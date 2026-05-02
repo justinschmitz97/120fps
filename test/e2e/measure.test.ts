@@ -20,6 +20,7 @@ describe("measureMount e2e", () => {
       expect(first.unmount.median).toBeGreaterThanOrEqual(0);
       expect(first.unmount.p95).toBeGreaterThanOrEqual(first.unmount.median);
       expect(first.domNodeCount).toBeGreaterThan(0);
+      expect(typeof first.heapDelta).toBe("number");
     } finally {
       await harness.cleanup();
     }

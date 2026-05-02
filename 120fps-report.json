@@ -1,0 +1,93 @@
+{
+  "version": 1,
+  "timestamp": "2026-05-02T12:37:37.166Z",
+  "machine": {
+    "cpu": "AMD Ryzen 9 5900X 12-Core Processor            ",
+    "cores": 24,
+    "ramMb": 32693,
+    "os": "Windows_NT 10.0.26100",
+    "nodeVersion": "v22.22.2",
+    "chromiumVersion": "147.0.7727.15"
+  },
+  "componentPath": "./fixtures/static-buttons.tsx",
+  "componentName": "StaticButtons",
+  "calibration": {
+    "totalDuration": 81.054,
+    "scriptDuration": 0.21000000000000002
+  },
+  "combos": [
+    {
+      "comboIndex": 0,
+      "props": {},
+      "mount": {
+        "samples": [
+          8.242999999999999,
+          6.199999999999999,
+          7.990999999999999
+        ],
+        "median": 7.990999999999999,
+        "p95": 8.242999999999999,
+        "cv": 12.162605689268634,
+        "unstable": false
+      },
+      "unmount": {
+        "samples": [
+          2.726,
+          1.8699999999999999,
+          1.612
+        ],
+        "median": 1.8699999999999999,
+        "p95": 2.726,
+        "cv": 23.008848303419292,
+        "unstable": true
+      },
+      "domNodeCount": 11,
+      "heapDelta": -455876,
+      "interactions": [
+        {
+          "selector": "div > button:nth-of-type(2)",
+          "type": "click",
+          "label": "Two",
+          "timing": {
+            "samples": [
+              21.947999999999997,
+              10.349,
+              8.988999999999999
+            ],
+            "median": 10.349,
+            "p95": 21.947999999999997,
+            "cv": 42.25362026795709,
+            "unstable": true
+          },
+          "relativeTiming": 0.1276803118908382
+        },
+        {
+          "selector": "div > button:nth-of-type(1)",
+          "type": "click",
+          "label": "One",
+          "timing": {
+            "samples": [
+              9.192999999999994,
+              8.777999999999999,
+              8.269999999999998
+            ],
+            "median": 8.777999999999999,
+            "p95": 9.192999999999994,
+            "cv": 4.315196266926185,
+            "unstable": false
+          },
+          "relativeTiming": 0.10829817158931081
+        }
+      ],
+      "scalingCurve": null,
+      "relativeMount": 0.09858859525748265,
+      "verdict": "fail"
+    }
+  ],
+  "thresholds": {
+    "mountMs": 0.001,
+    "interactionMs": 0.001,
+    "relativeMount": 0.001
+  },
+  "pass": false
+}

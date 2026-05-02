@@ -41,6 +41,12 @@ src/
   prop-gen-values.ts — value generation + stratified sampling
   harness.ts        — Vite harness builder + dev server
   measure.ts        — CDP trace capture + mount/unmount timing
+  metrics.ts        — full CDP metric extraction, INP, scaling curves, calibration
+  discovery.ts      — DOM walk for interactive element discovery
+  explorer.ts       — exploration loop + state graph builder
+  report.ts         — types, CV, verdict logic, terminal table formatting
+  analyze.ts        — full pipeline orchestrator (analyze + buildReport)
+  cli.ts            — CLI entry point, arg parsing, exit codes
   index.ts          — barrel export
 specs/
   overview/         — architecture + glossary

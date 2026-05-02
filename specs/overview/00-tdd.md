@@ -19,11 +19,13 @@ status: approved
 |---|---|
 | prop-gen | TS Compiler API prop extraction + value generation |
 | harness | Vite harness builder + dev server |
-| explorer | Exploration loop orchestration |
 | discovery | DOM walker, ARIA pattern recognizer |
-| measure | CDP trace capture + parsing |
-| report | Terminal table + JSON |
-| cli | Entry point, args |
+| explorer | Exploration loop, state graph builder |
+| measure | CDP trace capture + duration parsing |
+| metrics | Full CDP metric extraction, INP, scaling curves, calibration |
+| report | Types, CV, verdict logic, terminal table formatting |
+| analyze | Full pipeline orchestrator (`analyze()` + `buildReport()`) |
+| cli | Entry point, arg parsing, exit codes |
 
 ## Stack
 TypeScript, pnpm, Playwright, Vite, TS Compiler API, Node ≥20, vitest.
@@ -36,71 +38,79 @@ Build harness from .tsx, serve via Vite, open in Playwright, extract props via T
 ### M2 — mount/unmount measurement (done)
 CDP trace capture during mount/unmount across prop combinations. 4× CPU throttle, N=10 samples, median + P95. Auto-mount removed; caller controls lifecycle. Warmup runs (default 2) for JIT stabilization. 30s traceComplete timeout. Empty-array guards on median/P95. See `specs/milestones/m2-mount-measurement.md`. 57 new tests (146 total).
 
-### M3 — interaction discovery (pending)
+### M3 — interaction discovery (done)
 **Goal**: Given a mounted component, walk the live DOM to find all interactive elements and categorize them.
 
 **Builds on M2**: component is mounted with valid props, browser is open.
 
 **Scope**:
-- Walk DOM tree via `page.evaluate()`, find interactive elements: buttons, inputs, selects, textareas, links, `[role]` elements, `[tabindex]` elements, `[onclick]`/`[onkeydown]` elements
-- Recognize ARIA widget patterns: accordion (`role=region` + trigger), tabs (`role=tablist/tab/tabpanel`), menu (`role=menu/menuitem`), dialog (`role=dialog` + trigger), listbox, combobox, tree
-- Return `InteractionDescriptor[]` — each with type (click/keyboard/hover/focus/type), selector, and optional key/text
-- Deduplicate (same element found via multiple selectors)
-- Handle shadow DOM (if `shadowRoot` is open)
-- New module: `src/discovery.ts`
+- `discoverInteractions(page)` — single `page.evaluate()` DOM walk via TreeWalker
+- Finds: buttons, inputs (all types), textareas, selects, links (`a[href]`), `details > summary`, `[contenteditable]`, ARIA `[role]` widgets, `[tabindex]` (not -1), elements with inline event handler attributes
+- Recognizes ARIA widget patterns: accordion, tabs, menu, dialog, listbox, combobox, tree — annotates descriptors with `role` field
+- Returns `InteractionDescriptor[]` with type (`click`|`type`|`select`|`focus`|`keyboard`|`hover`), CSS selector, tagName, label, optional role/inputType
+- Deduplicates by element identity. Unique CSS selectors validated via `querySelector`.
+- Traverses open shadow DOM. Skips `display:none`, `visibility:hidden`, `aria-hidden="true"`, `input[type=hidden]`.
+- Deterministic: same DOM → same descriptors in document order.
+- New module: `src/discovery.ts`. See `specs/milestones/m3-interaction-discovery.md`. 31 new tests (177 total).
 
 **Does NOT include**: actually exercising the interactions (M4) or measuring them (M5).
 
-### M4 — exploration loop (pending)
+### M4 — exploration loop (done)
 **Goal**: Adaptive exploration that exercises discovered interactions, tracks state changes, and deepens into expensive paths.
 
 **Builds on M3**: `InteractionDescriptor[]` from discovery. M2's trace capture for measurement.
 
 **Scope**:
-- For each prop combo × each discovered interaction: exercise N=10 times, capture CDP trace
-- After each interaction: re-walk DOM, compute DOM hash, detect state change
-- Build `StateGraph`: nodes = unique DOM states (by hash), edges = interactions with cost (median, P95)
-- Adaptive deepening: if P95 > 1.5× median edge cost across all edges so far, add follow-up interactions from resulting state to priority queue
-- Convergence detection: rolling window of last 10 explorations, stop if all <5% information gain
+- `explore(harness, options?)` → `ExploreResult[]` (one per prop combo), each containing a `StateGraph`
+- For each prop combo × each discovered interaction: exercise N=10 times, capture CDP trace (independent samples via remount+replay)
+- After each interaction: DOM hash via FNV-1a of `#root` innerHTML → detect state change
+- Build `StateGraph`: nodes = unique DOM states (by hash), edges = interactions with cost (median, P95, raw traces)
+- Adaptive deepening: if P95 > 1.5× global median edge cost, add follow-up interactions to priority queue front
+- Convergence: binary info gain per exploration; stop when last 10 all yield no new nodes/edges
 - Hard limits: 200 nodes, 60s wall-clock, depth 4
-- Seeded RNG for deterministic tie-breaking
-- New module: `src/explorer.ts`
+- Seeded LCG PRNG (default seed 42) for deterministic interaction ordering
+- Interaction exercise: Playwright API for standard selectors, `page.evaluate` fallback for shadow DOM (`>>>` selectors)
+- Manages browser lifecycle internally (like `measureMount`)
+- New module: `src/explorer.ts`. See `specs/milestones/m4-exploration-loop.md`. 33 new tests (210 total).
 
 **Does NOT include**: full metric extraction (M5) or reporting (M6). M4 produces the state graph and raw traces.
 
-### M5 — full CDP metrics (pending)
+### M5 — full CDP metrics (done)
 **Goal**: Parse raw CDP traces into the complete metric taxonomy. Scaling curve analysis.
 
 **Builds on M4**: raw traces from mount + interaction exercises.
 
 **Scope**:
-- Parse trace events into `CdpMetrics`: paint count/duration, layout count/duration, style recalc count/duration, scripting duration, dropped frames, DOM node count, heap delta
-- Long task detection (>50ms scripting spans)
-- Frame timing analysis: frame durations, jank frames (>16.67ms)
-- INP estimation: max interaction-to-next-paint latency
-- Layout shift detection from `LayoutShift` trace events
-- Scaling curve: run at item counts [1, 5, 20, 50] (for array/list props), linear regression → R² + growth class (linear/quadratic/exponential)
-- Calibration component: known-cost reference, run first to establish machine baseline
-
-**Deferred from M2**: Fix nested trace event double-counting in `parseTraceDuration` (sums all X-phase dur including nested children → inflated totalDuration). Add `performance.mark` bracketing for precise mount/unmount windows. Force GC between samples via `--js-flags=--expose-gc`. Wire `scriptDuration` from `ParsedDuration` into `CdpMetrics`.
+- `parseMetrics(events, options?)` → `CdpMetrics` with paint/layout/style-recalc counts and durations, scripting duration, totalDuration (nested-event-aware), long tasks (>50ms), frame timing + jank/dropped frame counts, layout shift score, INP estimation
+- `computeINP(traces)` → max interaction-to-next-paint latency across trace sets
+- `computeScalingCurve(points)` → `{ slope, intercept, r2, growthClass }` via least-squares regression with automatic classification (constant/linear/quadratic/exponential)
+- `createCalibrationTrace(page, cdp)` → baseline `CdpMetrics` from known-cost operation (1000-element DOM insert + forced layout)
+- `linearRegression(points)` → `{ slope, intercept, r2 }` utility
+- Fixed `parseTraceDuration` nested event double-counting via timestamp-based nesting stack; backward-compatible fallback for events without `ts` field
+- `TraceEvent` extended with optional `ts` and `args` fields
+- `filterToMarks` option for `parseMetrics` to scope metrics to `performance.mark` window (`__120fps_start`/`__120fps_end`)
+- New module: `src/metrics.ts`. See `specs/milestones/m5-cdp-metrics.md`. 51 new tests (261 total).
 
 **Does NOT include**: reporting format (M6).
 
-### M6 — CLI + reporting + calibration (pending)
+### M6 — CLI + reporting + calibration (done)
 **Goal**: Ship the user-facing tool. Terminal output, JSON file, CLI entry point.
 
 **Builds on M5**: full `Report` structure with all metrics.
 
 **Scope**:
-- CLI: `npx 120fps ./Component.tsx` — arg parsing, error handling, help text
-- Terminal table: summary view (component name, mount time, top interactions, scaling class, pass/warn/fail thresholds)
-- JSON output: full `Report` object written to file (default: `120fps-report.json`)
-- Machine info collection: CPU, RAM, OS, Node version, Chromium version
-- Relative scoring: calibration component result → normalize all timings as ratio
-- CI mode: `--ci` flag, exit code 1 if any metric exceeds threshold, JSON-only output
-- `analyze()` public API: programmatic entry point wrapping the full pipeline
+- `analyze(componentPath, options?) → Report`: full pipeline orchestrator (buildAndServe → calibration → measureMount → explore → report)
+- CLI: `npx 120fps ./Component.tsx` — arg parsing (`--json`, `--ci`, `--samples`, `--threshold-mount`, `--threshold-interaction`, `--help`, `--version`), error handling, help text
+- Terminal table: summary view (component name, machine summary, per-combo mount/unmount/DOM/interactions/scaling/verdict, top 3 slowest interactions per combo)
+- JSON output: full `Report` object written to file (default: `120fps-report.json`), Map-to-object serialization
+- Machine info: CPU model, cores, RAM, OS, Node version, Chromium version
+- Calibration: `createCalibrationTrace` → normalize all timings as `relativeMount` / `relativeTiming` ratios
+- CV: `computeCV(samples)` = stddev/|mean|×100; `TimingWithCV` extends `TimingResult` with `cv` + `unstable` (cv>15%)
+- Verdicts: per-combo `pass`/`warn`/`fail` based on threshold checks + instability; `report.pass = no combo is "fail"`
+- CI mode: `--ci` → JSON-only output, exit code 1 if `report.pass === false`, exit 2 on usage errors
+- New modules: `src/report.ts`, `src/analyze.ts`, `src/cli.ts`. See `specs/milestones/m6-cli-reporting.md`. 63 new tests (324 total).
 
-**Deferred from M2**: Report coefficient of variation (CV) per timing; flag results with CV>15% as unstable.
+**Post-M6 wiring**: GC between samples (`HeapProfiler.collectGarbage`) called before each sample in measure + explorer. Heap delta via `Runtime.getHeapUsage` collected per combo in `measureMount()`. Scaling curve computed across combos with ≥2 distinct DOM sizes. 329 tests.
 
 ## Risks
 | risk | mitigation |

@@ -3,6 +3,7 @@ import {
   computeMedian,
   computeP95,
   parseTraceDuration,
+  tryCollectGarbage,
 } from "../../src/measure.js";
 
 describe("computeMedian", () => {
@@ -94,5 +95,17 @@ describe("parseTraceDuration", () => {
     ];
     const result = parseTraceDuration(events);
     expect(result.scriptDuration).toBeCloseTo(3, 0);
+  });
+});
+
+describe("tryCollectGarbage", () => {
+  it("does not throw when CDP method rejects", async () => {
+    const fakeCdp = { send: async () => { throw new Error("not supported"); } } as any;
+    await expect(tryCollectGarbage(fakeCdp)).resolves.toBeUndefined();
+  });
+
+  it("resolves when CDP method succeeds", async () => {
+    const fakeCdp = { send: async () => {} } as any;
+    await expect(tryCollectGarbage(fakeCdp)).resolves.toBeUndefined();
   });
 });

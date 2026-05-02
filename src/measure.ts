@@ -4,6 +4,14 @@ import type { PropCombination } from "./prop-gen-values.js";
 import { extractProps } from "./prop-gen.js";
 import { generateCombinations } from "./prop-gen-values.js";
 
+export async function tryCollectGarbage(cdp: CDPSession): Promise<void> {
+  try {
+    await cdp.send("HeapProfiler.collectGarbage" as any);
+  } catch {
+    // Best-effort: some Chromium builds don't expose HeapProfiler
+  }
+}
+
 export interface MeasureOptions {
   samples?: number;
   cpuThrottle?: number;
@@ -23,13 +31,16 @@ export interface MountResult {
   mount: TimingResult;
   unmount: TimingResult;
   domNodeCount: number;
+  heapDelta?: number;
 }
 
-interface TraceEvent {
+export interface TraceEvent {
   cat?: string;
   name?: string;
   dur?: number;
   ph?: string;
+  ts?: number;
+  args?: Record<string, unknown>;
 }
 
 interface ParsedDuration {
@@ -65,19 +76,52 @@ export function parseTraceDuration(events: TraceEvent[]): ParsedDuration {
   let scriptDuration = 0;
   let totalDuration = 0;
 
-  for (const event of events) {
-    if (event.ph !== "X" || typeof event.dur !== "number") continue;
-    const durMs = event.dur / 1000;
-    totalDuration += durMs;
+  const xEvents = events.filter(
+    (e) => e.ph === "X" && typeof e.dur === "number" && e.ts !== undefined,
+  );
+  xEvents.sort((a, b) => (a.ts ?? 0) - (b.ts ?? 0));
+
+  const nestingStack: number[] = [];
+
+  for (const event of xEvents) {
+    const durMs = event.dur! / 1000;
+    const eventStart = event.ts!;
+    const eventEnd = eventStart + event.dur!;
+
+    while (
+      nestingStack.length > 0 &&
+      nestingStack[nestingStack.length - 1] <= eventStart
+    ) {
+      nestingStack.pop();
+    }
+
+    if (nestingStack.length === 0) {
+      totalDuration += durMs;
+    }
+
+    nestingStack.push(eventEnd);
+
     if (event.name && SCRIPT_EVENT_NAMES.has(event.name)) {
       scriptDuration += durMs;
+    }
+  }
+
+  // Fallback: if no events had timestamps, use the old sum
+  if (xEvents.length === 0 && events.some((e) => e.ph === "X" && typeof e.dur === "number")) {
+    for (const event of events) {
+      if (event.ph !== "X" || typeof event.dur !== "number") continue;
+      const durMs = event.dur / 1000;
+      totalDuration += durMs;
+      if (event.name && SCRIPT_EVENT_NAMES.has(event.name)) {
+        scriptDuration += durMs;
+      }
     }
   }
 
   return { scriptDuration, totalDuration };
 }
 
-async function collectTrace(
+export async function collectTrace(
   cdp: CDPSession,
   action: () => Promise<void>,
 ): Promise<TraceEvent[]> {
@@ -152,7 +196,7 @@ async function runMountUnmount(
         }
         (window as any).__120fps.mount(p);
       },
-      [safeProps, FUNCTION_MARKER] as const,
+      [safeProps, FUNCTION_MARKER] as [Record<string, unknown>, string],
     );
     await page.evaluate(
       () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))),
@@ -229,12 +273,25 @@ export async function measureMount(
       const unmountSamples: number[] = [];
       let domNodeCount = 0;
 
+      let heapBefore = 0;
+      try {
+        const pre = await cdp.send("Runtime.getHeapUsage" as any) as { usedSize: number };
+        heapBefore = pre.usedSize;
+      } catch { /* CDP method may not be available */ }
+
       for (let s = 0; s < sampleCount; s++) {
+        await tryCollectGarbage(cdp);
         const run = await runMountUnmount(page, cdp, props);
         mountSamples.push(run.mountDur);
         unmountSamples.push(run.unmountDur);
         if (s === 0) domNodeCount = run.domNodeCount;
       }
+
+      let heapDelta = 0;
+      try {
+        const post = await cdp.send("Runtime.getHeapUsage" as any) as { usedSize: number };
+        heapDelta = post.usedSize - heapBefore;
+      } catch { /* fall back to 0 */ }
 
       results.push({
         comboIndex: ci,
@@ -242,6 +299,7 @@ export async function measureMount(
         mount: buildTimingResult(mountSamples),
         unmount: buildTimingResult(unmountSamples),
         domNodeCount,
+        heapDelta,
       });
     }
 
