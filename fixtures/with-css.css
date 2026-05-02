@@ -1,0 +1,4 @@
+.alert { padding: 12px; border-radius: 4px; }
+.alert-success { background: #d4edda; }
+.alert-error { background: #f8d7da; }
+.alert-warning { background: #fff3cd; }

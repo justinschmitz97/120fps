@@ -1,0 +1,7 @@
+node_modules/
+dist/
+*.node
+.pnpm-store/
+__120fps_harness/
+.perrr/
+*.tsbuildinfo
