@@ -31,7 +31,7 @@ tests:
   - All-optional props (includes all-undefined combo), default values in destructuring
   - Components extending HTMLAttributes — DOM props included, combos capped
   - Components with useEffect, zero-props components
-- Type classification: bool→`[true,false]`, union→each variant, number→`[1,5,20]`, optional→includes `undefined`, function→noop, ReactNode→placeholder, Record→object, array→`[[],["item"]]`
+- Type classification: bool→`[true,false]`, union→each variant, number→`[1,5,20]`, optional→includes `undefined`, function→noop, ReactNode→placeholder, Record→object, array→`[[],["item-1","item-2","item-3"]]`
 - Imported type aliases resolved via Bundler moduleResolution
 - `buildAndServe(filePath)` → Vite dev server with auto-detected import syntax
 - Control API: `window.__120fps.mount(props)`, `.unmount()`, `.rerender(props)`, `.getContainer()`
@@ -56,7 +56,8 @@ tests:
 
 ### Harness (`src/harness.ts`)
 - `detectComponentExport`: regex-based `{ name, isDefaultOnly }`. Checks: `export function X`, `export const X` (with optional type annotation), `export class X`, then default patterns, then filename fallback.
-- Generated `entry.tsx`: `import X from` (default) or `import { X } from` (named)
+- Generated `entry.tsx`: `import X from` (default) or `import { X } from` (named). No auto-mount — caller uses Control API.
+- `HarnessResult` includes `componentPath` (absolute) for downstream modules
 - Absolute component path (forward slashes on Windows)
 - Project's `node_modules` symlinked via junction into harness temp dir
 - Vite `createServer`, port 0, `fs.allow` includes project root
@@ -64,4 +65,3 @@ tests:
 ## Open
 - Re-export detection (`export { X } from './internal'`) — not handled
 - pnpm monorepo symlink stacking — untested
-- **Auto-mount with `{}`** crashes on required non-primitive props — harness should use `generateCombinations` output (fix in M2)

@@ -1,5 +1,5 @@
 import { describe, it, expect, afterAll } from "vitest";
-import { chromium, type Browser } from "playwright";
+import { chromium, type Browser, type Page } from "playwright";
 import { buildAndServe } from "../../src/harness.js";
 
 let browser: Browser;
@@ -8,6 +8,12 @@ afterAll(async () => {
   if (browser) await browser.close();
 });
 
+async function gotoAndMount(page: Page, url: string, props: any = {}) {
+  await page.goto(url);
+  await page.waitForFunction(() => typeof (window as any).__120fps === "object", { timeout: 10000 });
+  await page.evaluate((p: any) => (window as any).__120fps.mount(p), props);
+}
+
 // H1: forwardRef component renders in harness
 describe("H1: forwardRef harness", () => {
   it("renders forwardRef component", async () => {
@@ -15,7 +21,7 @@ describe("H1: forwardRef harness", () => {
     const harness = await buildAndServe("./fixtures/forward-ref.tsx");
     try {
       const page = await browser.newPage();
-      await page.goto(harness.url);
+      await gotoAndMount(page, harness.url);
       await page.waitForSelector("input", { state: "attached", timeout: 10000 });
       const tag = await page.evaluate(
         () => document.querySelector("input")?.tagName,
@@ -34,7 +40,7 @@ describe("H2: React.memo harness", () => {
     const harness = await buildAndServe("./fixtures/memo-comp.tsx");
     try {
       const page = await browser.newPage();
-      await page.goto(harness.url);
+      await gotoAndMount(page, harness.url, { count: 1 });
       await page.waitForSelector("span", { state: "attached", timeout: 10000 });
       const tag = await page.evaluate(
         () => document.querySelector("span")?.tagName,
@@ -46,14 +52,14 @@ describe("H2: React.memo harness", () => {
   });
 });
 
-// H3: default-export-only — harness imports { Tag } but file only has `export default function Tag`
+// H3: default-export-only — harness imports default
 describe("H3: default-export-only harness", () => {
   it("renders default-exported component", async () => {
     browser = await chromium.launch({ headless: true });
     const harness = await buildAndServe("./fixtures/default-only.tsx");
     try {
       const page = await browser.newPage();
-      await page.goto(harness.url);
+      await gotoAndMount(page, harness.url, { color: "red" });
       await page.waitForSelector("span", { state: "attached", timeout: 10000 });
       const tag = await page.evaluate(
         () => document.querySelector("span")?.tagName,
@@ -72,7 +78,7 @@ describe("H7: CSS import harness", () => {
     const harness = await buildAndServe("./fixtures/with-css.tsx");
     try {
       const page = await browser.newPage();
-      await page.goto(harness.url);
+      await gotoAndMount(page, harness.url, { type: "info" });
       await page.waitForSelector(".alert", { timeout: 10000 });
       const el = await page.evaluate(
         () => document.querySelector(".alert")?.tagName,
@@ -91,10 +97,9 @@ describe("H8: sibling import harness", () => {
     const harness = await buildAndServe("./fixtures/with-import.tsx");
     try {
       const page = await browser.newPage();
-      await page.goto(harness.url);
+      await gotoAndMount(page, harness.url, { amount: 0, currency: "USD" });
       await page.waitForSelector("span", { timeout: 10000 });
       const text = await page.textContent("span");
-      // formatPrice(0) = "$0.00", currency default "USD"
       expect(text).toContain("$");
     } finally {
       await harness.cleanup();
@@ -109,7 +114,7 @@ describe("H5: zero-props harness", () => {
     const harness = await buildAndServe("./fixtures/no-props.tsx");
     try {
       const page = await browser.newPage();
-      await page.goto(harness.url);
+      await gotoAndMount(page, harness.url);
       await page.waitForSelector("hr", { state: "attached", timeout: 10000 });
       const tag = await page.evaluate(
         () => document.querySelector("hr")?.tagName,
@@ -121,26 +126,16 @@ describe("H5: zero-props harness", () => {
   });
 });
 
-// H6: generic component — auto-mount with {} crashes because required array props are undefined.
-// This is a known limitation: the harness auto-mounts with {}, but components with required
-// non-primitive props (arrays, objects) crash. Mount with valid props via Control API instead.
+// H6: generic component — mount with valid props via Control API
 describe("H6: generic component harness", () => {
   it("renders generic DataTable when mounted with valid props", async () => {
     if (!browser) browser = await chromium.launch({ headless: true });
     const harness = await buildAndServe("./fixtures/generic.tsx");
     try {
       const page = await browser.newPage();
-
-      // Catch the auto-mount crash (expected — no valid props)
-      page.on("pageerror", () => {});
-      await page.goto(harness.url);
-
-      // Re-mount with valid props
-      await page.evaluate(() => {
-        (window as any).__120fps.mount({
-          data: [{ name: "Alice" }],
-          columns: [{ key: "name", label: "Name" }],
-        });
+      await gotoAndMount(page, harness.url, {
+        data: [{ name: "Alice" }],
+        columns: [{ key: "name", label: "Name" }],
       });
 
       await page.waitForSelector("table", { state: "attached", timeout: 10000 });
@@ -172,7 +167,10 @@ describe("H9: concurrent harness instances", () => {
         browser.newPage(),
       ]);
 
-      await Promise.all([p1.goto(h1.url), p2.goto(h2.url)]);
+      await Promise.all([
+        gotoAndMount(p1, h1.url, { label: "Test" }),
+        gotoAndMount(p2, h2.url, { amount: 0, currency: "USD" }),
+      ]);
 
       await Promise.all([
         p1.waitForSelector("button", { timeout: 10000 }),

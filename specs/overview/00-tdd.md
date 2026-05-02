@@ -33,28 +33,8 @@ TypeScript, pnpm, Playwright, Vite, TS Compiler API, Node ≥20, vitest.
 ### M1 — harness + props (done)
 Build harness from .tsx, serve via Vite, open in Playwright, extract props via TS Compiler API. See `specs/milestones/m1-harness-and-prop-extraction.md`. 89 tests.
 
-### M2 — mount/unmount measurement (pending)
-**Goal**: Capture CDP performance traces during mount and unmount. Produce per-prop-combo timing data.
-
-**Builds on M1**: `buildAndServe()` + `extractProps()` + `generateCombinations()` + Control API.
-
-**Scope**:
-- Fix auto-mount: use `generateCombinations` output instead of `{}` so components with required props don't crash
-- Enable CDP Tracing domain (`Tracing.start` / `Tracing.end`) via Playwright's CDP session
-- Enable 4× CPU throttle via `Emulation.setCPUThrottlingRate`
-- For each prop combination: mount → capture trace → unmount → capture trace
-- Parse trace events to extract: scripting duration, total duration, DOM node count after mount
-- Run N=10 samples per combo, compute median + P95
-- Return structured `MountResult[]` with per-combo timing data
-- New module: `src/measure.ts`
-
-**Key APIs**:
-- `page.context().newCDPSession(page)` → CDP session
-- `cdp.send('Tracing.start', { categories: 'devtools.timeline,v8.execute' })`
-- `cdp.send('Tracing.end')` → collect via `Tracing.dataCollected` + `Tracing.tracingComplete`
-- `cdp.send('Emulation.setCPUThrottlingRate', { rate: 4 })`
-
-**Does NOT include**: interaction discovery, exploration loop, full metric extraction (paint/layout/style recalc breakdown — that's M5). M2 captures raw traces and extracts basic timing. M5 parses the full event taxonomy.
+### M2 — mount/unmount measurement (done)
+CDP trace capture during mount/unmount across prop combinations. 4× CPU throttle, N=10 samples, median + P95. Auto-mount removed; caller controls lifecycle. Warmup runs (default 2) for JIT stabilization. 30s traceComplete timeout. Empty-array guards on median/P95. See `specs/milestones/m2-mount-measurement.md`. 57 new tests (146 total).
 
 ### M3 — interaction discovery (pending)
 **Goal**: Given a mounted component, walk the live DOM to find all interactive elements and categorize them.
@@ -102,6 +82,8 @@ Build harness from .tsx, serve via Vite, open in Playwright, extract props via T
 - Scaling curve: run at item counts [1, 5, 20, 50] (for array/list props), linear regression → R² + growth class (linear/quadratic/exponential)
 - Calibration component: known-cost reference, run first to establish machine baseline
 
+**Deferred from M2**: Fix nested trace event double-counting in `parseTraceDuration` (sums all X-phase dur including nested children → inflated totalDuration). Add `performance.mark` bracketing for precise mount/unmount windows. Force GC between samples via `--js-flags=--expose-gc`. Wire `scriptDuration` from `ParsedDuration` into `CdpMetrics`.
+
 **Does NOT include**: reporting format (M6).
 
 ### M6 — CLI + reporting + calibration (pending)
@@ -117,6 +99,8 @@ Build harness from .tsx, serve via Vite, open in Playwright, extract props via T
 - Relative scoring: calibration component result → normalize all timings as ratio
 - CI mode: `--ci` flag, exit code 1 if any metric exceeds threshold, JSON-only output
 - `analyze()` public API: programmatic entry point wrapping the full pipeline
+
+**Deferred from M2**: Report coefficient of variation (CV) per timing; flag results with CV>15% as unstable.
 
 ## Risks
 | risk | mitigation |

@@ -1,5 +1,5 @@
 import { describe, it, expect, afterAll } from "vitest";
-import { chromium, type Browser } from "playwright";
+import { chromium, type Browser, type Page } from "playwright";
 import { buildAndServe } from "../../src/harness.js";
 
 let browser: Browser;
@@ -8,6 +8,12 @@ afterAll(async () => {
   if (browser) await browser.close();
 });
 
+async function gotoAndMount(page: Page, url: string, props: any = {}) {
+  await page.goto(url);
+  await page.waitForFunction(() => typeof (window as any).__120fps === "object", { timeout: 10000 });
+  await page.evaluate((p: any) => (window as any).__120fps.mount(p), props);
+}
+
 describe("harness e2e", () => {
   it("renders button component with default props", async () => {
     browser = await chromium.launch({ headless: true });
@@ -15,7 +21,7 @@ describe("harness e2e", () => {
 
     try {
       const page = await browser.newPage();
-      await page.goto(harness.url);
+      await gotoAndMount(page, harness.url, { label: "Test" });
       await page.waitForSelector("button", { timeout: 10000 });
       const tag = await page.evaluate(() => document.querySelector("button")?.tagName);
       expect(tag).toBe("BUTTON");
@@ -31,7 +37,7 @@ describe("harness e2e", () => {
     try {
       const page = await browser.newPage();
       await page.goto(harness.url);
-      await page.waitForSelector("button", { timeout: 10000 });
+      await page.waitForFunction(() => typeof (window as any).__120fps === "object", { timeout: 10000 });
 
       const hasApi = await page.evaluate(() => {
         const api = (window as any).__120fps;
@@ -56,7 +62,7 @@ describe("harness e2e", () => {
     try {
       const page = await browser.newPage();
       await page.goto(harness.url);
-      await page.waitForSelector("button", { timeout: 10000 });
+      await page.waitForFunction(() => typeof (window as any).__120fps === "object", { timeout: 10000 });
 
       await page.evaluate(() => {
         (window as any).__120fps.mount({ label: "ClickMe" });

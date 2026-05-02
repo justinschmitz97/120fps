@@ -6,6 +6,7 @@ import os from "node:os";
 export interface HarnessResult {
   url: string;
   server: ViteDevServer;
+  componentPath: string;
   cleanup: () => Promise<void>;
 }
 
@@ -64,8 +65,6 @@ let mounted = false;
   },
 };
 
-// Auto-mount with default props
-(window as any).__120fps.mount({});
 `;
 
   const indexHtml = `<!DOCTYPE html>
@@ -119,7 +118,7 @@ let mounted = false;
     fs.rmSync(harnessDir, { recursive: true, force: true });
   };
 
-  return { url, server, cleanup };
+  return { url, server, componentPath: absoluteComponentPath, cleanup };
 }
 
 function findProjectRoot(dir: string): string | undefined {
