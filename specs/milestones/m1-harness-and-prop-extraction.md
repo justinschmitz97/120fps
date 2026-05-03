@@ -33,7 +33,12 @@ tests:
   - Components with useEffect, zero-props components
 - Type classification: bool→`[true,false]`, union→each variant, number→`[1,5,20]`, optional→includes `undefined`, function→noop, ReactNode→placeholder, Record→object, array→`[[],["item-1","item-2","item-3"]]`
 - Imported type aliases resolved via Bundler moduleResolution
-- `buildAndServe(filePath)` → Vite dev server with auto-detected import syntax
+- `buildAndServe(filePath, options?)` → Vite dev server with auto-detected import syntax. Accepts optional `BuildHarnessOptions` with `composition?: CompositionTree` for composed harness generation.
+- `HarnessResult` includes `harnessDir` (path to temp harness directory).
+- `scanExternalDeps(componentPath, projectRoot, aliases)` recursively follows imports (relative and tsconfig-aliased) to discover external packages for Vite `optimizeDeps.include`.
+- `loadTsconfigAliases(projectRoot)` parses `tsconfig.json` `compilerOptions.paths` into Vite resolve aliases (handles JSON comments).
+- Auto-scale rendering: when props contain `__120fps_scaleN`, harness renders N instances of the component via `Array.from`.
+- `detectScaleExport(filePath)` detects fixture `scale()` export for parameterized scaling.
 - Control API: `window.__120fps.mount(props)`, `.unmount()`, `.rerender(props)`, `.getContainer()`
 - Concurrent `buildAndServe` calls work (separate temp dirs, random ports)
 - CSS imports and sibling TS imports work (Vite handles them)
@@ -57,10 +62,9 @@ tests:
 ### Harness (`src/harness.ts`)
 - `detectComponentExport`: regex-based `{ name, isDefaultOnly }`. Checks: `export function X`, `export const X` (with optional type annotation), `export class X`, then default patterns, then filename fallback.
 - Generated `entry.tsx`: `import X from` (default) or `import { X } from` (named). No auto-mount — caller uses Control API.
-- `HarnessResult` includes `componentPath` (absolute) for downstream modules
+- `HarnessResult` includes `componentPath` (absolute) and `harnessDir` for downstream modules
 - Absolute component path (forward slashes on Windows)
-- Project's `node_modules` symlinked via junction into harness temp dir
-- Vite `createServer`, port 0, `fs.allow` includes project root
+- Vite `createServer`, port 0, `resolve.alias` from tsconfig paths, `resolve.dedupe` for react/react-dom, `optimizeDeps.include` populated by `scanExternalDeps`
 
 ## Open
 - Re-export detection (`export { X } from './internal'`) — not handled

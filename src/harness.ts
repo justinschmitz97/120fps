@@ -1,39 +1,82 @@
 import { createServer, type ViteDevServer } from "vite";
 import fs from "node:fs";
 import path from "node:path";
-import os from "node:os";
+import type { CompositionTree, CompositionNode } from "./composition.js";
 
 export interface HarnessResult {
   url: string;
   server: ViteDevServer;
   componentPath: string;
+  harnessDir: string;
   cleanup: () => Promise<void>;
+}
+
+export interface BuildHarnessOptions {
+  composition?: CompositionTree;
 }
 
 export async function buildAndServe(
   componentPath: string,
+  options?: BuildHarnessOptions,
 ): Promise<HarnessResult> {
   const absoluteComponentPath = path.resolve(componentPath);
   if (!fs.existsSync(absoluteComponentPath)) {
     throw new Error(`Component file not found: ${componentPath}`);
   }
 
+  const componentDir = path.dirname(absoluteComponentPath);
+  const projectRoot = findProjectRoot(componentDir) ?? componentDir;
+
+  // Place harness files inside the target project so Vite resolves aliases
   const harnessDir = fs.mkdtempSync(
-    path.join(os.tmpdir(), "120fps-harness-"),
+    path.join(projectRoot, ".120fps-harness-"),
   );
+  const harnessDirName = path.basename(harnessDir);
 
-  const componentImportPath = absoluteComponentPath.replace(/\\/g, "/");
+  const componentRelative = path.relative(projectRoot, absoluteComponentPath).replace(/\\/g, "/");
 
-  const { name: componentName, isDefaultOnly } = detectComponentExport(absoluteComponentPath);
+  let entryTsx: string;
 
-  const importLine = isDefaultOnly
-    ? `import ${componentName} from "${componentImportPath}";`
-    : `import { ${componentName} as Component } from "${componentImportPath}";`;
+  if (options?.composition) {
+    entryTsx = generateComposedEntry(componentRelative, options.composition);
+  } else {
+    const { name: componentName, isDefaultOnly } = detectComponentExport(absoluteComponentPath);
+    const hasScale = detectScaleExport(absoluteComponentPath);
 
-  const componentRef = isDefaultOnly ? componentName : "Component";
+    const importLine = isDefaultOnly
+      ? `import ${componentName}${hasScale ? ", { scale as __120fps_scale }" : ""} from "/${componentRelative}";`
+      : `import { ${componentName} as Component${hasScale ? ", scale as __120fps_scale" : ""} } from "/${componentRelative}";`;
 
-  const entryTsx = `
-import React from "react";
+    const componentRef = isDefaultOnly ? componentName : "Component";
+
+    const autoScaleRender = `if (typeof props.__120fps_scaleN === "number") {
+      const n = props.__120fps_scaleN;
+      const { __120fps_scaleN: _, ...restProps } = props;
+      root.render(createElement("div", null,
+        ...Array.from({ length: n }, (_, i) => createElement(${componentRef}, { ...restProps, key: i }))
+      ));
+    } else {
+      root.render(createElement(${componentRef}, props));
+    }`;
+
+    const scaleMount = hasScale
+      ? `if (typeof props.__120fps_scaleN === "number" && typeof __120fps_scale === "function") {
+      root.render(__120fps_scale(props.__120fps_scaleN));
+    } else {
+      root.render(createElement(${componentRef}, props));
+    }`
+      : autoScaleRender;
+
+    const scaleRerender = hasScale
+      ? `if (typeof props.__120fps_scaleN === "number" && typeof __120fps_scale === "function") {
+      root.render(__120fps_scale(props.__120fps_scaleN));
+    } else {
+      root.render(createElement(${componentRef}, props));
+    }`
+      : autoScaleRender;
+
+    entryTsx = `
+import { createElement } from "react";
 import { createRoot } from "react-dom/client";
 ${importLine}
 
@@ -47,7 +90,7 @@ let mounted = false;
       root.unmount();
       root = createRoot(container);
     }
-    root.render(React.createElement(${componentRef}, props));
+    ${scaleMount}
     mounted = true;
   },
   unmount() {
@@ -58,7 +101,7 @@ let mounted = false;
     }
   },
   rerender(props: any = {}) {
-    root.render(React.createElement(${componentRef}, props));
+    ${scaleRerender}
   },
   getContainer() {
     return container;
@@ -66,6 +109,7 @@ let mounted = false;
 };
 
 `;
+  }
 
   const indexHtml = `<!DOCTYPE html>
 <html>
@@ -76,30 +120,22 @@ let mounted = false;
   fs.writeFileSync(path.join(harnessDir, "entry.tsx"), entryTsx);
   fs.writeFileSync(path.join(harnessDir, "index.html"), indexHtml);
 
-  // Resolve react from the component's project or from 120fps's own deps
-  const componentDir = path.dirname(absoluteComponentPath);
-  const projectRoot = findProjectRoot(componentDir) ?? componentDir;
-
-  // Symlink node_modules into harness dir so Vite can resolve react/react-dom
-  const projectNodeModules = path.join(projectRoot, "node_modules");
-  const harnessNodeModules = path.join(harnessDir, "node_modules");
-  if (fs.existsSync(projectNodeModules) && !fs.existsSync(harnessNodeModules)) {
-    fs.symlinkSync(projectNodeModules, harnessNodeModules, "junction");
-  }
+  const alias = loadTsconfigAliases(projectRoot);
+  const externalDeps = scanExternalDeps(absoluteComponentPath, projectRoot, alias);
 
   const server = await createServer({
-    root: harnessDir,
+    root: projectRoot,
     logLevel: "silent",
     server: {
       port: 0,
       strictPort: false,
-      fs: { allow: [harnessDir, projectRoot, componentDir] },
     },
     resolve: {
+      alias,
       dedupe: ["react", "react-dom"],
     },
     optimizeDeps: {
-      include: ["react", "react-dom/client"],
+      include: ["react", "react-dom/client", ...externalDeps],
     },
   });
 
@@ -108,7 +144,7 @@ let mounted = false;
   const address = server.httpServer?.address();
   let url: string;
   if (address && typeof address === "object") {
-    url = `http://localhost:${address.port}`;
+    url = `http://localhost:${address.port}/${harnessDirName}/`;
   } else {
     throw new Error("Failed to start Vite dev server");
   }
@@ -118,7 +154,7 @@ let mounted = false;
     fs.rmSync(harnessDir, { recursive: true, force: true });
   };
 
-  return { url, server, componentPath: absoluteComponentPath, cleanup };
+  return { url, server, componentPath: absoluteComponentPath, harnessDir, cleanup };
 }
 
 function findProjectRoot(dir: string): string | undefined {
@@ -129,6 +165,163 @@ function findProjectRoot(dir: string): string | undefined {
     if (parent === current) return undefined;
     current = parent;
   }
+}
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function stripJsonComments(str: string): string {
+  let result = "";
+  let i = 0;
+  while (i < str.length) {
+    if (str[i] === '"') {
+      result += '"';
+      i++;
+      while (i < str.length && str[i] !== '"') {
+        if (str[i] === '\\') { result += str[i++]; }
+        if (i < str.length) { result += str[i++]; }
+      }
+      if (i < str.length) { result += str[i++]; }
+    } else if (str[i] === '/' && str[i + 1] === '/') {
+      while (i < str.length && str[i] !== '\n') i++;
+    } else if (str[i] === '/' && str[i + 1] === '*') {
+      i += 2;
+      while (i < str.length && !(str[i] === '*' && str[i + 1] === '/')) i++;
+      i += 2;
+    } else {
+      result += str[i++];
+    }
+  }
+  return result;
+}
+
+const EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".mts"];
+
+function resolveLocalImport(
+  fromFile: string,
+  spec: string,
+  projectRoot: string,
+  aliases: Array<{ find: RegExp; replacement: string }>,
+): string | null {
+  let resolved: string;
+  if (spec.startsWith(".") || spec.startsWith("/")) {
+    resolved = path.resolve(path.dirname(fromFile), spec);
+  } else {
+    let matched = false;
+    let aliasedPath = spec;
+    for (const { find, replacement } of aliases) {
+      if (find.test(spec)) {
+        aliasedPath = spec.replace(find, replacement);
+        matched = true;
+        break;
+      }
+    }
+    if (!matched) return null;
+    resolved = path.isAbsolute(aliasedPath) ? aliasedPath : path.resolve(projectRoot, aliasedPath);
+  }
+
+  if (fs.existsSync(resolved) && fs.statSync(resolved).isFile()) return resolved;
+  for (const ext of EXTENSIONS) {
+    const withExt = resolved + ext;
+    if (fs.existsSync(withExt)) return withExt;
+  }
+  for (const ext of EXTENSIONS) {
+    const indexFile = path.join(resolved, "index" + ext);
+    if (fs.existsSync(indexFile)) return indexFile;
+  }
+  return null;
+}
+
+function scanExternalDeps(
+  componentPath: string,
+  projectRoot: string,
+  aliases: Array<{ find: RegExp; replacement: string }>,
+): string[] {
+  const externalPkgs = new Set<string>();
+  const visited = new Set<string>();
+  const queue = [componentPath];
+
+  while (queue.length > 0) {
+    const file = queue.shift()!;
+    const normalizedFile = path.resolve(file);
+    if (visited.has(normalizedFile)) continue;
+    visited.add(normalizedFile);
+
+    let content: string;
+    try {
+      content = fs.readFileSync(normalizedFile, "utf-8");
+    } catch {
+      continue;
+    }
+
+    const importRegex = /(?:^|\s)(?:import|export)\s.*?from\s+["']([^"']+)["']|(?:^|\s)import\s+["']([^"']+)["']/gm;
+    let match;
+    while ((match = importRegex.exec(content)) !== null) {
+      const spec = match[1] ?? match[2];
+      if (!spec) continue;
+
+      const localResolved = resolveLocalImport(normalizedFile, spec, projectRoot, aliases);
+      if (localResolved) {
+        queue.push(localResolved);
+      } else if (!spec.startsWith(".") && !spec.startsWith("/")) {
+        const pkg = spec.startsWith("@")
+          ? spec.split("/").slice(0, 2).join("/")
+          : spec.split("/")[0];
+        externalPkgs.add(pkg);
+      }
+    }
+  }
+
+  externalPkgs.delete("react");
+  externalPkgs.delete("react-dom");
+  return [...externalPkgs];
+}
+
+function loadTsconfigAliases(
+  projectRoot: string,
+): Array<{ find: RegExp; replacement: string }> {
+  const tsconfigPath = path.join(projectRoot, "tsconfig.json");
+  if (!fs.existsSync(tsconfigPath)) return [];
+
+  try {
+    const raw = fs.readFileSync(tsconfigPath, "utf-8");
+    let tsconfig: any;
+    try {
+      tsconfig = JSON.parse(raw);
+    } catch {
+      const stripped = stripJsonComments(raw);
+      tsconfig = JSON.parse(stripped);
+    }
+    const paths: Record<string, string[]> | undefined =
+      tsconfig?.compilerOptions?.paths;
+    if (!paths) return [];
+
+    const baseUrl = tsconfig?.compilerOptions?.baseUrl ?? ".";
+    const base = path.resolve(projectRoot, baseUrl);
+
+    const aliases: Array<{ find: RegExp; replacement: string }> = [];
+    for (const [pattern, targets] of Object.entries(paths)) {
+      if (!targets.length) continue;
+      const target = targets[0];
+      if (pattern.endsWith("/*") && target.endsWith("/*")) {
+        const prefix = pattern.slice(0, -2);
+        const dir = path.resolve(base, target.slice(0, -2)).replace(/\\/g, "/");
+        aliases.push({ find: new RegExp(`^${escapeRegex(prefix)}/`), replacement: dir + "/" });
+      } else {
+        const resolved = path.resolve(base, target).replace(/\\/g, "/");
+        aliases.push({ find: new RegExp(`^${escapeRegex(pattern)}$`), replacement: resolved });
+      }
+    }
+    return aliases;
+  } catch {
+    return [];
+  }
+}
+
+export function detectScaleExport(filePath: string): boolean {
+  const content = fs.readFileSync(filePath, "utf-8");
+  return /export\s+(?:function|const)\s+scale\b/.test(content);
 }
 
 function detectComponentExport(filePath: string): {
@@ -154,6 +347,12 @@ function detectComponentExport(filePath: string): {
   );
   if (namedClassMatch) return { name: namedClassMatch[1], isDefaultOnly: false };
 
+  // Re-export: export { Name } or export { Name as default }
+  const reExportMatch = content.match(
+    /export\s+\{\s*([A-Z]\w*)\s*\}/,
+  );
+  if (reExportMatch) return { name: reExportMatch[1], isDefaultOnly: false };
+
   // Check for default-only: export default function X / export default class X
   const defaultFnMatch = content.match(
     /export\s+default\s+function\s+([A-Z]\w*)/,
@@ -172,3 +371,84 @@ function detectComponentExport(filePath: string): {
   return { name, isDefaultOnly: true };
 }
 
+function collectComponents(node: CompositionNode, set: Set<string>): void {
+  if (node.component !== "__text__") set.add(node.component);
+  for (const child of node.children) collectComponents(child, set);
+}
+
+function nodeToJsx(node: CompositionNode): string {
+  if (node.component === "__text__") {
+    return JSON.stringify((node.props as any).text ?? "");
+  }
+
+  const propsEntries = Object.entries(node.props);
+  const propsStr = propsEntries
+    .map(([k, v]) => {
+      if (typeof v === "boolean") return v ? k : `${k}={false}`;
+      if (typeof v === "string") return `${k}=${JSON.stringify(v)}`;
+      return `${k}={${JSON.stringify(v)}}`;
+    })
+    .join(" ");
+
+  const opening = propsStr ? `<${node.component} ${propsStr}>` : `<${node.component}>`;
+
+  if (node.children.length === 0) {
+    return propsStr ? `<${node.component} ${propsStr} />` : `<${node.component} />`;
+  }
+
+  const childrenJsx = node.children.map(nodeToJsx).join("\n");
+  return `${opening}\n${childrenJsx}\n</${node.component}>`;
+}
+
+export function compositionToJsx(tree: CompositionTree): string {
+  if (tree.structure.length === 0) return "";
+  return nodeToJsx(tree.structure[0]);
+}
+
+function generateComposedEntry(componentRelative: string, tree: CompositionTree): string {
+  const components = new Set<string>();
+  for (const node of tree.structure) collectComponents(node, components);
+
+  const importNames = [...components].sort();
+  const importLine = `import { ${importNames.join(", ")} } from "/${componentRelative}";`;
+  const jsx = compositionToJsx(tree);
+
+  return `
+import { createElement } from "react";
+import { createRoot } from "react-dom/client";
+${importLine}
+
+const ComposedScene = () => (
+${jsx}
+);
+
+const container = document.getElementById("root")!;
+let root = createRoot(container);
+let mounted = false;
+
+(window as any).__120fps = {
+  mount(props: any = {}) {
+    if (mounted) {
+      root.unmount();
+      root = createRoot(container);
+    }
+    root.render(<ComposedScene {...props} />);
+    mounted = true;
+  },
+  unmount() {
+    if (mounted) {
+      root.unmount();
+      root = createRoot(container);
+      mounted = false;
+    }
+  },
+  rerender(props: any = {}) {
+    root.render(<ComposedScene {...props} />);
+  },
+  getContainer() {
+    return container;
+  },
+};
+
+`;
+}

@@ -1,6 +1,114 @@
-import type { PropSchema } from "./prop-gen.js";
+import type { PropSchema, ScalingPropMatch } from "./prop-gen.js";
 
 export type PropCombination = Record<string, unknown>;
+
+export interface DeltaPair {
+  propName: string;
+  baseCombo: PropCombination;
+  flipCombo: PropCombination;
+  baseValue: unknown;
+  flipValue: unknown;
+}
+
+const MAX_DELTA_PAIRS = 128;
+
+export function generateDeltaPairs(schemas: PropSchema[]): DeltaPair[] {
+  if (schemas.length === 0) return [];
+
+  const anchor: PropCombination = {};
+  for (const s of schemas) {
+    anchor[s.name] = resolveAnchorValue(s);
+  }
+
+  const boolPairs: DeltaPair[] = [];
+  const unionPairs: DeltaPair[] = [];
+  const objectPairs: DeltaPair[] = [];
+
+  for (const s of schemas) {
+    if (s.kind === "boolean") {
+      boolPairs.push({
+        propName: s.name,
+        baseCombo: { ...anchor, [s.name]: false },
+        flipCombo: { ...anchor, [s.name]: true },
+        baseValue: false,
+        flipValue: true,
+      });
+    } else if (s.kind === "union" && s.values.length > 1) {
+      const base = s.values[0];
+      for (let i = 1; i < s.values.length; i++) {
+        unionPairs.push({
+          propName: s.name,
+          baseCombo: { ...anchor, [s.name]: base },
+          flipCombo: { ...anchor, [s.name]: s.values[i] },
+          baseValue: base,
+          flipValue: s.values[i],
+        });
+      }
+    } else if (s.kind === "object" && !s.required) {
+      const firstVal = s.values.length > 0 ? s.values[0] : {};
+      objectPairs.push({
+        propName: s.name,
+        baseCombo: { ...anchor, [s.name]: undefined },
+        flipCombo: { ...anchor, [s.name]: firstVal },
+        baseValue: undefined,
+        flipValue: firstVal,
+      });
+    }
+  }
+
+  unionPairs.sort((a, b) => {
+    const aCount = schemas.find((s) => s.name === a.propName)!.values.length;
+    const bCount = schemas.find((s) => s.name === b.propName)!.values.length;
+    return aCount - bCount;
+  });
+
+  const all = [...boolPairs, ...unionPairs, ...objectPairs];
+  return all.slice(0, MAX_DELTA_PAIRS);
+}
+
+export function generateScalingCombos(
+  schemas: PropSchema[],
+  match: ScalingPropMatch,
+  scalePoints: number[],
+): PropCombination[] {
+  const anchor: PropCombination = {};
+  for (const s of schemas) {
+    anchor[s.name] = resolveAnchorValue(s);
+  }
+
+  return scalePoints.map((n) => {
+    const combo = { ...anchor };
+    if (match.kind === "numeric") {
+      combo[match.schema.name] = n;
+    } else {
+      combo[match.schema.name] = Array.from({ length: n }, (_, i) => `item-${i + 1}`);
+    }
+    return combo;
+  });
+}
+
+function resolveAnchorValue(schema: PropSchema): unknown {
+  switch (schema.kind) {
+    case "boolean":
+      return false;
+    case "string":
+      return schema.values.length > 0 ? schema.values[0] : "test";
+    case "number":
+      return schema.values.length > 0 ? schema.values[0] : 1;
+    case "union":
+      return schema.values[0];
+    case "array":
+      return [];
+    case "function":
+      return () => {};
+    case "reactnode":
+      return "120fps-placeholder";
+    case "object":
+      return schema.values.length > 0 ? schema.values[0] : {};
+    case "unknown":
+      return undefined;
+  }
+}
 
 const MAX_COMBINATIONS = 64;
 

@@ -6,7 +6,13 @@ import { generateCombinations } from "./prop-gen-values.js";
 import {
   discoverInteractions,
   type InteractionDescriptor,
+  type DiscoverOptions,
 } from "./discovery.js";
+import {
+  resolveStressPattern,
+  executeStressPattern,
+  findAriaGroupSiblings,
+} from "./stress-patterns.js";
 import {
   collectTrace,
   computeMedian,
@@ -38,6 +44,7 @@ export interface StateEdge {
   median: number;
   p95: number;
   traces: TraceEvent[][];
+  stressPattern?: string;
 }
 
 export interface StateGraph {
@@ -348,7 +355,10 @@ async function exploreCombo(
   // Initial state
   await mountComponent(page, props);
   const initialHash = await computeDomHash(page);
-  const initialInteractions = await discoverInteractions(page);
+  const initialInteractions = await discoverInteractions(page, {
+    probePortals: true,
+    remount: () => mountComponent(page, props),
+  });
 
   nodes.set(initialHash, {
     id: initialHash,
@@ -387,6 +397,10 @@ async function exploreCombo(
     if (exploredEdges.has(edgeKey)) continue;
     exploredEdges.add(edgeKey);
 
+    // Resolve stress pattern for this interaction
+    const siblings = await findAriaGroupSiblings(page, item.interaction);
+    const pattern = resolveStressPattern(item.interaction, siblings);
+
     // Collect N timing samples
     const samples: number[] = [];
     const traces: TraceEvent[][] = [];
@@ -399,7 +413,7 @@ async function exploreCombo(
       await navigateToState(page, props, sourceNode.pathFromRoot);
 
       const traceEvents = await collectTrace(cdp, async () => {
-        await exerciseInteraction(page, item.interaction);
+        await executeStressPattern(page, pattern);
       });
 
       const parsed = parseTraceDuration(traceEvents);
@@ -423,6 +437,7 @@ async function exploreCombo(
       median: computeMedian(samples),
       p95: computeP95(samples),
       traces,
+      stressPattern: pattern.name,
     };
     edges.push(edge);
 

@@ -2,25 +2,32 @@ import os from "node:os";
 import fs from "node:fs";
 import path from "node:path";
 import { chromium, type Browser } from "playwright";
-import { buildAndServe, type HarnessResult } from "./harness.js";
-import { extractProps } from "./prop-gen.js";
-import { generateCombinations, type PropCombination } from "./prop-gen-values.js";
-import { measureMount, type MountResult } from "./measure.js";
+import { buildAndServe, detectScaleExport, type HarnessResult } from "./harness.js";
+import { extractProps, extractExports, extractAllProps, detectScalingProps, type ScalingPropMatch } from "./prop-gen.js";
+import { inferComposition, type CompositionTree } from "./composition.js";
+import { detectFramework, runReactAnalysis, hasReactWarning, type ReactOptimizations } from "./react-profiler.js";
+import { generateCombinations, generateDeltaPairs, generateScalingCombos, type PropCombination } from "./prop-gen-values.js";
+import { measureMount, measureRerender, type MountResult, type RerenderResult } from "./measure.js";
 import { explore, type ExploreResult } from "./explorer.js";
 import {
   createCalibrationTrace,
   computeScalingCurve,
+  attributeCost,
   type ScalingCurve,
 } from "./metrics.js";
 import {
   buildTimingWithCV,
+  classifyTier,
   computeVerdict,
   DEFAULT_THRESHOLDS,
+  TIER_BUDGETS,
   type CalibrationResult,
   type ComboReport,
   type InteractionReport,
   type MachineInfo,
+  type PropDelta,
   type Report,
+  type TierBudget,
   type Thresholds,
   type TimingWithCV,
 } from "./report.js";
@@ -33,6 +40,15 @@ export interface AnalyzeOptions {
   jsonPath?: string;
   ci?: boolean;
   thresholds?: Partial<Thresholds>;
+  fixturePath?: string;
+  scalePoints?: number[];
+  skipDeltas?: boolean;
+  skipAutoScale?: boolean;
+  flatThresholds?: boolean;
+  skipAttribution?: boolean;
+  skipAutoCompose?: boolean;
+  skipReactAnalysis?: boolean;
+  framework?: "react" | "vanilla" | "auto";
 }
 
 export interface BuildReportInput {
@@ -44,6 +60,14 @@ export interface BuildReportInput {
   explores: ExploreResult[];
   heapDeltas: number[];
   thresholds: Thresholds;
+  fixturePath?: string;
+  fixtureAutoDetected?: boolean;
+  rerenders?: RerenderResult[];
+  flatThresholds?: boolean;
+  explicitThresholds?: Partial<Record<keyof TierBudget, boolean>>;
+  skipAttribution?: boolean;
+  autoComposition?: boolean;
+  compositionTree?: import("./composition.js").CompositionTree;
 }
 
 export function buildReport(input: BuildReportInput): Report {
@@ -57,7 +81,7 @@ export function buildReport(input: BuildReportInput): Report {
     const interactions: InteractionReport[] = [];
     if (exploreResult) {
       for (const edge of exploreResult.graph.edges) {
-        interactions.push({
+        const report: InteractionReport = {
           selector: edge.interaction.selector,
           type: edge.interaction.type,
           label: edge.interaction.label,
@@ -67,7 +91,10 @@ export function buildReport(input: BuildReportInput): Report {
               ? computeMedianFromSamples(edge.samples) /
                 input.calibration.totalDuration
               : 0,
-        });
+        };
+        if (edge.interaction.portal) report.portal = true;
+        if (edge.stressPattern) report.stressPattern = edge.stressPattern;
+        interactions.push(report);
       }
     }
 
@@ -76,11 +103,20 @@ export function buildReport(input: BuildReportInput): Report {
         ? mount.mount.median / input.calibration.totalDuration
         : 0;
 
+    const rerenderResult = input.rerenders?.find(
+      (r) => r.comboIndex === mount.comboIndex,
+    );
+
+    const rerenderTiming = rerenderResult
+      ? buildTimingWithCV(rerenderResult.stable.samples)
+      : buildTimingWithCV([0]);
+
     const combo: ComboReport = {
       comboIndex: mount.comboIndex,
       props: mount.props as Record<string, unknown>,
       mount: buildTimingWithCV(mount.mount.samples),
       unmount: buildTimingWithCV(mount.unmount.samples),
+      rerender: rerenderTiming,
       domNodeCount: mount.domNodeCount,
       heapDelta: input.heapDeltas[mount.comboIndex] ?? 0,
       interactions,
@@ -88,6 +124,15 @@ export function buildReport(input: BuildReportInput): Report {
       relativeMount,
       verdict: "pass",
     };
+
+    if (rerenderResult?.change) {
+      combo.rerenderChange = buildTimingWithCV(rerenderResult.change.samples);
+    }
+
+    if (!input.skipAttribution && mount.mountTraces && mount.mountTraces.length > 0) {
+      const allEvents = mount.mountTraces.flat();
+      combo.costAttribution = attributeCost(allEvents);
+    }
 
     combo.verdict = computeVerdict(combo, input.thresholds);
     combos.push(combo);
@@ -100,11 +145,36 @@ export function buildReport(input: BuildReportInput): Report {
     for (const combo of combos) {
       combo.scalingCurve = curve;
     }
+
+    const rerenderPoints = combos.map((c) => ({ n: c.domNodeCount, metric: c.rerender.median }));
+    const rerenderCurve = computeScalingCurve(rerenderPoints);
+    for (const combo of combos) {
+      combo.rerenderScalingCurve = rerenderCurve;
+    }
+  }
+
+  if (!input.flatThresholds) {
+    for (const combo of combos) {
+      const hasPortal = combo.interactions.some((i) => i.portal === true);
+      const hasScaling = combo.scalingCurve != null || combo.rerenderScalingCurve != null;
+      const mountResult = input.mounts.find((m) => m.comboIndex === combo.comboIndex);
+      const hasAnimation = mountResult?.hasAnimation ?? false;
+      const tier = classifyTier({ domNodeCount: combo.domNodeCount, hasPortal, hasScaling, hasAnimation });
+      combo.tier = tier;
+      combo.hasAnimation = hasAnimation;
+      const tierBudget = TIER_BUDGETS[tier];
+      const effectiveBudget: TierBudget = {
+        mountMs: input.explicitThresholds?.mountMs ? input.thresholds.mountMs : tierBudget.mountMs,
+        rerenderMs: input.explicitThresholds?.rerenderMs ? input.thresholds.rerenderMs : tierBudget.rerenderMs,
+        interactionMs: input.explicitThresholds?.interactionMs ? input.thresholds.interactionMs : tierBudget.interactionMs,
+      };
+      combo.verdict = computeVerdict(combo, input.thresholds, { tierBudget: effectiveBudget });
+    }
   }
 
   const pass = combos.every((c) => c.verdict !== "fail");
 
-  return {
+  const report: Report = {
     version: 1,
     timestamp: new Date().toISOString(),
     machine: input.machine,
@@ -115,6 +185,24 @@ export function buildReport(input: BuildReportInput): Report {
     thresholds: input.thresholds,
     pass,
   };
+
+  if (input.fixturePath !== undefined) {
+    report.fixturePath = input.fixturePath;
+    report.fixtureAutoDetected = input.fixtureAutoDetected ?? false;
+  }
+
+  if (!input.flatThresholds) {
+    report.tieredBudgets = true;
+  }
+
+  if (input.autoComposition) {
+    report.autoComposition = true;
+  }
+  if (input.compositionTree) {
+    report.compositionTree = input.compositionTree;
+  }
+
+  return report;
 }
 
 function computeMedianFromSamples(samples: number[]): number {
@@ -175,11 +263,50 @@ export async function analyze(
   const warmupRuns = options.warmupRuns ?? 2;
   const seed = options.seed ?? 42;
 
+  let fixturePath: string | undefined = options.fixturePath;
+  let fixtureAutoDetected = false;
+  const inputIsFixture = isFixturePath(componentPath);
+
+  if (inputIsFixture) {
+    fixturePath = componentPath;
+  } else if (!fixturePath) {
+    const detected = detectFixture(resolvedPath);
+    if (detected) {
+      fixturePath = detected;
+      fixtureAutoDetected = true;
+    }
+  }
+
+  if (fixturePath && !inputIsFixture) {
+    const resolvedFixture = path.resolve(fixturePath);
+    if (!fs.existsSync(resolvedFixture)) {
+      throw new Error(`Fixture file not found: ${fixturePath}`);
+    }
+  }
+
+  let compositionTree: CompositionTree | undefined;
+  if (!fixturePath && !inputIsFixture && !options.skipAutoCompose) {
+    const componentExports = await extractExports(resolvedPath);
+    if (componentExports.length > 1) {
+      const allSchemas = await extractAllProps(resolvedPath);
+      const tree = inferComposition(componentExports, allSchemas);
+      if (tree) compositionTree = tree;
+    }
+  }
+
+  const useFixture = fixturePath !== undefined;
+  const useComposition = compositionTree !== undefined;
+  const harnessPath = useFixture ? fixturePath! : componentPath;
+  const metadataPath = inputIsFixture ? componentPath : resolvedPath;
+
   let harness: HarnessResult | undefined;
   let browser: Browser | undefined;
 
   try {
-    harness = await buildAndServe(componentPath);
+    harness = await buildAndServe(
+      harnessPath,
+      useComposition ? { composition: compositionTree! } : undefined,
+    );
 
     browser = await chromium.launch({ headless: true });
     const page = await browser.newPage();
@@ -208,9 +335,23 @@ export async function analyze(
     await browser.close();
     browser = undefined;
 
-    const schemas = await extractProps(harness.componentPath);
-    let combos = generateCombinations(schemas);
-    if (combos.length === 0) combos = [{}];
+    let combos: PropCombination[];
+    let schemas: import("./prop-gen.js").PropSchema[] | undefined;
+    const resolvedHarnessPath = path.resolve(harnessPath);
+    const fixtureHasScale = useFixture && detectScaleExport(resolvedHarnessPath);
+
+    const scalePoints = options.scalePoints ?? [1, 5, 20, 50];
+    if (fixtureHasScale) {
+      combos = scalePoints.map((n) => ({ __120fps_scaleN: n }));
+    } else if (useFixture || useComposition) {
+      combos = [{}];
+    } else {
+      schemas = await extractProps(harness.componentPath);
+      combos = generateCombinations(schemas);
+      if (combos.length === 0) combos = [{}];
+      const scaleCombos = scalePoints.map((n) => ({ __120fps_scaleN: n }));
+      combos = [...combos, ...scaleCombos];
+    }
 
     const mounts = await measureMount(harness, {
       samples,
@@ -221,6 +362,13 @@ export async function analyze(
 
     const heapDeltas: number[] = mounts.map((m) => m.heapDelta ?? 0);
 
+    const rerenders = await measureRerender(harness, {
+      samples,
+      cpuThrottle,
+      warmupRuns,
+      combos,
+    });
+
     const explores = await explore(harness, {
       samples,
       cpuThrottle,
@@ -230,7 +378,82 @@ export async function analyze(
       maxWallClockMs: 60000,
     });
 
-    const componentName = detectComponentName(resolvedPath);
+    let propDeltas: PropDelta[] | undefined;
+    if (!useFixture && !useComposition && !options.skipDeltas && schemas && schemas.length > 0) {
+      const pairs = generateDeltaPairs(schemas);
+      if (pairs.length > 0) {
+        const measured = new Map<string, { mount: number; rerender: number }>();
+        for (const m of mounts) {
+          const key = JSON.stringify(m.props);
+          measured.set(key, { mount: m.mount.median, rerender: 0 });
+        }
+        for (const r of rerenders) {
+          const key = JSON.stringify(r.props);
+          const existing = measured.get(key);
+          if (existing) {
+            existing.rerender = r.stable.median;
+          }
+        }
+
+        const needed: PropCombination[] = [];
+        for (const pair of pairs) {
+          for (const combo of [pair.baseCombo, pair.flipCombo]) {
+            const key = JSON.stringify(combo);
+            if (!measured.has(key)) {
+              needed.push(combo);
+              measured.set(key, { mount: 0, rerender: 0 });
+            }
+          }
+        }
+
+        if (needed.length > 0) {
+          const extraMounts = await measureMount(harness, {
+            samples,
+            cpuThrottle,
+            warmupRuns,
+            combos: needed,
+          });
+          const extraRerenders = await measureRerender(harness, {
+            samples,
+            cpuThrottle,
+            warmupRuns,
+            combos: needed,
+          });
+          for (const m of extraMounts) {
+            measured.set(JSON.stringify(m.props), { mount: m.mount.median, rerender: 0 });
+          }
+          for (const r of extraRerenders) {
+            const key = JSON.stringify(r.props);
+            const existing = measured.get(key);
+            if (existing) {
+              existing.rerender = r.stable.median;
+            }
+          }
+        }
+
+        propDeltas = pairs.map((pair) => {
+          const baseKey = JSON.stringify(pair.baseCombo);
+          const flipKey = JSON.stringify(pair.flipCombo);
+          const base = measured.get(baseKey) ?? { mount: 0, rerender: 0 };
+          const flip = measured.get(flipKey) ?? { mount: 0, rerender: 0 };
+          return {
+            propName: pair.propName,
+            baseValue: pair.baseValue,
+            flipValue: pair.flipValue,
+            mountDelta: flip.mount - base.mount,
+            rerenderDelta: flip.rerender - base.rerender,
+          };
+        });
+        propDeltas.sort((a, b) => Math.abs(b.mountDelta) - Math.abs(a.mountDelta));
+      }
+    }
+
+    const componentName = detectComponentName(metadataPath);
+
+    const explicitThresholds: Partial<Record<keyof TierBudget, boolean>> = {};
+    if (options.thresholds?.mountMs !== undefined) explicitThresholds.mountMs = true;
+    if (options.thresholds?.rerenderMs !== undefined) explicitThresholds.rerenderMs = true;
+    if (options.thresholds?.interactionMs !== undefined) explicitThresholds.interactionMs = true;
 
     const report = buildReport({
       componentPath,
@@ -241,7 +464,116 @@ export async function analyze(
       explores,
       heapDeltas,
       thresholds,
+      rerenders,
+      flatThresholds: options.flatThresholds,
+      explicitThresholds,
+      skipAttribution: options.skipAttribution,
+      ...(useFixture
+        ? {
+            fixturePath: inputIsFixture ? componentPath : fixturePath,
+            fixtureAutoDetected,
+          }
+        : {}),
+      ...(useComposition
+        ? {
+            autoComposition: true,
+            compositionTree: compositionTree!,
+          }
+        : {}),
     });
+
+    if (propDeltas) {
+      report.propDeltas = propDeltas;
+    }
+
+    let autoScalingMatch: ScalingPropMatch | undefined;
+    if (!fixtureHasScale && !useFixture && !useComposition && !options.skipAutoScale && schemas && schemas.length > 0) {
+      const matches = detectScalingProps(schemas);
+      if (matches.length > 0) {
+        autoScalingMatch = matches[0];
+        const scalePoints = options.scalePoints ?? [1, 5, 20, 50];
+        const scaleCombos = generateScalingCombos(schemas, autoScalingMatch, scalePoints);
+
+        const scaleMounts = await measureMount(harness, {
+          samples,
+          cpuThrottle,
+          warmupRuns,
+          combos: scaleCombos,
+        });
+        const scaleRerenders = await measureRerender(harness, {
+          samples,
+          cpuThrottle,
+          warmupRuns,
+          combos: scaleCombos,
+        });
+
+        const mountPoints = scaleMounts.map((m) => ({
+          n: scalePoints[m.comboIndex],
+          metric: m.mount.median,
+        }));
+        const rerenderPoints = scaleRerenders.map((r) => ({
+          n: scalePoints[r.comboIndex],
+          metric: r.stable.median,
+        }));
+
+        if (mountPoints.length >= 2) {
+          const curve = computeScalingCurve(mountPoints);
+          for (const combo of report.combos) {
+            combo.scalingCurve = curve;
+          }
+        }
+        if (rerenderPoints.length >= 2) {
+          const rerenderCurve = computeScalingCurve(rerenderPoints);
+          for (const combo of report.combos) {
+            combo.rerenderScalingCurve = rerenderCurve;
+          }
+        }
+
+        report.autoScalingProp = autoScalingMatch.schema.name;
+        report.autoScalingReason = autoScalingMatch.reason;
+      }
+    }
+
+    // --- React optimization detection (separate pass) ---
+    const frameworkMode = options.framework ?? "auto";
+    const entryContent = fs.readFileSync(
+      path.join(harness.harnessDir, "entry.tsx"),
+      "utf-8",
+    );
+    const detectedFramework = detectFramework(entryContent);
+
+    if (frameworkMode === "react" && detectedFramework !== "react") {
+      throw new Error("--framework react specified but React was not detected in the bundle");
+    }
+
+    const shouldRunReact =
+      !options.skipReactAnalysis &&
+      frameworkMode !== "vanilla" &&
+      detectedFramework === "react";
+
+    if (shouldRunReact) {
+      const fnPropNames = schemas
+        ? schemas.filter((s) => s.kind === "function").map((s) => s.name)
+        : [];
+
+      const reactResults = await runReactAnalysis(harness, {
+        combos,
+        samples: Math.min(samples, 3),
+        cpuThrottle,
+        warmupRuns: 1,
+        fnPropNames,
+      });
+
+      for (const combo of report.combos) {
+        const opts = reactResults.get(combo.comboIndex);
+        if (opts) {
+          combo.reactOptimizations = opts;
+          if (combo.verdict === "pass" && hasReactWarning(opts)) {
+            combo.verdict = "warn";
+          }
+        }
+      }
+    }
 
     const jsonPath = options.jsonPath ?? "120fps-report.json";
     const jsonDir = path.dirname(path.resolve(jsonPath));
@@ -257,6 +589,23 @@ export async function analyze(
     if (browser) await browser.close();
     if (harness) await harness.cleanup();
   }
+}
+
+export function hasScaleExport(source: string): boolean {
+  return /export\s+(?:function|const)\s+scale\b/.test(source);
+}
+
+export function isFixturePath(filePath: string): boolean {
+  return /\.fixture\.[jt]sx?$/.test(filePath);
+}
+
+export function detectFixture(componentPath: string): string | undefined {
+  const ext = path.extname(componentPath);
+  const stem = componentPath.slice(0, -ext.length);
+  for (const candidate of [`${stem}.fixture.tsx`, `${stem}.fixture.ts`]) {
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return undefined;
 }
 
 function mapReplacer(_key: string, value: unknown): unknown {

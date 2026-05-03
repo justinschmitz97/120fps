@@ -37,14 +37,17 @@ Every milestone follows this cycle. Do not skip steps.
 
 ```
 src/
-  prop-gen.ts       — TS Compiler API prop extraction
-  prop-gen-values.ts — value generation + stratified sampling
-  harness.ts        — Vite harness builder + dev server
-  measure.ts        — CDP trace capture + mount/unmount timing
-  metrics.ts        — full CDP metric extraction, INP, scaling curves, calibration
+  prop-gen.ts       — TS Compiler API prop extraction, auto-scaling prop detection, export extraction
+  prop-gen-values.ts — value generation + stratified sampling + scaling combo generation
+  composition.ts    — auto-composition inference: prefix grouping, suffix taxonomy, template selection
+  harness.ts        — Vite harness builder + dev server + composed harness generation
+  measure.ts        — CDP trace capture + mount/unmount/rerender timing + animation detection
+  metrics.ts        — full CDP metric extraction, INP, scaling curves, calibration, cost attribution
   discovery.ts      — DOM walk for interactive element discovery
   explorer.ts       — exploration loop + state graph builder
-  report.ts         — types, CV, verdict logic, terminal table formatting
+  stress-patterns.ts — stress pattern dispatch, step execution, ARIA sibling detection
+  react-profiler.ts — framework detection, DevTools hook injection, memo/context/callback analysis, portal hygiene, render attribution
+  report.ts         — types, CV, tier classification, verdict logic, terminal table formatting
   analyze.ts        — full pipeline orchestrator (analyze + buildReport)
   cli.ts            — CLI entry point, arg parsing, exit codes
   index.ts          — barrel export

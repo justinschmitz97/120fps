@@ -36,6 +36,18 @@ export interface ScalingCurve {
   growthClass: "constant" | "linear" | "quadratic" | "exponential";
 }
 
+export interface CostBucket {
+  source: string;
+  durationMs: number;
+  percentage: number;
+  category: "user" | "package" | "react" | "browser";
+}
+
+export interface CostAttribution {
+  buckets: CostBucket[];
+  unattributed: number;
+}
+
 export interface ParseMetricsOptions {
   filterToMarks?: boolean;
 }
@@ -46,6 +58,187 @@ const SCRIPT_EVENTS = new Set([
   "v8.compile",
   "v8.run",
 ]);
+
+const REACT_PACKAGES = new Set([
+  "react",
+  "react-dom",
+  "react_jsx-runtime",
+  "scheduler",
+]);
+
+function extractUrl(event: TraceEvent): string | undefined {
+  const data = (event.args as any)?.data;
+  if (!data) return undefined;
+  if (typeof data.url === "string" && data.url) return data.url;
+  if (typeof data.fileName === "string" && data.fileName) return data.fileName;
+  if (typeof data.scriptName === "string" && data.scriptName) return data.scriptName;
+  if (data.stackTrace?.callFrames?.[0]?.url) return data.stackTrace.callFrames[0].url;
+  return undefined;
+}
+
+function resolveSource(rawUrl: string): { source: string; category: CostBucket["category"] } {
+  if (
+    rawUrl.startsWith("chrome-extension://") ||
+    rawUrl.startsWith("native ") ||
+    rawUrl.startsWith("v8/") ||
+    !rawUrl.startsWith("http")
+  ) {
+    return { source: "browser", category: "browser" };
+  }
+
+  let cleaned: string;
+  try {
+    const url = new URL(rawUrl);
+    cleaned = url.pathname;
+  } catch {
+    return { source: "browser", category: "browser" };
+  }
+
+  if (cleaned.startsWith("/@fs/")) {
+    cleaned = cleaned.slice(4);
+  }
+
+  const nmIndex = cleaned.indexOf("node_modules/");
+  if (nmIndex !== -1) {
+    let pkgPath = cleaned.slice(nmIndex + "node_modules/".length);
+    if (pkgPath.startsWith(".vite/deps/")) {
+      pkgPath = pkgPath.slice(".vite/deps/".length);
+    }
+    pkgPath = pkgPath.replace(/\.js$/, "").replace(/\.mjs$/, "");
+    let pkgName: string;
+    if (pkgPath.startsWith("@")) {
+      const parts = pkgPath.split("/");
+      if (parts.length >= 2) {
+        pkgName = `${parts[0]}/${parts[1]}`;
+      } else {
+        const underscoreIdx = pkgPath.indexOf("_");
+        if (underscoreIdx > 0) {
+          const scope = pkgPath.slice(0, underscoreIdx);
+          const rest = pkgPath.slice(underscoreIdx + 1);
+          const dashOrEnd = rest.indexOf("/");
+          pkgName = `${scope}/${dashOrEnd >= 0 ? rest.slice(0, dashOrEnd) : rest}`;
+        } else {
+          pkgName = pkgPath;
+        }
+      }
+    } else {
+      const slashIdx = pkgPath.indexOf("/");
+      pkgName = slashIdx >= 0 ? pkgPath.slice(0, slashIdx) : pkgPath;
+    }
+
+    if (REACT_PACKAGES.has(pkgName)) {
+      return { source: "react", category: "react" };
+    }
+    return { source: pkgName, category: "package" };
+  }
+
+  const srcPath = cleaned.startsWith("/") ? cleaned.slice(1) : cleaned;
+  return { source: srcPath, category: "user" };
+}
+
+export function attributeCost(events: TraceEvent[]): CostAttribution {
+  const scriptEvents = events.filter(
+    (e) => e.ph === "X" && typeof e.dur === "number" && e.ts !== undefined &&
+      e.name !== undefined && SCRIPT_EVENTS.has(e.name),
+  );
+
+  if (scriptEvents.length === 0) {
+    return { buckets: [], unattributed: 0 };
+  }
+
+  const sorted = [...scriptEvents].sort((a, b) => (a.ts ?? 0) - (b.ts ?? 0));
+
+  interface NestingEntry { end: number; source: string; childDur: number }
+  const stack: NestingEntry[] = [];
+  const sourceDurations = new Map<string, { durationMs: number; category: CostBucket["category"] }>();
+
+  function addDuration(source: string, category: CostBucket["category"], ms: number) {
+    const existing = sourceDurations.get(source);
+    if (existing) {
+      existing.durationMs += ms;
+    } else {
+      sourceDurations.set(source, { durationMs: ms, category });
+    }
+  }
+
+  for (const event of sorted) {
+    const durMs = event.dur! / 1000;
+    const eventStart = event.ts!;
+    const eventEnd = eventStart + event.dur!;
+
+    while (stack.length > 0 && stack[stack.length - 1].end <= eventStart) {
+      stack.pop();
+    }
+
+    const url = extractUrl(event);
+    const resolved = url ? resolveSource(url) : { source: "browser", category: "browser" as const };
+
+    if (stack.length > 0) {
+      stack[stack.length - 1].childDur += durMs;
+    }
+
+    stack.push({ end: eventEnd, source: resolved.source, childDur: 0 });
+    addDuration(resolved.source, resolved.category, durMs);
+  }
+
+  // Second pass: subtract child durations from parents
+  // We need to re-process to correctly handle nesting
+  sourceDurations.clear();
+
+  interface Entry { end: number; source: string; category: CostBucket["category"]; durMs: number }
+  const entries: Entry[] = [];
+  for (const event of sorted) {
+    const durMs = event.dur! / 1000;
+    const eventStart = event.ts!;
+    const eventEnd = eventStart + event.dur!;
+    const url = extractUrl(event);
+    const resolved = url ? resolveSource(url) : { source: "browser", category: "browser" as const };
+    entries.push({ end: eventEnd, source: resolved.source, category: resolved.category, durMs });
+  }
+
+  const nestStack: { end: number; idx: number }[] = [];
+  const childDeductions = new Float64Array(entries.length);
+
+  for (let i = 0; i < entries.length; i++) {
+    const eventStart = sorted[i].ts!;
+    while (nestStack.length > 0 && nestStack[nestStack.length - 1].end <= eventStart) {
+      nestStack.pop();
+    }
+
+    if (nestStack.length > 0) {
+      const parentIdx = nestStack[nestStack.length - 1].idx;
+      childDeductions[parentIdx] += entries[i].durMs;
+    }
+
+    nestStack.push({ end: entries[i].end, idx: i });
+  }
+
+  for (let i = 0; i < entries.length; i++) {
+    const net = entries[i].durMs - childDeductions[i];
+    if (net > 0) {
+      addDuration(entries[i].source, entries[i].category, net);
+    }
+  }
+
+  let totalMs = 0;
+  for (const v of sourceDurations.values()) {
+    totalMs += v.durationMs;
+  }
+
+  const buckets: CostBucket[] = [];
+  for (const [source, data] of sourceDurations) {
+    buckets.push({
+      source,
+      durationMs: data.durationMs,
+      percentage: totalMs > 0 ? (data.durationMs / totalMs) * 100 : 0,
+      category: data.category,
+    });
+  }
+
+  buckets.sort((a, b) => b.durationMs - a.durationMs);
+
+  return { buckets, unattributed: 0 };
+}
 
 const STYLE_RECALC_EVENTS = new Set(["UpdateLayoutTree", "RecalcStyles"]);
 

@@ -33,6 +33,7 @@ function makeCombo(overrides: Partial<ComboReport> = {}): ComboReport {
     comboIndex: 0, props: {},
     mount: { samples: [5], median: 5, p95: 5, cv: 0, unstable: false },
     unmount: { samples: [2], median: 2, p95: 2, cv: 0, unstable: false },
+    rerender: { samples: [3], median: 3, p95: 3, cv: 0, unstable: false },
     domNodeCount: 10, heapDelta: 0, interactions: [],
     scalingCurve: null, relativeMount: 0.5, verdict: "pass",
     ...overrides,
@@ -201,16 +202,15 @@ describe("H15: report.pass logic with mixed verdicts", () => {
       calibration: { totalDuration: 100, scriptDuration: 50 },
       mounts: [{
         comboIndex: 0, props: {},
-        mount: { samples: [1, 15], median: 8, p95: 15 },
-        unmount: { samples: [2], median: 2, p95: 2 },
+        mount: { samples: [0.2, 1.8], median: 1, p95: 1.8 },
+        unmount: { samples: [0.5], median: 0.5, p95: 0.5 },
         domNodeCount: 5,
       }],
       explores: [],
       heapDeltas: [0],
-      thresholds: { mountMs: 16, interactionMs: 100, relativeMount: 2.0 },
+      thresholds: { mountMs: 16, interactionMs: 100, relativeMount: 2.0, rerenderMs: 8 },
     };
     const report = buildReport(input);
-    // With [1, 100] samples, CV will be >15% → unstable → warn
     if (report.combos[0].mount.unstable) {
       expect(report.combos[0].verdict).toBe("warn");
       expect(report.pass).toBe(true);
@@ -227,12 +227,12 @@ describe("H15: report.pass logic with mixed verdicts", () => {
       },
       calibration: { totalDuration: 10, scriptDuration: 5 },
       mounts: [
-        { comboIndex: 0, props: {}, mount: { samples: [5], median: 5, p95: 5 }, unmount: { samples: [2], median: 2, p95: 2 }, domNodeCount: 5 },
-        { comboIndex: 1, props: {}, mount: { samples: [20], median: 20, p95: 20 }, unmount: { samples: [2], median: 2, p95: 2 }, domNodeCount: 5 },
+        { comboIndex: 0, props: {}, mount: { samples: [1.5], median: 1.5, p95: 1.5 }, unmount: { samples: [0.5], median: 0.5, p95: 0.5 }, domNodeCount: 5 },
+        { comboIndex: 1, props: {}, mount: { samples: [20], median: 20, p95: 20 }, unmount: { samples: [0.5], median: 0.5, p95: 0.5 }, domNodeCount: 5 },
       ],
       explores: [],
       heapDeltas: [0, 0],
-      thresholds: { mountMs: 16, interactionMs: 100, relativeMount: 2.0 },
+      thresholds: { mountMs: 16, interactionMs: 100, relativeMount: 2.0, rerenderMs: 8 },
     };
     const report = buildReport(input);
     expect(report.combos[0].verdict).toBe("pass");

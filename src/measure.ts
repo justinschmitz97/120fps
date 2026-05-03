@@ -4,6 +4,42 @@ import type { PropCombination } from "./prop-gen-values.js";
 import { extractProps } from "./prop-gen.js";
 import { generateCombinations } from "./prop-gen-values.js";
 
+const LAYOUT_TRANSITION_PROPS = new Set([
+  "transform", "opacity", "height", "width",
+  "max-height", "max-width", "all",
+]);
+
+export async function detectAnimations(page: Page): Promise<boolean> {
+  return page.evaluate((layoutProps: string[]) => {
+    const root = document.getElementById("root");
+    if (!root) return false;
+
+    const animations = document.getAnimations();
+    if (animations.some((a) => {
+      const target = (a as any).effect?.target;
+      return target instanceof Element && root.contains(target);
+    })) return true;
+
+    const layoutSet = new Set(layoutProps);
+    const elements = root.querySelectorAll("*");
+    for (const el of elements) {
+      const style = getComputedStyle(el);
+      if (style.animationName !== "none") return true;
+
+      const transitionProp = style.transitionProperty;
+      if (transitionProp && transitionProp !== "none") {
+        const props = transitionProp.split(",").map((p) => p.trim());
+        const durs = style.transitionDuration.split(",").map((d) => d.trim());
+        for (let i = 0; i < props.length; i++) {
+          const dur = durs[i % durs.length];
+          if (layoutSet.has(props[i]) && dur !== "0s") return true;
+        }
+      }
+    }
+    return false;
+  }, [...LAYOUT_TRANSITION_PROPS]);
+}
+
 export async function tryCollectGarbage(cdp: CDPSession): Promise<void> {
   try {
     await cdp.send("HeapProfiler.collectGarbage" as any);
@@ -32,6 +68,8 @@ export interface MountResult {
   unmount: TimingResult;
   domNodeCount: number;
   heapDelta?: number;
+  hasAnimation?: boolean;
+  mountTraces?: TraceEvent[][];
 }
 
 export interface TraceEvent {
@@ -132,28 +170,36 @@ export async function collectTrace(
   };
   cdp.on("Tracing.dataCollected", onData);
 
+  let timer: ReturnType<typeof setTimeout> | undefined;
   const traceComplete = new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(
+    timer = setTimeout(
       () => reject(new Error("Tracing.tracingComplete timed out")),
       TRACE_TIMEOUT_MS,
     );
     cdp.once("Tracing.tracingComplete", () => {
       clearTimeout(timer);
+      timer = undefined;
       resolve();
     });
   });
 
-  await cdp.send("Tracing.start", {
-    categories: "devtools.timeline,v8.execute",
-    options: "sampling-frequency=10000",
-  } as any);
+  // Prevent unhandled rejection if timeout fires before await
+  traceComplete.catch(() => {});
 
-  await action();
+  try {
+    await cdp.send("Tracing.start", {
+      categories: "devtools.timeline,v8.execute",
+      options: "sampling-frequency=10000",
+    } as any);
 
-  await cdp.send("Tracing.end");
-  await traceComplete;
+    await action();
 
-  cdp.off("Tracing.dataCollected", onData);
+    await cdp.send("Tracing.end");
+    await traceComplete;
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+    cdp.off("Tracing.dataCollected", onData);
+  }
 
   return chunks.flat();
 }
@@ -184,7 +230,7 @@ async function runMountUnmount(
   page: Page,
   cdp: CDPSession,
   props: PropCombination,
-): Promise<{ mountDur: number; unmountDur: number; domNodeCount: number }> {
+): Promise<{ mountDur: number; unmountDur: number; domNodeCount: number; hasAnimation: boolean; mountEvents: TraceEvent[] }> {
   await page.evaluate(() => (window as any).__120fps.unmount());
 
   const safeProps = serializeProps(props);
@@ -207,6 +253,8 @@ async function runMountUnmount(
     () => document.querySelectorAll("*").length,
   );
 
+  const hasAnimation = await detectAnimations(page);
+
   const mountParsed = parseTraceDuration(mountEvents);
 
   const unmountEvents = await collectTrace(cdp, async () => {
@@ -222,7 +270,150 @@ async function runMountUnmount(
     mountDur: mountParsed.totalDuration,
     unmountDur: unmountParsed.totalDuration,
     domNodeCount,
+    hasAnimation,
+    mountEvents,
   };
+}
+
+export interface RerenderResult {
+  comboIndex: number;
+  props: PropCombination;
+  stable: TimingResult;
+  change?: TimingResult;
+  changeToProps?: PropCombination;
+}
+
+export interface MeasureRerenderOptions {
+  samples?: number;
+  cpuThrottle?: number;
+  warmupRuns?: number;
+  combos?: PropCombination[];
+}
+
+async function mountAndWait(page: Page, props: PropCombination): Promise<void> {
+  await page.evaluate(() => (window as any).__120fps.unmount());
+  const safeProps = serializeProps(props);
+  await page.evaluate(
+    ([p, marker]: [any, string]) => {
+      for (const k of Object.keys(p)) {
+        if (p[k] === marker) p[k] = () => {};
+      }
+      (window as any).__120fps.mount(p);
+    },
+    [safeProps, FUNCTION_MARKER] as [Record<string, unknown>, string],
+  );
+  await page.evaluate(
+    () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))),
+  );
+}
+
+async function rerenderAndTrace(
+  page: Page,
+  cdp: CDPSession,
+  props: PropCombination,
+): Promise<number> {
+  const safeProps = serializeProps(props);
+  const events = await collectTrace(cdp, async () => {
+    await page.evaluate(
+      ([p, marker]: [any, string]) => {
+        for (const k of Object.keys(p)) {
+          if (p[k] === marker) p[k] = () => {};
+        }
+        (window as any).__120fps.rerender(p);
+      },
+      [safeProps, FUNCTION_MARKER] as [Record<string, unknown>, string],
+    );
+    await page.evaluate(
+      () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))),
+    );
+  });
+  return parseTraceDuration(events).totalDuration;
+}
+
+export async function measureRerender(
+  harness: HarnessResult,
+  options: MeasureRerenderOptions = {},
+): Promise<RerenderResult[]> {
+  const {
+    samples: sampleCount = 10,
+    cpuThrottle = 4,
+    warmupRuns = 2,
+  } = options;
+
+  let combos: PropCombination[];
+  if (options.combos) {
+    combos = options.combos;
+  } else {
+    const schemas = await extractProps(harness.componentPath);
+    combos = generateCombinations(schemas);
+    if (combos.length === 0) combos = [{}];
+  }
+
+  let browser: Browser | undefined;
+  try {
+    browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage();
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send("Emulation.setCPUThrottlingRate", { rate: cpuThrottle });
+
+    await page.goto(harness.url);
+    await page.waitForFunction(
+      () => typeof (window as any).__120fps === "object",
+      { timeout: 10000 },
+    );
+
+    // Warmup
+    if (warmupRuns > 0 && combos.length > 0) {
+      await mountAndWait(page, combos[0]);
+      for (let w = 0; w < warmupRuns; w++) {
+        await rerenderAndTrace(page, cdp, combos[0]);
+      }
+    }
+
+    const results: RerenderResult[] = [];
+
+    for (let ci = 0; ci < combos.length; ci++) {
+      const props = combos[ci];
+
+      // Stable rerender: mount with props, then rerender with same props N times
+      const stableSamples: number[] = [];
+      for (let s = 0; s < sampleCount; s++) {
+        await tryCollectGarbage(cdp);
+        await mountAndWait(page, props);
+        stableSamples.push(await rerenderAndTrace(page, cdp, props));
+      }
+
+      const result: RerenderResult = {
+        comboIndex: ci,
+        props,
+        stable: buildTimingResult(stableSamples),
+      };
+
+      // Prop-change rerender: mount with current props, rerender with next combo's props
+      // Skip when either combo is a scale combo — cross-scale rerenders are not meaningful
+      if (combos.length > 1) {
+        const nextProps = combos[(ci + 1) % combos.length];
+        const isScale = "__120fps_scaleN" in props;
+        const nextIsScale = "__120fps_scaleN" in nextProps;
+        if (!isScale && !nextIsScale) {
+          const changeSamples: number[] = [];
+          for (let s = 0; s < sampleCount; s++) {
+            await tryCollectGarbage(cdp);
+            await mountAndWait(page, props);
+            changeSamples.push(await rerenderAndTrace(page, cdp, nextProps));
+          }
+          result.change = buildTimingResult(changeSamples);
+          result.changeToProps = nextProps;
+        }
+      }
+
+      results.push(result);
+    }
+
+    return results;
+  } finally {
+    if (browser) await browser.close();
+  }
 }
 
 export async function measureMount(
@@ -271,7 +462,9 @@ export async function measureMount(
       const props = combos[ci];
       const mountSamples: number[] = [];
       const unmountSamples: number[] = [];
+      const mountTraces: TraceEvent[][] = [];
       let domNodeCount = 0;
+      let hasAnimation = false;
 
       let heapBefore = 0;
       try {
@@ -284,7 +477,11 @@ export async function measureMount(
         const run = await runMountUnmount(page, cdp, props);
         mountSamples.push(run.mountDur);
         unmountSamples.push(run.unmountDur);
-        if (s === 0) domNodeCount = run.domNodeCount;
+        mountTraces.push(run.mountEvents);
+        if (s === 0) {
+          domNodeCount = run.domNodeCount;
+          hasAnimation = run.hasAnimation;
+        }
       }
 
       let heapDelta = 0;
@@ -300,6 +497,8 @@ export async function measureMount(
         unmount: buildTimingResult(unmountSamples),
         domNodeCount,
         heapDelta,
+        hasAnimation,
+        mountTraces,
       });
     }
 

@@ -9,8 +9,8 @@ function makeMountResult(overrides: Partial<MountResult> = {}): MountResult {
   return {
     comboIndex: 0,
     props: {},
-    mount: { samples: [5, 5, 5, 5, 5], median: 5, p95: 5 },
-    unmount: { samples: [2, 2, 2, 2, 2], median: 2, p95: 2 },
+    mount: { samples: [1.5, 1.5, 1.5, 1.5, 1.5], median: 1.5, p95: 1.5 },
+    unmount: { samples: [0.5, 0.5, 0.5, 0.5, 0.5], median: 0.5, p95: 0.5 },
     domNodeCount: 10,
     ...overrides,
   };
@@ -39,7 +39,7 @@ const baseMachine = {
   cpu: "Test", cores: 4, ramMb: 16384,
   os: "Linux 6.0", nodeVersion: "v20.0.0", chromiumVersion: "120.0.0.0",
 };
-const baseThresholds: Thresholds = { mountMs: 16, interactionMs: 100, relativeMount: 2.0 };
+const baseThresholds: Thresholds = { mountMs: 16, interactionMs: 100, relativeMount: 2.0, rerenderMs: 8 };
 
 describe("buildReport", () => {
   it("produces a valid Report with version 1", () => {
@@ -54,7 +54,7 @@ describe("buildReport", () => {
       mounts: [makeMountResult()],
       explores: [makeExploreResult()],
       heapDeltas: [1024],
-      thresholds: { mountMs: 16, interactionMs: 100, relativeMount: 2.0 },
+      thresholds: { mountMs: 16, interactionMs: 100, relativeMount: 2.0, rerenderMs: 8 },
     };
     const report = buildReport(input);
     expect(report.version).toBe(1);
@@ -75,7 +75,7 @@ describe("buildReport", () => {
       mounts: [makeMountResult({ mount: { samples: [5, 5], median: 5, p95: 5 } })],
       explores: [makeExploreResult()],
       heapDeltas: [0],
-      thresholds: { mountMs: 16, interactionMs: 100, relativeMount: 2.0 },
+      thresholds: { mountMs: 16, interactionMs: 100, relativeMount: 2.0, rerenderMs: 8 },
     };
     const report = buildReport(input);
     expect(report.combos[0].relativeMount).toBeCloseTo(0.5, 2);
@@ -93,7 +93,7 @@ describe("buildReport", () => {
       mounts: [makeMountResult({ mount: { samples: [20, 20], median: 20, p95: 20 } })],
       explores: [makeExploreResult()],
       heapDeltas: [0],
-      thresholds: { mountMs: 16, interactionMs: 100, relativeMount: 2.0 },
+      thresholds: { mountMs: 16, interactionMs: 100, relativeMount: 2.0, rerenderMs: 8 },
     };
     const report = buildReport(input);
     expect(report.pass).toBe(false);
@@ -112,7 +112,7 @@ describe("buildReport", () => {
       mounts: [makeMountResult()],
       explores: [makeExploreResult()],
       heapDeltas: [2048],
-      thresholds: { mountMs: 16, interactionMs: 100, relativeMount: 2.0 },
+      thresholds: { mountMs: 16, interactionMs: 100, relativeMount: 2.0, rerenderMs: 8 },
     };
     const report = buildReport(input);
     expect(report.combos[0].heapDelta).toBe(2048);
@@ -141,7 +141,7 @@ describe("buildReport", () => {
       mounts: [makeMountResult()],
       explores: [{ graph, comboIndex: 0, props: {} }],
       heapDeltas: [0],
-      thresholds: { mountMs: 16, interactionMs: 100, relativeMount: 2.0 },
+      thresholds: { mountMs: 16, interactionMs: 100, relativeMount: 2.0, rerenderMs: 8 },
     };
     const report = buildReport(input);
     expect(report.combos[0].interactions).toHaveLength(1);
@@ -161,7 +161,7 @@ describe("buildReport", () => {
       mounts: [makeMountResult()],
       explores: [],
       heapDeltas: [0],
-      thresholds: { mountMs: 16, interactionMs: 100, relativeMount: 2.0 },
+      thresholds: { mountMs: 16, interactionMs: 100, relativeMount: 2.0, rerenderMs: 8 },
     };
     const report = buildReport(input);
     expect(report.combos[0].interactions).toHaveLength(0);
@@ -187,7 +187,7 @@ describe("buildReport", () => {
         makeExploreResult({ comboIndex: 2 }),
       ],
       heapDeltas: [0, 0, 0],
-      thresholds: { mountMs: 100, interactionMs: 100, relativeMount: 20.0 },
+      thresholds: { mountMs: 100, interactionMs: 100, relativeMount: 20.0, rerenderMs: 100 },
     };
     const report = buildReport(input);
     expect(report.combos[0].scalingCurve).not.toBeNull();
@@ -210,7 +210,7 @@ describe("buildReport", () => {
       ],
       explores: [makeExploreResult({ comboIndex: 0 }), makeExploreResult({ comboIndex: 1 })],
       heapDeltas: [0, 0],
-      thresholds: { mountMs: 16, interactionMs: 100, relativeMount: 2.0 },
+      thresholds: { mountMs: 16, interactionMs: 100, relativeMount: 2.0, rerenderMs: 8 },
     };
     const report = buildReport(input);
     expect(report.combos[0].scalingCurve).toBeNull();
@@ -228,7 +228,7 @@ describe("buildReport", () => {
       mounts: [makeMountResult()],
       explores: [makeExploreResult()],
       heapDeltas: [0],
-      thresholds: { mountMs: 16, interactionMs: 100, relativeMount: 2.0 },
+      thresholds: { mountMs: 16, interactionMs: 100, relativeMount: 2.0, rerenderMs: 8 },
     };
     const report = buildReport(input);
     expect(report.combos[0].scalingCurve).toBeNull();

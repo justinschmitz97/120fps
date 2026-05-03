@@ -59,7 +59,7 @@ describe("buildTimingWithCV", () => {
 });
 
 describe("computeVerdict", () => {
-  const thresholds: Thresholds = { mountMs: 16, interactionMs: 100, relativeMount: 2.0 };
+  const thresholds: Thresholds = { mountMs: 16, interactionMs: 100, relativeMount: 2.0, rerenderMs: 8 };
 
   function makeCombo(overrides: Partial<ComboReport> = {}): ComboReport {
     return {
@@ -67,6 +67,7 @@ describe("computeVerdict", () => {
       props: {},
       mount: { samples: [5], median: 5, p95: 5, cv: 0, unstable: false },
       unmount: { samples: [2], median: 2, p95: 2, cv: 0, unstable: false },
+      rerender: { samples: [3], median: 3, p95: 3, cv: 0, unstable: false },
       domNodeCount: 10,
       heapDelta: 0,
       interactions: [],
@@ -119,9 +120,10 @@ describe("computeVerdict", () => {
 
 describe("DEFAULT_THRESHOLDS", () => {
   it("has expected defaults", () => {
-    expect(DEFAULT_THRESHOLDS.mountMs).toBe(16);
-    expect(DEFAULT_THRESHOLDS.interactionMs).toBe(100);
+    expect(DEFAULT_THRESHOLDS.mountMs).toBe(50);
+    expect(DEFAULT_THRESHOLDS.interactionMs).toBe(400);
     expect(DEFAULT_THRESHOLDS.relativeMount).toBe(2.0);
+    expect(DEFAULT_THRESHOLDS.rerenderMs).toBe(16);
   });
 });
 
@@ -146,6 +148,7 @@ describe("formatTable", () => {
         props: {},
         mount: { samples: [5], median: 5, p95: 6, cv: 3, unstable: false },
         unmount: { samples: [2], median: 2, p95: 3, cv: 2, unstable: false },
+        rerender: { samples: [3], median: 3, p95: 3, cv: 2, unstable: false },
         domNodeCount: 10,
         heapDelta: 1024,
         interactions: [],
@@ -180,6 +183,7 @@ describe("formatTable", () => {
         props: {},
         mount: { samples: [20], median: 20, p95: 25, cv: 3, unstable: false },
         unmount: { samples: [2], median: 2, p95: 3, cv: 2, unstable: false },
+        rerender: { samples: [3], median: 3, p95: 3, cv: 0, unstable: false },
         domNodeCount: 10,
         heapDelta: 0,
         interactions: [],
@@ -198,6 +202,7 @@ describe("formatTable", () => {
         props: {},
         mount: { samples: [5], median: 5, p95: 6, cv: 20, unstable: true },
         unmount: { samples: [2], median: 2, p95: 3, cv: 2, unstable: false },
+        rerender: { samples: [3], median: 3, p95: 3, cv: 0, unstable: false },
         domNodeCount: 10,
         heapDelta: 0,
         interactions: [],
@@ -207,6 +212,76 @@ describe("formatTable", () => {
       }],
     });
     expect(formatTable(r)).toContain("CV>15%");
+  });
+
+  it("shows stress pattern name in parentheses for non-single-shot interactions", () => {
+    const interactions = [
+      {
+        selector: "button",
+        type: "click" as const,
+        label: "Toggle",
+        timing: { samples: [10], median: 10, p95: 12, cv: 0, unstable: false },
+        relativeTiming: 1.0,
+        stressPattern: "rapid-toggle-10",
+      },
+    ];
+    const r = makeReport({
+      combos: [{
+        comboIndex: 0, props: {}, mount: { samples: [5], median: 5, p95: 6, cv: 0, unstable: false },
+        unmount: { samples: [2], median: 2, p95: 3, cv: 0, unstable: false },
+        rerender: { samples: [3], median: 3, p95: 3, cv: 0, unstable: false },
+        domNodeCount: 10, heapDelta: 0, interactions, scalingCurve: null, relativeMount: 0.5, verdict: "pass",
+      }],
+    });
+    const table = formatTable(r);
+    expect(table).toContain("(rapid-toggle-10)");
+  });
+
+  it("does not show pattern name for single-shot interactions", () => {
+    const interactions = [
+      {
+        selector: "button",
+        type: "focus" as const,
+        label: "Focus",
+        timing: { samples: [10], median: 10, p95: 12, cv: 0, unstable: false },
+        relativeTiming: 1.0,
+        stressPattern: "single-shot",
+      },
+    ];
+    const r = makeReport({
+      combos: [{
+        comboIndex: 0, props: {}, mount: { samples: [5], median: 5, p95: 6, cv: 0, unstable: false },
+        unmount: { samples: [2], median: 2, p95: 3, cv: 0, unstable: false },
+        rerender: { samples: [3], median: 3, p95: 3, cv: 0, unstable: false },
+        domNodeCount: 10, heapDelta: 0, interactions, scalingCurve: null, relativeMount: 0.5, verdict: "pass",
+      }],
+    });
+    const table = formatTable(r);
+    expect(table).not.toContain("(single-shot)");
+  });
+
+  it("does not show pattern name when stressPattern is undefined", () => {
+    const interactions = [
+      {
+        selector: "button",
+        type: "click" as const,
+        label: "Btn",
+        timing: { samples: [10], median: 10, p95: 12, cv: 0, unstable: false },
+        relativeTiming: 1.0,
+      },
+    ];
+    const r = makeReport({
+      combos: [{
+        comboIndex: 0, props: {}, mount: { samples: [5], median: 5, p95: 6, cv: 0, unstable: false },
+        unmount: { samples: [2], median: 2, p95: 3, cv: 0, unstable: false },
+        rerender: { samples: [3], median: 3, p95: 3, cv: 0, unstable: false },
+        domNodeCount: 10, heapDelta: 0, interactions, scalingCurve: null, relativeMount: 0.5, verdict: "pass",
+      }],
+    });
+    const table = formatTable(r);
+    // Should just show "(click)" not "(click) (some-pattern)"
+    expect(table).toContain("(click)");
+    expect(table).not.toMatch(/\(rapid-toggle/);
   });
 
   it("lists top 3 slowest interactions", () => {
@@ -220,6 +295,7 @@ describe("formatTable", () => {
       combos: [{
         comboIndex: 0, props: {}, mount: { samples: [5], median: 5, p95: 6, cv: 0, unstable: false },
         unmount: { samples: [2], median: 2, p95: 3, cv: 0, unstable: false },
+        rerender: { samples: [3], median: 3, p95: 3, cv: 0, unstable: false },
         domNodeCount: 10, heapDelta: 0, interactions, scalingCurve: null, relativeMount: 0.5, verdict: "pass",
       }],
     });

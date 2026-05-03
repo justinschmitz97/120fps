@@ -7,11 +7,21 @@ import { formatTable, DEFAULT_THRESHOLDS } from "./report.js";
 
 export interface CliArgs {
   componentPath?: string;
+  fixturePath?: string;
   jsonPath: string;
   ci: boolean;
   samples?: number;
   thresholdMount?: number;
   thresholdInteraction?: number;
+  thresholdRerender?: number;
+  scale?: number[];
+  noDeltas?: boolean;
+  noAutoScale?: boolean;
+  noAttribution?: boolean;
+  noAutoCompose?: boolean;
+  noReactAnalysis?: boolean;
+  framework?: "react" | "vanilla" | "auto";
+  flatThresholds?: boolean;
   help: boolean;
   version: boolean;
   error?: string;
@@ -23,6 +33,16 @@ const KNOWN_FLAGS = new Set([
   "--samples",
   "--threshold-mount",
   "--threshold-interaction",
+  "--threshold-rerender",
+  "--scale",
+  "--fixture",
+  "--no-deltas",
+  "--no-auto-scale",
+  "--no-attribution",
+  "--no-auto-compose",
+  "--no-react-analysis",
+  "--framework",
+  "--flat-thresholds",
   "--help",
   "--version",
 ]);
@@ -54,12 +74,65 @@ export function parseArgs(argv: string[]): CliArgs {
       i++;
       continue;
     }
+    if (arg === "--no-deltas") {
+      result.noDeltas = true;
+      i++;
+      continue;
+    }
+    if (arg === "--no-auto-scale") {
+      result.noAutoScale = true;
+      i++;
+      continue;
+    }
+    if (arg === "--no-attribution") {
+      result.noAttribution = true;
+      i++;
+      continue;
+    }
+    if (arg === "--no-auto-compose") {
+      result.noAutoCompose = true;
+      i++;
+      continue;
+    }
+    if (arg === "--no-react-analysis") {
+      result.noReactAnalysis = true;
+      i++;
+      continue;
+    }
+    if (arg === "--framework") {
+      if (i + 1 >= argv.length) {
+        result.error = "--framework requires a value (react, vanilla, or auto)";
+        return result;
+      }
+      const val = argv[++i];
+      if (val !== "react" && val !== "vanilla" && val !== "auto") {
+        result.error = `--framework must be react, vanilla, or auto, got "${val}"`;
+        return result;
+      }
+      result.framework = val;
+      i++;
+      continue;
+    }
+    if (arg === "--flat-thresholds") {
+      result.flatThresholds = true;
+      i++;
+      continue;
+    }
     if (arg === "--json") {
       if (i + 1 >= argv.length) {
         result.error = "--json requires a path argument";
         return result;
       }
       result.jsonPath = argv[++i];
+      i++;
+      continue;
+    }
+    if (arg === "--fixture") {
+      if (i + 1 >= argv.length) {
+        result.error = "--fixture requires a path argument";
+        return result;
+      }
+      result.fixturePath = argv[++i];
       i++;
       continue;
     }
@@ -105,6 +178,40 @@ export function parseArgs(argv: string[]): CliArgs {
       i++;
       continue;
     }
+    if (arg === "--threshold-rerender") {
+      if (i + 1 >= argv.length) {
+        result.error = "--threshold-rerender requires a number argument";
+        return result;
+      }
+      const n = Number(argv[++i]);
+      if (isNaN(n) || n <= 0) {
+        result.error = `--threshold-rerender must be a positive number, got "${argv[i]}"`;
+        return result;
+      }
+      result.thresholdRerender = n;
+      i++;
+      continue;
+    }
+    if (arg === "--scale") {
+      if (i + 1 >= argv.length) {
+        result.error = "--scale requires a comma-separated list of integers";
+        return result;
+      }
+      const raw = argv[++i];
+      const parts = raw.split(",");
+      const nums: number[] = [];
+      for (const p of parts) {
+        const n = Number(p.trim());
+        if (isNaN(n) || n <= 0 || !Number.isInteger(n)) {
+          result.error = `--scale values must be positive integers, got "${raw}"`;
+          return result;
+        }
+        nums.push(n);
+      }
+      result.scale = nums;
+      i++;
+      continue;
+    }
     if (arg.startsWith("--")) {
       result.error = `Unknown flag: ${arg}`;
       return result;
@@ -123,6 +230,10 @@ export function parseArgs(argv: string[]): CliArgs {
     result.error = "Missing component path. Usage: 120fps <component.tsx> [options]";
   }
 
+  if (result.fixturePath && !result.componentPath) {
+    result.error = "--fixture requires a component path";
+  }
+
   return result;
 }
 
@@ -130,11 +241,20 @@ function printHelp(): void {
   process.stdout.write(`Usage: 120fps <component.tsx> [options]
 
 Options:
+  --fixture <path>               Fixture file for composed component measurement
   --json <path>                  JSON output path (default: 120fps-report.json)
   --ci                           CI mode: JSON-only output, exit 1 on fail
   --samples <n>                  Sample count per measurement (default: 10)
+  --scale <n,n,...>              Scale points for parameterized fixtures (default: 1,5,20,50)
+  --no-auto-scale                Disable auto-scaling prop detection
+  --no-attribution               Disable cost attribution analysis
+  --no-auto-compose              Disable auto-composition inference
+  --no-react-analysis            Disable React optimization detection
+  --framework <react|vanilla|auto>  Framework detection mode (default: auto)
+  --flat-thresholds              Disable tiered budgets, use flat thresholds
   --threshold-mount <ms>         Mount time threshold (default: ${DEFAULT_THRESHOLDS.mountMs})
   --threshold-interaction <ms>   Interaction time threshold (default: ${DEFAULT_THRESHOLDS.interactionMs})
+  --threshold-rerender <ms>      Rerender time threshold (default: ${DEFAULT_THRESHOLDS.rerenderMs})
   --help                         Show this help
   --version                      Print version
 `);
@@ -169,17 +289,34 @@ async function main(): Promise<void> {
     process.exit(2);
   }
 
+  if (args.fixturePath && !fs.existsSync(path.resolve(args.fixturePath))) {
+    process.stderr.write(`Error: Fixture file not found: ${args.fixturePath}\n`);
+    process.exit(2);
+  }
+
   try {
     const report = await analyze(args.componentPath!, {
       samples: args.samples,
       jsonPath: args.jsonPath,
       ci: args.ci,
+      fixturePath: args.fixturePath,
+      scalePoints: args.scale,
+      skipDeltas: args.noDeltas,
+      skipAutoScale: args.noAutoScale,
+      skipAttribution: args.noAttribution,
+      skipAutoCompose: args.noAutoCompose,
+      skipReactAnalysis: args.noReactAnalysis,
+      framework: args.framework,
+      flatThresholds: args.flatThresholds,
       thresholds: {
         ...(args.thresholdMount !== undefined
           ? { mountMs: args.thresholdMount }
           : {}),
         ...(args.thresholdInteraction !== undefined
           ? { interactionMs: args.thresholdInteraction }
+          : {}),
+        ...(args.thresholdRerender !== undefined
+          ? { rerenderMs: args.thresholdRerender }
           : {}),
       },
     });

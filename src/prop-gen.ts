@@ -17,6 +17,44 @@ export interface PropSchema {
   values: unknown[];
 }
 
+export interface ScalingPropMatch {
+  schema: PropSchema;
+  kind: "numeric" | "array";
+  reason: string;
+}
+
+const ITEMS_PATTERN = /items|options|data|children|entries|records|elements|list/i;
+const SCALING_NAME_PATTERN = /count|size|length|limit|max|total|depth|level|columns|rows|pages/i;
+const NUMERIC_SHORTHAND = /^n$|^num/i;
+const ARIA_PATTERN = /^aria-/;
+
+export function detectScalingProps(schemas: PropSchema[]): ScalingPropMatch[] {
+  const matches: ScalingPropMatch[] = [];
+
+  for (const schema of schemas) {
+    if (ARIA_PATTERN.test(schema.name)) continue;
+    if (schema.kind === "array" && ITEMS_PATTERN.test(schema.name)) {
+      matches.push({ schema, kind: "array", reason: "array prop with items-like name" });
+    } else if (schema.kind === "array") {
+      matches.push({ schema, kind: "array", reason: "array prop" });
+    } else if (schema.kind === "number" && SCALING_NAME_PATTERN.test(schema.name)) {
+      matches.push({ schema, kind: "numeric", reason: "numeric prop name matches scaling pattern" });
+    } else if (schema.kind === "number" && NUMERIC_SHORTHAND.test(schema.name)) {
+      matches.push({ schema, kind: "numeric", reason: "numeric prop" });
+    }
+  }
+
+  const priority: Record<string, number> = {
+    "array prop with items-like name": 0,
+    "array prop": 1,
+    "numeric prop name matches scaling pattern": 2,
+    "numeric prop": 3,
+  };
+  matches.sort((a, b) => priority[a.reason] - priority[b.reason]);
+
+  return matches;
+}
+
 export async function extractProps(filePath: string): Promise<PropSchema[]> {
   const absolutePath = path.resolve(filePath);
 
@@ -78,8 +116,8 @@ function findComponentPropsType(
   ts.forEachChild(sourceFile, (node) => {
     if (propsType) return;
 
-    // function Component(props: Props)
-    if (ts.isFunctionDeclaration(node) && node.name && node.parameters.length > 0) {
+    // function Component(props: Props) — PascalCase name required (React convention)
+    if (ts.isFunctionDeclaration(node) && node.name && /^[A-Z]/.test(node.name.text) && node.parameters.length > 0) {
       const param = node.parameters[0];
       const type = checker.getTypeAtLocation(param);
       if (looksLikePropsType(type, checker)) {
@@ -145,12 +183,17 @@ function looksLikePropsType(type: ts.Type, checker: ts.TypeChecker): boolean {
   const props = type.getProperties();
   if (props.length === 0) return false;
 
-  // Destructured object parameter — check it has named members
   const typeStr = checker.typeToString(type);
-  // Skip primitive types
   if (["string", "number", "boolean", "undefined", "null"].includes(typeStr)) {
     return false;
   }
+
+  if (type.isUnion() && type.types.every((t) =>
+    !!(t.flags & (ts.TypeFlags.StringLiteral | ts.TypeFlags.NumberLiteral | ts.TypeFlags.BooleanLiteral | ts.TypeFlags.Undefined | ts.TypeFlags.Null))
+  )) {
+    return false;
+  }
+
   return true;
 }
 
@@ -266,4 +309,155 @@ function isBooleanUnion(types: ts.Type[]): boolean {
 function isReactNodeType(type: ts.Type, checker: ts.TypeChecker): boolean {
   const typeStr = checker.typeToString(type);
   return /ReactNode|ReactElement|JSX\.Element/.test(typeStr);
+}
+
+export type { ExportInfo } from "./composition.js";
+
+export async function extractExports(filePath: string): Promise<import("./composition.js").ExportInfo[]> {
+  const absolutePath = path.resolve(filePath);
+  const program = ts.createProgram([absolutePath], createCompilerOptions(absolutePath));
+  const checker = program.getTypeChecker();
+  const sourceFile = program.getSourceFile(absolutePath);
+  if (!sourceFile) return [];
+
+  const exports: import("./composition.js").ExportInfo[] = [];
+  const seen = new Set<string>();
+
+  ts.forEachChild(sourceFile, (node) => {
+    if (!hasExportModifier(node)) return;
+
+    const isDefault = hasDefaultModifier(node);
+
+    if (ts.isFunctionDeclaration(node) && node.name) {
+      const name = node.name.text;
+      if (isComponentName(name) && !seen.has(name)) {
+        seen.add(name);
+        exports.push({ name, isDefault });
+      }
+    }
+
+    if (ts.isClassDeclaration(node) && node.name) {
+      const name = node.name.text;
+      if (isComponentName(name) && !seen.has(name)) {
+        seen.add(name);
+        exports.push({ name, isDefault });
+      }
+    }
+
+    if (ts.isVariableStatement(node)) {
+      for (const decl of node.declarationList.declarations) {
+        if (ts.isIdentifier(decl.name)) {
+          const name = decl.name.text;
+          if (isComponentName(name) && !seen.has(name)) {
+            seen.add(name);
+            exports.push({ name, isDefault });
+          }
+        }
+      }
+    }
+  });
+
+  return exports;
+}
+
+export async function extractAllProps(filePath: string): Promise<Map<string, PropSchema[]>> {
+  const absolutePath = path.resolve(filePath);
+  const options = createCompilerOptions(absolutePath);
+  const program = ts.createProgram([absolutePath], options);
+  const checker = program.getTypeChecker();
+  const sourceFile = program.getSourceFile(absolutePath);
+  if (!sourceFile) return new Map();
+
+  const result = new Map<string, PropSchema[]>();
+
+  ts.forEachChild(sourceFile, (node) => {
+    if (!hasExportModifier(node)) return;
+
+    if (ts.isFunctionDeclaration(node) && node.name && node.parameters.length > 0) {
+      const name = node.name.text;
+      if (!isComponentName(name)) return;
+      const param = node.parameters[0];
+      const type = checker.getTypeAtLocation(param);
+      if (looksLikePropsType(type, checker)) {
+        result.set(name, typeToSchema(type, checker));
+      } else {
+        result.set(name, []);
+      }
+    }
+
+    if (ts.isVariableStatement(node)) {
+      for (const decl of node.declarationList.declarations) {
+        if (!ts.isIdentifier(decl.name) || !decl.initializer) continue;
+        const name = decl.name.text;
+        if (!isComponentName(name)) continue;
+        const fn = extractFunctionFromInitializer(decl.initializer);
+        if (fn && fn.parameters.length > 0) {
+          const type = checker.getTypeAtLocation(fn.parameters[0]);
+          if (looksLikePropsType(type, checker)) {
+            result.set(name, typeToSchema(type, checker));
+          } else {
+            result.set(name, []);
+          }
+        } else {
+          result.set(name, []);
+        }
+      }
+    }
+  });
+
+  return result;
+}
+
+function createCompilerOptions(absolutePath: string): ts.CompilerOptions {
+  const tsconfigPath = ts.findConfigFile(
+    path.dirname(absolutePath),
+    ts.sys.fileExists,
+    "tsconfig.json",
+  );
+
+  let compilerOptions: ts.CompilerOptions = {
+    target: ts.ScriptTarget.ES2022,
+    module: ts.ModuleKind.ESNext,
+    moduleResolution: ts.ModuleResolutionKind.Bundler,
+    jsx: ts.JsxEmit.ReactJSX,
+    esModuleInterop: true,
+    skipLibCheck: true,
+  };
+
+  if (tsconfigPath) {
+    const configFile = ts.readConfigFile(tsconfigPath, ts.sys.readFile);
+    if (!configFile.error) {
+      const parsed = ts.parseJsonConfigFileContent(
+        configFile.config,
+        ts.sys,
+        path.dirname(tsconfigPath),
+      );
+      compilerOptions = {
+        ...parsed.options,
+        skipLibCheck: true,
+        moduleResolution: ts.ModuleResolutionKind.Bundler,
+        module: ts.ModuleKind.ESNext,
+      };
+    }
+  }
+
+  return compilerOptions;
+}
+
+function hasExportModifier(node: ts.Node): boolean {
+  if (!ts.canHaveModifiers(node)) return false;
+  const mods = ts.getModifiers(node);
+  return mods?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword) ?? false;
+}
+
+function hasDefaultModifier(node: ts.Node): boolean {
+  if (!ts.canHaveModifiers(node)) return false;
+  const mods = ts.getModifiers(node);
+  return mods?.some((m) => m.kind === ts.SyntaxKind.DefaultKeyword) ?? false;
+}
+
+function isComponentName(name: string): boolean {
+  if (!/^[A-Z]/.test(name)) return false;
+  if (/^[A-Z_][A-Z0-9_]*$/.test(name)) return false;
+  return true;
 }
