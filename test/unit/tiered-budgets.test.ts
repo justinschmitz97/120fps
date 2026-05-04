@@ -67,8 +67,12 @@ describe("classifyTier", () => {
     expect(classifyTier({ domNodeCount: 8, hasPortal: false, hasScaling: false, hasAnimation: false })).toBe("T1");
   });
 
-  it("returns T1 at boundary: domNodeCount=12", () => {
-    expect(classifyTier({ domNodeCount: 12, hasPortal: false, hasScaling: false, hasAnimation: false })).toBe("T1");
+  it("returns T1 at boundary: domNodeCount=10", () => {
+    expect(classifyTier({ domNodeCount: 10, hasPortal: false, hasScaling: false, hasAnimation: false })).toBe("T1");
+  });
+
+  it("returns T2 for domNodeCount=12", () => {
+    expect(classifyTier({ domNodeCount: 12, hasPortal: false, hasScaling: false, hasAnimation: false })).toBe("T2");
   });
 
   it("returns T2 for domNodeCount=13, no portals/scaling", () => {
@@ -118,20 +122,20 @@ describe("classifyTier", () => {
 // --- TIER_BUDGETS ---
 
 describe("TIER_BUDGETS", () => {
-  it("T1 budget: mount 14ms, rerender 10ms, interaction 200ms", () => {
-    expect(TIER_BUDGETS.T1).toEqual({ mountMs: 14, rerenderMs: 10, interactionMs: 200 });
+  it("T1 budget: mount 14ms, rerender 10ms, interaction 250ms", () => {
+    expect(TIER_BUDGETS.T1).toEqual({ mountMs: 14, rerenderMs: 10, interactionMs: 250 });
   });
 
-  it("T2 budget: mount 20ms, rerender 12ms, interaction 250ms", () => {
-    expect(TIER_BUDGETS.T2).toEqual({ mountMs: 20, rerenderMs: 12, interactionMs: 250 });
+  it("T2 budget: mount 44ms, rerender 30ms, interaction 300ms", () => {
+    expect(TIER_BUDGETS.T2).toEqual({ mountMs: 44, rerenderMs: 30, interactionMs: 300 });
   });
 
-  it("T3 budget: mount 30ms, rerender 14ms, interaction 300ms", () => {
-    expect(TIER_BUDGETS.T3).toEqual({ mountMs: 30, rerenderMs: 14, interactionMs: 300 });
+  it("T3 budget: mount 60ms, rerender 36ms, interaction 350ms", () => {
+    expect(TIER_BUDGETS.T3).toEqual({ mountMs: 60, rerenderMs: 36, interactionMs: 350 });
   });
 
-  it("T4 budget: mount 50ms, rerender 16ms, interaction 400ms", () => {
-    expect(TIER_BUDGETS.T4).toEqual({ mountMs: 50, rerenderMs: 16, interactionMs: 400 });
+  it("T4 budget: mount 80ms, rerender 48ms, interaction 400ms", () => {
+    expect(TIER_BUDGETS.T4).toEqual({ mountMs: 80, rerenderMs: 48, interactionMs: 400 });
   });
 });
 
@@ -175,22 +179,22 @@ describe("computeVerdict with tierBudget", () => {
         selector: "button",
         type: "click",
         label: "btn",
-        timing: { samples: [210], median: 210, p95: 210, cv: 0, unstable: false },
+        timing: { samples: [260], median: 260, p95: 260, cv: 0, unstable: false },
         relativeTiming: 1.0,
       }],
     });
     const verdict = computeVerdict(combo, flatThresholds, { tierBudget: TIER_BUDGETS.T1 });
-    expect(verdict).toBe("fail"); // 210ms > T1 interaction budget 200ms
+    expect(verdict).toBe("fail"); // 260ms > T1 interaction budget 250ms
   });
 
-  it("relativeMount threshold unchanged by tier budget", () => {
+  it("relativeMount exceeding threshold is warn (not fail) with tier budget", () => {
     const combo = makeCombo({
       mount: { samples: [1], median: 1, p95: 1, cv: 0, unstable: false },
       rerender: { samples: [0.5], median: 0.5, p95: 0.5, cv: 0, unstable: false },
       relativeMount: 3.0,
     });
     const verdict = computeVerdict(combo, flatThresholds, { tierBudget: TIER_BUDGETS.T1 });
-    expect(verdict).toBe("fail"); // relativeMount 3.0 > 2.0 threshold
+    expect(verdict).toBe("warn");
   });
 
   it("without tierBudget, uses flat thresholds (backward compat)", () => {

@@ -435,7 +435,6 @@ export async function runReactAnalysis(
     const page = await browser.newPage();
     const cdp = await page.context().newCDPSession(page);
 
-    await cdp.send("Emulation.setCPUThrottlingRate", { rate: cpuThrottle });
     await injectProfilerHook(cdp);
 
     const pageErrors: string[] = [];
@@ -444,11 +443,11 @@ export async function runReactAnalysis(
       if (msg.type() === "error") pageErrors.push(msg.text());
     });
 
-    await page.goto(probeUrl, { timeout: 15000 });
+    await page.goto(probeUrl, { timeout: 30000 });
     try {
       await page.waitForFunction(
         () => typeof (window as any).__120fps === "object",
-        { timeout: 15000 },
+        { timeout: 30000 },
       );
     } catch (waitErr: any) {
       const errDetail = pageErrors.length > 0
@@ -456,6 +455,8 @@ export async function runReactAnalysis(
         : "No browser errors captured";
       throw new Error(`React probe failed to load (${errDetail}): ${waitErr.message}`);
     }
+
+    await cdp.send("Emulation.setCPUThrottlingRate", { rate: cpuThrottle });
 
     // Warmup
     if (warmupRuns > 0 && combos.length > 0) {

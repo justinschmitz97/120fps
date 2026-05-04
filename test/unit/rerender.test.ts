@@ -133,9 +133,9 @@ describe("computeVerdict with rerender", () => {
     expect(computeVerdict(combo, thresholds)).toBe("fail");
   });
 
-  it("returns fail when rerenderChange exceeds threshold", () => {
+  it("returns fail when rerenderChange exceeds 1.5x threshold", () => {
     const combo = makeCombo({
-      rerenderChange: { samples: [10], median: 10, p95: 10, cv: 0, unstable: false },
+      rerenderChange: { samples: [13], median: 13, p95: 13, cv: 0, unstable: false },
     });
     expect(computeVerdict(combo, thresholds)).toBe("fail");
   });

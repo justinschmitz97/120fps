@@ -50,13 +50,13 @@ status: approved
 | CV | Coefficient of variation: `stddev / |mean| × 100`. Measures timing stability across samples. |
 | ComponentTier | `"T1" \| "T2" \| "T3" \| "T4"`. Auto-classification based on DOM complexity, portals, and animations. |
 | TierBudget | `{ mountMs, rerenderMs, interactionMs }`. Per-tier performance budget thresholds. |
-| TIER_BUDGETS | Constant: T1 (14/10/200ms), T2 (20/12/250ms), T3 (30/14/300ms), T4 (50/16/400ms). Calibrated for 4x CPU throttle + HTML attribute prop-diffing overhead. |
-| classifyTier | `classifyTier(info)` → `ComponentTier`. Pure function: portal or animation → T3, ≤12 DOM → T1, ≤40 DOM → T2, else → T4. `hasScaling` parameter accepted but ignored. |
+| TIER_BUDGETS | Constant: T1 (14/10/250ms), T2 (44/30/300ms), T3 (60/36/350ms), T4 (80/48/400ms). Calibrated for 4x CPU throttle with real-world Radix/React framework overhead. |
+| classifyTier | `classifyTier(info)` → `ComponentTier`. Pure function: portal or animation → T3, ≤10 DOM → T1, ≤40 DOM → T2, else → T4. `hasScaling` parameter accepted but ignored. |
 | ComboReport | Per-prop-combination report: `{ comboIndex, props, mount, unmount, rerender, rerenderChange?, domNodeCount, heapDelta, interactions: InteractionReport[], scalingCurve: ScalingCurve | null, rerenderScalingCurve?, relativeMount, verdict, tier?, hasAnimation?, costAttribution?, reactOptimizations? }`. |
 | Report | Top-level output: `{ version: 1, timestamp, componentPath, componentName, machine, calibration, combos: ComboReport[], thresholds, pass, fixturePath?, fixtureAutoDetected?, propDeltas?, autoScalingProp?, autoScalingReason?, tieredBudgets?, autoComposition?, compositionTree? }`. |
 | Thresholds | Pass/fail gates: `{ mountMs: 50, interactionMs: 400, relativeMount: 2.0, rerenderMs: 16 }` (defaults). Overridden by tier budgets when active. |
 | DEFAULT_THRESHOLDS | Exported constant from `report.ts` with the default threshold values. |
-| Verdict | Per-combo classification: `pass` (within thresholds, stable), `warn` (within thresholds, unstable CV>15%), `fail` (exceeds any threshold). When tiered budgets active, thresholds are per-tier. |
+| Verdict | Per-combo classification: `pass` (within thresholds, stable), `warn` (within thresholds, unstable CV>15% or rerenderChange exceeds budget with tier budgets), `fail` (exceeds any threshold). When tiered budgets active: mount/rerender/interaction use per-tier budget; rerenderChange exceeding 1.5× rerender budget produces `warn` (not `fail`); relativeMount exceeding threshold produces `warn` (not `fail`). |
 | ScalingPropMatch | `{ schema: PropSchema, kind: "numeric" | "array", reason: string }`. One auto-detected scaling-eligible prop. |
 | detectScalingProps | `detectScalingProps(schemas)` → `ScalingPropMatch[]`. Detects array/numeric props suitable for auto-scaling sweeps. Priority: items-like array > plain array > named numeric > shorthand numeric. |
 | generateScalingCombos | `generateScalingCombos(schemas, match, scalePoints)` → `PropCombination[]`. Generates combos with scaling prop set to each scale point, other props at anchor values. |

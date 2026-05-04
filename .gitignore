@@ -5,3 +5,5 @@ dist/
 __120fps_harness/
 .perrr/
 *.tsbuildinfo
+*.tgz
+120fps-report.json

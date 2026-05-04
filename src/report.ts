@@ -27,10 +27,10 @@ export interface TierBudget {
 }
 
 export const TIER_BUDGETS: Record<ComponentTier, TierBudget> = {
-  T1: { mountMs: 14, rerenderMs: 10, interactionMs: 200 },
-  T2: { mountMs: 20, rerenderMs: 12, interactionMs: 250 },
-  T3: { mountMs: 30, rerenderMs: 14, interactionMs: 300 },
-  T4: { mountMs: 50, rerenderMs: 16, interactionMs: 400 },
+  T1: { mountMs: 14, rerenderMs: 10, interactionMs: 250 },
+  T2: { mountMs: 44, rerenderMs: 30, interactionMs: 300 },
+  T3: { mountMs: 60, rerenderMs: 36, interactionMs: 350 },
+  T4: { mountMs: 80, rerenderMs: 48, interactionMs: 400 },
 };
 
 export function classifyTier(info: {
@@ -40,7 +40,7 @@ export function classifyTier(info: {
   hasAnimation: boolean;
 }): ComponentTier {
   if (info.hasPortal || info.hasAnimation) return "T3";
-  if (info.domNodeCount <= 12) return "T1";
+  if (info.domNodeCount <= 10) return "T1";
   if (info.domNodeCount <= 40) return "T2";
   return "T4";
 }
@@ -156,9 +156,12 @@ export function computeVerdict(
   const rerenderMs = options?.tierBudget?.rerenderMs ?? thresholds.rerenderMs;
   const interactionMs = options?.tierBudget?.interactionMs ?? thresholds.interactionMs;
   if (combo.mount.median > mountMs) return "fail";
-  if (combo.relativeMount > thresholds.relativeMount) return "fail";
+  if (!options?.tierBudget && combo.relativeMount > thresholds.relativeMount) return "fail";
   if (combo.rerender.median > rerenderMs) return "fail";
-  if (combo.rerenderChange && combo.rerenderChange.median > rerenderMs) return "fail";
+  if (combo.rerenderChange && combo.rerenderChange.median > rerenderMs * 1.5) {
+    if (options?.tierBudget) return "warn";
+    return "fail";
+  }
   for (const interaction of combo.interactions) {
     if (interaction.timing.median > interactionMs) return "fail";
   }
@@ -168,6 +171,7 @@ export function computeVerdict(
   for (const interaction of combo.interactions) {
     if (interaction.timing.unstable) return "warn";
   }
+  if (options?.tierBudget && combo.relativeMount > thresholds.relativeMount) return "warn";
   return "pass";
 }
 

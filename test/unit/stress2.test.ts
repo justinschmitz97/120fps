@@ -119,20 +119,22 @@ describe("H17: multiple components", () => {
 
 // H18: Extends HTMLAttributes — massive DOM props
 describe("H18: extends HTMLAttributes", () => {
-  it("extracts props without crashing on 100+ inherited DOM props", async () => {
+  it("extracts only user-defined props, filtering inherited DOM attributes", async () => {
     const schema = await extractProps("./fixtures/html-attrs.tsx");
-    expect(schema.length).toBeGreaterThan(2);
-    // Should include our custom props
+    expect(schema.length).toBeGreaterThanOrEqual(2);
     const padding = schema.find((s) => s.name === "padding");
     const elevation = schema.find((s) => s.name === "elevation");
     expect(padding).toBeDefined();
     expect(elevation).toBeDefined();
+    const onClick = schema.find((s) => s.name === "onClick");
+    expect(onClick).toBeUndefined();
   });
 
-  it("combination count is capped at 64", async () => {
+  it("combination count is small for HTMLAttributes component", async () => {
     const schema = await extractProps("./fixtures/html-attrs.tsx");
     const combos = generateCombinations(schema);
     expect(combos.length).toBeLessThanOrEqual(64);
+    expect(combos.length).toBeLessThan(20);
   });
 });
 

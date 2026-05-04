@@ -197,14 +197,22 @@ function looksLikePropsType(type: ts.Type, checker: ts.TypeChecker): boolean {
   return true;
 }
 
+function isDomLibDeclaration(decl: ts.Declaration): boolean {
+  const fileName = decl.getSourceFile().fileName;
+  return fileName.includes("node_modules") || fileName.includes("/lib.") || fileName.includes("\\lib.");
+}
+
 function typeToSchema(type: ts.Type, checker: ts.TypeChecker): PropSchema[] {
   const schemas: PropSchema[] = [];
 
   for (const prop of type.getProperties()) {
     const name = prop.getName();
-    const decl = prop.getDeclarations()?.[0];
-    if (!decl) continue;
+    const decls = prop.getDeclarations();
+    if (!decls || decls.length === 0) continue;
 
+    if (decls.every((d) => isDomLibDeclaration(d))) continue;
+
+    const decl = decls[0];
     const propType = checker.getTypeOfSymbolAtLocation(prop, decl);
     const required = !(prop.flags & ts.SymbolFlags.Optional);
 

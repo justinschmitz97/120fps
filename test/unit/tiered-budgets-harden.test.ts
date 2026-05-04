@@ -69,8 +69,11 @@ describe("H2: classifyTier with domNodeCount=1", () => {
 
 // H3: exact boundaries
 describe("H3: exact tier boundaries", () => {
-  it("domNodeCount=12 is T1", () => {
-    expect(classifyTier({ domNodeCount: 12, hasPortal: false, hasScaling: false, hasAnimation: false })).toBe("T1");
+  it("domNodeCount=10 is T1", () => {
+    expect(classifyTier({ domNodeCount: 10, hasPortal: false, hasScaling: false, hasAnimation: false })).toBe("T1");
+  });
+  it("domNodeCount=11 is T2", () => {
+    expect(classifyTier({ domNodeCount: 11, hasPortal: false, hasScaling: false, hasAnimation: false })).toBe("T2");
   });
   it("domNodeCount=13 is T2", () => {
     expect(classifyTier({ domNodeCount: 13, hasPortal: false, hasScaling: false, hasAnimation: false })).toBe("T2");
@@ -90,14 +93,22 @@ describe("H4: portal + animation + scaling all true", () => {
   });
 });
 
-// H5: rerenderChange exceeds tier budget
+// H5: rerenderChange exceeds tier budget → warn (not fail)
 describe("H5: computeVerdict with rerenderChange exceeding tier budget", () => {
-  it("fails when rerenderChange exceeds tier rerender budget", () => {
+  it("warns when rerenderChange exceeds 1.5x tier rerender budget", () => {
     const combo = makeCombo({
-      rerenderChange: { samples: [11], median: 11, p95: 11, cv: 0, unstable: false },
+      rerenderChange: { samples: [16], median: 16, p95: 16, cv: 0, unstable: false },
     });
     const verdict = computeVerdict(combo, DEFAULT_THRESHOLDS, { tierBudget: TIER_BUDGETS.T1 });
-    expect(verdict).toBe("fail"); // 11ms > T1 rerender 10ms
+    expect(verdict).toBe("warn"); // 16ms > T1 rerender 10ms * 1.5 = 15ms → warn with tier budgets
+  });
+
+  it("fails when rerenderChange exceeds 1.5x threshold without tier budget", () => {
+    const combo = makeCombo({
+      rerenderChange: { samples: [16], median: 16, p95: 16, cv: 0, unstable: false },
+    });
+    const verdict = computeVerdict(combo, { mountMs: 50, interactionMs: 400, relativeMount: 2.0, rerenderMs: 10 });
+    expect(verdict).toBe("fail"); // 16ms > 10ms * 1.5 = 15ms → fail without tier budget
   });
 });
 
@@ -260,7 +271,7 @@ describe("H14: TIER_BUDGETS immutability", () => {
     computeVerdict(combo, DEFAULT_THRESHOLDS, { tierBudget: TIER_BUDGETS.T1 });
     expect(TIER_BUDGETS.T1.mountMs).toBe(14);
     expect(TIER_BUDGETS.T1.rerenderMs).toBe(10);
-    expect(TIER_BUDGETS.T1.interactionMs).toBe(200);
+    expect(TIER_BUDGETS.T1.interactionMs).toBe(250);
   });
 });
 

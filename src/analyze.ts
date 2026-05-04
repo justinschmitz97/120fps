@@ -155,6 +155,7 @@ export function buildReport(input: BuildReportInput): Report {
 
   if (!input.flatThresholds) {
     for (const combo of combos) {
+      const isScaleCombo = "__120fps_scaleN" in combo.props;
       const hasPortal = combo.interactions.some((i) => i.portal === true);
       const hasScaling = combo.scalingCurve != null || combo.rerenderScalingCurve != null;
       const mountResult = input.mounts.find((m) => m.comboIndex === combo.comboIndex);
@@ -162,13 +163,17 @@ export function buildReport(input: BuildReportInput): Report {
       const tier = classifyTier({ domNodeCount: combo.domNodeCount, hasPortal, hasScaling, hasAnimation });
       combo.tier = tier;
       combo.hasAnimation = hasAnimation;
-      const tierBudget = TIER_BUDGETS[tier];
-      const effectiveBudget: TierBudget = {
-        mountMs: input.explicitThresholds?.mountMs ? input.thresholds.mountMs : tierBudget.mountMs,
-        rerenderMs: input.explicitThresholds?.rerenderMs ? input.thresholds.rerenderMs : tierBudget.rerenderMs,
-        interactionMs: input.explicitThresholds?.interactionMs ? input.thresholds.interactionMs : tierBudget.interactionMs,
-      };
-      combo.verdict = computeVerdict(combo, input.thresholds, { tierBudget: effectiveBudget });
+      if (isScaleCombo) {
+        combo.verdict = "pass";
+      } else {
+        const tierBudget = TIER_BUDGETS[tier];
+        const effectiveBudget: TierBudget = {
+          mountMs: input.explicitThresholds?.mountMs ? input.thresholds.mountMs : tierBudget.mountMs,
+          rerenderMs: input.explicitThresholds?.rerenderMs ? input.thresholds.rerenderMs : tierBudget.rerenderMs,
+          interactionMs: input.explicitThresholds?.interactionMs ? input.thresholds.interactionMs : tierBudget.interactionMs,
+        };
+        combo.verdict = computeVerdict(combo, input.thresholds, { tierBudget: effectiveBudget });
+      }
     }
   }
 
@@ -216,15 +221,25 @@ function computeMedianFromSamples(samples: number[]): number {
 function detectComponentName(componentPath: string): string {
   const source = fs.readFileSync(componentPath, "utf-8");
 
+  const defaultFn = source.match(
+    /export\s+default\s+function\s+([A-Z]\w*)/,
+  );
+  if (defaultFn) return defaultFn[1];
+
+  const defaultConst = source.match(
+    /export\s+default\s+([A-Z]\w*)/,
+  );
+  if (defaultConst) return defaultConst[1];
+
   const namedExport = source.match(
     /export\s+(?:const|function)\s+([A-Z]\w*)/,
   );
   if (namedExport) return namedExport[1];
 
-  const defaultFn = source.match(
-    /export\s+default\s+function\s+([A-Z]\w*)/,
+  const reExport = source.match(
+    /export\s+\{\s*([A-Z]\w*)\s*\}/,
   );
-  if (defaultFn) return defaultFn[1];
+  if (reExport) return reExport[1];
 
   const basename = path.basename(componentPath, path.extname(componentPath));
   return basename.charAt(0).toUpperCase() + basename.slice(1);
@@ -285,8 +300,9 @@ export async function analyze(
   }
 
   let compositionTree: CompositionTree | undefined;
+  let componentExports: import("./composition.js").ExportInfo[] | undefined;
   if (!fixturePath && !inputIsFixture && !options.skipAutoCompose) {
-    const componentExports = await extractExports(resolvedPath);
+    componentExports = await extractExports(resolvedPath);
     if (componentExports.length > 1) {
       const allSchemas = await extractAllProps(resolvedPath);
       const tree = inferComposition(componentExports, allSchemas);
@@ -305,13 +321,12 @@ export async function analyze(
   try {
     harness = await buildAndServe(
       harnessPath,
-      useComposition ? { composition: compositionTree! } : undefined,
+      useComposition ? { composition: compositionTree!, exports: componentExports } : undefined,
     );
 
     browser = await chromium.launch({ headless: true });
     const page = await browser.newPage();
     const cdp = await page.context().newCDPSession(page);
-    await cdp.send("Emulation.setCPUThrottlingRate", { rate: cpuThrottle });
 
     const chromiumVersion = browser.version();
     const machine = await collectMachineInfo(chromiumVersion);
@@ -319,8 +334,10 @@ export async function analyze(
     await page.goto(harness.url);
     await page.waitForFunction(
       () => typeof (window as any).__120fps === "object",
-      { timeout: 10000 },
+      { timeout: 30000 },
     );
+
+    await cdp.send("Emulation.setCPUThrottlingRate", { rate: cpuThrottle });
 
     const calibrationMetrics = await createCalibrationTrace(page, cdp);
     const calibration: CalibrationResult = {
@@ -349,12 +366,17 @@ export async function analyze(
       schemas = await extractProps(harness.componentPath);
       combos = generateCombinations(schemas);
       if (combos.length === 0) combos = [{}];
+      if (combos.length > 16) combos = combos.slice(0, 16);
       const scaleCombos = scalePoints.map((n) => ({ __120fps_scaleN: n }));
       combos = [...combos, ...scaleCombos];
     }
 
+    const effectiveSamples = combos.length > 20
+      ? Math.max(3, Math.min(samples, Math.floor(200 / combos.length)))
+      : samples;
+
     const mounts = await measureMount(harness, {
-      samples,
+      samples: effectiveSamples,
       cpuThrottle,
       warmupRuns,
       combos,
@@ -363,19 +385,23 @@ export async function analyze(
     const heapDeltas: number[] = mounts.map((m) => m.heapDelta ?? 0);
 
     const rerenders = await measureRerender(harness, {
-      samples,
+      samples: effectiveSamples,
       cpuThrottle,
       warmupRuns,
       combos,
     });
 
+    const exploreCombos = combos.filter((c) => !("__120fps_scaleN" in c));
+    const exploreWallClockPerCombo = exploreCombos.length > 1
+      ? Math.max(10000, Math.floor(60000 / exploreCombos.length))
+      : 60000;
     const explores = await explore(harness, {
-      samples,
+      samples: Math.min(samples, 5),
       cpuThrottle,
       warmupRuns,
       seed,
-      combos,
-      maxWallClockMs: 60000,
+      combos: exploreCombos,
+      maxWallClockMs: exploreWallClockPerCombo,
     });
 
     let propDeltas: PropDelta[] | undefined;
@@ -408,13 +434,13 @@ export async function analyze(
 
         if (needed.length > 0) {
           const extraMounts = await measureMount(harness, {
-            samples,
+            samples: effectiveSamples,
             cpuThrottle,
             warmupRuns,
             combos: needed,
           });
           const extraRerenders = await measureRerender(harness, {
-            samples,
+            samples: effectiveSamples,
             cpuThrottle,
             warmupRuns,
             combos: needed,

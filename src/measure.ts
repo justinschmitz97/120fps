@@ -93,7 +93,7 @@ const SCRIPT_EVENT_NAMES = new Set([
   "v8.run",
 ]);
 
-const TRACE_TIMEOUT_MS = 30_000;
+const TRACE_TIMEOUT_MS = 60_000;
 
 export function computeMedian(values: number[]): number {
   if (values.length === 0) return 0;
@@ -192,9 +192,11 @@ export async function collectTrace(
       options: "sampling-frequency=10000",
     } as any);
 
-    await action();
-
-    await cdp.send("Tracing.end");
+    try {
+      await action();
+    } finally {
+      await cdp.send("Tracing.end");
+    }
     await traceComplete;
   } finally {
     if (timer !== undefined) clearTimeout(timer);
@@ -354,13 +356,14 @@ export async function measureRerender(
     browser = await chromium.launch({ headless: true });
     const page = await browser.newPage();
     const cdp = await page.context().newCDPSession(page);
-    await cdp.send("Emulation.setCPUThrottlingRate", { rate: cpuThrottle });
 
     await page.goto(harness.url);
     await page.waitForFunction(
       () => typeof (window as any).__120fps === "object",
-      { timeout: 10000 },
+      { timeout: 30000 },
     );
+
+    await cdp.send("Emulation.setCPUThrottlingRate", { rate: cpuThrottle });
 
     // Warmup
     if (warmupRuns > 0 && combos.length > 0) {
@@ -441,13 +444,13 @@ export async function measureMount(
     const page = await browser.newPage();
     const cdp = await page.context().newCDPSession(page);
 
-    await cdp.send("Emulation.setCPUThrottlingRate", { rate: cpuThrottle });
-
     await page.goto(harness.url);
     await page.waitForFunction(
       () => typeof (window as any).__120fps === "object",
-      { timeout: 10000 },
+      { timeout: 30000 },
     );
+
+    await cdp.send("Emulation.setCPUThrottlingRate", { rate: cpuThrottle });
 
     // Warmup: JIT + module cache stabilization (results discarded)
     if (warmupRuns > 0 && combos.length > 0) {

@@ -1,7 +1,7 @@
 import { createServer, type ViteDevServer } from "vite";
 import fs from "node:fs";
 import path from "node:path";
-import type { CompositionTree, CompositionNode } from "./composition.js";
+import type { CompositionTree, CompositionNode, ExportInfo } from "./composition.js";
 
 export interface HarnessResult {
   url: string;
@@ -13,6 +13,7 @@ export interface HarnessResult {
 
 export interface BuildHarnessOptions {
   composition?: CompositionTree;
+  exports?: ExportInfo[];
 }
 
 export async function buildAndServe(
@@ -38,7 +39,7 @@ export async function buildAndServe(
   let entryTsx: string;
 
   if (options?.composition) {
-    entryTsx = generateComposedEntry(componentRelative, options.composition);
+    entryTsx = generateComposedEntry(componentRelative, options.composition, options.exports);
   } else {
     const { name: componentName, isDefaultOnly } = detectComponentExport(absoluteComponentPath);
     const hasScale = detectScaleExport(absoluteComponentPath);
@@ -275,6 +276,23 @@ function scanExternalDeps(
 
   externalPkgs.delete("react");
   externalPkgs.delete("react-dom");
+
+  const BLOCKED = new Set([
+    "next", "webpack", "critters", "fibers",
+    "react-server-dom-webpack", "react-server-dom-turbopack",
+    "@vercel/turbopack-ecmascript-runtime",
+    "@next/env", "@next/swc-linux-x64-gnu", "@next/swc-linux-x64-musl",
+    "@next/swc-darwin-arm64", "@next/swc-darwin-x64",
+    "@next/swc-win32-x64-msvc", "@next/swc-win32-arm64-msvc",
+    "sass", "less", "stylus", "lightningcss", "sugarss",
+  ]);
+
+  for (const pkg of externalPkgs) {
+    if (BLOCKED.has(pkg) || pkg.startsWith("@next/") || pkg.startsWith("@vercel/turbopack")) {
+      externalPkgs.delete(pkg);
+    }
+  }
+
   return [...externalPkgs];
 }
 
@@ -330,30 +348,7 @@ function detectComponentExport(filePath: string): {
 } {
   const content = fs.readFileSync(filePath, "utf-8");
 
-  // Check for named export: export function X / export const X
-  const namedFnMatch = content.match(
-    /export\s+function\s+([A-Z]\w*)/,
-  );
-  if (namedFnMatch) return { name: namedFnMatch[1], isDefaultOnly: false };
-
-  const namedConstMatch = content.match(
-    /export\s+const\s+([A-Z]\w*)\s*(?::[^=]+)?\s*=/,
-  );
-  if (namedConstMatch) return { name: namedConstMatch[1], isDefaultOnly: false };
-
-  // Named class export: export class X extends ...
-  const namedClassMatch = content.match(
-    /export\s+class\s+([A-Z]\w*)/,
-  );
-  if (namedClassMatch) return { name: namedClassMatch[1], isDefaultOnly: false };
-
-  // Re-export: export { Name } or export { Name as default }
-  const reExportMatch = content.match(
-    /export\s+\{\s*([A-Z]\w*)\s*\}/,
-  );
-  if (reExportMatch) return { name: reExportMatch[1], isDefaultOnly: false };
-
-  // Check for default-only: export default function X / export default class X
+  // Default exports take priority — the default is the primary component
   const defaultFnMatch = content.match(
     /export\s+default\s+function\s+([A-Z]\w*)/,
   );
@@ -364,6 +359,40 @@ function detectComponentExport(filePath: string): {
   );
   if (defaultConstMatch)
     return { name: defaultConstMatch[1], isDefaultOnly: true };
+
+  // Re-export as default: export { Name as default }
+  const reExportDefaultMatch = content.match(
+    /export\s+\{\s*([A-Z]\w*)\s+as\s+default\s*\}/,
+  );
+  if (reExportDefaultMatch) return { name: reExportDefaultMatch[1], isDefaultOnly: false };
+
+  // Named exports (no default found)
+  const namedFnMatch = content.match(
+    /export\s+function\s+([A-Z]\w*)/,
+  );
+  if (namedFnMatch) return { name: namedFnMatch[1], isDefaultOnly: false };
+
+  const namedConstMatch = content.match(
+    /export\s+const\s+([A-Z]\w*)\s*(?::[^=]+)?\s*=/,
+  );
+  if (namedConstMatch) return { name: namedConstMatch[1], isDefaultOnly: false };
+
+  const namedClassMatch = content.match(
+    /export\s+class\s+([A-Z]\w*)/,
+  );
+  if (namedClassMatch) return { name: namedClassMatch[1], isDefaultOnly: false };
+
+  // Re-export: export { Name } or export { Name, ... }
+  const reExportBlock = content.match(/export\s+\{([^}]+)\}/);
+  if (reExportBlock) {
+    const items = reExportBlock[1].split(",");
+    for (const item of items) {
+      const cleaned = item.replace(/\/\*[\s\S]*?\*\//g, "").trim();
+      if (cleaned.startsWith("type ")) continue;
+      const m = cleaned.match(/^([A-Z]\w*)/);
+      if (m) return { name: m[1], isDefaultOnly: false };
+    }
+  }
 
   // Fallback: derive from filename, assume default export
   const basename = path.basename(filePath, path.extname(filePath));
@@ -405,12 +434,18 @@ export function compositionToJsx(tree: CompositionTree): string {
   return nodeToJsx(tree.structure[0]);
 }
 
-function generateComposedEntry(componentRelative: string, tree: CompositionTree): string {
+function generateComposedEntry(componentRelative: string, tree: CompositionTree, exports?: ExportInfo[]): string {
   const components = new Set<string>();
   for (const node of tree.structure) collectComponents(node, components);
 
-  const importNames = [...components].sort();
-  const importLine = `import { ${importNames.join(", ")} } from "/${componentRelative}";`;
+  const defaultExports = new Set(exports?.filter((e) => e.isDefault).map((e) => e.name) ?? []);
+  const namedImports = [...components].filter((n) => !defaultExports.has(n)).sort();
+  const defaultImport = [...components].find((n) => defaultExports.has(n));
+
+  const parts: string[] = [];
+  if (defaultImport) parts.push(defaultImport);
+  if (namedImports.length > 0) parts.push(`{ ${namedImports.join(", ")} }`);
+  const importLine = `import ${parts.join(", ")} from "/${componentRelative}";`;
   const jsx = compositionToJsx(tree);
 
   return `

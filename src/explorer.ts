@@ -289,13 +289,14 @@ export async function explore(
     browser = await chromium.launch({ headless: true });
     const page = await browser.newPage();
     const cdp = await page.context().newCDPSession(page);
-    await cdp.send("Emulation.setCPUThrottlingRate", { rate: cpuThrottle });
 
     await page.goto(harness.url);
     await page.waitForFunction(
       () => typeof (window as any).__120fps === "object",
-      { timeout: 10000 },
+      { timeout: 30000 },
     );
+
+    await cdp.send("Emulation.setCPUThrottlingRate", { rate: cpuThrottle });
 
     const results: ExploreResult[] = [];
 
