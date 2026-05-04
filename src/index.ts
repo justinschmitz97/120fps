@@ -13,7 +13,7 @@ export {
   type PropCombination,
   type DeltaPair,
 } from "./prop-gen-values.js";
-export { buildAndServe, compositionToJsx, type HarnessResult, type BuildHarnessOptions } from "./harness.js";
+export { buildAndServe, compositionToJsx, detectNextJs, buildShimAliases, SHIM_MODULES, type HarnessResult, type BuildHarnessOptions, type ShimEntry } from "./harness.js";
 export {
   measureMount,
   measureRerender,

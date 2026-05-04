@@ -3,17 +3,59 @@ import fs from "node:fs";
 import path from "node:path";
 import type { CompositionTree, CompositionNode, ExportInfo } from "./composition.js";
 
+export interface ShimEntry {
+  module: string;
+  shimFile: string;
+}
+
+export const SHIM_MODULES: ShimEntry[] = [
+  { module: "next/image", shimFile: "next-image.js" },
+  { module: "next/dynamic", shimFile: "next-dynamic.js" },
+  { module: "next/link", shimFile: "next-link.js" },
+  { module: "next/navigation", shimFile: "next-navigation.js" },
+  { module: "next/headers", shimFile: "next-headers.js" },
+  { module: "next-video/player", shimFile: "next-video-player.js" },
+];
+
+export function detectNextJs(projectRoot: string): boolean {
+  const pkgPath = path.join(projectRoot, "package.json");
+  if (!fs.existsSync(pkgPath)) return false;
+  try {
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
+    const deps = { ...pkg.dependencies, ...pkg.devDependencies };
+    return "next" in deps;
+  } catch {
+    return false;
+  }
+}
+
+export function buildShimAliases(
+  hasNextJs: boolean,
+): Array<{ find: RegExp; replacement: string }> {
+  if (!hasNextJs) return [];
+  const shimDir = path.resolve(import.meta.dirname ?? __dirname, "shims");
+  return SHIM_MODULES.map((entry) => {
+    const escaped = entry.module.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return {
+      find: new RegExp(`^${escaped}$`),
+      replacement: path.join(shimDir, entry.shimFile),
+    };
+  });
+}
+
 export interface HarnessResult {
   url: string;
   server: ViteDevServer;
   componentPath: string;
   harnessDir: string;
   cleanup: () => Promise<void>;
+  nextJsShims?: string[];
 }
 
 export interface BuildHarnessOptions {
   composition?: CompositionTree;
   exports?: ExportInfo[];
+  noShims?: boolean;
 }
 
 export async function buildAndServe(
@@ -121,8 +163,19 @@ let mounted = false;
   fs.writeFileSync(path.join(harnessDir, "entry.tsx"), entryTsx);
   fs.writeFileSync(path.join(harnessDir, "index.html"), indexHtml);
 
-  const alias = loadTsconfigAliases(projectRoot);
-  const externalDeps = scanExternalDeps(absoluteComponentPath, projectRoot, alias);
+  const tsconfigAliases = loadTsconfigAliases(projectRoot);
+  const externalDeps = scanExternalDeps(absoluteComponentPath, projectRoot, tsconfigAliases);
+
+  const hasNextJs = !options?.noShims && detectNextJs(projectRoot);
+  const shimAliases = buildShimAliases(hasNextJs);
+  const alias = [...tsconfigAliases, ...shimAliases];
+
+  let activeShims: string[] | undefined;
+  if (hasNextJs) {
+    const shimModules = new Set(SHIM_MODULES.map((s) => s.module));
+    activeShims = externalDeps.filter((d) => shimModules.has(d));
+    if (activeShims.length === 0) activeShims = undefined;
+  }
 
   const server = await createServer({
     root: projectRoot,
@@ -155,7 +208,7 @@ let mounted = false;
     fs.rmSync(harnessDir, { recursive: true, force: true });
   };
 
-  return { url, server, componentPath: absoluteComponentPath, harnessDir, cleanup };
+  return { url, server, componentPath: absoluteComponentPath, harnessDir, cleanup, nextJsShims: activeShims };
 }
 
 function findProjectRoot(dir: string): string | undefined {

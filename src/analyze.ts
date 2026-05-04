@@ -49,6 +49,7 @@ export interface AnalyzeOptions {
   skipAutoCompose?: boolean;
   skipReactAnalysis?: boolean;
   framework?: "react" | "vanilla" | "auto";
+  noShims?: boolean;
 }
 
 export interface BuildReportInput {
@@ -68,6 +69,7 @@ export interface BuildReportInput {
   skipAttribution?: boolean;
   autoComposition?: boolean;
   compositionTree?: import("./composition.js").CompositionTree;
+  nextJsShims?: string[];
 }
 
 export function buildReport(input: BuildReportInput): Report {
@@ -207,6 +209,10 @@ export function buildReport(input: BuildReportInput): Report {
     report.compositionTree = input.compositionTree;
   }
 
+  if (input.nextJsShims && input.nextJsShims.length > 0) {
+    report.nextJsShims = input.nextJsShims;
+  }
+
   return report;
 }
 
@@ -319,10 +325,11 @@ export async function analyze(
   let browser: Browser | undefined;
 
   try {
-    harness = await buildAndServe(
-      harnessPath,
-      useComposition ? { composition: compositionTree!, exports: componentExports } : undefined,
-    );
+    const harnessOpts: import("./harness.js").BuildHarnessOptions = {
+      ...(useComposition ? { composition: compositionTree!, exports: componentExports } : {}),
+      ...(options.noShims ? { noShims: true } : {}),
+    };
+    harness = await buildAndServe(harnessPath, harnessOpts);
 
     browser = await chromium.launch({ headless: true });
     const page = await browser.newPage();
@@ -506,6 +513,7 @@ export async function analyze(
             compositionTree: compositionTree!,
           }
         : {}),
+      nextJsShims: harness.nextJsShims,
     });
 
     if (propDeltas) {

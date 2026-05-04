@@ -120,3 +120,7 @@ status: approved
 | hasReactWarning | `hasReactWarning(opts)` → `boolean`. True if any finding warrants warn verdict (memoBailout, contextFanOut, portalOrphans > 0, callbackIdentityDelta > 2ms). |
 | generateProbeEntry | `generateProbeEntry(opts)` → `string`. Generates probe-entry.tsx with context wrapper and callback identity control for React analysis. |
 | runReactAnalysis | `runReactAnalysis(harness, options)` → `Map<number, ReactOptimizations>`. Separate-pass orchestrator: opens browser with profiler hook, runs all React-specific detections per combo. |
+| detectNextJs | `detectNextJs(projectRoot)` → `boolean`. Checks `package.json` for `next` in dependencies or devDependencies. |
+| SHIM_MODULES | Constant array of `{ module, shimFile }` entries mapping 6 Next.js modules to shim filenames: next/image, next/dynamic, next/link, next/navigation, next/headers, next-video/player. |
+| buildShimAliases | `buildShimAliases(hasNextJs)` → `Array<{ find: RegExp, replacement: string }>`. Returns Vite resolve aliases mapping Next.js modules to shim files. Empty when `hasNextJs` is false. |
+| Next.js shims | Lightweight replacement modules in `dist/shims/` that render native HTML equivalents (img, a, video, React.lazy) instead of Next.js components. Activated automatically when target project depends on `next`. Disabled via `--no-shims`. |

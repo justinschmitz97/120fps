@@ -22,6 +22,7 @@ export interface CliArgs {
   noReactAnalysis?: boolean;
   framework?: "react" | "vanilla" | "auto";
   flatThresholds?: boolean;
+  noShims?: boolean;
   help: boolean;
   version: boolean;
   error?: string;
@@ -43,6 +44,7 @@ const KNOWN_FLAGS = new Set([
   "--no-react-analysis",
   "--framework",
   "--flat-thresholds",
+  "--no-shims",
   "--help",
   "--version",
 ]);
@@ -115,6 +117,11 @@ export function parseArgs(argv: string[]): CliArgs {
     }
     if (arg === "--flat-thresholds") {
       result.flatThresholds = true;
+      i++;
+      continue;
+    }
+    if (arg === "--no-shims") {
+      result.noShims = true;
       i++;
       continue;
     }
@@ -252,6 +259,7 @@ Options:
   --no-react-analysis            Disable React optimization detection
   --framework <react|vanilla|auto>  Framework detection mode (default: auto)
   --flat-thresholds              Disable tiered budgets, use flat thresholds
+  --no-shims                     Disable Next.js module shims
   --threshold-mount <ms>         Mount time threshold (default: ${DEFAULT_THRESHOLDS.mountMs})
   --threshold-interaction <ms>   Interaction time threshold (default: ${DEFAULT_THRESHOLDS.interactionMs})
   --threshold-rerender <ms>      Rerender time threshold (default: ${DEFAULT_THRESHOLDS.rerenderMs})
@@ -308,6 +316,7 @@ async function main(): Promise<void> {
       skipReactAnalysis: args.noReactAnalysis,
       framework: args.framework,
       flatThresholds: args.flatThresholds,
+      noShims: args.noShims,
       thresholds: {
         ...(args.thresholdMount !== undefined
           ? { mountMs: args.thresholdMount }

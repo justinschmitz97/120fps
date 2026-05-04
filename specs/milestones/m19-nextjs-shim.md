@@ -1,7 +1,7 @@
 ---
 kind: milestone
-status: spec
-tests: []
+status: done
+tests: [test/unit/nextjs-shim.test.ts, test/unit/nextjs-shim-harden.test.ts]
 ---
 
 ## Purpose
@@ -84,68 +84,13 @@ const shimAliases = hasNextJs ? [
 const resolveAlias = [...alias, ...shimAliases];
 ```
 
-### Shim: `next/image`
+### Shim implementations
 
-```typescript
-import { createElement, forwardRef } from "react";
+See `src/shims/*.ts`. Each shim is a self-contained module importing only from `react`. Compiled to `dist/shims/*.js`.
 
-const Image = forwardRef(function Image(props, ref) {
-  const { fill, priority, loader, quality, placeholder, blurDataURL,
-          sizes, ...rest } = props;
-  const style = fill
-    ? { position: "absolute", inset: 0, width: "100%", height: "100%",
-        objectFit: "cover", ...props.style }
-    : props.style;
-  return createElement("img", {
-    ...rest,
-    ref,
-    style,
-    loading: priority ? "eager" : "lazy",
-  });
-});
+### Report integration
 
-export default Image;
-```
-
-### Shim: `next/dynamic`
-
-```typescript
-import { createElement, lazy, Suspense } from "react";
-
-export default function dynamic(importFn, opts) {
-  const LazyComponent = lazy(importFn);
-  const fallback = opts?.loading ? createElement(opts.loading) : null;
-  return function DynamicWrapper(props) {
-    return createElement(Suspense, { fallback },
-      createElement(LazyComponent, props));
-  };
-}
-```
-
-### Report line
-
-In `formatTable()`, after the machine info block, if the report carries `nextJsShims: string[]`:
-
-```
-Next.js shims: next/image, next/dynamic
-```
-
-`Report` extended with `nextJsShims?: string[]`. Populated in `buildReport()` from harness metadata.
-
-### File layout
-
-```
-src/shims/
-  next-image.ts
-  next-dynamic.ts
-  next-link.ts
-  next-navigation.ts
-  next-headers.ts
-  next-video-player.ts
-dist/shims/         (compiled output, included in package "files")
-```
-
-`tsconfig.json` already compiles `src/**/*.ts` → `dist/`. No extra build config needed.
+`Report.nextJsShims?: string[]` populated from `HarnessResult.nextJsShims`. `formatTable` prints `Next.js shims: ...` line after machine info when present.
 
 ## Verification
 
@@ -158,3 +103,7 @@ dist/shims/         (compiled output, included in package "files")
 - `--no-shims` flag → carousel.tsx fails with Vite build error (Next.js modules unresolved).
 - Shim `<img>` produces same DOM node count as `next/image` `<img>` → tier classification unchanged.
 - All existing unit tests pass (shims don't affect non-Next.js paths).
+
+## Test count
+
+42 new tests (20 unit + 22 unit-harden). 828 total.

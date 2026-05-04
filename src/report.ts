@@ -123,6 +123,7 @@ export interface Report {
   tieredBudgets?: boolean;
   autoComposition?: boolean;
   compositionTree?: import("./composition.js").CompositionTree;
+  nextJsShims?: string[];
 }
 
 export function computeCV(samples: number[]): number {
@@ -181,6 +182,9 @@ export function formatTable(report: Report): string {
   lines.push(`120fps — ${report.componentName}`);
   lines.push(`Machine: ${report.machine.cpu} (${report.machine.cores} cores), ${Math.round(report.machine.ramMb / 1024)}GB RAM, ${report.machine.os}`);
   lines.push(`Node ${report.machine.nodeVersion}, Chromium ${report.machine.chromiumVersion}`);
+  if (report.nextJsShims && report.nextJsShims.length > 0) {
+    lines.push(`Next.js shims: ${report.nextJsShims.join(", ")}`);
+  }
   lines.push("");
 
   const header = padRow(["#", "Mount", "Rerender", "Unmount", "DOM", "Interactions", "Scaling", "Verdict"]);
