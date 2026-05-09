@@ -1,19 +1,19 @@
 {
   "version": 1,
-  "timestamp": "2026-05-02T12:37:37.166Z",
+  "timestamp": "2026-05-06T13:30:56.369Z",
   "machine": {
     "cpu": "AMD Ryzen 9 5900X 12-Core Processor            ",
     "cores": 24,
     "ramMb": 32693,
     "os": "Windows_NT 10.0.26100",
-    "nodeVersion": "v22.22.2",
+    "nodeVersion": "v24.15.0",
     "chromiumVersion": "147.0.7727.15"
   },
   "componentPath": "./fixtures/static-buttons.tsx",
   "componentName": "StaticButtons",
   "calibration": {
-    "totalDuration": 81.054,
-    "scriptDuration": 0.21000000000000002
+    "totalDuration": 69.338,
+    "scriptDuration": 0.608
   },
   "combos": [
     {
@@ -21,28 +21,39 @@
       "props": {},
       "mount": {
         "samples": [
-          8.242999999999999,
-          6.199999999999999,
-          7.990999999999999
+          7.1690000000000005,
+          7.233999999999999,
+          7.725999999999999
         ],
-        "median": 7.990999999999999,
-        "p95": 8.242999999999999,
-        "cv": 12.162605689268634,
+        "median": 7.233999999999999,
+        "p95": 7.725999999999999,
+        "cv": 3.371208573196196,
         "unstable": false
       },
       "unmount": {
         "samples": [
-          2.726,
-          1.8699999999999999,
-          1.612
+          2.6039999999999996,
+          2.0419999999999994,
+          2.849
         ],
-        "median": 1.8699999999999999,
-        "p95": 2.726,
-        "cv": 23.008848303419292,
-        "unstable": true
+        "median": 2.6039999999999996,
+        "p95": 2.849,
+        "cv": 13.521925315744227,
+        "unstable": false
+      },
+      "rerender": {
+        "samples": [
+          2.5,
+          3.105,
+          3.368
+        ],
+        "median": 3.105,
+        "p95": 3.368,
+        "cv": 12.150201591275197,
+        "unstable": false
       },
       "domNodeCount": 11,
-      "heapDelta": -455876,
+      "heapDelta": -459784,
       "interactions": [
         {
           "selector": "div > button:nth-of-type(2)",
@@ -50,16 +61,17 @@
           "label": "Two",
           "timing": {
             "samples": [
-              21.947999999999997,
-              10.349,
-              8.988999999999999
+              82.86700000000015,
+              57.55499999999999,
+              60.967
             ],
-            "median": 10.349,
-            "p95": 21.947999999999997,
-            "cv": 42.25362026795709,
+            "median": 60.967,
+            "p95": 82.86700000000015,
+            "cv": 16.70620097073242,
             "unstable": true
           },
-          "relativeTiming": 0.1276803118908382
+          "relativeTiming": 0.8792725489630506,
+          "stressPattern": "rapid-toggle-10"
         },
         {
           "selector": "div > button:nth-of-type(1)",
@@ -67,27 +79,386 @@
           "label": "One",
           "timing": {
             "samples": [
-              9.192999999999994,
-              8.777999999999999,
-              8.269999999999998
+              55.135000000000026,
+              63.31600000000005,
+              65.75600000000004
             ],
-            "median": 8.777999999999999,
-            "p95": 9.192999999999994,
-            "cv": 4.315196266926185,
+            "median": 63.31600000000005,
+            "p95": 65.75600000000004,
+            "cv": 7.397513935188231,
             "unstable": false
           },
-          "relativeTiming": 0.10829817158931081
+          "relativeTiming": 0.9131500764371637,
+          "stressPattern": "rapid-toggle-10"
         }
       ],
-      "scalingCurve": null,
-      "relativeMount": 0.09858859525748265,
-      "verdict": "fail"
+      "scalingCurve": {
+        "slope": 0.28254765833227574,
+        "intercept": 3.1192787917248364,
+        "r2": 0.9972556918706036,
+        "growthClass": "linear"
+      },
+      "relativeMount": 0.1043295162825579,
+      "verdict": "fail",
+      "costAttribution": {
+        "buckets": [
+          {
+            "source": "react-dom_client",
+            "durationMs": 14.533999999999999,
+            "percentage": 92.44958972075568,
+            "category": "package"
+          },
+          {
+            "source": "browser",
+            "durationMs": 1.187,
+            "percentage": 7.550410279244324,
+            "category": "browser"
+          }
+        ],
+        "unattributed": 0
+      },
+      "rerenderScalingCurve": {
+        "slope": 0.11218600076151797,
+        "intercept": 2.8467699581165133,
+        "r2": 0.9481688807684624,
+        "growthClass": "linear"
+      },
+      "tier": "T2",
+      "hasAnimation": false,
+      "reactOptimizations": {
+        "memoBailout": false,
+        "contextFanOut": false
+      }
+    },
+    {
+      "comboIndex": 1,
+      "props": {
+        "__120fps_scaleN": 1
+      },
+      "mount": {
+        "samples": [
+          5.815,
+          6.045000000000001,
+          7.154
+        ],
+        "median": 6.045000000000001,
+        "p95": 7.154,
+        "cv": 9.223561289577637,
+        "unstable": false
+      },
+      "unmount": {
+        "samples": [
+          1.631,
+          2.3959999999999995,
+          1.903
+        ],
+        "median": 1.903,
+        "p95": 2.3959999999999995,
+        "cv": 16.018088078238296,
+        "unstable": true
+      },
+      "rerender": {
+        "samples": [
+          3.324,
+          2.502,
+          3.3819999999999997
+        ],
+        "median": 3.324,
+        "p95": 3.3819999999999997,
+        "cv": 13.092857426574461,
+        "unstable": false
+      },
+      "domNodeCount": 12,
+      "heapDelta": 76264,
+      "interactions": [],
+      "scalingCurve": {
+        "slope": 0.28254765833227574,
+        "intercept": 3.1192787917248364,
+        "r2": 0.9972556918706036,
+        "growthClass": "linear"
+      },
+      "relativeMount": 0.0871816320055381,
+      "verdict": "pass",
+      "costAttribution": {
+        "buckets": [
+          {
+            "source": "react-dom_client",
+            "durationMs": 10.315999999999999,
+            "percentage": 90.96199629662287,
+            "category": "package"
+          },
+          {
+            "source": "browser",
+            "durationMs": 1.025,
+            "percentage": 9.038003703377127,
+            "category": "browser"
+          }
+        ],
+        "unattributed": 0
+      },
+      "rerenderScalingCurve": {
+        "slope": 0.11218600076151797,
+        "intercept": 2.8467699581165133,
+        "r2": 0.9481688807684624,
+        "growthClass": "linear"
+      },
+      "tier": "T2",
+      "hasAnimation": false,
+      "reactOptimizations": {
+        "memoBailout": false,
+        "contextFanOut": false
+      }
+    },
+    {
+      "comboIndex": 2,
+      "props": {
+        "__120fps_scaleN": 5
+      },
+      "mount": {
+        "samples": [
+          10.215000000000002,
+          7.954000000000001,
+          10.834
+        ],
+        "median": 10.215000000000002,
+        "p95": 10.834,
+        "cv": 12.803662063928547,
+        "unstable": false
+      },
+      "unmount": {
+        "samples": [
+          3.048,
+          2.7809999999999997,
+          1.7999999999999996
+        ],
+        "median": 2.7809999999999997,
+        "p95": 3.048,
+        "cv": 21.099832014291568,
+        "unstable": true
+      },
+      "rerender": {
+        "samples": [
+          5.695,
+          4.632999999999999,
+          5.683
+        ],
+        "median": 5.683,
+        "p95": 5.695,
+        "cv": 9.327848590681914,
+        "unstable": false
+      },
+      "domNodeCount": 24,
+      "heapDelta": 101320,
+      "interactions": [],
+      "scalingCurve": {
+        "slope": 0.28254765833227574,
+        "intercept": 3.1192787917248364,
+        "r2": 0.9972556918706036,
+        "growthClass": "linear"
+      },
+      "relativeMount": 0.1473218148778448,
+      "verdict": "pass",
+      "costAttribution": {
+        "buckets": [
+          {
+            "source": "react-dom_client",
+            "durationMs": 19.098,
+            "percentage": 97.03282186769637,
+            "category": "package"
+          },
+          {
+            "source": "browser",
+            "durationMs": 0.5840000000000001,
+            "percentage": 2.967178132303628,
+            "category": "browser"
+          }
+        ],
+        "unattributed": 0
+      },
+      "rerenderScalingCurve": {
+        "slope": 0.11218600076151797,
+        "intercept": 2.8467699581165133,
+        "r2": 0.9481688807684624,
+        "growthClass": "linear"
+      },
+      "tier": "T2",
+      "hasAnimation": false,
+      "reactOptimizations": {
+        "memoBailout": false,
+        "contextFanOut": false
+      }
+    },
+    {
+      "comboIndex": 3,
+      "props": {
+        "__120fps_scaleN": 20
+      },
+      "mount": {
+        "samples": [
+          20.975,
+          22.238,
+          21.247
+        ],
+        "median": 21.247,
+        "p95": 22.238,
+        "cv": 2.526002227092253,
+        "unstable": false
+      },
+      "unmount": {
+        "samples": [
+          2.381,
+          2.522,
+          2.0919999999999996
+        ],
+        "median": 2.381,
+        "p95": 2.522,
+        "cv": 7.6760201967597625,
+        "unstable": false
+      },
+      "rerender": {
+        "samples": [
+          12.389000000000003,
+          14.101000000000003,
+          13.396
+        ],
+        "median": 13.396,
+        "p95": 14.101000000000003,
+        "cv": 5.284083503940908,
+        "unstable": false
+      },
+      "domNodeCount": 69,
+      "heapDelta": 174592,
+      "interactions": [],
+      "scalingCurve": {
+        "slope": 0.28254765833227574,
+        "intercept": 3.1192787917248364,
+        "r2": 0.9972556918706036,
+        "growthClass": "linear"
+      },
+      "relativeMount": 0.30642649052467624,
+      "verdict": "pass",
+      "costAttribution": {
+        "buckets": [
+          {
+            "source": "react-dom_client",
+            "durationMs": 50.43000000000001,
+            "percentage": 98.42112453404633,
+            "category": "package"
+          },
+          {
+            "source": "browser",
+            "durationMs": 0.809,
+            "percentage": 1.5788754659536681,
+            "category": "browser"
+          }
+        ],
+        "unattributed": 0
+      },
+      "rerenderScalingCurve": {
+        "slope": 0.11218600076151797,
+        "intercept": 2.8467699581165133,
+        "r2": 0.9481688807684624,
+        "growthClass": "linear"
+      },
+      "tier": "T4",
+      "hasAnimation": false,
+      "reactOptimizations": {
+        "memoBailout": false,
+        "contextFanOut": false
+      }
+    },
+    {
+      "comboIndex": 4,
+      "props": {
+        "__120fps_scaleN": 50
+      },
+      "mount": {
+        "samples": [
+          48.55600000000001,
+          46.56400000000001,
+          50.808
+        ],
+        "median": 48.55600000000001,
+        "p95": 50.808,
+        "cv": 3.5641327111438406,
+        "unstable": false
+      },
+      "unmount": {
+        "samples": [
+          3.035,
+          1.842,
+          1.8689999999999998
+        ],
+        "median": 1.8689999999999998,
+        "p95": 3.035,
+        "cv": 24.73158374797693,
+        "unstable": true
+      },
+      "rerender": {
+        "samples": [
+          22.456000000000007,
+          19.577,
+          19.558
+        ],
+        "median": 19.577,
+        "p95": 22.456000000000007,
+        "cv": 6.632498504915815,
+        "unstable": false
+      },
+      "domNodeCount": 159,
+      "heapDelta": 349256,
+      "interactions": [],
+      "scalingCurve": {
+        "slope": 0.28254765833227574,
+        "intercept": 3.1192787917248364,
+        "r2": 0.9972556918706036,
+        "growthClass": "linear"
+      },
+      "relativeMount": 0.7002797888603653,
+      "verdict": "pass",
+      "costAttribution": {
+        "buckets": [
+          {
+            "source": "react-dom_client",
+            "durationMs": 115.837,
+            "percentage": 99.24093794710555,
+            "category": "package"
+          },
+          {
+            "source": "browser",
+            "durationMs": 0.6920000000000001,
+            "percentage": 0.5928565921026705,
+            "category": "browser"
+          },
+          {
+            "source": "@vite/client",
+            "durationMs": 0.194,
+            "percentage": 0.16620546079178913,
+            "category": "user"
+          }
+        ],
+        "unattributed": 0
+      },
+      "rerenderScalingCurve": {
+        "slope": 0.11218600076151797,
+        "intercept": 2.8467699581165133,
+        "r2": 0.9481688807684624,
+        "growthClass": "linear"
+      },
+      "tier": "T4",
+      "hasAnimation": false,
+      "reactOptimizations": {
+        "memoBailout": false,
+        "contextFanOut": false
+      }
     }
   ],
   "thresholds": {
     "mountMs": 0.001,
     "interactionMs": 0.001,
-    "relativeMount": 0.001
+    "relativeMount": 0.001,
+    "rerenderMs": 16
   },
-  "pass": false
+  "pass": false,
+  "tieredBudgets": true
 }

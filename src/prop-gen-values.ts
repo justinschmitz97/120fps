@@ -87,7 +87,7 @@ export function generateScalingCombos(
   });
 }
 
-function resolveAnchorValue(schema: PropSchema): unknown {
+export function resolveAnchorValue(schema: PropSchema): unknown {
   switch (schema.kind) {
     case "boolean":
       return false;
@@ -233,4 +233,168 @@ function stratifiedSample(
   }
 
   return results;
+}
+
+const MAX_MATRIX_CELLS = 256;
+const MAX_MATRIX_AUTO_CELLS = 64;
+
+export function isMatrixEligible(schema: PropSchema): boolean {
+  if (schema.kind === "boolean") return true;
+  if (schema.kind === "union" && schema.values.length >= 1 && schema.values.length <= 8) return true;
+  return false;
+}
+
+function matrixValueCount(schema: PropSchema): number {
+  if (schema.kind === "boolean") return 2;
+  return schema.values.length;
+}
+
+export function shouldAutoActivateMatrix(schemas: PropSchema[]): boolean {
+  const eligible = schemas.filter(isMatrixEligible);
+  if (eligible.length < 2) return false;
+  const product = eligible.reduce((acc, s) => acc * matrixValueCount(s), 1);
+  return product <= MAX_MATRIX_AUTO_CELLS;
+}
+
+function matrixValues(schema: PropSchema): unknown[] {
+  if (schema.kind === "boolean") return [false, true];
+  return schema.values;
+}
+
+export function generatePropMatrix(schemas: PropSchema[]): PropCombination[] {
+  if (schemas.length === 0) return [{}];
+
+  const eligible = schemas.filter(isMatrixEligible);
+  const anchorProps: PropCombination = {};
+  for (const s of schemas) {
+    if (!isMatrixEligible(s)) {
+      anchorProps[s.name] = resolveAnchorValue(s);
+    }
+  }
+
+  if (eligible.length === 0) {
+    const combo: PropCombination = { ...anchorProps };
+    return [combo];
+  }
+
+  const axes = eligible.map((s) => ({ name: s.name, values: matrixValues(s) }));
+  const product = axes.reduce((acc, a) => acc * a.values.length, 1);
+
+  let matrixCells: PropCombination[];
+  if (product <= MAX_MATRIX_CELLS) {
+    matrixCells = matrixCartesian(axes);
+  } else {
+    matrixCells = pairwiseCover(axes, MAX_MATRIX_CELLS);
+  }
+
+  return matrixCells.map((cell) => ({ ...anchorProps, ...cell }));
+}
+
+function matrixCartesian(axes: { name: string; values: unknown[] }[]): PropCombination[] {
+  const results: PropCombination[] = [];
+  const indices = new Array(axes.length).fill(0) as number[];
+
+  while (true) {
+    const combo: PropCombination = {};
+    for (let i = 0; i < axes.length; i++) {
+      combo[axes[i].name] = axes[i].values[indices[i]];
+    }
+    results.push(combo);
+
+    let carry = axes.length - 1;
+    while (carry >= 0) {
+      indices[carry]++;
+      if (indices[carry] < axes[carry].values.length) break;
+      indices[carry] = 0;
+      carry--;
+    }
+    if (carry < 0) break;
+  }
+
+  return results;
+}
+
+export function pairwiseCover(
+  axes: { name: string; values: unknown[] }[],
+  maxRows: number,
+): PropCombination[] {
+  if (axes.length <= 1) return matrixCartesian(axes);
+
+  type Pair = string;
+  const allPairs = new Set<Pair>();
+  for (let i = 0; i < axes.length; i++) {
+    for (let j = i + 1; j < axes.length; j++) {
+      for (const vi of axes[i].values) {
+        for (const vj of axes[j].values) {
+          allPairs.add(pairKey(i, vi, j, vj));
+        }
+      }
+    }
+  }
+
+  const uncovered = new Set(allPairs);
+  const rows: PropCombination[] = [];
+
+  while (uncovered.size > 0 && rows.length < maxRows) {
+    let bestRow: PropCombination | null = null;
+    let bestScore = -1;
+
+    for (let attempt = 0; attempt < axes.length * 10; attempt++) {
+      const candidate: PropCombination = {};
+      for (let a = 0; a < axes.length; a++) {
+        candidate[axes[a].name] = axes[a].values[attempt % axes[a].values.length];
+      }
+
+      for (let a = 0; a < axes.length; a++) {
+        let bestVal = candidate[axes[a].name];
+        let bestCover = 0;
+        for (const v of axes[a].values) {
+          candidate[axes[a].name] = v;
+          const cover = countCoveredPairs(candidate, axes, uncovered);
+          if (cover > bestCover) {
+            bestCover = cover;
+            bestVal = v;
+          }
+        }
+        candidate[axes[a].name] = bestVal;
+      }
+
+      const score = countCoveredPairs(candidate, axes, uncovered);
+      if (score > bestScore) {
+        bestScore = score;
+        bestRow = { ...candidate };
+      }
+    }
+
+    if (!bestRow || bestScore === 0) break;
+    rows.push(bestRow);
+
+    for (let i = 0; i < axes.length; i++) {
+      for (let j = i + 1; j < axes.length; j++) {
+        uncovered.delete(pairKey(i, bestRow[axes[i].name], j, bestRow[axes[j].name]));
+      }
+    }
+  }
+
+  return rows;
+}
+
+function pairKey(i: number, vi: unknown, j: number, vj: unknown): string {
+  return `${i}:${JSON.stringify(vi)}|${j}:${JSON.stringify(vj)}`;
+}
+
+function countCoveredPairs(
+  row: PropCombination,
+  axes: { name: string; values: unknown[] }[],
+  uncovered: Set<string>,
+): number {
+  let count = 0;
+  for (let i = 0; i < axes.length; i++) {
+    for (let j = i + 1; j < axes.length; j++) {
+      if (uncovered.has(pairKey(i, row[axes[i].name], j, row[axes[j].name]))) {
+        count++;
+      }
+    }
+  }
+  return count;
 }

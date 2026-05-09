@@ -23,6 +23,18 @@ export interface CliArgs {
   framework?: "react" | "vanilla" | "auto";
   flatThresholds?: boolean;
   noShims?: boolean;
+  curve?: boolean | string;
+  noCurve?: boolean;
+  matrix?: boolean;
+  noMatrix?: boolean;
+  saveBaseline?: boolean;
+  check?: boolean;
+  budget?: boolean;
+  noBaseline?: boolean;
+  componentPaths?: string[];
+  isolate?: string[];
+  memoryCycles?: number;
+  noIsolate?: boolean;
   help: boolean;
   version: boolean;
   error?: string;
@@ -45,6 +57,17 @@ const KNOWN_FLAGS = new Set([
   "--framework",
   "--flat-thresholds",
   "--no-shims",
+  "--curve",
+  "--no-curve",
+  "--matrix",
+  "--no-matrix",
+  "--save-baseline",
+  "--check",
+  "--budget",
+  "--no-baseline",
+  "--isolate",
+  "--memory-cycles",
+  "--no-isolate",
   "--help",
   "--version",
 ]);
@@ -122,6 +145,98 @@ export function parseArgs(argv: string[]): CliArgs {
     }
     if (arg === "--no-shims") {
       result.noShims = true;
+      i++;
+      continue;
+    }
+    if (arg === "--curve") {
+      const next = argv[i + 1];
+      if (next && !next.startsWith("--") && /^\w+:(array|number)$/.test(next)) {
+        result.curve = next;
+        i += 2;
+      } else if (next && !next.startsWith("--") && /^\w+:\w+$/.test(next)) {
+        result.error = `--curve prop:type must use type "array" or "number", got "${next}"`;
+        return result;
+      } else {
+        result.curve = true;
+        i++;
+      }
+      continue;
+    }
+    if (arg === "--no-curve") {
+      result.noCurve = true;
+      i++;
+      continue;
+    }
+    if (arg === "--matrix") {
+      result.matrix = true;
+      i++;
+      continue;
+    }
+    if (arg === "--no-matrix") {
+      result.noMatrix = true;
+      i++;
+      continue;
+    }
+    if (arg === "--save-baseline") {
+      result.saveBaseline = true;
+      i++;
+      continue;
+    }
+    if (arg === "--check") {
+      result.check = true;
+      i++;
+      continue;
+    }
+    if (arg === "--budget") {
+      result.budget = true;
+      result.ci = true;
+      result.check = true;
+      i++;
+      continue;
+    }
+    if (arg === "--no-baseline") {
+      result.noBaseline = true;
+      i++;
+      continue;
+    }
+    if (arg === "--isolate") {
+      if (i + 1 >= argv.length || argv[i + 1].startsWith("--")) {
+        result.error = "--isolate requires a comma-separated list of phases (mount,rerender,unmount,memory,strictmode,all)";
+        return result;
+      }
+      const raw = argv[++i];
+      const validPhases = new Set(["mount", "rerender", "unmount", "memory", "strictmode", "all"]);
+      const parts = raw.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
+      for (const p of parts) {
+        if (!validPhases.has(p)) {
+          result.error = `Invalid isolation phase: "${p}". Valid phases: mount, rerender, unmount, memory, strictmode, all`;
+          return result;
+        }
+      }
+      if (parts.length === 1 && parts[0] === "all") {
+        result.isolate = ["mount", "rerender", "unmount", "memory", "strictmode"];
+      } else {
+        result.isolate = [...new Set(parts)];
+      }
+      i++;
+      continue;
+    }
+    if (arg === "--memory-cycles") {
+      if (i + 1 >= argv.length) {
+        result.error = "--memory-cycles requires a positive integer";
+        return result;
+      }
+      const n = Number(argv[++i]);
+      if (isNaN(n) || n <= 0 || !Number.isInteger(n)) {
+        result.error = `--memory-cycles must be a positive integer, got "${argv[i]}"`;
+        return result;
+      }
+      result.memoryCycles = n;
+      i++;
+      continue;
+    }
+    if (arg === "--no-isolate") {
+      result.noIsolate = true;
       i++;
       continue;
     }
@@ -226,9 +341,10 @@ export function parseArgs(argv: string[]): CliArgs {
 
     if (!result.componentPath) {
       result.componentPath = arg;
+      result.componentPaths = [arg];
     } else {
-      result.error = `Unexpected argument: ${arg}`;
-      return result;
+      if (!result.componentPaths) result.componentPaths = [result.componentPath];
+      result.componentPaths.push(arg);
     }
     i++;
   }
@@ -241,7 +357,19 @@ export function parseArgs(argv: string[]): CliArgs {
     result.error = "--fixture requires a component path";
   }
 
+  if (!result.error && result.isolate && result.curve) {
+    result.error = "--isolate cannot be combined with --curve";
+  }
+  if (!result.error && result.isolate && result.matrix) {
+    result.error = "--isolate cannot be combined with --matrix";
+  }
+
   return result;
+}
+
+function parseCurveArg(arg: string): { propName: string; propKind: "array" | "number" } {
+  const [propName, propKind] = arg.split(":");
+  return { propName, propKind: propKind as "array" | "number" };
 }
 
 function printHelp(): void {
@@ -259,6 +387,17 @@ Options:
   --no-react-analysis            Disable React optimization detection
   --framework <react|vanilla|auto>  Framework detection mode (default: auto)
   --flat-thresholds              Disable tiered budgets, use flat thresholds
+  --curve [prop:type]             Enable curve mode (auto-detect or specify prop:array|number)
+  --no-curve                     Disable auto-activation of curve mode
+  --matrix                       Enable prop variation matrix mode
+  --no-matrix                    Disable auto-activation of matrix mode
+  --save-baseline                Save current measurements as baseline
+  --check                        Compare against baseline, fail on regression
+  --budget                       Shorthand for --ci --check
+  --no-baseline                  Skip baseline comparison in CI mode
+  --isolate <phases>             Isolated measurement: mount,rerender,unmount,memory,strictmode,all
+  --memory-cycles <n>            Mount/unmount cycles for memory mode (default: 20)
+  --no-isolate                   Disable isolation mode
   --no-shims                     Disable Next.js module shims
   --threshold-mount <ms>         Mount time threshold (default: ${DEFAULT_THRESHOLDS.mountMs})
   --threshold-interaction <ms>   Interaction time threshold (default: ${DEFAULT_THRESHOLDS.interactionMs})
@@ -317,6 +456,12 @@ async function main(): Promise<void> {
       framework: args.framework,
       flatThresholds: args.flatThresholds,
       noShims: args.noShims,
+      curveMode: args.noCurve ? false : args.curve === true ? true : typeof args.curve === "string" ? parseCurveArg(args.curve) : undefined,
+      matrixMode: args.noMatrix ? false : args.matrix ? true : undefined,
+      saveBaseline: args.saveBaseline,
+      check: args.check,
+      noBaseline: args.noBaseline,
+      isolation: args.isolate ? { phases: args.isolate, memoryCycles: args.memoryCycles } : undefined,
       thresholds: {
         ...(args.thresholdMount !== undefined
           ? { mountMs: args.thresholdMount }

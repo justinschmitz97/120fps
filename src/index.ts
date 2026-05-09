@@ -80,6 +80,9 @@ export {
   type Thresholds,
   type MachineInfo,
   type CalibrationResult,
+  type BaselineComparison,
+  type Regression,
+  type Improvement,
 } from "./report.js";
 export { analyze, buildReport, isFixturePath, detectFixture, hasScaleExport, type AnalyzeOptions, type BuildReportInput } from "./analyze.js";
 export { detectScaleExport } from "./harness.js";
@@ -116,3 +119,28 @@ export {
   type ReactAnalysisOptions,
 } from "./react-profiler.js";
 export { parseArgs, type CliArgs } from "./cli.js";
+export {
+  parseIsolationPhases,
+  computeChurnDegradation,
+  buildMemoryReport,
+  buildStrictModeReport,
+  buildRerenderIsolation,
+  type IsolationPhase,
+  type RerenderIsolation,
+  type MemoryReport,
+  type StrictModeReport,
+  type IsolationReport,
+} from "./isolation.js";
+export {
+  loadBudgetConfig,
+  loadBaseline,
+  saveBaseline,
+  resolveComponentBudget,
+  resolveTolerances,
+  compareBaseline,
+  type BudgetConfig,
+  type ComponentBudget,
+  type Baseline,
+  type BaselineEntry,
+  type ResolvedTolerance,
+} from "./budget.js";

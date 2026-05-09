@@ -30,6 +30,8 @@ status: approved
 | analyze | Full pipeline orchestrator (analyze, buildReport), fixture detection (isFixturePath, detectFixture, hasScaleExport), auto-scale combo appending for raw components |
 | cli | Entry point, arg parsing, exit codes |
 | react-profiler | Framework detection, DevTools hook injection, profiler snapshot capture, memo/context/callback analysis, portal hygiene |
+| budget | Budget config loading, baseline I/O, regression comparison, tolerance resolution |
+| isolation | Isolated measurement types, churn degradation, memory leak detection, strictmode overhead |
 | index | Barrel re-export of all public API |
 
 ## Stack
@@ -321,6 +323,82 @@ CDP trace capture during mount/unmount across prop combinations. 4× CPU throttl
 - New module: `src/react-profiler.ts`. See `specs/milestones/m18-react-optimization-detection.md`. 99 new tests (932 total: 783 unit + 149 e2e).
 
 **Does NOT include**: Vue/Svelte/Solid adapters, source-map-based line-level attribution, automatic injection of React.memo fixes.
+
+### M19 — Next.js shim layer (done)
+**Goal**: Lightweight Vite aliases replacing Next.js modules (`next/image`, `next/link`, `next/navigation`, `next/dynamic`, `next-video/player`, etc.) with browser-compatible shims so components mount without a framework server.
+
+**Builds on M1** (harness build), **M6** (CLI).
+
+**Scope**:
+- `SHIM_MODULES` constant mapping module specifiers to shim implementations. `buildShimAliases(projectRoot)` returns Vite resolve aliases.
+- `detectNextJs(projectRoot)` checks for `next` in `package.json` dependencies.
+- Shims preserve DOM structure and prop forwarding (profiling stand-ins, not polyfills).
+- Auto-enabled when Next.js detected. `--no-shims` CLI flag to disable.
+- `ShimEntry` type exported from `harness.ts`.
+- See `specs/milestones/m19-nextjs-shim.md`. 30 new tests (962 total: 813 unit + 149 e2e).
+
+**Does NOT include**: Remix/Gatsby/other meta-framework shims, server component emulation.
+
+### M20 — scaling curves (done)
+**Goal**: Dedicated `--curve` mode that measures mount/rerender across scale points (1,2,5,10,20,50,100) and reports growth classification (constant/linear/quadratic/exponential) with R² fit quality.
+
+**Builds on M8** (parameterized scaling), **M5** (scaling curve computation), **M12** (auto-scaling prop detection).
+
+**Scope**:
+- `--curve [prop:type]` CLI flag. Auto-detect scaling prop or explicit `prop:array|number`.
+- `CurveReport` type with per-point timings, mount/rerender scaling curves, growth class.
+- Curve mode runs instead of normal combo pipeline. Scale points: `[1,2,5,10,20,50,100]`.
+- `Report.curveReport?` field. Terminal table shows per-point mount/rerender timings, regression line, growth class.
+- `--no-curve` disables auto-activation. Mutually exclusive with `--matrix` and `--isolate`.
+- See `specs/milestones/m20-scaling-curves.md`. 49 new tests (1011 total: 862 unit + 149 e2e).
+
+**Does NOT include**: custom scale point lists in curve mode, multi-prop curve sweeps.
+
+### M21 — prop variation matrix (done)
+**Goal**: `--matrix` mode measures mount/rerender for every individual prop value against a baseline combo, producing a cost matrix showing per-prop-value performance impact.
+
+**Builds on M1** (prop extraction), **M11** (delta pairs), **M8** (rerender measurement).
+
+**Scope**:
+- `--matrix` CLI flag. Generates matrix combos: baseline + one combo per unique prop value.
+- `MatrixReport` type with `MatrixCell[]` per-prop-value entries (mount/rerender timing, delta from baseline).
+- `Report.matrixReport?` field. Terminal table shows prop×value cost matrix.
+- `--no-matrix` disables auto-activation. Mutually exclusive with `--curve` and `--isolate`.
+- See `specs/milestones/m21-prop-variation-matrix.md`. 74 new tests (1085 total: 936 unit + 149 e2e).
+
+**Does NOT include**: cross-prop interaction effects, matrix mode for fixtures.
+
+### M22 — budget CI (done)
+**Goal**: Persistent baselines and per-component budget configuration for CI regression detection. `--budget` mode saves/loads baselines and fails on regressions.
+
+**Builds on M6** (CLI, report), **M13** (tiered budgets).
+
+**Scope**:
+- `120fps.config.json`: per-component budget overrides, default tolerances, component-specific tolerances.
+- `120fps-baseline.json`: persistent per-component baselines (mount, rerender, interaction, unmount, domCount, tier, timestamp).
+- `compareBaseline()` regression detection: mount±10%, rerender±15%, interaction±15%, unmount±20%. CV>15% metrics get WARN not FAIL.
+- `--save-baseline`, `--check`, `--budget` (shorthand for `--ci --check`), `--no-baseline` CLI flags.
+- `Report.baseline?` field with regressions/improvements arrays.
+- Budget resolution precedence: CLI flags > per-component config > defaults config > tier budgets.
+- New module: `src/budget.ts`. See `specs/milestones/m22-budget-ci.md`. 64 new tests.
+
+**Does NOT include**: baseline diffing across branches, GitHub PR comment integration.
+
+### M23 — isolated measurements (done)
+**Goal**: Independent micro-benchmarks for each lifecycle phase (mount, rerender, unmount, memory, strictmode), comparable to hand-authored vitest bench suites.
+
+**Builds on M8** (rerender), **M2** (mount), **M5** (CDP tracing), **M13** (tiered budgets).
+
+**Scope**:
+- `--isolate <phases>` CLI flag (comma-separated: mount, rerender, unmount, memory, strictmode, all).
+- Mount isolation: mount-to-first-paint excluding unmount. Rerender isolation: stable (same props), prop-change, churn (10 cycles with degradation ratio).
+- Memory stability: repeated mount/unmount cycles, heap growth per cycle, leak detection (>1KB/cycle).
+- StrictMode comparison: interleaved normal/strict sampling, overhead percentage, `doubleInvokeClean` (≤110%).
+- `--memory-cycles <N>` override (default 20). Mutually exclusive with `--curve` and `--matrix`.
+- `Report.isolation?` field with per-phase results. New module: `src/isolation.ts`.
+- See `specs/milestones/m23-isolated-measurements.md`. 63 new tests (1085 total: 936 unit + 149 e2e).
+
+**Does NOT include**: isolation modes combined with curve/matrix, concurrent phase execution.
 
 ## Risks
 | risk | mitigation |

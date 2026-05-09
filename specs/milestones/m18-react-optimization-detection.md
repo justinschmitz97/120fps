@@ -2,6 +2,10 @@
 kind: milestone
 status: done
 depends_on: [m2, m5, m6, m8]
+tests:
+  - test/unit/react-profiler.test.ts
+  - test/unit/react-profiler-report.test.ts
+  - test/unit/react-profiler-harden.test.ts
 ---
 
 ## M18 — React optimization detection

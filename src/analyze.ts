@@ -6,7 +6,7 @@ import { buildAndServe, detectScaleExport, type HarnessResult } from "./harness.
 import { extractProps, extractExports, extractAllProps, detectScalingProps, type ScalingPropMatch } from "./prop-gen.js";
 import { inferComposition, type CompositionTree } from "./composition.js";
 import { detectFramework, runReactAnalysis, hasReactWarning, type ReactOptimizations } from "./react-profiler.js";
-import { generateCombinations, generateDeltaPairs, generateScalingCombos, type PropCombination } from "./prop-gen-values.js";
+import { generateCombinations, generateDeltaPairs, generateScalingCombos, generatePropMatrix, shouldAutoActivateMatrix, type PropCombination } from "./prop-gen-values.js";
 import { measureMount, measureRerender, type MountResult, type RerenderResult } from "./measure.js";
 import { explore, type ExploreResult } from "./explorer.js";
 import {
@@ -16,7 +16,18 @@ import {
   type ScalingCurve,
 } from "./metrics.js";
 import {
+  loadBudgetConfig,
+  loadBaseline,
+  saveBaseline as saveBaselineFile,
+  resolveComponentBudget,
+  resolveTolerances,
+  compareBaseline,
+  type BaselineEntry,
+} from "./budget.js";
+import {
   buildTimingWithCV,
+  buildCurveReport,
+  computeCurveVerdict,
   classifyTier,
   computeVerdict,
   DEFAULT_THRESHOLDS,
@@ -27,6 +38,10 @@ import {
   type MachineInfo,
   type PropDelta,
   type Report,
+  buildMatrixReport,
+  type MatrixAxis,
+  type MatrixReport,
+  type ScalingCurveReport,
   type TierBudget,
   type Thresholds,
   type TimingWithCV,
@@ -50,6 +65,12 @@ export interface AnalyzeOptions {
   skipReactAnalysis?: boolean;
   framework?: "react" | "vanilla" | "auto";
   noShims?: boolean;
+  curveMode?: boolean | { propName: string; propKind: "array" | "number" };
+  matrixMode?: boolean;
+  saveBaseline?: boolean;
+  check?: boolean;
+  noBaseline?: boolean;
+  isolation?: { phases: string[]; memoryCycles?: number };
 }
 
 export interface BuildReportInput {
@@ -70,6 +91,8 @@ export interface BuildReportInput {
   autoComposition?: boolean;
   compositionTree?: import("./composition.js").CompositionTree;
   nextJsShims?: string[];
+  scalingCurveReport?: ScalingCurveReport;
+  matrixReport?: import("./report.js").MatrixReport;
 }
 
 export function buildReport(input: BuildReportInput): Report {
@@ -211,6 +234,14 @@ export function buildReport(input: BuildReportInput): Report {
 
   if (input.nextJsShims && input.nextJsShims.length > 0) {
     report.nextJsShims = input.nextJsShims;
+  }
+
+  if (input.scalingCurveReport) {
+    report.scalingCurveReport = input.scalingCurveReport;
+  }
+
+  if (input.matrixReport) {
+    report.matrixReport = input.matrixReport;
   }
 
   return report;
@@ -363,6 +394,229 @@ export async function analyze(
     let schemas: import("./prop-gen.js").PropSchema[] | undefined;
     const resolvedHarnessPath = path.resolve(harnessPath);
     const fixtureHasScale = useFixture && detectScaleExport(resolvedHarnessPath);
+
+    // --- Curve mode check ---
+    const curveDisabled = options.curveMode === false;
+    let curveMatch: ScalingPropMatch | undefined;
+    let curveExplicit: { propName: string; propKind: "array" | "number" } | undefined;
+
+    if (!curveDisabled && !useFixture && !useComposition) {
+      if (typeof options.curveMode === "object") {
+        curveExplicit = options.curveMode;
+      } else {
+        const tempSchemas = await extractProps(harness.componentPath);
+        const matches = detectScalingProps(tempSchemas);
+        if (matches.length > 0 && options.curveMode !== false) {
+          curveMatch = matches[0];
+          schemas = tempSchemas;
+        }
+      }
+    }
+
+    const activateCurve = !!(curveExplicit || curveMatch);
+
+    if (activateCurve) {
+      if (!schemas) schemas = await extractProps(harness.componentPath);
+      const curveScalePoints = options.scalePoints ?? [1, 3, 5, 10, 20, 50];
+      const matchKind = curveExplicit ? (curveExplicit.propKind === "number" ? "numeric" as const : "array" as const) : curveMatch!.kind;
+      const match: ScalingPropMatch = curveMatch ?? {
+        schema: schemas.find((s) => s.name === curveExplicit!.propName) ?? { name: curveExplicit!.propName, kind: curveExplicit!.propKind, values: [], required: false },
+        kind: matchKind,
+        reason: "explicit --curve flag",
+      };
+      const scaleCombos = generateScalingCombos(schemas, match, curveScalePoints);
+
+      const curveMounts = await measureMount(harness, {
+        samples,
+        cpuThrottle,
+        warmupRuns,
+        combos: scaleCombos,
+      });
+      const curveRerenders = await measureRerender(harness, {
+        samples,
+        cpuThrottle,
+        warmupRuns,
+        combos: scaleCombos,
+      });
+      const curveExplores = await explore(harness, {
+        samples: Math.min(samples, 5),
+        cpuThrottle,
+        warmupRuns,
+        seed: options.seed ?? 42,
+        combos: scaleCombos,
+        maxWallClockMs: 30000,
+      });
+
+      const curveHeapDeltas = curveMounts.map((m) => m.heapDelta ?? 0);
+      const componentName = detectComponentName(metadataPath);
+
+      const curveReport = buildCurveReport({
+        propName: match.schema.name,
+        propKind: match.kind === "numeric" ? "number" : "array",
+        reason: match.reason,
+        scalePoints: curveScalePoints,
+        mounts: curveMounts,
+        rerenders: curveRerenders,
+        explores: curveExplores,
+        heapDeltas: curveHeapDeltas,
+        calibration,
+        thresholds,
+        skipAttribution: options.skipAttribution,
+      });
+
+      const curveVerdict = computeCurveVerdict(curveReport.points, curveReport.mountCurve, thresholds);
+      const pass = curveVerdict !== "fail";
+
+      const report: Report = {
+        version: 1,
+        timestamp: new Date().toISOString(),
+        machine,
+        componentPath,
+        componentName,
+        calibration,
+        combos: [],
+        thresholds,
+        pass,
+        scalingCurveReport: curveReport,
+        ...(harness.nextJsShims && harness.nextJsShims.length > 0 ? { nextJsShims: harness.nextJsShims } : {}),
+      };
+
+      const jsonPath = options.jsonPath ?? "120fps-report.json";
+      const jsonDir = path.dirname(path.resolve(jsonPath));
+      fs.mkdirSync(jsonDir, { recursive: true });
+      fs.writeFileSync(
+        path.resolve(jsonPath),
+        JSON.stringify(report, mapReplacer, 2),
+        "utf-8",
+      );
+
+      return report;
+    }
+
+    // --- Matrix mode check ---
+    const matrixDisabled = options.matrixMode === false;
+    let activateMatrix = false;
+
+    if (!matrixDisabled && !useFixture && !useComposition && !activateCurve) {
+      if (!schemas) schemas = await extractProps(harness.componentPath);
+      if (options.matrixMode === true) {
+        activateMatrix = true;
+      } else {
+        activateMatrix = shouldAutoActivateMatrix(schemas);
+      }
+    }
+
+    if (activateMatrix) {
+      if (!schemas) schemas = await extractProps(harness.componentPath);
+      const matrixCombos = generatePropMatrix(schemas);
+      const matrixAxes: MatrixAxis[] = schemas
+        .filter((s) => s.kind === "boolean" || (s.kind === "union" && s.values.length >= 1 && s.values.length <= 8))
+        .map((s) => ({
+          propName: s.name,
+          values: s.kind === "boolean" ? [false, true] : s.values,
+        }));
+
+      const matrixMounts = await measureMount(harness, {
+        samples,
+        cpuThrottle,
+        warmupRuns,
+        combos: matrixCombos,
+      });
+      const matrixRerenders = await measureRerender(harness, {
+        samples,
+        cpuThrottle,
+        warmupRuns,
+        combos: matrixCombos,
+      });
+
+      // Explore only hot cells (top 5 by mount median)
+      const sortedMounts = [...matrixMounts].sort((a, b) => b.mount.median - a.mount.median);
+      const hotIndices = new Set(sortedMounts.slice(0, 5).map((m) => m.comboIndex));
+      const hotCombos = matrixCombos.filter((_, i) => hotIndices.has(i));
+      const matrixExplores = hotCombos.length > 0
+        ? await explore(harness, {
+            samples: Math.min(samples, 5),
+            cpuThrottle,
+            warmupRuns,
+            seed: options.seed ?? 42,
+            combos: hotCombos,
+            maxWallClockMs: 30000,
+          })
+        : [];
+
+      // Delta analysis for compound effects
+      let matrixDeltas: PropDelta[] | undefined;
+      if (!options.skipDeltas && schemas.length > 0) {
+        const deltaPairs = generateDeltaPairs(schemas);
+        const measured = new Map<string, { mount: MountResult; rerender?: RerenderResult }>();
+        for (const m of matrixMounts) {
+          measured.set(JSON.stringify(m.props), { mount: m, rerender: matrixRerenders.find((r) => r.comboIndex === m.comboIndex) });
+        }
+        const missingPairs = deltaPairs.filter((p) => !measured.has(JSON.stringify(p.baseCombo)) || !measured.has(JSON.stringify(p.flipCombo)));
+        if (missingPairs.length > 0) {
+          const missingCombos = [...new Set(missingPairs.flatMap((p) => [JSON.stringify(p.baseCombo), JSON.stringify(p.flipCombo)]))].filter((k) => !measured.has(k)).map((k) => JSON.parse(k) as PropCombination);
+          if (missingCombos.length > 0) {
+            const extraMounts = await measureMount(harness, { samples, cpuThrottle, warmupRuns, combos: missingCombos });
+            const extraRerenders = await measureRerender(harness, { samples, cpuThrottle, warmupRuns, combos: missingCombos });
+            for (const m of extraMounts) measured.set(JSON.stringify(m.props), { mount: m, rerender: extraRerenders.find((r) => r.comboIndex === m.comboIndex) });
+          }
+        }
+        matrixDeltas = [];
+        for (const pair of deltaPairs) {
+          const base = measured.get(JSON.stringify(pair.baseCombo));
+          const flip = measured.get(JSON.stringify(pair.flipCombo));
+          if (base && flip) {
+            matrixDeltas.push({
+              propName: pair.propName,
+              baseValue: pair.baseValue,
+              flipValue: pair.flipValue,
+              mountDelta: flip.mount.mount.median - base.mount.mount.median,
+              rerenderDelta: (flip.rerender?.stable.median ?? 0) - (base.rerender?.stable.median ?? 0),
+            });
+          }
+        }
+      }
+
+      const matrixReport = buildMatrixReport({
+        axes: matrixAxes,
+        mounts: matrixMounts,
+        rerenders: matrixRerenders,
+        thresholds,
+        flatThresholds: options.flatThresholds,
+        propDeltas: matrixDeltas,
+      });
+
+      const heapDeltas = matrixMounts.map((m) => m.heapDelta ?? 0);
+      const componentName = detectComponentName(metadataPath);
+      const report = buildReport({
+        componentPath,
+        componentName,
+        machine,
+        calibration,
+        mounts: matrixMounts,
+        explores: matrixExplores,
+        heapDeltas,
+        thresholds,
+        rerenders: matrixRerenders,
+        flatThresholds: options.flatThresholds,
+        skipAttribution: options.skipAttribution,
+        matrixReport,
+        ...(harness.nextJsShims && harness.nextJsShims.length > 0 ? { nextJsShims: harness.nextJsShims } : {}),
+      });
+
+      if (matrixDeltas) report.propDeltas = matrixDeltas;
+
+      const jsonPath = options.jsonPath ?? "120fps-report.json";
+      const jsonDir = path.dirname(path.resolve(jsonPath));
+      fs.mkdirSync(jsonDir, { recursive: true });
+      fs.writeFileSync(
+        path.resolve(jsonPath),
+        JSON.stringify(report, mapReplacer, 2),
+        "utf-8",
+      );
+
+      return report;
+    }
 
     const scalePoints = options.scalePoints ?? [1, 5, 20, 50];
     if (fixtureHasScale) {
@@ -606,6 +860,69 @@ export async function analyze(
             combo.verdict = "warn";
           }
         }
+      }
+    }
+
+    const projectRoot = path.dirname(resolvedPath);
+    const relativeComponent = "./" + path.relative(projectRoot, resolvedPath).replace(/\\/g, "/");
+
+    if (options.check && !options.noBaseline) {
+      const baselinePath = path.join(projectRoot, "120fps-baseline.json");
+      const baseline = loadBaseline(baselinePath);
+      if (baseline) {
+        const entry = baseline.entries[relativeComponent];
+        if (entry) {
+          const config = loadBudgetConfig(projectRoot);
+          const tol = resolveTolerances(config);
+          const primary = report.combos[0];
+          const unstableMetrics = new Set<string>();
+          if (primary?.mount?.unstable) unstableMetrics.add("mount");
+          if (primary?.rerender?.unstable) unstableMetrics.add("rerender");
+          if (primary?.unmount?.unstable) unstableMetrics.add("unmount");
+
+          const interactionMap: Record<string, number> = {};
+          if (primary) {
+            for (const ix of primary.interactions) {
+              interactionMap[ix.label] = ix.timing.median;
+            }
+          }
+
+          const comparison = compareBaseline(
+            entry,
+            {
+              mount: primary?.mount?.median ?? 0,
+              rerender: primary?.rerender?.median ?? 0,
+              unmount: primary?.unmount?.median ?? 0,
+              interactions: interactionMap,
+            },
+            tol,
+            unstableMetrics,
+          );
+          report.baseline = comparison;
+          if (comparison.regressions.length > 0) {
+            report.pass = false;
+          }
+        }
+      }
+    }
+
+    if (options.saveBaseline) {
+      const baselinePath = path.join(projectRoot, "120fps-baseline.json");
+      const primary = report.combos[0];
+      if (primary) {
+        const interactionMap: Record<string, number> = {};
+        for (const ix of primary.interactions) {
+          interactionMap[ix.label] = ix.timing.median;
+        }
+        const entry: BaselineEntry = {
+          mount: primary.mount.median,
+          rerender: primary.rerender.median,
+          unmount: primary.unmount.median,
+          domNodeCount: primary.domNodeCount,
+          interactions: interactionMap,
+          tier: (primary.tier ?? "T1") as BaselineEntry["tier"],
+        };
+        saveBaselineFile(baselinePath, entry, relativeComponent);
       }
     }
 
