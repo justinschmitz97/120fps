@@ -10,7 +10,7 @@ status: approved
 1. **Prop extraction** — TS Compiler API (Bundler moduleResolution) → props interface → value generation. Recursively unwraps HOC chains (forwardRef/memo). Handles class components via heritage clause. Cap 64 combos via stratified sampling.
 2. **Harness build** — Vite bundles HTML page importing target component (auto-detects named/default/class/const export). Harness dir placed inside project root for natural dependency resolution. `scanExternalDeps` recursively follows imports (including tsconfig aliases) to pre-populate `optimizeDeps.include`. Auto-scale rendering: when props contain `__120fps_scaleN`, renders N instances. Exposes `window.__120fps` control API.
 3. **Browser** — Playwright headless Chromium. Fresh browser per measurement phase. 4× CPU throttle.
-4. **Exploration loop** — Per prop combo: mount→trace, DOM walk→discover interactables, resolve stress pattern per interaction (pointer-drag, keyboard-sweep, hover-sweep, open-close-10, multi-keystroke, rapid-toggle-10, or single-shot), exercise each N=10→trace, deepen expensive paths (edge P95 > 1.5× global median edge cost), build state graph. Terminate: convergence / 200 nodes / 60s.
+4. **Exploration loop** — Per prop combo: mount→trace, DOM walk→discover interactables, resolve stress pattern per interaction (pointer-drag, keyboard-sweep, hover-sweep, open-close-10, multi-keystroke, rapid-toggle-11, or single-shot), exercise each N=10→trace, deepen expensive paths (edge P95 > 1.5× global median edge cost), build state graph. Terminate: convergence / 200 nodes / 60s.
 5. **Metrics** — CDP traces → paint, layout shifts, style recalcs, long tasks, frame timing, scripting, DOM count, heap delta.
 6. **Report** — Terminal table + JSON. Scaling curve analysis.
 
@@ -31,11 +31,15 @@ status: approved
 | cli | Entry point, arg parsing, exit codes |
 | react-profiler | Framework detection, DevTools hook injection, profiler snapshot capture, memo/context/callback analysis, portal hygiene |
 | budget | Budget config loading, baseline I/O, regression comparison, tolerance resolution |
+| page-errors | Browser page-error capture (pageerror + console errors), timeout error enrichment |
 | isolation | Isolated measurement types, churn degradation, memory leak detection, strictmode overhead |
 | index | Barrel re-export of all public API |
 
 ## Stack
 TypeScript, pnpm, Playwright, Vite, TS Compiler API, Node ≥20, vitest.
+
+## Tests
+Current suite: 1242 unit + 153 e2e (vitest; e2e drives real Chromium). Per-milestone "N new tests" notes below are historical; this line is the source of truth.
 
 ## Milestones
 
@@ -146,7 +150,7 @@ CDP trace capture during mount/unmount across prop combinations. 4× CPU throttl
 - Parameterized fixtures: fixture exports `scale(n: number) => JSX.Element` alongside `default`. Detection via `hasScaleExport()` regex with word boundary. Harness imports `scale` and dispatches via `__120fps_scaleN` prop.
 - Default scale points: `[1, 5, 20, 50]`. Override via `--scale 1,10,100` CLI flag.
 - Scaling curves computed for mount AND rerender across parameterized combos (`rerenderScalingCurve` on ComboReport).
-- `--threshold-rerender <ms>` CLI flag (default: 8ms). Rerender exceeding threshold → verdict `fail`.
+- `--threshold-rerender <ms>` CLI flag (default: `DEFAULT_THRESHOLDS.rerenderMs`, currently 16ms). Rerender exceeding threshold → verdict `fail`.
 - `Report.thresholds.rerenderMs`, `ComboReport.rerenderScalingCurve`.
 - See `specs/milestones/m8-rerender-scaling.md`. 34 new tests (413 total).
 
@@ -175,12 +179,12 @@ CDP trace capture during mount/unmount across prop combinations. 4× CPU throttl
 
 **Scope**:
 - New module `src/stress-patterns.ts`: `StressPattern`, `StressStep` types, `resolveStressPattern()` pure dispatch, `executeStressPattern()` runner, `findAriaGroupSiblings()`.
-- Pattern library: rapid-toggle-10, keyboard-sweep, hover-sweep, open-close-10, multi-keystroke, single-shot (fallback).
+- Pattern library: rapid-toggle-11, keyboard-sweep, hover-sweep, open-close-10, multi-keystroke, single-shot (fallback).
 - Sibling detection via ARIA container queries (`[role=tablist]`, `[role=listbox]`, etc.).
 - Explorer integration: replaces single-shot exercise in trace capture.
 - `StateEdge.stressPattern?` and `InteractionReport.stressPattern?` fields.
 - Terminal table shows pattern name in parentheses after interaction label when not `"single-shot"`.
-- Backward-compatible: components without ARIA roles get single-shot (identical to M9).
+- Fallback: descriptors that match no pattern rule (neither drag, sweep, portal, type, nor click) get single-shot. Click descriptors always get rapid-toggle-11 (odd click count so binary toggles end opposite their initial state, preserving M4 state discovery).
 - See `specs/milestones/m10-interaction-stress-patterns.md`. 50 new tests (520 total: 371 unit + 149 e2e).
 
 **Does NOT include**: custom user-defined stress patterns or pattern configuration.
@@ -310,7 +314,7 @@ CDP trace capture during mount/unmount across prop combinations. 4× CPU throttl
 **Builds on M2** (mount measurement), **M5** (CDP traces), **M6** (report), **M8** (rerender).
 
 **Scope**:
-- Framework auto-detection: `detectFramework(entryContent)` scans harness entry for `react-dom` import. `--framework react|vanilla|auto` CLI flag (default: `auto`).
+- Framework auto-detection: `detectFramework(projectRoot)` returns `"react"` iff `react`/`react-dom` is in the project package.json dependencies/devDependencies/peerDependencies (default `"react"` when unreadable). `--framework react|vanilla|auto` CLI flag (default: `auto`).
 - React DevTools profiler hook injection via `Page.addScriptToEvaluateOnNewDocument`. `PROFILER_HOOK_SCRIPT` captures per-fiber render counts and durations per commit via `onCommitFiberRoot`. No external dependencies.
 - Memo bailout detection: mount → rerender same props → snapshot A → rerender same props → snapshot B → `diffSnapshots` → `detectMemoBailouts` returns components that failed to bail out.
 - Context fan-out detection: probe entry wraps component in `__120fpsContextProbe` synthetic context provider → `forceContextUpdate()` → diff fiber renders → `detectContextFanOut` returns components re-rendering on unrelated context changes.
@@ -364,7 +368,7 @@ CDP trace capture during mount/unmount across prop combinations. 4× CPU throttl
 - `MatrixReport` type with `MatrixCell[]` per-prop-value entries (mount/rerender timing, delta from baseline).
 - `Report.matrixReport?` field. Terminal table shows prop×value cost matrix.
 - `--no-matrix` disables auto-activation. Mutually exclusive with `--curve` and `--isolate`.
-- See `specs/milestones/m21-prop-variation-matrix.md`. 74 new tests (1085 total: 936 unit + 149 e2e).
+- See `specs/milestones/m21-prop-variation-matrix.md`. 74 new tests.
 
 **Does NOT include**: cross-prop interaction effects, matrix mode for fixtures.
 
@@ -384,7 +388,7 @@ CDP trace capture during mount/unmount across prop combinations. 4× CPU throttl
 
 **Does NOT include**: baseline diffing across branches, GitHub PR comment integration.
 
-### M23 — isolated measurements (done)
+### M23 — isolated measurements (partial)
 **Goal**: Independent micro-benchmarks for each lifecycle phase (mount, rerender, unmount, memory, strictmode), comparable to hand-authored vitest bench suites.
 
 **Builds on M8** (rerender), **M2** (mount), **M5** (CDP tracing), **M13** (tiered budgets).
@@ -396,9 +400,16 @@ CDP trace capture during mount/unmount across prop combinations. 4× CPU throttl
 - StrictMode comparison: interleaved normal/strict sampling, overhead percentage, `doubleInvokeClean` (≤110%).
 - `--memory-cycles <N>` override (default 20). Mutually exclusive with `--curve` and `--matrix`.
 - `Report.isolation?` field with per-phase results. New module: `src/isolation.ts`.
-- See `specs/milestones/m23-isolated-measurements.md`. 63 new tests (1085 total: 936 unit + 149 e2e).
+- See `specs/milestones/m23-isolated-measurements.md`. 63 new tests.
 
 **Does NOT include**: isolation modes combined with curve/matrix, concurrent phase execution.
+
+**Status (as of M24 audit)**: CLI parsing/validation (`--isolate`, `--memory-cycles`, `--no-isolate`), pure computation helpers (`src/isolation.ts`), and report formatting exist and are tested. The browser execution pipeline is NOT wired into `analyze()` — `AnalyzeOptions.isolation` is accepted but unused and `Report.isolation` is never populated. `--isolate` currently validates its input and then runs the standard pipeline. Completing the execution pipeline is open work.
+
+### M24 — debt remediation (done)
+**Goal**: Fix audit debt; no new product features beyond the unfulfilled M22 multi-path promise.
+
+**Scope**: tsconfig reading unified on the TS API (`extends`/JSONC in harness aliases); export detection unified on a shared AST walker (`scanExports`) with selection order default > file-stem match > first PascalCase export; `--no-isolate` wired (overrides `--isolate`); `detectFramework(projectRoot)` reads package.json; `src/page-errors.ts` — harness-init timeouts now carry captured page errors; silent degradations warn (tsconfig parse errors, unsupported baseline version, missing baseline interactions via `BaselineComparison.missingInteractions`, zero-props hint via `Report.warnings`); config/baseline resolved from nearest package.json root with repo-relative keys; stale `.120fps-harness-*` dirs swept after 1h; multi-component CLI paths per M22; packaging/docs sync. See `specs/milestones/m24-debt-remediation.md`.
 
 ## Risks
 | risk | mitigation |

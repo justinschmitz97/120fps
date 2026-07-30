@@ -32,6 +32,7 @@ export interface CliArgs {
   budget?: boolean;
   noBaseline?: boolean;
   componentPaths?: string[];
+  jsonExplicit?: boolean;
   isolate?: string[];
   memoryCycles?: number;
   noIsolate?: boolean;
@@ -40,7 +41,7 @@ export interface CliArgs {
   error?: string;
 }
 
-const KNOWN_FLAGS = new Set([
+export const KNOWN_FLAGS = new Set([
   "--json",
   "--ci",
   "--samples",
@@ -246,6 +247,7 @@ export function parseArgs(argv: string[]): CliArgs {
         return result;
       }
       result.jsonPath = argv[++i];
+      result.jsonExplicit = true;
       i++;
       continue;
     }
@@ -350,11 +352,20 @@ export function parseArgs(argv: string[]): CliArgs {
   }
 
   if (!result.help && !result.version && !result.componentPath) {
-    result.error = "Missing component path. Usage: 120fps <component.tsx> [options]";
+    result.error = "Missing component path. Usage: 120fps <component.tsx> [more.tsx ...] [options]";
   }
 
   if (result.fixturePath && !result.componentPath) {
     result.error = "--fixture requires a component path";
+  }
+
+  if (!result.error && result.componentPaths && result.componentPaths.length > 1) {
+    if (result.fixturePath) {
+      result.error = "--fixture supports a single component path";
+    } else if (result.jsonExplicit) {
+      result.error =
+        "--json with multiple component paths is ambiguous; omit it to write 120fps-report.<name>.json per component";
+    }
   }
 
   if (!result.error && result.isolate && result.curve) {
@@ -372,8 +383,27 @@ function parseCurveArg(arg: string): { propName: string; propKind: "array" | "nu
   return { propName, propKind: propKind as "array" | "number" };
 }
 
-function printHelp(): void {
-  process.stdout.write(`Usage: 120fps <component.tsx> [options]
+export function resolveIsolationOption(
+  args: Pick<CliArgs, "isolate" | "noIsolate" | "memoryCycles">,
+): { phases: string[]; memoryCycles?: number } | undefined {
+  if (!args.isolate || args.noIsolate) return undefined;
+  return { phases: args.isolate, memoryCycles: args.memoryCycles };
+}
+
+export function formatCliError(err: unknown, debugEnv: string | undefined): string {
+  const message = err instanceof Error ? err.message : String(err);
+  let out = `Error: ${message}\n`;
+  if (/Executable doesn't exist|playwright install/i.test(message)) {
+    out += "Hint: run `npx playwright install chromium`\n";
+  }
+  if (debugEnv !== undefined && debugEnv.includes("120fps") && err instanceof Error && err.stack) {
+    out += err.stack + "\n";
+  }
+  return out;
+}
+
+export function helpText(): string {
+  return `Usage: 120fps <component.tsx> [more.tsx ...] [options]
 
 Options:
   --fixture <path>               Fixture file for composed component measurement
@@ -381,6 +411,7 @@ Options:
   --ci                           CI mode: JSON-only output, exit 1 on fail
   --samples <n>                  Sample count per measurement (default: 10)
   --scale <n,n,...>              Scale points for parameterized fixtures (default: 1,5,20,50)
+  --no-deltas                    Skip pairwise prop delta analysis
   --no-auto-scale                Disable auto-scaling prop detection
   --no-attribution               Disable cost attribution analysis
   --no-auto-compose              Disable auto-composition inference
@@ -397,14 +428,35 @@ Options:
   --no-baseline                  Skip baseline comparison in CI mode
   --isolate <phases>             Isolated measurement: mount,rerender,unmount,memory,strictmode,all
   --memory-cycles <n>            Mount/unmount cycles for memory mode (default: 20)
-  --no-isolate                   Disable isolation mode
+  --no-isolate                   Disable isolation mode (overrides --isolate)
   --no-shims                     Disable Next.js module shims
   --threshold-mount <ms>         Mount time threshold (default: ${DEFAULT_THRESHOLDS.mountMs})
   --threshold-interaction <ms>   Interaction time threshold (default: ${DEFAULT_THRESHOLDS.interactionMs})
   --threshold-rerender <ms>      Rerender time threshold (default: ${DEFAULT_THRESHOLDS.rerenderMs})
   --help                         Show this help
   --version                      Print version
-`);
+`;
+}
+
+function printHelp(): void {
+  process.stdout.write(helpText());
+}
+
+export function defaultJsonPathFor(componentPath: string): string {
+  const normalized = componentPath.replace(/\\/g, "/");
+  const base = normalized.slice(normalized.lastIndexOf("/") + 1);
+  const stem = base.replace(/\.[^.]+$/, "");
+  return `120fps-report.${stem}.json`;
+}
+
+export function resolveReportPaths(componentPaths: string[]): string[] {
+  const seen = new Map<string, number>();
+  return componentPaths.map((p) => {
+    const base = defaultJsonPathFor(p);
+    const count = seen.get(base) ?? 0;
+    seen.set(base, count + 1);
+    return count === 0 ? base : base.replace(/\.json$/, `-${count + 1}.json`);
+  });
 }
 
 async function main(): Promise<void> {
@@ -431,9 +483,13 @@ async function main(): Promise<void> {
     process.exit(2);
   }
 
-  if (!fs.existsSync(path.resolve(args.componentPath!))) {
-    process.stderr.write(`Error: File not found: ${args.componentPath}\n`);
-    process.exit(2);
+  const componentPaths = args.componentPaths ?? [args.componentPath!];
+
+  for (const componentPath of componentPaths) {
+    if (!fs.existsSync(path.resolve(componentPath))) {
+      process.stderr.write(`Error: File not found: ${componentPath}\n`);
+      process.exit(2);
+    }
   }
 
   if (args.fixturePath && !fs.existsSync(path.resolve(args.fixturePath))) {
@@ -441,10 +497,42 @@ async function main(): Promise<void> {
     process.exit(2);
   }
 
-  try {
-    const report = await analyze(args.componentPath!, {
+  const multi = componentPaths.length > 1;
+  const reportPaths = multi ? resolveReportPaths(componentPaths) : [args.jsonPath];
+  let anyFail = false;
+
+  for (let idx = 0; idx < componentPaths.length; idx++) {
+    const componentPath = componentPaths[idx];
+    if (multi && !args.ci) {
+      process.stdout.write(`\n=== ${componentPath} ===\n`);
+    }
+    try {
+      const report = await runOne(componentPath, reportPaths[idx], args);
+      if (!args.ci) {
+        process.stdout.write(formatTable(report) + "\n");
+      }
+      if (!report.pass) anyFail = true;
+    } catch (err: unknown) {
+      if (!multi) {
+        process.stderr.write(formatCliError(err, process.env.DEBUG));
+        process.exit(2);
+      }
+      anyFail = true;
+      process.stderr.write(`[${componentPath}] ` + formatCliError(err, process.env.DEBUG));
+    }
+  }
+
+  process.exit(anyFail ? 1 : 0);
+}
+
+async function runOne(
+  componentPath: string,
+  jsonPath: string,
+  args: CliArgs,
+): Promise<import("./report.js").Report> {
+  return analyze(componentPath, {
       samples: args.samples,
-      jsonPath: args.jsonPath,
+      jsonPath,
       ci: args.ci,
       fixturePath: args.fixturePath,
       scalePoints: args.scale,
@@ -461,7 +549,7 @@ async function main(): Promise<void> {
       saveBaseline: args.saveBaseline,
       check: args.check,
       noBaseline: args.noBaseline,
-      isolation: args.isolate ? { phases: args.isolate, memoryCycles: args.memoryCycles } : undefined,
+      isolation: resolveIsolationOption(args),
       thresholds: {
         ...(args.thresholdMount !== undefined
           ? { mountMs: args.thresholdMount }
@@ -474,16 +562,6 @@ async function main(): Promise<void> {
           : {}),
       },
     });
-
-    if (!args.ci) {
-      process.stdout.write(formatTable(report) + "\n");
-    }
-
-    process.exit(report.pass ? 0 : 1);
-  } catch (err: any) {
-    process.stderr.write(`Error: ${err.message}\n`);
-    process.exit(2);
-  }
 }
 
 const isDirectRun =

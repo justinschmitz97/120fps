@@ -1,6 +1,10 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import {
   detectFramework,
+  detectDurationsUnavailable,
   diffSnapshots,
   detectMemoBailouts,
   detectContextFanOut,
@@ -48,33 +52,96 @@ function makeSnapshot(
 // ====================================================================
 
 describe("detectFramework", () => {
-  it("returns 'react' when entry contains react-dom/client import", () => {
-    const entry = `import { createRoot } from "react-dom/client";`;
-    expect(detectFramework(entry)).toBe("react");
+  const tmpDirs: string[] = [];
+
+  function makeProject(pkgJson: string | null): string {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "120fps-framework-"));
+    tmpDirs.push(dir);
+    if (pkgJson !== null) {
+      fs.writeFileSync(path.join(dir, "package.json"), pkgJson);
+    }
+    return dir;
+  }
+
+  afterEach(() => {
+    for (const dir of tmpDirs.splice(0)) {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
-  it("returns 'react' when entry contains react-dom import", () => {
-    const entry = `import ReactDOM from "react-dom";`;
-    expect(detectFramework(entry)).toBe("react");
+  it("returns 'react' when react is in dependencies", () => {
+    const dir = makeProject(JSON.stringify({ dependencies: { react: "^19.0.0" } }));
+    expect(detectFramework(dir)).toBe("react");
   });
 
-  it("returns 'vanilla' when entry has no react-dom", () => {
-    const entry = `const app = document.getElementById("root");`;
-    expect(detectFramework(entry)).toBe("vanilla");
+  it("returns 'react' when react-dom is in devDependencies", () => {
+    const dir = makeProject(JSON.stringify({ devDependencies: { "react-dom": "^19.0.0" } }));
+    expect(detectFramework(dir)).toBe("react");
   });
 
-  it("returns 'vanilla' for empty string", () => {
-    expect(detectFramework("")).toBe("vanilla");
+  it("returns 'react' when react is in peerDependencies", () => {
+    const dir = makeProject(JSON.stringify({ peerDependencies: { react: ">=18" } }));
+    expect(detectFramework(dir)).toBe("react");
   });
 
-  it("detects react-dom in require() calls", () => {
-    const entry = `const ReactDOM = require("react-dom");`;
-    expect(detectFramework(entry)).toBe("react");
+  it("returns 'vanilla' when neither react nor react-dom is declared", () => {
+    const dir = makeProject(JSON.stringify({ dependencies: { lodash: "^4.0.0" } }));
+    expect(detectFramework(dir)).toBe("vanilla");
   });
 
-  it("detects react-dom in dynamic import", () => {
-    const entry = `const mod = await import("react-dom/client");`;
-    expect(detectFramework(entry)).toBe("react");
+  it("returns 'vanilla' for a package.json with no dependency sections", () => {
+    const dir = makeProject(JSON.stringify({ name: "plain" }));
+    expect(detectFramework(dir)).toBe("vanilla");
+  });
+
+  it("returns 'react' when package.json is missing", () => {
+    const dir = makeProject(null);
+    expect(detectFramework(dir)).toBe("react");
+  });
+
+  it("returns 'react' when package.json is malformed JSON", () => {
+    const dir = makeProject("{ not valid json !!");
+    expect(detectFramework(dir)).toBe("react");
+  });
+
+  it("returns 'react' for a nonexistent projectRoot path", () => {
+    expect(detectFramework(path.join(os.tmpdir(), "120fps-does-not-exist-xyz"))).toBe("react");
+  });
+});
+
+// ====================================================================
+// detectDurationsUnavailable
+// ====================================================================
+
+describe("detectDurationsUnavailable", () => {
+  it("returns true when all fibers have duration 0", () => {
+    const snap = makeSnapshot([
+      ["f1", makeFiber({ actualDurationMs: 0 })],
+      ["f2", makeFiber({ actualDurationMs: 0 })],
+    ]);
+    expect(detectDurationsUnavailable(snap)).toBe(true);
+  });
+
+  it("returns true when all fibers have undefined duration", () => {
+    const snap = {
+      fibers: new Map([
+        ["f1", { actualDurationMs: undefined }],
+        ["f2", { actualDurationMs: undefined }],
+      ]),
+    };
+    expect(detectDurationsUnavailable(snap)).toBe(true);
+  });
+
+  it("returns false when at least one fiber has a positive duration", () => {
+    const snap = makeSnapshot([
+      ["f1", makeFiber({ actualDurationMs: 0 })],
+      ["f2", makeFiber({ actualDurationMs: 1.5 })],
+    ]);
+    expect(detectDurationsUnavailable(snap)).toBe(false);
+  });
+
+  it("returns false for an empty snapshot (0 fibers)", () => {
+    expect(detectDurationsUnavailable(makeSnapshot())).toBe(false);
   });
 });
 

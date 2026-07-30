@@ -15,24 +15,24 @@ function makeDescriptor(
 }
 
 describe("H1: aria-haspopup descriptor without triggeredBy or dialog role", () => {
-  it("descriptor with portal:true and click type falls through to rapid-toggle-10 (portal flag alone is not a trigger signal)", () => {
+  it("descriptor with portal:true and click type falls through to rapid-toggle-11 (portal flag alone is not a trigger signal)", () => {
     const desc = makeDescriptor({ type: "click", portal: true });
     const pattern = resolveStressPattern(desc);
-    expect(pattern.name).toBe("rapid-toggle-10");
+    expect(pattern.name).toBe("rapid-toggle-11");
   });
 });
 
 describe("H2: accordion role falls through to type-based pattern", () => {
-  it("accordion role + click type → rapid-toggle-10 (not keyboard-sweep)", () => {
+  it("accordion role + click type → rapid-toggle-11 (not keyboard-sweep)", () => {
     const desc = makeDescriptor({ type: "click", role: "accordion" });
     const pattern = resolveStressPattern(desc);
-    expect(pattern.name).toBe("rapid-toggle-10");
+    expect(pattern.name).toBe("rapid-toggle-11");
   });
 
   it("accordion role with siblings still not keyboard-sweep", () => {
     const desc = makeDescriptor({ type: "click", role: "accordion" });
     const pattern = resolveStressPattern(desc, ["button:nth-of-type(1)"]);
-    expect(pattern.name).toBe("rapid-toggle-10");
+    expect(pattern.name).toBe("rapid-toggle-11");
   });
 });
 
@@ -105,11 +105,11 @@ describe("H8: multi-keystroke always has exactly 11 steps", () => {
   });
 });
 
-describe("H9: rapid-toggle-10 always has exactly 10 steps", () => {
-  it("10 click steps", () => {
+describe("H9: rapid-toggle-11 always has exactly 11 steps", () => {
+  it("11 click steps", () => {
     const desc = makeDescriptor({ type: "click", selector: "#btn" });
     const pattern = resolveStressPattern(desc);
-    expect(pattern.steps).toHaveLength(10);
+    expect(pattern.steps).toHaveLength(11);
     for (const step of pattern.steps) {
       expect(step.action).toBe("click");
     }

@@ -105,6 +105,7 @@ M13 (tiered budgets: `TIER_BUDGETS`, `classifyTier`, `computeVerdict`). M6 (CLI 
     hasBaseline: boolean;
     regressions: Regression[];
     improvements: Improvement[];
+    missingInteractions: string[]; // baseline interactions absent from the current run — warned, never FAIL
   }
 
   interface Regression {
@@ -123,8 +124,9 @@ M13 (tiered budgets: `TIER_BUDGETS`, `classifyTier`, `computeVerdict`). M6 (CLI 
   }
   ```
 - Config loading: `loadBudgetConfig(projectRoot: string): BudgetConfig | null`. Returns null when file doesn't exist.
-- Baseline loading: `loadBaseline(projectRoot: string): Baseline | null`.
-- Baseline saving: `saveBaseline(projectRoot: string, entry: BaselineEntry, componentPath: string): void`. Merge-writes.
+- Baseline loading: `loadBaseline(baselinePath: string): Baseline | null`. Unsupported `version` → stderr warning + null.
+- Baseline saving: `saveBaseline(baselinePath: string, entry: BaselineEntry, componentPath: string): void`. Merge-writes.
+- Project root for both files: nearest ancestor of the component containing `package.json` (fallback: component dir). Entry keys: component path relative to that root (`"./components/ui/Button.tsx"`).
 
 ### MUST NOT
 
@@ -215,7 +217,7 @@ When curve mode is active AND baseline exists, regression is checked at the high
 
 1. Should baseline be committed to git? Decision: yes, recommend committing `120fps-baseline.json`. It's machine-normalized via percentage tolerance so cross-machine comparison works.
 2. Should `--save-baseline` require all tests passing first? Decision: no — allow saving baseline even on FAIL to establish a new baseline after intentional cost increases.
-3. Monorepo support: config/baseline per-package? Decision: defer. Config/baseline are always at `process.cwd()` (project root from which 120fps is invoked).
+3. Monorepo support: config/baseline per-package? Decision (revised in M24): config/baseline live at the nearest ancestor of the component containing `package.json` — in a monorepo that is the workspace package root, matching harness dependency resolution.
 
 ## Test count
 

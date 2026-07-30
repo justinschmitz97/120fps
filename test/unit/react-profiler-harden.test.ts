@@ -1,6 +1,10 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import {
   detectFramework,
+  detectDurationsUnavailable,
   diffSnapshots,
   detectMemoBailouts,
   detectContextFanOut,
@@ -260,13 +264,79 @@ describe("H12: render attribution selfDuration clamp", () => {
   });
 });
 
-describe("H13: detectFramework with minified react-dom", () => {
-  it("detects react-dom in minified import", () => {
-    expect(detectFramework(`import{createRoot}from"react-dom/client"`)).toBe("react");
+describe("H13: detectFramework edge-case package.json contents", () => {
+  const tmpDirs: string[] = [];
+
+  function makeProject(pkgJson: string): string {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "120fps-fw-harden-"));
+    tmpDirs.push(dir);
+    fs.writeFileSync(path.join(dir, "package.json"), pkgJson);
+    return dir;
+  }
+
+  afterEach(() => {
+    for (const dir of tmpDirs.splice(0)) {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
-  it("detects react-dom in Vite pre-bundled path", () => {
-    expect(detectFramework(`from ".vite/deps/react-dom_client.js"`)).toBe("react");
+  it("react mentioned only outside dependency sections -> vanilla", () => {
+    const dir = makeProject(JSON.stringify({
+      name: "not-react",
+      scripts: { build: "react-scripts build" },
+      exports: { "./react": "./dist/react.js" },
+    }));
+    expect(detectFramework(dir)).toBe("vanilla");
+  });
+
+  it("monorepo subdir without react in its own package.json -> vanilla (no upward walk)", () => {
+    const root = makeProject(JSON.stringify({ dependencies: { react: "^19.0.0" } }));
+    const sub = path.join(root, "packages", "utils");
+    fs.mkdirSync(sub, { recursive: true });
+    fs.writeFileSync(
+      path.join(sub, "package.json"),
+      JSON.stringify({ name: "utils", dependencies: { lodash: "^4.0.0" } }),
+    );
+    expect(detectFramework(sub)).toBe("vanilla");
+  });
+
+  it("valid JSON that is not an object -> react (treated as unparseable)", () => {
+    expect(detectFramework(makeProject('"just a string"'))).toBe("react");
+    expect(detectFramework(makeProject("null"))).toBe("react");
+  });
+
+  it("react-lookalike dependency names do not count", () => {
+    const dir = makeProject(JSON.stringify({
+      dependencies: { "react-native": "0.75.0", preact: "^10.0.0", "@types/react-dom-mock": "1.0.0" },
+    }));
+    expect(detectFramework(dir)).toBe("vanilla");
+  });
+
+  it("dependency sections with non-object values -> react (defensive)", () => {
+    const dir = makeProject(JSON.stringify({ dependencies: "react" }));
+    expect(detectFramework(dir)).toBe("react");
+  });
+});
+
+describe("H16: detectDurationsUnavailable edge durations", () => {
+  it("negative duration counts as available (false)", () => {
+    const snap = makeSnapshot([["f1", makeFiber({ actualDurationMs: -1 })]]);
+    expect(detectDurationsUnavailable(snap)).toBe(false);
+  });
+
+  it("single fiber at exactly 0 -> true", () => {
+    const snap = makeSnapshot([["f1", makeFiber({ actualDurationMs: 0 })]]);
+    expect(detectDurationsUnavailable(snap)).toBe(true);
+  });
+
+  it("mixed undefined and positive -> false", () => {
+    const snap = {
+      fibers: new Map<string, { actualDurationMs?: number }>([
+        ["f1", { actualDurationMs: undefined }],
+        ["f2", { actualDurationMs: 0.2 }],
+      ]),
+    };
+    expect(detectDurationsUnavailable(snap)).toBe(false);
   });
 });
 

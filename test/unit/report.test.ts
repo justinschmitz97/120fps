@@ -222,7 +222,7 @@ describe("formatTable", () => {
         label: "Toggle",
         timing: { samples: [10], median: 10, p95: 12, cv: 0, unstable: false },
         relativeTiming: 1.0,
-        stressPattern: "rapid-toggle-10",
+        stressPattern: "rapid-toggle-11",
       },
     ];
     const r = makeReport({
@@ -234,7 +234,7 @@ describe("formatTable", () => {
       }],
     });
     const table = formatTable(r);
-    expect(table).toContain("(rapid-toggle-10)");
+    expect(table).toContain("(rapid-toggle-11)");
   });
 
   it("does not show pattern name for single-shot interactions", () => {

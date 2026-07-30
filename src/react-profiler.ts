@@ -4,6 +4,7 @@ import { chromium, type Browser, type CDPSession, type Page } from "playwright";
 import type { HarnessResult } from "./harness.js";
 import type { PropCombination } from "./prop-gen-values.js";
 import { collectTrace, parseTraceDuration, tryCollectGarbage, computeMedian } from "./measure.js";
+import { attachPageErrorCapture, enrichTimeoutError } from "./page-errors.js";
 
 export interface FiberInfo {
   name: string;
@@ -42,11 +43,34 @@ export interface ReactOptimizations {
   callbackIdentityDeltas?: CallbackIdentityDelta[];
   portalOrphans?: number;
   renderAttribution?: RenderAttribution[];
+  durationsUnavailable?: boolean;
 }
 
-export function detectFramework(entryContent: string): "react" | "vanilla" {
-  if (/react-dom/.test(entryContent)) return "react";
-  return "vanilla";
+export function detectDurationsUnavailable(snapshot: {
+  fibers: Map<string, { actualDurationMs?: number }>;
+}): boolean {
+  if (snapshot.fibers.size === 0) return false;
+  for (const fiber of snapshot.fibers.values()) {
+    const d = fiber.actualDurationMs;
+    if (d !== undefined && d !== 0) return false;
+  }
+  return true;
+}
+
+export function detectFramework(projectRoot: string): "react" | "vanilla" {
+  try {
+    const raw = fs.readFileSync(path.join(projectRoot, "package.json"), "utf-8");
+    const pkg = JSON.parse(raw);
+    if (typeof pkg !== "object" || pkg === null) return "react";
+    for (const section of [pkg.dependencies, pkg.devDependencies, pkg.peerDependencies]) {
+      if (section == null) continue;
+      if (typeof section !== "object") return "react";
+      if ("react" in section || "react-dom" in section) return "react";
+    }
+    return "vanilla";
+  } catch {
+    return "react";
+  }
 }
 
 export function diffSnapshots(
@@ -437,23 +461,17 @@ export async function runReactAnalysis(
 
     await injectProfilerHook(cdp);
 
-    const pageErrors: string[] = [];
-    page.on("pageerror", (err) => pageErrors.push(err.message));
-    page.on("console", (msg) => {
-      if (msg.type() === "error") pageErrors.push(msg.text());
-    });
+    const errorCapture = attachPageErrorCapture(page);
 
     await page.goto(probeUrl, { timeout: 30000 });
     try {
       await page.waitForFunction(
         () => typeof (window as any).__120fps === "object",
+        undefined,
         { timeout: 30000 },
       );
-    } catch (waitErr: any) {
-      const errDetail = pageErrors.length > 0
-        ? `Browser errors: ${pageErrors.join("; ")}`
-        : "No browser errors captured";
-      throw new Error(`React probe failed to load (${errDetail}): ${waitErr.message}`);
+    } catch (waitErr) {
+      throw enrichTimeoutError(waitErr, errorCapture, "react analysis harness");
     }
 
     await cdp.send("Emulation.setCPUThrottlingRate", { rate: cpuThrottle });
@@ -559,6 +577,7 @@ export async function runReactAnalysis(
       if (callbackIdentityDeltas.length > 0) opts.callbackIdentityDeltas = callbackIdentityDeltas;
       if (portalOrphans > 0) opts.portalOrphans = portalOrphans;
       if (renderAttribution.length > 0) opts.renderAttribution = renderAttribution;
+      if (detectDurationsUnavailable(fullSnap)) opts.durationsUnavailable = true;
 
       results.set(ci, opts);
     }

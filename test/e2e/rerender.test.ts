@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { analyze } from "../../src/analyze.js";
+import { DEFAULT_THRESHOLDS } from "../../src/report.js";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
@@ -45,7 +46,7 @@ describe("rerender e2e", () => {
 
     const parsed = JSON.parse(fs.readFileSync(jsonPath, "utf-8"));
     expect(parsed.combos[0].rerender).toBeDefined();
-    expect(parsed.thresholds.rerenderMs).toBe(8);
+    expect(parsed.thresholds.rerenderMs).toBe(DEFAULT_THRESHOLDS.rerenderMs);
 
     fs.unlinkSync(jsonPath);
   }, 120_000);

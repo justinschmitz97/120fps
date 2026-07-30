@@ -27,7 +27,7 @@ M9 (portal-aware discovery). Discovery already categorizes descriptors with `typ
   2. `type === "hover"` AND `siblingSelectors.length > 0` → **hover-sweep**: hover each sibling sequentially.
   3. Descriptor triggers a portal (`role === "dialog"` or `triggeredBy` set) → **open-close-10**: 10 cycles of click-open then click-close. Note: `aria-haspopup="dialog"` is mapped to `role: "dialog"` by discovery's `inferAriaRole`.
   4. `type === "type"` → **multi-keystroke**: focus, type `"abcde12345"` one key at a time.
-  5. `type === "click"` → **rapid-toggle-10**: 10 clicks on same selector.
+  5. `type === "click"` → **rapid-toggle-11**: 11 clicks on same selector (odd count so binary toggles end opposite their initial state — required by M4 state discovery).
   6. All others → **single-shot**: one exercise (matches current M9 behavior).
 - Explorer calls `resolveStressPattern` for each interaction during edge exploration. The full pattern executes inside the CDP trace capture, replacing the current single `exerciseInteraction` call. Each of the N samples executes the full pattern.
 - Sibling detection: `findAriaGroupSiblings` queries the page for siblings within ARIA containers:
@@ -64,7 +64,7 @@ resolveStressPattern(descriptor, siblingSelectors?)
   2. Check type=hover → hover-sweep (if siblings available)
   3. Check portal trigger → open-close-10
   4. Check type=type → multi-keystroke
-  5. Check type=click → rapid-toggle-10
+  5. Check type=click → rapid-toggle-11
   6. Fallback → single-shot
 ```
 
@@ -105,7 +105,7 @@ Double-rAF settle (`page.evaluate(() => new Promise(r => requestAnimationFrame((
 
 ### Report
 
-`InteractionReport.stressPattern` passes through from `StateEdge.stressPattern`. `formatTable` appends ` (rapid-toggle-10)` etc.
+`InteractionReport.stressPattern` passes through from `StateEdge.stressPattern`. `formatTable` appends ` (rapid-toggle-11)` etc.
 
 ## Test count
 

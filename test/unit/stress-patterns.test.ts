@@ -71,10 +71,10 @@ describe("resolveStressPattern dispatch", () => {
     expect(pattern.name).toBe("multi-keystroke");
   });
 
-  it("type=click → rapid-toggle-10", () => {
+  it("type=click → rapid-toggle-11", () => {
     const desc = makeDescriptor({ type: "click" });
     const pattern = resolveStressPattern(desc);
-    expect(pattern.name).toBe("rapid-toggle-10");
+    expect(pattern.name).toBe("rapid-toggle-11");
   });
 
   it("type=focus → single-shot fallback", () => {
@@ -105,16 +105,16 @@ describe("resolveStressPattern priority", () => {
     expect(pattern.name).toBe("keyboard-sweep");
   });
 
-  it("tab role without siblings falls through to rapid-toggle-10 (click type)", () => {
+  it("tab role without siblings falls through to rapid-toggle-11 (click type)", () => {
     const desc = makeDescriptor({ type: "click", role: "tab" });
     const pattern = resolveStressPattern(desc, []);
-    expect(pattern.name).toBe("rapid-toggle-10");
+    expect(pattern.name).toBe("rapid-toggle-11");
   });
 
-  it("tab role without siblings arg falls through to rapid-toggle-10", () => {
+  it("tab role without siblings arg falls through to rapid-toggle-11", () => {
     const desc = makeDescriptor({ type: "click", role: "tab" });
     const pattern = resolveStressPattern(desc);
-    expect(pattern.name).toBe("rapid-toggle-10");
+    expect(pattern.name).toBe("rapid-toggle-11");
   });
 
   it("hover without siblings falls through to single-shot", () => {
@@ -190,12 +190,12 @@ describe("multi-keystroke steps", () => {
   });
 });
 
-describe("rapid-toggle-10 steps", () => {
-  it("has 10 click steps on same selector", () => {
+describe("rapid-toggle-11 steps", () => {
+  it("has 11 click steps on same selector", () => {
     const desc = makeDescriptor({ type: "click", selector: "#toggle" });
     const pattern = resolveStressPattern(desc);
 
-    expect(pattern.steps).toHaveLength(10);
+    expect(pattern.steps).toHaveLength(11);
     for (const step of pattern.steps) {
       expect(step).toEqual({ action: "click", selector: "#toggle" });
     }

@@ -179,6 +179,7 @@ export interface BaselineComparison {
   hasBaseline: boolean;
   regressions: Regression[];
   improvements: Improvement[];
+  missingInteractions?: string[];
 }
 
 export interface Report {
@@ -204,6 +205,7 @@ export interface Report {
   matrixReport?: MatrixReport;
   baseline?: BaselineComparison;
   isolation?: import("./isolation.js").IsolationReport;
+  warnings?: string[];
 }
 
 export function computeCV(samples: number[]): number {
@@ -354,6 +356,9 @@ export function formatTable(report: Report): string {
       if (reactCombos.length > 1) {
         lines.push(`  Combo #${combo.comboIndex}:`);
       }
+      if (opts.durationsUnavailable) {
+        lines.push("  Note: profiler durations unavailable — memo/context findings may be unreliable");
+      }
       if (opts.memoBailout && opts.memoBailoutComponents?.length) {
         lines.push(`  Memo bailout: ${opts.memoBailoutComponents.join(", ")}`);
       }
@@ -404,6 +409,12 @@ export function formatTable(report: Report): string {
 
   if (hasUnstable) {
     lines.push("⚠ Unstable results (CV>15%) — consider increasing sample count");
+  }
+
+  if (report.warnings) {
+    for (const warning of report.warnings) {
+      lines.push(`⚠ ${warning}`);
+    }
   }
 
   const totalInteractions = report.combos.reduce((sum, c) => sum + c.interactions.length, 0);
@@ -499,24 +510,29 @@ function formatBaselineSection(lines: string[], comparison: BaselineComparison):
 
   if (allMetrics.size === 0) {
     lines.push("  All metrics within tolerance — OK");
-    return;
+  } else {
+    const header = padRow(["Metric", "Baseline", "Current", "Delta", "Status"], [14, 12, 12, 10, 30]);
+    lines.push(header);
+    lines.push("-".repeat(header.length));
+
+    for (const [metric, info] of allMetrics) {
+      const deltaStr = info.delta !== undefined ? `${info.delta >= 0 ? "+" : ""}${info.delta.toFixed(1)}%` : "-";
+      lines.push(padRow(
+        [metric, `${info.baseline?.toFixed(2)}ms`, `${info.current?.toFixed(2)}ms`, deltaStr, info.status],
+        [14, 12, 12, 10, 30],
+      ));
+    }
+
+    const regCount = comparison.regressions.length;
+    if (regCount > 0) {
+      lines.push(`  ${regCount} regression(s) detected`);
+    }
   }
 
-  const header = padRow(["Metric", "Baseline", "Current", "Delta", "Status"], [14, 12, 12, 10, 30]);
-  lines.push(header);
-  lines.push("-".repeat(header.length));
-
-  for (const [metric, info] of allMetrics) {
-    const deltaStr = info.delta !== undefined ? `${info.delta >= 0 ? "+" : ""}${info.delta.toFixed(1)}%` : "-";
-    lines.push(padRow(
-      [metric, `${info.baseline?.toFixed(2)}ms`, `${info.current?.toFixed(2)}ms`, deltaStr, info.status],
-      [14, 12, 12, 10, 30],
-    ));
-  }
-
-  const regCount = comparison.regressions.length;
-  if (regCount > 0) {
-    lines.push(`  ${regCount} regression(s) detected`);
+  if (comparison.missingInteractions && comparison.missingInteractions.length > 0) {
+    lines.push(
+      `  ⚠ Baseline interaction(s) not measured in this run: ${comparison.missingInteractions.join(", ")}`,
+    );
   }
 }
 

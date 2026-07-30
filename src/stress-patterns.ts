@@ -47,7 +47,7 @@ export function resolveStressPattern(
   }
 
   if (descriptor.type === "click") {
-    return buildRapidToggle10(descriptor.selector);
+    return buildRapidToggle11(descriptor.selector);
   }
 
   return buildSingleShot(descriptor);
@@ -103,12 +103,14 @@ function buildMultiKeystroke(selector: string): StressPattern {
   return { name: "multi-keystroke", steps };
 }
 
-function buildRapidToggle10(selector: string): StressPattern {
+// 11 clicks: odd count so binary toggles end opposite their initial state,
+// keeping explorer state discovery (M4) able to see the transition.
+function buildRapidToggle11(selector: string): StressPattern {
   const steps: StressStep[] = [];
-  for (let i = 0; i < 10; i++) {
+  for (let i = 0; i < 11; i++) {
     steps.push({ action: "click", selector });
   }
-  return { name: "rapid-toggle-10", steps };
+  return { name: "rapid-toggle-11", steps };
 }
 
 function buildPointerDrag(selector: string, direction: "horizontal" | "vertical"): StressPattern {

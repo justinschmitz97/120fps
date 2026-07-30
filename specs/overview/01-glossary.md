@@ -85,7 +85,7 @@ status: approved
 | resolveStressPattern | `resolveStressPattern(descriptor, siblingSelectors?)` → `StressPattern`. Pure dispatch: selects pattern by role+type+context. |
 | executeStressPattern | `executeStressPattern(page, pattern)` → `Promise<void>`. Runs stress steps in the browser with double-rAF settle between each. |
 | findAriaGroupSiblings | `findAriaGroupSiblings(page, descriptor)` → `Promise<string[]>`. Queries ARIA container parents to find sibling selectors. |
-| Stress pattern library | Seven patterns: pointer-drag, keyboard-sweep, hover-sweep, open-close-10, multi-keystroke, rapid-toggle-10, single-shot (fallback). Pointer-drag has highest dispatch priority. |
+| Stress pattern library | Seven patterns: pointer-drag, keyboard-sweep, hover-sweep, open-close-10, multi-keystroke, rapid-toggle-11, single-shot (fallback). Pointer-drag has highest dispatch priority. |
 | isDragTarget | `isDragTarget(descriptor)` → `boolean`. Pure detection: `role="slider"`, `inputType="range"`, `ariaValueNow`, cursor in `DRAG_CURSORS` (grab, col-resize, row-resize). |
 | DRAG_CURSORS | Set of CSS cursor values that trigger pointer-drag: `grab`, `col-resize`, `row-resize`. |
 | CostAttribution | `{ buckets: CostBucket[], unattributed: number }`. Result of `attributeCost()`. |
@@ -106,7 +106,7 @@ status: approved
 | ProfilerDiff | `{ rerenderFibers: { name, renderCountDelta }[] }`. Diff between two profiler snapshots. |
 | RenderAttribution | `{ component, renderCount, totalDurationMs, selfDurationMs }`. Per-component render cost breakdown. |
 | CallbackIdentityDelta | `{ propName, deltaMs }`. Cost difference between stable and fresh function reference for a prop. |
-| detectFramework | `detectFramework(entryContent)` → `"react" \| "vanilla"`. Scans harness entry for `react-dom` import. |
+| detectFramework | `detectFramework(projectRoot)` → `"react" \| "vanilla"`. Checks project package.json for `react`/`react-dom` dependency; defaults to `"react"` when unreadable. |
 | PROFILER_HOOK_SCRIPT | Injection script for `__REACT_DEVTOOLS_GLOBAL_HOOK__`. Injected via `Page.addScriptToEvaluateOnNewDocument` before React loads. Walks fiber tree on each commit. |
 | injectProfilerHook | `injectProfilerHook(cdp)`. Injects profiler hook via CDP. |
 | collectProfilerData | `collectProfilerData(page)` → `ProfilerSnapshot`. Reads `window.__120fps_profiler`. |

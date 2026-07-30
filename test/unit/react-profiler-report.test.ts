@@ -244,6 +244,55 @@ describe("formatTable React Optimizations section", () => {
     expect(table).not.toContain("Combo #");
   });
 
+  it("shows durations-unavailable note when flag is true", () => {
+    const r = makeReport({
+      combos: [makeCombo({
+        reactOptimizations: makeReactOptimizations({ durationsUnavailable: true }),
+      })],
+    });
+    const table = formatTable(r);
+    expect(table).toContain("React Optimizations");
+    expect(table).toContain("profiler durations unavailable — memo/context findings may be unreliable");
+  });
+
+  it("omits durations-unavailable note when flag is absent or false", () => {
+    const withFalse = makeReport({
+      combos: [makeCombo({
+        reactOptimizations: makeReactOptimizations({
+          durationsUnavailable: false,
+          memoBailout: true,
+          memoBailoutComponents: ["X"],
+        }),
+      })],
+    });
+    expect(formatTable(withFalse)).not.toContain("profiler durations unavailable");
+
+    const withAbsent = makeReport({
+      combos: [makeCombo({
+        reactOptimizations: makeReactOptimizations({ memoBailout: true, memoBailoutComponents: ["X"] }),
+      })],
+    });
+    expect(formatTable(withAbsent)).not.toContain("profiler durations unavailable");
+  });
+
+  it("prints durations-unavailable note only for flagged combos", () => {
+    const r = makeReport({
+      combos: [
+        makeCombo({
+          comboIndex: 0,
+          reactOptimizations: makeReactOptimizations({ durationsUnavailable: true }),
+        }),
+        makeCombo({
+          comboIndex: 1,
+          reactOptimizations: makeReactOptimizations({ memoBailout: true, memoBailoutComponents: ["B"] }),
+        }),
+      ],
+    });
+    const table = formatTable(r);
+    const occurrences = table.split("profiler durations unavailable").length - 1;
+    expect(occurrences).toBe(1);
+  });
+
   it("handles reactOptimizations with all fields populated", () => {
     const r = makeReport({
       combos: [makeCombo({

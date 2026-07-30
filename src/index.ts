@@ -85,7 +85,9 @@ export {
   type Improvement,
 } from "./report.js";
 export { analyze, buildReport, isFixturePath, detectFixture, hasScaleExport, type AnalyzeOptions, type BuildReportInput } from "./analyze.js";
-export { detectScaleExport } from "./harness.js";
+export { detectScaleExport, loadTsconfigAliases, findProjectRoot, sweepStaleHarnessDirs, detectComponentExport } from "./harness.js";
+export { scanExports } from "./prop-gen.js";
+export { attachPageErrorCapture, enrichTimeoutError, type PageErrorCapture } from "./page-errors.js";
 export {
   resolveStressPattern,
   executeStressPattern,

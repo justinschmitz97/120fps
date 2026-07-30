@@ -2,8 +2,10 @@ node_modules/
 dist/
 *.node
 .pnpm-store/
-__120fps_harness/
+.120fps-harness-*/
 .perrr/
 *.tsbuildinfo
 *.tgz
-120fps-report.json
+120fps-report*.json
+120fps-verify.json
+120fps-baseline.json

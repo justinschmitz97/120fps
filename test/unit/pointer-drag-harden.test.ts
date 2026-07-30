@@ -28,7 +28,7 @@ describe("H2: cursor pointer", () => {
   it("cursor=pointer does not trigger pointer-drag", () => {
     const desc = makeDescriptor({ cursor: "pointer" });
     const pattern = resolveStressPattern(desc);
-    expect(pattern.name).toBe("rapid-toggle-10");
+    expect(pattern.name).toBe("rapid-toggle-11");
   });
 });
 

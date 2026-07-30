@@ -56,7 +56,7 @@ describe("pointer-drag dispatch", () => {
   it("non-drag element unchanged", () => {
     const desc = makeDescriptor({ type: "click" });
     const pattern = resolveStressPattern(desc);
-    expect(pattern.name).toBe("rapid-toggle-10");
+    expect(pattern.name).toBe("rapid-toggle-11");
   });
 });
 
@@ -99,7 +99,7 @@ describe("pointer-drag priority", () => {
     expect(pattern.name).toBe("pointer-drag");
   });
 
-  it("range input takes priority over rapid-toggle-10", () => {
+  it("range input takes priority over rapid-toggle-11", () => {
     const desc = makeDescriptor({ type: "click", tagName: "INPUT", inputType: "range" });
     const pattern = resolveStressPattern(desc);
     expect(pattern.name).toBe("pointer-drag");

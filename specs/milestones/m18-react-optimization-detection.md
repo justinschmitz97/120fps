@@ -20,7 +20,7 @@ Framework detection is automatic (`auto` by default). The React module activates
 
 **MUST:**
 
-1. **Framework auto-detection**: `detectFramework(entryContent)` scans the harness entry for `react-dom` import. Returns `"react"` or `"vanilla"`. `--framework vanilla` disables React analysis. `--framework react` forces it (error if React not found).
+1. **Framework auto-detection**: `detectFramework(projectRoot)` checks the project package.json for a `react`/`react-dom` dependency (dependencies/devDependencies/peerDependencies). Returns `"react"` or `"vanilla"`; missing or unreadable package.json → `"react"`. `--framework vanilla` disables React analysis. `--framework react` forces it.
 
 2. **React DevTools profiler integration**: `PROFILER_HOOK_SCRIPT` injected via CDP `Page.addScriptToEvaluateOnNewDocument` before React loads. Captures per-fiber render counts and durations via `onCommitFiberRoot`. Stores data on `window.__120fps_profiler`. No React DevTools browser extension dependency.
 
@@ -49,8 +49,8 @@ Framework detection is automatic (`auto` by default). The React module activates
 ### Invariants
 
 - `--framework vanilla` → `reactOptimizations` always undefined.
-- `--framework auto` + no React → same as vanilla, no errors.
-- `--framework react` + no React → error, exit code 2.
+- `--framework auto` + no React in project package.json → same as vanilla, no errors.
+- `--framework react` forces the React analysis pass regardless of detection (no error path).
 - Profiler hook injection once per browser launch, not per navigation.
 - React analysis runs as separate pass after main pipeline (no overhead on mount/rerender/explore measurements).
 

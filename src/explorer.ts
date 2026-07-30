@@ -21,6 +21,7 @@ import {
   tryCollectGarbage,
   type TraceEvent,
 } from "./measure.js";
+import { attachPageErrorCapture, enrichTimeoutError } from "./page-errors.js";
 
 // --- Types ---
 
@@ -288,13 +289,19 @@ export async function explore(
   try {
     browser = await chromium.launch({ headless: true });
     const page = await browser.newPage();
+    const errorCapture = attachPageErrorCapture(page);
     const cdp = await page.context().newCDPSession(page);
 
     await page.goto(harness.url);
-    await page.waitForFunction(
-      () => typeof (window as any).__120fps === "object",
-      { timeout: 30000 },
-    );
+    try {
+      await page.waitForFunction(
+        () => typeof (window as any).__120fps === "object",
+        undefined,
+        { timeout: 30000 },
+      );
+    } catch (err) {
+      throw enrichTimeoutError(err, errorCapture, "explorer harness");
+    }
 
     await cdp.send("Emulation.setCPUThrottlingRate", { rate: cpuThrottle });
 

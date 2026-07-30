@@ -70,6 +70,47 @@ describe("CLI e2e", () => {
     fs.unlinkSync(jsonPath);
   }, 120000);
 
+  it("multi-path: profiles each component, per-component reports, collision suffix", async () => {
+    const reportA = path.resolve("120fps-report.static-buttons.json");
+    const reportB = path.resolve("120fps-report.static-buttons-2.json");
+    try {
+      const { code } = await runCli([
+        "./fixtures/static-buttons.tsx",
+        "./fixtures/static-buttons.tsx",
+        "--samples", "2",
+        "--ci",
+      ]);
+      expect(code).toBe(0);
+      expect(fs.existsSync(reportA)).toBe(true);
+      expect(fs.existsSync(reportB)).toBe(true);
+      const a = JSON.parse(fs.readFileSync(reportA, "utf-8"));
+      expect(a.version).toBe(1);
+    } finally {
+      for (const f of [reportA, reportB]) {
+        if (fs.existsSync(f)) fs.unlinkSync(f);
+      }
+    }
+  }, 300000);
+
+  it("multi-path with explicit --json exits 2", async () => {
+    const { code, stderr } = await runCli([
+      "./fixtures/static-buttons.tsx",
+      "./fixtures/button.tsx",
+      "--json", "out.json",
+    ]);
+    expect(code).toBe(2);
+    expect(stderr).toContain("--json");
+  });
+
+  it("multi-path with a missing second file exits 2 before any run", async () => {
+    const { code, stderr } = await runCli([
+      "./fixtures/static-buttons.tsx",
+      "./fixtures/does-not-exist.tsx",
+    ]);
+    expect(code).toBe(2);
+    expect(stderr).toContain("File not found");
+  });
+
   it("CI mode returns exit 1 on fail threshold", async () => {
     const jsonPath = path.join(os.tmpdir(), `cli-ci-${Date.now()}.json`);
     const { code, stdout } = await runCli([

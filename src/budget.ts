@@ -47,6 +47,7 @@ export interface BaselineComparison {
   hasBaseline: boolean;
   regressions: Regression[];
   improvements: Improvement[];
+  missingInteractions: string[];
 }
 
 export interface Regression {
@@ -86,7 +87,12 @@ export function loadBaseline(baselinePath: string): Baseline | null {
   try {
     const raw = fs.readFileSync(baselinePath, "utf-8");
     const parsed = JSON.parse(raw);
-    if (parsed.version !== 1) return null;
+    if (parsed.version !== 1) {
+      process.stderr.write(
+        `Warning: ${baselinePath} has unsupported baseline version, ignoring (expected 1, got ${JSON.stringify(parsed.version)})\n`,
+      );
+      return null;
+    }
     return parsed as Baseline;
   } catch (err: any) {
     if (err.code === "ENOENT") return null;
@@ -159,10 +165,13 @@ export function compareBaseline(
     { name: "unmount", baseline: entry.unmount, current: current.unmount, tol: tolerance.unmount },
   ];
 
+  const missingInteractions: string[] = [];
   for (const [label, baselineMs] of Object.entries(entry.interactions)) {
     const currentMs = current.interactions[label];
     if (currentMs !== undefined) {
       metrics.push({ name: `interaction:${label}`, baseline: baselineMs, current: currentMs, tol: tolerance.interaction });
+    } else {
+      missingInteractions.push(label);
     }
   }
 
@@ -190,5 +199,5 @@ export function compareBaseline(
     }
   }
 
-  return { hasBaseline: true, regressions, improvements };
+  return { hasBaseline: true, regressions, improvements, missingInteractions };
 }

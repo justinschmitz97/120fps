@@ -49,13 +49,15 @@ src/
   react-profiler.ts — framework detection, DevTools hook injection, memo/context/callback analysis, portal hygiene, render attribution
   report.ts         — types, CV, tier classification, verdict logic, terminal table formatting
   analyze.ts        — full pipeline orchestrator (analyze + buildReport)
+  budget.ts         — budget config loading, baseline I/O, regression comparison
+  isolation.ts      — isolated per-phase measurements, churn/leak/strictmode checks
+  page-errors.ts    — browser page-error capture + timeout error enrichment
   cli.ts            — CLI entry point, arg parsing, exit codes
   index.ts          — barrel export
 specs/
   overview/         — architecture + glossary
   decisions/        — ADRs (append-only)
   milestones/       — per-milestone specs (transient)
-  packages/         — package-level specs (durable)
 fixtures/           — test component fixtures
 test/
   unit/             — vitest unit tests

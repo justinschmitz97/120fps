@@ -6,9 +6,13 @@ export interface ExportInfo {
   isDefault: boolean;
 }
 
+// Props of a composition node. `text` is the payload of `__text__` nodes;
+// it stays inside props so the serialized tree shape is unchanged.
+export type CompositionNodeProps = PropCombination & { text?: string };
+
 export interface CompositionNode {
   component: string;
-  props: PropCombination;
+  props: CompositionNodeProps;
   children: CompositionNode[];
 }
 
@@ -138,7 +142,7 @@ export function inferComposition(
   return tree;
 }
 
-function makeNode(component: string, props: PropCombination = {}, children: CompositionNode[] = []): CompositionNode {
+function makeNode(component: string, props: CompositionNodeProps = {}, children: CompositionNode[] = []): CompositionNode {
   return { component, props, children };
 }
 
@@ -209,7 +213,7 @@ function buildListBased(
   for (let i = 0; i < repeatCount; i++) {
     for (const t of triggerOrItem) {
       const hasValue = schemas.get(t.name)?.some((p) => p.name === "value");
-      const props: PropCombination = hasValue ? { value: String(i) } : {};
+      const props: CompositionNodeProps = hasValue ? { value: String(i) } : {};
       listChildren.push(makeNode(t.name, props));
     }
   }
@@ -221,7 +225,7 @@ function buildListBased(
   for (let i = 0; i < repeatCount; i++) {
     for (const c of contents) {
       const hasValue = schemas.get(c.name)?.some((p) => p.name === "value");
-      const props: PropCombination = hasValue ? { value: String(i) } : {};
+      const props: CompositionNodeProps = hasValue ? { value: String(i) } : {};
       rootChildren.push(makeNode(c.name, props));
     }
   }
@@ -311,7 +315,7 @@ function buildFlat(
     for (let i = 0; i < repeatCount; i++) {
       for (const item of items) {
         const hasValue = schemas.get(item.name)?.some((p) => p.name === "value");
-        const props: PropCombination = hasValue ? { value: String(i) } : {};
+        const props: CompositionNodeProps = hasValue ? { value: String(i) } : {};
         contentChildren.push(makeNode(item.name, props));
       }
     }
@@ -324,7 +328,7 @@ function buildFlat(
     for (let i = 0; i < repeatCount; i++) {
       for (const item of items) {
         const hasValue = schemas.get(item.name)?.some((p) => p.name === "value");
-        const props: PropCombination = hasValue ? { value: String(i) } : {};
+        const props: CompositionNodeProps = hasValue ? { value: String(i) } : {};
         rootChildren.push(makeNode(item.name, props));
       }
     }

@@ -7,7 +7,6 @@ status: approved
 | kind | path | lifetime |
 |---|---|---|
 | overview | `specs/overview/` | durable |
-| package | `specs/packages/<name>/spec.md` | durable |
 | decision | `specs/decisions/NNNN-<slug>.md` | append-only |
 | milestone | `specs/milestones/mN-<slug>.md` | transient; archive on merge |
 

@@ -84,6 +84,91 @@ describe("extractExports", () => {
       expect(exports).toHaveLength(0);
     });
   });
+
+  // ─── M24 D2: additional export forms, parse-only ───
+
+  it("recognizes export default <Identifier>; (export assignment)", () => {
+    const filePath = writeFixture("assign.tsx", `
+      function Button() { return null; }
+      export default Button;
+    `);
+    return extractExports(filePath).then((exports) => {
+      expect(exports).toEqual([{ name: "Button", isDefault: true }]);
+    });
+  });
+
+  it("recognizes export default class", () => {
+    const filePath = writeFixture("class-default.tsx", `
+      export default class Modal { render() { return null; } }
+    `);
+    return extractExports(filePath).then((exports) => {
+      expect(exports).toEqual([{ name: "Modal", isDefault: true }]);
+    });
+  });
+
+  it("recognizes export { A, B as default }", () => {
+    const filePath = writeFixture("clause.tsx", `
+      function Alpha() { return null; }
+      function Bravo() { return null; }
+      export { Alpha, Bravo as default };
+    `);
+    return extractExports(filePath).then((exports) => {
+      expect(exports).toContainEqual({ name: "Alpha", isDefault: false });
+      expect(exports).toContainEqual({ name: "Bravo", isDefault: true });
+      expect(exports).toHaveLength(2);
+    });
+  });
+
+  it("skips type specifiers in export clauses", () => {
+    const filePath = writeFixture("type-spec.tsx", `
+      type Foo = { a: number };
+      function Bar() { return null; }
+      export { type Foo, Bar };
+    `);
+    return extractExports(filePath).then((exports) => {
+      expect(exports).toEqual([{ name: "Bar", isDefault: false }]);
+    });
+  });
+
+  it("skips export type { ... } declarations", () => {
+    const filePath = writeFixture("type-decl.tsx", `
+      type Foo = { a: number };
+      export type { Foo };
+    `);
+    return extractExports(filePath).then((exports) => {
+      expect(exports).toHaveLength(0);
+    });
+  });
+
+  it("merges a named export re-exported as default into one entry", () => {
+    const filePath = writeFixture("merged.tsx", `
+      export function Foo() { return null; }
+      export { Foo as default };
+    `);
+    return extractExports(filePath).then((exports) => {
+      expect(exports).toEqual([{ name: "Foo", isDefault: true }]);
+    });
+  });
+
+  it("ignores export { default } re-exports (not PascalCase)", () => {
+    const filePath = writeFixture("reexport-default.tsx", `
+      export { default } from "./somewhere";
+    `);
+    return extractExports(filePath).then((exports) => {
+      expect(exports).toHaveLength(0);
+    });
+  });
+
+  it("preserves source order across declaration kinds", () => {
+    const filePath = writeFixture("order.tsx", `
+      export const First = () => null;
+      export function Second() { return null; }
+      export class Third { render() { return null; } }
+    `);
+    return extractExports(filePath).then((exports) => {
+      expect(exports.map((e) => e.name)).toEqual(["First", "Second", "Third"]);
+    });
+  });
 });
 
 describe("extractAllProps", () => {

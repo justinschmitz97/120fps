@@ -1,7 +1,9 @@
 import { createServer, type ViteDevServer } from "vite";
+import ts from "typescript";
 import fs from "node:fs";
 import path from "node:path";
 import type { CompositionTree, CompositionNode, ExportInfo } from "./composition.js";
+import { scanExports } from "./prop-gen.js";
 
 export interface ShimEntry {
   module: string;
@@ -69,6 +71,9 @@ export async function buildAndServe(
 
   const componentDir = path.dirname(absoluteComponentPath);
   const projectRoot = findProjectRoot(componentDir) ?? componentDir;
+
+  // Crash leftovers from previous runs: best-effort removal (M24 D8)
+  sweepStaleHarnessDirs(projectRoot);
 
   // Place harness files inside the target project so Vite resolves aliases
   const harnessDir = fs.mkdtempSync(
@@ -211,7 +216,7 @@ let mounted = false;
   return { url, server, componentPath: absoluteComponentPath, harnessDir, cleanup, nextJsShims: activeShims };
 }
 
-function findProjectRoot(dir: string): string | undefined {
+export function findProjectRoot(dir: string): string | undefined {
   let current = dir;
   while (true) {
     if (fs.existsSync(path.join(current, "package.json"))) return current;
@@ -225,29 +230,26 @@ function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function stripJsonComments(str: string): string {
-  let result = "";
-  let i = 0;
-  while (i < str.length) {
-    if (str[i] === '"') {
-      result += '"';
-      i++;
-      while (i < str.length && str[i] !== '"') {
-        if (str[i] === '\\') { result += str[i++]; }
-        if (i < str.length) { result += str[i++]; }
+const STALE_HARNESS_MAX_AGE_MS = 60 * 60 * 1000;
+
+// Best-effort removal of .120fps-harness-* leftovers older than 1 hour (M24 D8).
+export function sweepStaleHarnessDirs(projectRoot: string): void {
+  try {
+    const cutoff = Date.now() - STALE_HARNESS_MAX_AGE_MS;
+    for (const entry of fs.readdirSync(projectRoot, { withFileTypes: true })) {
+      if (!entry.isDirectory() || !entry.name.startsWith(".120fps-harness-")) continue;
+      const full = path.join(projectRoot, entry.name);
+      try {
+        if (fs.statSync(full).mtimeMs < cutoff) {
+          fs.rmSync(full, { recursive: true, force: true });
+        }
+      } catch {
+        // best-effort: dir may be in use or already gone
       }
-      if (i < str.length) { result += str[i++]; }
-    } else if (str[i] === '/' && str[i + 1] === '/') {
-      while (i < str.length && str[i] !== '\n') i++;
-    } else if (str[i] === '/' && str[i + 1] === '*') {
-      i += 2;
-      while (i < str.length && !(str[i] === '*' && str[i + 1] === '/')) i++;
-      i += 2;
-    } else {
-      result += str[i++];
     }
+  } catch {
+    // best-effort: unreadable project root
   }
-  return result;
 }
 
 const EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".mts"];
@@ -349,45 +351,65 @@ function scanExternalDeps(
   return [...externalPkgs];
 }
 
-function loadTsconfigAliases(
+export function loadTsconfigAliases(
   projectRoot: string,
 ): Array<{ find: RegExp; replacement: string }> {
-  const tsconfigPath = path.join(projectRoot, "tsconfig.json");
+  // Forward slashes: ts.readConfigFile asserts on backslash paths when the
+  // config has parse errors (diagnostic fileName is normalized internally).
+  const tsconfigPath = path.join(projectRoot, "tsconfig.json").replace(/\\/g, "/");
   if (!fs.existsSync(tsconfigPath)) return [];
 
+  let options: ts.CompilerOptions;
   try {
-    const raw = fs.readFileSync(tsconfigPath, "utf-8");
-    let tsconfig: any;
-    try {
-      tsconfig = JSON.parse(raw);
-    } catch {
-      const stripped = stripJsonComments(raw);
-      tsconfig = JSON.parse(stripped);
+    const configFile = ts.readConfigFile(tsconfigPath, ts.sys.readFile);
+    if (configFile.error) {
+      process.stderr.write(
+        `Warning: could not parse tsconfig at ${tsconfigPath}: ${ts.flattenDiagnosticMessageText(configFile.error.messageText, " ")}\n`,
+      );
+      return [];
     }
-    const paths: Record<string, string[]> | undefined =
-      tsconfig?.compilerOptions?.paths;
-    if (!paths) return [];
-
-    const baseUrl = tsconfig?.compilerOptions?.baseUrl ?? ".";
-    const base = path.resolve(projectRoot, baseUrl);
-
-    const aliases: Array<{ find: RegExp; replacement: string }> = [];
-    for (const [pattern, targets] of Object.entries(paths)) {
-      if (!targets.length) continue;
-      const target = targets[0];
-      if (pattern.endsWith("/*") && target.endsWith("/*")) {
-        const prefix = pattern.slice(0, -2);
-        const dir = path.resolve(base, target.slice(0, -2)).replace(/\\/g, "/");
-        aliases.push({ find: new RegExp(`^${escapeRegex(prefix)}/`), replacement: dir + "/" });
-      } else {
-        const resolved = path.resolve(base, target).replace(/\\/g, "/");
-        aliases.push({ find: new RegExp(`^${escapeRegex(pattern)}$`), replacement: resolved });
-      }
-    }
-    return aliases;
-  } catch {
+    // parseJsonConfigFileContent resolves extends (string and array), JSONC,
+    // and trailing commas; baseUrl comes back absolute.
+    options = ts.parseJsonConfigFileContent(
+      configFile.config,
+      ts.sys,
+      projectRoot,
+      undefined,
+      tsconfigPath,
+    ).options;
+  } catch (err) {
+    process.stderr.write(
+      `Warning: could not parse tsconfig at ${tsconfigPath}: ${err instanceof Error ? err.message : String(err)}\n`,
+    );
     return [];
   }
+
+  const paths = options.paths;
+  if (!paths) return [];
+
+  // Alias base: resolved baseUrl when set; else the directory of the config
+  // that declared "paths" (pathsBasePath, internal but stable), else the
+  // tsconfig's own directory.
+  const base =
+    options.baseUrl ??
+    (options as { pathsBasePath?: string }).pathsBasePath ??
+    path.dirname(tsconfigPath);
+
+  const aliases: Array<{ find: RegExp; replacement: string }> = [];
+  for (const [pattern, targets] of Object.entries(paths)) {
+    if (!targets.length) continue;
+    // First target only — Vite aliases support a single replacement.
+    const target = targets[0];
+    if (pattern.endsWith("/*") && target.endsWith("/*")) {
+      const prefix = pattern.slice(0, -2);
+      const dir = path.resolve(base, target.slice(0, -2)).replace(/\\/g, "/");
+      aliases.push({ find: new RegExp(`^${escapeRegex(prefix)}/`), replacement: dir + "/" });
+    } else {
+      const resolved = path.resolve(base, target).replace(/\\/g, "/");
+      aliases.push({ find: new RegExp(`^${escapeRegex(pattern)}$`), replacement: resolved });
+    }
+  }
+  return aliases;
 }
 
 export function detectScaleExport(filePath: string): boolean {
@@ -395,57 +417,25 @@ export function detectScaleExport(filePath: string): boolean {
   return /export\s+(?:function|const)\s+scale\b/.test(content);
 }
 
-function detectComponentExport(filePath: string): {
+// Selection order (M24 D2): default export > file-stem case-insensitive
+// match among named exports > first PascalCase export in source order >
+// filename fallback. isDefaultOnly is true iff the chosen component is
+// importable as a default import.
+export function detectComponentExport(filePath: string): {
   name: string;
   isDefaultOnly: boolean;
 } {
   const content = fs.readFileSync(filePath, "utf-8");
+  const exports = scanExports(content, filePath);
 
-  // Default exports take priority — the default is the primary component
-  const defaultFnMatch = content.match(
-    /export\s+default\s+function\s+([A-Z]\w*)/,
-  );
-  if (defaultFnMatch) return { name: defaultFnMatch[1], isDefaultOnly: true };
+  const defaultExport = exports.find((e) => e.isDefault);
+  if (defaultExport) return { name: defaultExport.name, isDefaultOnly: true };
 
-  const defaultConstMatch = content.match(
-    /export\s+default\s+(?:const\s+)?([A-Z]\w*)/,
-  );
-  if (defaultConstMatch)
-    return { name: defaultConstMatch[1], isDefaultOnly: true };
+  const stem = path.basename(filePath, path.extname(filePath)).toLowerCase();
+  const stemMatch = exports.find((e) => e.name.toLowerCase() === stem);
+  if (stemMatch) return { name: stemMatch.name, isDefaultOnly: false };
 
-  // Re-export as default: export { Name as default }
-  const reExportDefaultMatch = content.match(
-    /export\s+\{\s*([A-Z]\w*)\s+as\s+default\s*\}/,
-  );
-  if (reExportDefaultMatch) return { name: reExportDefaultMatch[1], isDefaultOnly: false };
-
-  // Named exports (no default found)
-  const namedFnMatch = content.match(
-    /export\s+function\s+([A-Z]\w*)/,
-  );
-  if (namedFnMatch) return { name: namedFnMatch[1], isDefaultOnly: false };
-
-  const namedConstMatch = content.match(
-    /export\s+const\s+([A-Z]\w*)\s*(?::[^=]+)?\s*=/,
-  );
-  if (namedConstMatch) return { name: namedConstMatch[1], isDefaultOnly: false };
-
-  const namedClassMatch = content.match(
-    /export\s+class\s+([A-Z]\w*)/,
-  );
-  if (namedClassMatch) return { name: namedClassMatch[1], isDefaultOnly: false };
-
-  // Re-export: export { Name } or export { Name, ... }
-  const reExportBlock = content.match(/export\s+\{([^}]+)\}/);
-  if (reExportBlock) {
-    const items = reExportBlock[1].split(",");
-    for (const item of items) {
-      const cleaned = item.replace(/\/\*[\s\S]*?\*\//g, "").trim();
-      if (cleaned.startsWith("type ")) continue;
-      const m = cleaned.match(/^([A-Z]\w*)/);
-      if (m) return { name: m[1], isDefaultOnly: false };
-    }
-  }
+  if (exports.length > 0) return { name: exports[0].name, isDefaultOnly: false };
 
   // Fallback: derive from filename, assume default export
   const basename = path.basename(filePath, path.extname(filePath));
@@ -460,7 +450,7 @@ function collectComponents(node: CompositionNode, set: Set<string>): void {
 
 function nodeToJsx(node: CompositionNode): string {
   if (node.component === "__text__") {
-    return JSON.stringify((node.props as any).text ?? "");
+    return JSON.stringify(node.props.text ?? "");
   }
 
   const propsEntries = Object.entries(node.props);

@@ -2,7 +2,8 @@ import os from "node:os";
 import fs from "node:fs";
 import path from "node:path";
 import { chromium, type Browser } from "playwright";
-import { buildAndServe, detectScaleExport, type HarnessResult } from "./harness.js";
+import { buildAndServe, detectScaleExport, findProjectRoot, type HarnessResult } from "./harness.js";
+import { attachPageErrorCapture, enrichTimeoutError } from "./page-errors.js";
 import { extractProps, extractExports, extractAllProps, detectScalingProps, type ScalingPropMatch } from "./prop-gen.js";
 import { inferComposition, type CompositionTree } from "./composition.js";
 import { detectFramework, runReactAnalysis, hasReactWarning, type ReactOptimizations } from "./react-profiler.js";
@@ -364,16 +365,22 @@ export async function analyze(
 
     browser = await chromium.launch({ headless: true });
     const page = await browser.newPage();
+    const pageErrors = attachPageErrorCapture(page);
     const cdp = await page.context().newCDPSession(page);
 
     const chromiumVersion = browser.version();
     const machine = await collectMachineInfo(chromiumVersion);
 
     await page.goto(harness.url);
-    await page.waitForFunction(
-      () => typeof (window as any).__120fps === "object",
-      { timeout: 30000 },
-    );
+    try {
+      await page.waitForFunction(
+        () => typeof (window as any).__120fps === "object",
+        undefined,
+        { timeout: 30000 },
+      );
+    } catch (err) {
+      throw enrichTimeoutError(err, pageErrors, "component harness");
+    }
 
     await cdp.send("Emulation.setCPUThrottlingRate", { rate: cpuThrottle });
 
@@ -619,12 +626,14 @@ export async function analyze(
     }
 
     const scalePoints = options.scalePoints ?? [1, 5, 20, 50];
+    let zeroPropsExtracted = false;
     if (fixtureHasScale) {
       combos = scalePoints.map((n) => ({ __120fps_scaleN: n }));
     } else if (useFixture || useComposition) {
       combos = [{}];
     } else {
       schemas = await extractProps(harness.componentPath);
+      zeroPropsExtracted = schemas.length === 0;
       combos = generateCombinations(schemas);
       if (combos.length === 0) combos = [{}];
       if (combos.length > 16) combos = combos.slice(0, 16);
@@ -770,6 +779,10 @@ export async function analyze(
       nextJsShims: harness.nextJsShims,
     });
 
+    if (zeroPropsExtracted) {
+      report.warnings = [...(report.warnings ?? []), ZERO_PROPS_WARNING];
+    }
+
     if (propDeltas) {
       report.propDeltas = propDeltas;
     }
@@ -822,22 +835,14 @@ export async function analyze(
       }
     }
 
+    const { projectRoot, relativeComponent } = resolveProjectPaths(resolvedPath);
+
     // --- React optimization detection (separate pass) ---
     const frameworkMode = options.framework ?? "auto";
-    const entryContent = fs.readFileSync(
-      path.join(harness.harnessDir, "entry.tsx"),
-      "utf-8",
-    );
-    const detectedFramework = detectFramework(entryContent);
-
-    if (frameworkMode === "react" && detectedFramework !== "react") {
-      throw new Error("--framework react specified but React was not detected in the bundle");
-    }
+    const effectiveFramework = resolveFramework(frameworkMode, projectRoot);
 
     const shouldRunReact =
-      !options.skipReactAnalysis &&
-      frameworkMode !== "vanilla" &&
-      detectedFramework === "react";
+      !options.skipReactAnalysis && effectiveFramework === "react";
 
     if (shouldRunReact) {
       const fnPropNames = schemas
@@ -863,45 +868,45 @@ export async function analyze(
       }
     }
 
-    const projectRoot = path.dirname(resolvedPath);
-    const relativeComponent = "./" + path.relative(projectRoot, resolvedPath).replace(/\\/g, "/");
-
     if (options.check && !options.noBaseline) {
       const baselinePath = path.join(projectRoot, "120fps-baseline.json");
       const baseline = loadBaseline(baselinePath);
-      if (baseline) {
-        const entry = baseline.entries[relativeComponent];
-        if (entry) {
-          const config = loadBudgetConfig(projectRoot);
-          const tol = resolveTolerances(config);
-          const primary = report.combos[0];
-          const unstableMetrics = new Set<string>();
-          if (primary?.mount?.unstable) unstableMetrics.add("mount");
-          if (primary?.rerender?.unstable) unstableMetrics.add("rerender");
-          if (primary?.unmount?.unstable) unstableMetrics.add("unmount");
+      const entry = baseline?.entries[relativeComponent];
+      if (entry) {
+        const config = loadBudgetConfig(projectRoot);
+        const tol = resolveTolerances(config);
+        const primary = report.combos[0];
+        const unstableMetrics = new Set<string>();
+        if (primary?.mount?.unstable) unstableMetrics.add("mount");
+        if (primary?.rerender?.unstable) unstableMetrics.add("rerender");
+        if (primary?.unmount?.unstable) unstableMetrics.add("unmount");
 
-          const interactionMap: Record<string, number> = {};
-          if (primary) {
-            for (const ix of primary.interactions) {
-              interactionMap[ix.label] = ix.timing.median;
-            }
+        const interactionMap: Record<string, number> = {};
+        if (primary) {
+          for (const ix of primary.interactions) {
+            interactionMap[ix.label] = ix.timing.median;
           }
+        }
 
-          const comparison = compareBaseline(
-            entry,
-            {
-              mount: primary?.mount?.median ?? 0,
-              rerender: primary?.rerender?.median ?? 0,
-              unmount: primary?.unmount?.median ?? 0,
-              interactions: interactionMap,
-            },
-            tol,
-            unstableMetrics,
-          );
-          report.baseline = comparison;
-          if (comparison.regressions.length > 0) {
-            report.pass = false;
-          }
+        const comparison = compareBaseline(
+          entry,
+          {
+            mount: primary?.mount?.median ?? 0,
+            rerender: primary?.rerender?.median ?? 0,
+            unmount: primary?.unmount?.median ?? 0,
+            interactions: interactionMap,
+          },
+          tol,
+          unstableMetrics,
+        );
+        report.baseline = comparison;
+        if (comparison.regressions.length > 0) {
+          report.pass = false;
+        }
+      } else {
+        const legacyWarning = legacyBaselineWarning(projectRoot, path.dirname(resolvedPath));
+        if (legacyWarning) {
+          process.stderr.write(`Warning: ${legacyWarning}\n`);
         }
       }
     }
@@ -940,6 +945,44 @@ export async function analyze(
     if (browser) await browser.close();
     if (harness) await harness.cleanup();
   }
+}
+
+export const ZERO_PROPS_WARNING =
+  "No props extracted — component measured with empty props only; if the component has typed props, extraction may have failed";
+
+// Root for 120fps.config.json / 120fps-baseline.json: nearest ancestor of the
+// component containing package.json, falling back to the component's directory.
+export function resolveProjectPaths(resolvedPath: string): {
+  projectRoot: string;
+  relativeComponent: string;
+} {
+  const componentDir = path.dirname(resolvedPath);
+  const projectRoot = findProjectRoot(componentDir) ?? componentDir;
+  const relativeComponent =
+    "./" + path.relative(projectRoot, resolvedPath).replace(/\\/g, "/");
+  return { projectRoot, relativeComponent };
+}
+
+export function legacyBaselineWarning(
+  projectRoot: string,
+  componentDir: string,
+): string | undefined {
+  if (componentDir === projectRoot) return undefined;
+  if (!fs.existsSync(path.join(componentDir, "120fps-baseline.json"))) return undefined;
+  return (
+    `no baseline entry found at ${path.join(projectRoot, "120fps-baseline.json")}, ` +
+    `but a legacy 120fps-baseline.json exists next to the component in ${componentDir}. ` +
+    `Baselines now live at the package root — re-run with --save-baseline to migrate.`
+  );
+}
+
+// Explicit --framework react|vanilla skips detection; auto detects from the
+// project's package.json.
+export function resolveFramework(
+  mode: "react" | "vanilla" | "auto",
+  projectRoot: string,
+): "react" | "vanilla" {
+  return mode === "auto" ? detectFramework(projectRoot) : mode;
 }
 
 export function hasScaleExport(source: string): boolean {

@@ -12,13 +12,12 @@
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
-      "import": "./dist/index.js",
-      "types": "./dist/index.d.ts"
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
     }
   },
   "files": [
-    "dist",
-    "dist/shims"
+    "dist"
   ],
   "publishConfig": {
     "access": "public"

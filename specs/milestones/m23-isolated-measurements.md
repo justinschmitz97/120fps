@@ -1,12 +1,14 @@
 ---
 kind: milestone
-status: done
+status: partial
 tests:
   - test/unit/isolation-cli.test.ts
   - test/unit/isolation-calc.test.ts
   - test/unit/isolation-report.test.ts
   - test/unit/isolation-harden.test.ts
 ---
+
+> **Status (M24 audit)**: CLI parsing, pure computation helpers (`src/isolation.ts`), and report formatting are implemented and tested. The browser execution pipeline is NOT wired into `analyze()` — `AnalyzeOptions.isolation` is accepted but unused and `Report.isolation` is never populated, so `--isolate` validates input and then runs the standard pipeline. The measurement contracts below describe intended, not current, behavior.
 
 ## Purpose
 
@@ -136,7 +138,7 @@ interface Report {
 - `--isolate <phases>` — comma-separated list: `mount`, `rerender`, `unmount`, `memory`, `strictmode`, or `all`.
 - `--isolate all` runs all 5 isolation modes.
 - `--memory-cycles <N>` — override default 20 cycles for memory mode.
-- `--no-isolate` — explicitly skip isolation (default behavior without the flag).
+- `--no-isolate` — disables isolation even when `--isolate` is present (explicit disable wins); no-op otherwise.
 - `CliArgs.isolate?: string[]`.
 - `CliArgs.memoryCycles?: number`.
 - `AnalyzeOptions.isolation?: { phases: string[]; memoryCycles?: number }`.

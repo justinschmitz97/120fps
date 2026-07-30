@@ -1,5 +1,6 @@
 import ts from "typescript";
 import path from "node:path";
+import type { ExportInfo } from "./composition.js";
 
 export interface PropSchema {
   name: string;
@@ -58,40 +59,7 @@ export function detectScalingProps(schemas: PropSchema[]): ScalingPropMatch[] {
 export async function extractProps(filePath: string): Promise<PropSchema[]> {
   const absolutePath = path.resolve(filePath);
 
-  const tsconfigPath = ts.findConfigFile(
-    path.dirname(absolutePath),
-    ts.sys.fileExists,
-    "tsconfig.json",
-  );
-
-  let compilerOptions: ts.CompilerOptions = {
-    target: ts.ScriptTarget.ES2022,
-    module: ts.ModuleKind.ESNext,
-    moduleResolution: ts.ModuleResolutionKind.Bundler,
-    jsx: ts.JsxEmit.ReactJSX,
-    esModuleInterop: true,
-    skipLibCheck: true,
-  };
-
-  if (tsconfigPath) {
-    const configFile = ts.readConfigFile(tsconfigPath, ts.sys.readFile);
-    if (!configFile.error) {
-      const parsed = ts.parseJsonConfigFileContent(
-        configFile.config,
-        ts.sys,
-        path.dirname(tsconfigPath),
-      );
-      // Override resolution to Bundler — user components use extensionless imports
-      compilerOptions = {
-        ...parsed.options,
-        skipLibCheck: true,
-        moduleResolution: ts.ModuleResolutionKind.Bundler,
-        module: ts.ModuleKind.ESNext,
-      };
-    }
-  }
-
-  const program = ts.createProgram([absolutePath], compilerOptions);
+  const program = ts.createProgram([absolutePath], createCompilerOptions(absolutePath));
   const checker = program.getTypeChecker();
   const sourceFile = program.getSourceFile(absolutePath);
 
@@ -321,51 +289,78 @@ function isReactNodeType(type: ts.Type, checker: ts.TypeChecker): boolean {
 
 export type { ExportInfo } from "./composition.js";
 
-export async function extractExports(filePath: string): Promise<import("./composition.js").ExportInfo[]> {
-  const absolutePath = path.resolve(filePath);
-  const program = ts.createProgram([absolutePath], createCompilerOptions(absolutePath));
-  const checker = program.getTypeChecker();
-  const sourceFile = program.getSourceFile(absolutePath);
-  if (!sourceFile) return [];
+// Shared sync AST walker for export detection (parse-only, no type checker).
+// Recognizes: export function/class/const declarations, export default
+// declarations, `export default <Identifier>;` assignments, and
+// `export { A, B as default }` clauses (type specifiers skipped).
+// PascalCase-filtered; entries deduped by name with isDefault OR-merged.
+export function scanExports(sourceText: string, fileName: string): ExportInfo[] {
+  const sourceFile = ts.createSourceFile(
+    fileName,
+    sourceText,
+    ts.ScriptTarget.Latest,
+    false,
+  );
 
-  const exports: import("./composition.js").ExportInfo[] = [];
-  const seen = new Set<string>();
+  const byName = new Map<string, { name: string; isDefault: boolean }>();
+  const add = (name: string, isDefault: boolean): void => {
+    if (!isComponentName(name)) return;
+    const existing = byName.get(name);
+    if (existing) {
+      existing.isDefault = existing.isDefault || isDefault;
+    } else {
+      byName.set(name, { name, isDefault });
+    }
+  };
 
   ts.forEachChild(sourceFile, (node) => {
-    if (!hasExportModifier(node)) return;
-
-    const isDefault = hasDefaultModifier(node);
-
-    if (ts.isFunctionDeclaration(node) && node.name) {
-      const name = node.name.text;
-      if (isComponentName(name) && !seen.has(name)) {
-        seen.add(name);
-        exports.push({ name, isDefault });
+    // export default <Identifier>;
+    if (ts.isExportAssignment(node)) {
+      if (!node.isExportEquals && ts.isIdentifier(node.expression)) {
+        add(node.expression.text, true);
       }
+      return;
     }
 
-    if (ts.isClassDeclaration(node) && node.name) {
-      const name = node.name.text;
-      if (isComponentName(name) && !seen.has(name)) {
-        seen.add(name);
-        exports.push({ name, isDefault });
+    // export { A, B as default }
+    if (ts.isExportDeclaration(node)) {
+      if (node.isTypeOnly || !node.exportClause || !ts.isNamedExports(node.exportClause)) return;
+      for (const spec of node.exportClause.elements) {
+        if (spec.isTypeOnly) continue;
+        const exported = spec.name.text;
+        if (exported === "default") {
+          add(spec.propertyName?.text ?? exported, true);
+        } else {
+          add(exported, false);
+        }
       }
+      return;
+    }
+
+    if (!hasExportModifier(node)) return;
+    const isDefault = hasDefaultModifier(node);
+
+    if ((ts.isFunctionDeclaration(node) || ts.isClassDeclaration(node)) && node.name) {
+      add(node.name.text, isDefault);
     }
 
     if (ts.isVariableStatement(node)) {
       for (const decl of node.declarationList.declarations) {
         if (ts.isIdentifier(decl.name)) {
-          const name = decl.name.text;
-          if (isComponentName(name) && !seen.has(name)) {
-            seen.add(name);
-            exports.push({ name, isDefault });
-          }
+          add(decl.name.text, false);
         }
       }
     }
   });
 
-  return exports;
+  return [...byName.values()];
+}
+
+export async function extractExports(filePath: string): Promise<ExportInfo[]> {
+  const absolutePath = path.resolve(filePath);
+  const sourceText = ts.sys.readFile(absolutePath);
+  if (sourceText === undefined) return [];
+  return scanExports(sourceText, absolutePath);
 }
 
 export async function extractAllProps(filePath: string): Promise<Map<string, PropSchema[]>> {
@@ -416,6 +411,15 @@ export async function extractAllProps(filePath: string): Promise<Map<string, Pro
   return result;
 }
 
+// One warning per tsconfig path per process (M24 D6).
+const warnedTsconfigPaths = new Set<string>();
+
+function warnTsconfigOnce(configPath: string, detail: string): void {
+  if (warnedTsconfigPaths.has(configPath)) return;
+  warnedTsconfigPaths.add(configPath);
+  process.stderr.write(`Warning: problem reading tsconfig at ${configPath}: ${detail}\n`);
+}
+
 function createCompilerOptions(absolutePath: string): ts.CompilerOptions {
   const tsconfigPath = ts.findConfigFile(
     path.dirname(absolutePath),
@@ -434,12 +438,24 @@ function createCompilerOptions(absolutePath: string): ts.CompilerOptions {
 
   if (tsconfigPath) {
     const configFile = ts.readConfigFile(tsconfigPath, ts.sys.readFile);
-    if (!configFile.error) {
+    if (configFile.error) {
+      warnTsconfigOnce(
+        tsconfigPath,
+        ts.flattenDiagnosticMessageText(configFile.error.messageText, " "),
+      );
+    } else {
       const parsed = ts.parseJsonConfigFileContent(
         configFile.config,
         ts.sys,
         path.dirname(tsconfigPath),
       );
+      if (parsed.errors.length > 0) {
+        warnTsconfigOnce(
+          tsconfigPath,
+          ts.flattenDiagnosticMessageText(parsed.errors[0].messageText, " "),
+        );
+      }
+      // Override resolution to Bundler — user components use extensionless imports
       compilerOptions = {
         ...parsed.options,
         skipLibCheck: true,

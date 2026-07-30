@@ -3,6 +3,7 @@ import type { HarnessResult } from "./harness.js";
 import type { PropCombination } from "./prop-gen-values.js";
 import { extractProps } from "./prop-gen.js";
 import { generateCombinations } from "./prop-gen-values.js";
+import { attachPageErrorCapture, enrichTimeoutError } from "./page-errors.js";
 
 const LAYOUT_TRANSITION_PROPS = new Set([
   "transform", "opacity", "height", "width",
@@ -355,13 +356,19 @@ export async function measureRerender(
   try {
     browser = await chromium.launch({ headless: true });
     const page = await browser.newPage();
+    const errorCapture = attachPageErrorCapture(page);
     const cdp = await page.context().newCDPSession(page);
 
     await page.goto(harness.url);
-    await page.waitForFunction(
-      () => typeof (window as any).__120fps === "object",
-      { timeout: 30000 },
-    );
+    try {
+      await page.waitForFunction(
+        () => typeof (window as any).__120fps === "object",
+        undefined,
+        { timeout: 30000 },
+      );
+    } catch (err) {
+      throw enrichTimeoutError(err, errorCapture, "rerender harness");
+    }
 
     await cdp.send("Emulation.setCPUThrottlingRate", { rate: cpuThrottle });
 
@@ -442,13 +449,19 @@ export async function measureMount(
   try {
     browser = await chromium.launch({ headless: true });
     const page = await browser.newPage();
+    const errorCapture = attachPageErrorCapture(page);
     const cdp = await page.context().newCDPSession(page);
 
     await page.goto(harness.url);
-    await page.waitForFunction(
-      () => typeof (window as any).__120fps === "object",
-      { timeout: 30000 },
-    );
+    try {
+      await page.waitForFunction(
+        () => typeof (window as any).__120fps === "object",
+        undefined,
+        { timeout: 30000 },
+      );
+    } catch (err) {
+      throw enrichTimeoutError(err, errorCapture, "mount harness");
+    }
 
     await cdp.send("Emulation.setCPUThrottlingRate", { rate: cpuThrottle });
 
