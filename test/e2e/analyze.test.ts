@@ -75,4 +75,73 @@ describe("analyze e2e", () => {
     expect(measured.length).toBeGreaterThan(0);
     expect(measured.every((c) => c.verdict === "fail")).toBe(true);
   }, 120000);
+
+  describe("matrix mode", () => {
+    // Matrix mode explores only the hottest cells. `explore` numbers its results
+    // against the subset it was handed, so without an index restore the
+    // interactions land on cells 0..4 whatever was actually measured.
+    it("attaches interactions to the cells that were explored, not the first five", async () => {
+      const report = await analyze("./fixtures/button.tsx", {
+        samples: 3,
+        matrixMode: true,
+      });
+      const mr = report.matrixReport;
+      expect(mr).toBeDefined();
+      expect(mr!.cells.length).toBeGreaterThan(5);
+
+      const explored = report.combos
+        .filter((c) => c.interactions.length > 0)
+        .map((c) => c.comboIndex)
+        .sort((a, b) => a - b);
+      const hottest = [...report.combos]
+        .sort((a, b) => b.mount.median - a.mount.median)
+        .slice(0, 5)
+        .map((c) => c.comboIndex)
+        .sort((a, b) => a - b);
+
+      expect(explored).toEqual(hottest);
+    }, 180000);
+
+    it("carries the worst interaction onto the matching cell", async () => {
+      const report = await analyze("./fixtures/button.tsx", {
+        samples: 3,
+        matrixMode: true,
+      });
+      for (const cell of report.matrixReport!.cells) {
+        const combo = report.combos.find((c) => c.comboIndex === cell.comboIndex);
+        expect(combo).toBeDefined();
+        const expected = combo!.interactions.length > 0
+          ? Math.max(...combo!.interactions.map((i) => i.timing.median))
+          : null;
+        expect(cell.worstInteractionMs).toBe(expected);
+        expect(cell.verdict).toBe(combo!.verdict);
+      }
+    }, 180000);
+
+    // Tiered budgets are the default, and the matrix branch used to drop
+    // explicitThresholds, so a user-supplied budget was silently ignored.
+    it("applies an explicit interaction threshold under tiered budgets", async () => {
+      const report = await analyze("./fixtures/button.tsx", {
+        samples: 3,
+        matrixMode: true,
+        thresholds: { interactionMs: 0.001 },
+      });
+      const interactive = report.combos.filter((c) => c.interactions.length > 0);
+      expect(interactive.length).toBeGreaterThan(0);
+      expect(interactive.every((c) => c.verdict === "fail")).toBe(true);
+      expect(report.pass).toBe(false);
+      expect(report.matrixReport!.failingCells.length).toBe(interactive.length);
+    }, 180000);
+
+    it("keeps every failing cell reachable in the report", async () => {
+      const report = await analyze("./fixtures/button.tsx", {
+        samples: 3,
+        matrixMode: true,
+        thresholds: { interactionMs: 0.001 },
+      });
+      const mr = report.matrixReport!;
+      const failedCellIndices = mr.cells.filter((c) => c.verdict === "fail").map((c) => c.comboIndex);
+      expect(mr.failingCells.map((c) => c.comboIndex)).toEqual(failedCellIndices);
+    }, 180000);
+  });
 });

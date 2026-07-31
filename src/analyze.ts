@@ -9,7 +9,7 @@ import { inferComposition, type CompositionTree } from "./composition.js";
 import { detectFramework, runReactAnalysis, hasReactWarning, type ReactOptimizations } from "./react-profiler.js";
 import { generateCombinations, generateDeltaPairs, generateScalingCombos, generatePropMatrix, shouldAutoActivateMatrix, type PropCombination } from "./prop-gen-values.js";
 import { applyWrapperViewport, measureMount, measureRerender, measureWrapperOverhead, settleStyles, FONT_SETTLE_WARNING, HARNESS_NAV_WAIT, type MountResult, type RerenderResult } from "./measure.js";
-import { explore, type ExploreResult } from "./explorer.js";
+import { explore, restoreComboIndices, type ExploreResult } from "./explorer.js";
 import {
   createCalibrationTrace,
   computeScalingCurve,
@@ -407,6 +407,13 @@ export async function analyze(
     ...options.thresholds,
   };
 
+  // Under tiered budgets a threshold the user typed must override the tier's,
+  // so every mode that builds combos needs to know which ones were explicit.
+  const explicitThresholds: Partial<Record<keyof TierBudget, boolean>> = {};
+  if (options.thresholds?.mountMs !== undefined) explicitThresholds.mountMs = true;
+  if (options.thresholds?.rerenderMs !== undefined) explicitThresholds.rerenderMs = true;
+  if (options.thresholds?.interactionMs !== undefined) explicitThresholds.interactionMs = true;
+
   const samples = options.samples ?? 10;
   const cpuThrottle = options.cpuThrottle ?? 4;
   const warmupRuns = options.warmupRuns ?? 2;
@@ -772,9 +779,9 @@ export async function analyze(
 
       // Explore only hot cells (top 5 by mount median)
       const sortedMounts = [...matrixMounts].sort((a, b) => b.mount.median - a.mount.median);
-      const hotIndices = new Set(sortedMounts.slice(0, 5).map((m) => m.comboIndex));
-      const hotCombos = matrixCombos.filter((_, i) => hotIndices.has(i));
-      const matrixExplores = hotCombos.length > 0
+      const hotIndices = sortedMounts.slice(0, 5).map((m) => m.comboIndex);
+      const hotCombos = hotIndices.map((i) => matrixCombos[i]);
+      const rawExplores = hotCombos.length > 0
         ? await explore(harness, {
             samples: Math.min(samples, 5),
             cpuThrottle,
@@ -784,6 +791,7 @@ export async function analyze(
             maxWallClockMs: 30000,
           })
         : [];
+      const matrixExplores = restoreComboIndices(rawExplores, hotIndices);
 
       // Delta analysis for compound effects
       let matrixDeltas: PropDelta[] | undefined;
@@ -818,15 +826,6 @@ export async function analyze(
         }
       }
 
-      const matrixReport = buildMatrixReport({
-        axes: matrixAxes,
-        mounts: matrixMounts,
-        rerenders: matrixRerenders,
-        thresholds,
-        flatThresholds: options.flatThresholds,
-        propDeltas: matrixDeltas,
-      });
-
       const heapDeltas = matrixMounts.map((m) => m.heapDelta ?? 0);
       const componentName = detectComponentName(metadataPath);
       const report = buildReport({
@@ -840,9 +839,15 @@ export async function analyze(
         thresholds,
         rerenders: matrixRerenders,
         flatThresholds: options.flatThresholds,
+        explicitThresholds,
         skipAttribution: options.skipAttribution,
-        matrixReport,
         ...(harness.nextJsShims && harness.nextJsShims.length > 0 ? { nextJsShims: harness.nextJsShims } : {}),
+      });
+
+      report.matrixReport = buildMatrixReport({
+        axes: matrixAxes,
+        combos: report.combos,
+        propDeltas: matrixDeltas,
       });
 
       if (matrixDeltas) report.propDeltas = matrixDeltas;
@@ -974,11 +979,6 @@ export async function analyze(
     }
 
     const componentName = detectComponentName(metadataPath);
-
-    const explicitThresholds: Partial<Record<keyof TierBudget, boolean>> = {};
-    if (options.thresholds?.mountMs !== undefined) explicitThresholds.mountMs = true;
-    if (options.thresholds?.rerenderMs !== undefined) explicitThresholds.rerenderMs = true;
-    if (options.thresholds?.interactionMs !== undefined) explicitThresholds.interactionMs = true;
 
     const report = buildReport({
       componentPath,

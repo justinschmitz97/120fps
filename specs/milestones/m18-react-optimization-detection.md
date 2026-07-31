@@ -28,7 +28,7 @@ Framework detection is automatic (`auto` by default). The React module activates
 
 3. **Memo bailout detection**: per combo, mount → rerender same props → snapshot A → rerender same props → snapshot B → `diffSnapshots(A, B)` → `detectMemoBailouts(diff)` returns the **memoized** components that re-rendered. A component without `React.memo` re-renders whenever its parent does — that is React working as designed, not a defect — so only a memoized component whose memoization was defeated is reported.
 
-4. **Context fan-out detection**: probe entry wraps the component in a `__120fpsContextProbe` synthetic provider, and renders the component behind a `__120fpsStable` memo boundary so the provider's own re-render cannot cascade. Mount → snapshot A → `forceContextUpdate()` → snapshot B → `diffSnapshots(A, B)` → `detectContextFanOut(diff)` returns the components that re-rendered, which are only those that actually read the context. Probe internals are excluded by the `__120fps` name prefix, since bundlers suffix duplicate function names.
+4. **Context fan-out detection**: probe entry wraps the component in a `__120fpsContextProbe` synthetic provider, and renders the component behind a `__120fpsStable` memo boundary so the provider's own re-render cannot cascade. Mount → snapshot A → `forceContextUpdate()` → snapshot B → `diffSnapshots(A, B)` → `detectContextFanOut(diff)` returns the components that re-rendered, which are only those that actually read the context, filtered per item 8.
 
 5. **Callback identity detection**: for function-typed props, measures rerender cost with stable (cached) vs fresh (new arrow) references via probe entry's `rerenderWithStableCallbacks()` / `rerenderWithFreshCallbacks()`. Reports delta when > 0.5ms. `hasReactWarning` flags at > 2ms.
 
@@ -36,11 +36,17 @@ Framework detection is automatic (`auto` by default). The React module activates
 
 7. **Per-component render attribution**: `computeRenderAttribution(snapshot, top)` returns top-N fibers by selfDurationMs with component name, renderCount, totalDurationMs, selfDurationMs.
 
-8. **Report integration**: `ComboReport.reactOptimizations?: ReactOptimizations`. Terminal "React Optimizations" section after cost breakdown shows: memo bailout components, context fan-out components, callback identity deltas, portal orphans count, render attribution top 3.
+8. **Reportable component names**: `detectMemoBailouts`, `detectContextFanOut`, and `computeRenderAttribution` all filter through one predicate. A name is reportable unless it is:
+   - **probe scaffolding** — `Root`, `AppRoot`, or any `__120fps` prefix (bundlers suffix duplicate function names, so the match is by prefix, not exact name);
+   - **a React Compiler memo-cache slot** — `/^_c\d+$/`. The compiler emits `_c1`, `_c2`, … as cache-index bindings that reach the fiber tree as names; they identify a slot, not a component the user wrote, so no action is possible on them. Names that merely start with `_c` (`_carousel`, `_c2x`) are the user's and stay.
 
-9. **Verdict integration**: memo bailout, context fan-out, portal orphans → warn only (never fail). Callback identity delta > 2ms → warn. `hasReactWarning(opts)` determines if verdict upgrade from "pass" to "warn" is needed.
+   Both categories are harness or toolchain cost, not the user's components.
 
-10. **CLI flags**: `--no-react-analysis` → `skipReactAnalysis`. `--framework react|vanilla|auto` (default: auto).
+9. **Report integration**: `ComboReport.reactOptimizations?: ReactOptimizations`. Terminal "React Optimizations" section after cost breakdown shows: memo bailout components, context fan-out components, callback identity deltas, portal orphans count, render attribution top 3.
+
+10. **Verdict integration**: memo bailout, context fan-out, portal orphans → warn only (never fail). Callback identity delta > 2ms → warn. `hasReactWarning(opts)` determines if verdict upgrade from "pass" to "warn" is needed.
+
+11. **CLI flags**: `--no-react-analysis` → `skipReactAnalysis`. `--framework react|vanilla|auto` (default: auto).
 
 **MUST NOT:**
 

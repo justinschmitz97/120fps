@@ -10,6 +10,7 @@ import {
   buildMatrixReport,
   buildTimingWithCV,
   formatTable,
+  type ComboReport,
   type MatrixReport,
   type MatrixCell,
   type PropDelta,
@@ -17,29 +18,25 @@ import {
   type Thresholds,
 } from "../../src/report.js";
 import type { PropSchema } from "../../src/prop-gen.js";
-import type { MountResult, RerenderResult } from "../../src/measure.js";
 
 function makeSchema(overrides: Partial<PropSchema> & { name: string; kind: PropSchema["kind"] }): PropSchema {
   return { required: true, values: [], ...overrides };
 }
 
-function makeMountResult(comboIndex: number, mountMedian: number, dom: number, props: Record<string, unknown> = {}): MountResult {
+function makeCombo(comboIndex: number, mountMedian: number, dom: number, props: Record<string, unknown> = {}): ComboReport {
   return {
     comboIndex,
     props,
-    mount: { samples: [mountMedian, mountMedian, mountMedian], median: mountMedian, p95: mountMedian },
-    unmount: { samples: [0.1, 0.1, 0.1], median: 0.1, p95: 0.1 },
+    mount: buildTimingWithCV([mountMedian, mountMedian, mountMedian]),
+    rerender: buildTimingWithCV([0.5, 0.5, 0.5]),
+    unmount: buildTimingWithCV([0.1, 0.1, 0.1]),
     domNodeCount: dom,
     heapDelta: 0,
-    mountTraces: [],
-  };
-}
-
-function makeRerenderResult(comboIndex: number, stableMedian: number): RerenderResult {
-  return {
-    comboIndex,
-    props: {},
-    stable: { samples: [stableMedian, stableMedian, stableMedian], median: stableMedian, p95: stableMedian },
+    interactions: [],
+    scalingCurve: null,
+    relativeMount: 1,
+    verdict: "pass",
+    tier: "T1",
   };
 }
 
@@ -51,6 +48,7 @@ function makeTiming(median: number) {
 
 function makeCell(props: Record<string, unknown>, mountMs: number): MatrixCell {
   return {
+    comboIndex: 0,
     props,
     mount: makeTiming(mountMs),
     rerender: makeTiming(mountMs * 0.3),
@@ -58,6 +56,7 @@ function makeCell(props: Record<string, unknown>, mountMs: number): MatrixCell {
     domNodeCount: 10,
     tier: "T1" as const,
     verdict: "pass" as const,
+    worstInteractionMs: null,
   };
 }
 
@@ -95,13 +94,10 @@ describe("H2: 1 eligible prop with --matrix", () => {
     const cells = generatePropMatrix(schemas);
     expect(cells).toHaveLength(2);
 
-    const mounts = cells.map((c, i) => makeMountResult(i, (i + 1) * 2.0, 8, c));
-    const rerenders = mounts.map((_, i) => makeRerenderResult(i, 0.5));
+    const combos = cells.map((c, i) => makeCombo(i, (i + 1) * 2.0, 8, c));
     const result = buildMatrixReport({
       axes: [{ propName: "disabled", values: [false, true] }],
-      mounts,
-      rerenders,
-      thresholds: THRESHOLDS,
+      combos,
       propDeltas: [{ propName: "disabled", baseValue: false, flipValue: true, mountDelta: 2, rerenderDelta: 0 }],
     });
     expect(result.compoundEffects).toHaveLength(0);
@@ -110,13 +106,10 @@ describe("H2: 1 eligible prop with --matrix", () => {
 
 describe("H3: all cells same mount timing", () => {
   it("hotCells and coldCells handled without error", () => {
-    const mounts = Array.from({ length: 4 }, (_, i) => makeMountResult(i, 5.0, 10));
-    const rerenders = mounts.map((_, i) => makeRerenderResult(i, 0.5));
+    const combos = Array.from({ length: 4 }, (_, i) => makeCombo(i, 5.0, 10));
     const result = buildMatrixReport({
       axes: [{ propName: "a", values: [false, true] }, { propName: "b", values: [false, true] }],
-      mounts,
-      rerenders,
-      thresholds: THRESHOLDS,
+      combos,
     });
     expect(result.hotCells).toHaveLength(4);
     expect(result.coldCells).toHaveLength(3);
@@ -194,16 +187,13 @@ describe("H8: --matrix and --curve together", () => {
 
 describe("H9: --matrix with --no-deltas", () => {
   it("buildMatrixReport without propDeltas produces no compound effects", () => {
-    const mounts = [
-      makeMountResult(0, 1.0, 8, { a: false, b: false }),
-      makeMountResult(1, 5.0, 8, { a: true, b: true }),
+    const combos = [
+      makeCombo(0, 1.0, 8, { a: false, b: false }),
+      makeCombo(1, 5.0, 8, { a: true, b: true }),
     ];
-    const rerenders = mounts.map((_, i) => makeRerenderResult(i, 0.5));
     const result = buildMatrixReport({
       axes: [{ propName: "a", values: [false, true] }, { propName: "b", values: [false, true] }],
-      mounts,
-      rerenders,
-      thresholds: THRESHOLDS,
+      combos,
     });
     expect(result.compoundEffects).toHaveLength(0);
   });
@@ -212,12 +202,11 @@ describe("H9: --matrix with --no-deltas", () => {
 describe("H10: compound significance boundaries", () => {
   it("1.49x is medium, 1.50x is high", () => {
     const anchorMount = 1.0;
-    const mounts = [
-      makeMountResult(0, anchorMount, 8, { a: "x", b: "x" }),
-      makeMountResult(1, 1.49 * (anchorMount + 0.5 + 0.3), 8, { a: "y", b: "y" }),
-      makeMountResult(2, 1.50 * (anchorMount + 0.5 + 0.3), 8, { a: "z", b: "z" }),
+    const combos = [
+      makeCombo(0, anchorMount, 8, { a: "x", b: "x" }),
+      makeCombo(1, 1.49 * (anchorMount + 0.5 + 0.3), 8, { a: "y", b: "y" }),
+      makeCombo(2, 1.50 * (anchorMount + 0.5 + 0.3), 8, { a: "z", b: "z" }),
     ];
-    const rerenders = mounts.map((_, i) => makeRerenderResult(i, 0.5));
     const deltas: PropDelta[] = [
       { propName: "a", baseValue: "x", flipValue: "y", mountDelta: 0.5, rerenderDelta: 0 },
       { propName: "a", baseValue: "x", flipValue: "z", mountDelta: 0.5, rerenderDelta: 0 },
@@ -226,9 +215,7 @@ describe("H10: compound significance boundaries", () => {
     ];
     const result = buildMatrixReport({
       axes: [{ propName: "a", values: ["x", "y", "z"] }, { propName: "b", values: ["x", "y", "z"] }],
-      mounts,
-      rerenders,
-      thresholds: THRESHOLDS,
+      combos,
       propDeltas: deltas,
     });
     const medEffect = result.compoundEffects.find((e) => e.props.a === "y" && e.props.b === "y");
@@ -293,6 +280,7 @@ describe("H14: formatMatrixOutput with 0 compound effects", () => {
       cells: [makeCell({ v: "a" }, 1), makeCell({ v: "b" }, 2)],
       hotCells: [makeCell({ v: "b" }, 2), makeCell({ v: "a" }, 1)],
       coldCells: [makeCell({ v: "a" }, 1)],
+      failingCells: [],
       compoundEffects: [],
     };
     const output = formatTable(makeReport({ matrixReport: mr }));
@@ -319,13 +307,9 @@ describe("H15: every cell has all prop keys including non-matrix", () => {
 
 describe("H16: fewer than 5 total cells", () => {
   it("hotCells = all cells", () => {
-    const mounts = [makeMountResult(0, 1, 8), makeMountResult(1, 2, 8)];
-    const rerenders = mounts.map((_, i) => makeRerenderResult(i, 0.5));
     const result = buildMatrixReport({
       axes: [{ propName: "a", values: [false, true] }],
-      mounts,
-      rerenders,
-      thresholds: THRESHOLDS,
+      combos: [makeCombo(0, 1, 8), makeCombo(1, 2, 8)],
     });
     expect(result.hotCells).toHaveLength(2);
   });
@@ -333,13 +317,9 @@ describe("H16: fewer than 5 total cells", () => {
 
 describe("H17: fewer than 3 total cells", () => {
   it("coldCells = all cells", () => {
-    const mounts = [makeMountResult(0, 1, 8), makeMountResult(1, 2, 8)];
-    const rerenders = mounts.map((_, i) => makeRerenderResult(i, 0.5));
     const result = buildMatrixReport({
       axes: [{ propName: "a", values: [false, true] }],
-      mounts,
-      rerenders,
-      thresholds: THRESHOLDS,
+      combos: [makeCombo(0, 1, 8), makeCombo(1, 2, 8)],
     });
     expect(result.coldCells).toHaveLength(2);
   });
@@ -352,6 +332,7 @@ describe("H18: JSON round-trip of matrixReport", () => {
       cells: [makeCell({ v: "a" }, 1), makeCell({ v: "b" }, 2)],
       hotCells: [makeCell({ v: "b" }, 2)],
       coldCells: [makeCell({ v: "a" }, 1)],
+      failingCells: [],
       compoundEffects: [{
         props: { v: "b" },
         expectedMount: 1,

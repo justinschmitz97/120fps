@@ -15,8 +15,15 @@ function makeTiming(median: number) {
   return buildTimingWithCV([median, median, median]);
 }
 
-function makeCell(props: Record<string, unknown>, mountMs: number): MatrixCell {
+let cellCounter = 0;
+
+function makeCell(
+  props: Record<string, unknown>,
+  mountMs: number,
+  overrides: Partial<MatrixCell> = {},
+): MatrixCell {
   return {
+    comboIndex: cellCounter++,
     props,
     mount: makeTiming(mountMs),
     rerender: makeTiming(mountMs * 0.3),
@@ -24,10 +31,13 @@ function makeCell(props: Record<string, unknown>, mountMs: number): MatrixCell {
     domNodeCount: 10,
     tier: "T1" as const,
     verdict: "pass" as const,
+    worstInteractionMs: null,
+    ...overrides,
   };
 }
 
 function makeMatrixReport(overrides: Partial<MatrixReport> = {}): MatrixReport {
+  cellCounter = 0;
   const cells = [
     makeCell({ variant: "primary", disabled: false }, 2.0),
     makeCell({ variant: "primary", disabled: true }, 3.0),
@@ -42,6 +52,7 @@ function makeMatrixReport(overrides: Partial<MatrixReport> = {}): MatrixReport {
     cells,
     hotCells: [cells[1], cells[3], cells[0], cells[2]],
     coldCells: [cells[2], cells[0], cells[3]],
+    failingCells: [],
     compoundEffects: [],
     ...overrides,
   };
@@ -145,5 +156,67 @@ describe("formatTable with matrixReport", () => {
     const report = makeReport({ matrixReport: makeMatrixReport() });
     const output = formatTable(report);
     expect(output).not.toContain("Compound");
+  });
+
+  it("shows an Interact column", () => {
+    const report = makeReport({ matrixReport: makeMatrixReport() });
+    expect(formatTable(report)).toContain("Interact");
+  });
+
+  it("renders a dash for cells whose interactions were not explored", () => {
+    const mr = makeMatrixReport();
+    const report = makeReport({ matrixReport: mr });
+    const row = formatTable(report)
+      .split("\n")
+      .find((l) => l.includes("primary") && l.includes("3.00ms"));
+    expect(row).toBeDefined();
+    expect(row).toMatch(/\s-\s/);
+  });
+
+  it("renders the worst interaction time when present", () => {
+    cellCounter = 0;
+    const cells = [makeCell({ variant: "primary", disabled: false }, 2.0, { worstInteractionMs: 717.3 })];
+    const mr = makeMatrixReport({ cells, hotCells: cells, coldCells: cells });
+    const output = formatTable(makeReport({ matrixReport: mr }));
+    expect(output).toContain("717.30ms");
+  });
+
+  // A cheap-to-mount cell that fails on an interaction is outside hotCells; the
+  // run reported FAIL while the table showed nothing but PASS.
+  it("prints failing cells that are not among the hottest", () => {
+    cellCounter = 0;
+    const hot = [
+      makeCell({ variant: "primary", disabled: false }, 9.0),
+      makeCell({ variant: "primary", disabled: true }, 8.0),
+    ];
+    const failing = makeCell({ variant: "secondary", disabled: true }, 0.4, {
+      verdict: "fail",
+      worstInteractionMs: 717.3,
+    });
+    const mr = makeMatrixReport({
+      cells: [...hot, failing],
+      hotCells: hot,
+      coldCells: [failing],
+      failingCells: [failing],
+    });
+    const output = formatTable(makeReport({ matrixReport: mr, pass: false }));
+    expect(output).toContain("FAIL");
+    expect(output).toContain("717.30ms");
+    expect(output).toContain("1 failing shown");
+  });
+
+  it("does not duplicate a failing cell that is already among the hottest", () => {
+    cellCounter = 0;
+    const failingHot = makeCell({ variant: "primary", disabled: false }, 90.0, { verdict: "fail" });
+    const mr = makeMatrixReport({
+      cells: [failingHot],
+      hotCells: [failingHot],
+      coldCells: [failingHot],
+      failingCells: [failingHot],
+    });
+    const output = formatTable(makeReport({ matrixReport: mr, pass: false }));
+    const rows = output.split("\n").filter((l) => l.includes("90.00ms"));
+    expect(rows).toHaveLength(1);
+    expect(output).toContain("hottest shown");
   });
 });

@@ -369,10 +369,10 @@ CDP trace capture during mount/unmount across prop combinations. 4× CPU throttl
 
 **Scope**:
 - `--matrix` CLI flag. Generates matrix combos: baseline + one combo per unique prop value.
-- `MatrixReport` type with `MatrixCell[]` per-prop-value entries (mount/rerender timing, delta from baseline).
-- `Report.matrixReport?` field. Terminal table shows prop×value cost matrix.
+- `MatrixReport` type with `MatrixCell[]` per-prop-value entries (mount/rerender timing, delta from baseline). Cells are a pure projection of `report.combos`, so a cell verdict and the run-level `pass` derive from one computation.
+- `Report.matrixReport?` field. Terminal table shows prop×value cost matrix, with an `Interact` column and every failing cell printed alongside the hottest.
 - `--no-matrix` disables auto-activation. Mutually exclusive with `--curve` and `--isolate`.
-- See `specs/milestones/m21-prop-variation-matrix.md`. 74 new tests.
+- See `specs/milestones/m21-prop-variation-matrix.md`. 86 unit tests + 4 e2e.
 
 **Does NOT include**: cross-prop interaction effects, matrix mode for fixtures.
 

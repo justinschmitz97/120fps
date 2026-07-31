@@ -611,6 +611,7 @@ const MATRIX_REPORT: MatrixReport = {
   axes: [{ propName: "variant", values: ["primary", "ghost"] }],
   cells: [
     {
+      comboIndex: 0,
       props: { variant: "primary" },
       mount: timing(1),
       rerender: timing(1),
@@ -618,10 +619,12 @@ const MATRIX_REPORT: MatrixReport = {
       domNodeCount: 3,
       tier: "T1",
       verdict: "pass",
+      worstInteractionMs: null,
     },
   ],
   hotCells: [],
   coldCells: [],
+  failingCells: [],
   compoundEffects: [],
 };
 

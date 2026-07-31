@@ -87,6 +87,16 @@ interface ExploreResult {
 }
 ```
 
+### comboIndex is relative to the array passed in
+
+`explore` sets `comboIndex` to the position in the `combos` array it received, not to any wider combo space. A caller that explores a subset (matrix mode explores only the hottest cells) MUST translate the indices back before joining against results measured over the full set:
+
+```ts
+restoreComboIndices<T extends { comboIndex: number }>(results: T[], sourceIndices: number[]): T[]
+```
+
+It returns copies with `comboIndex` replaced by `sourceIndices[comboIndex]`, and throws when a result has no corresponding source index. Skipping the restore silently attaches each interaction to the wrong prop combination — the joins downstream match on `comboIndex` and cannot detect the mismatch.
+
 ## Design
 
 ### Exploration algorithm

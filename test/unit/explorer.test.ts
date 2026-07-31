@@ -1,5 +1,39 @@
 import { describe, it, expect } from "vitest";
-import { fnv1aHash, createRng } from "../../src/explorer.js";
+import { fnv1aHash, createRng, restoreComboIndices } from "../../src/explorer.js";
+
+describe("restoreComboIndices", () => {
+  it("translates subset positions back into full combo indices", () => {
+    const results = [
+      { comboIndex: 0, label: "hottest" },
+      { comboIndex: 1, label: "second" },
+      { comboIndex: 2, label: "third" },
+    ];
+    expect(restoreComboIndices(results, [7, 2, 11])).toEqual([
+      { comboIndex: 7, label: "hottest" },
+      { comboIndex: 2, label: "second" },
+      { comboIndex: 11, label: "third" },
+    ]);
+  });
+
+  it("is identity when the subset is the whole set in order", () => {
+    const results = [{ comboIndex: 0 }, { comboIndex: 1 }];
+    expect(restoreComboIndices(results, [0, 1])).toEqual(results);
+  });
+
+  it("does not mutate the input results", () => {
+    const results = [{ comboIndex: 0 }];
+    restoreComboIndices(results, [5]);
+    expect(results[0].comboIndex).toBe(0);
+  });
+
+  it("returns empty for empty results", () => {
+    expect(restoreComboIndices([], [3, 4])).toEqual([]);
+  });
+
+  it("throws when a result has no corresponding source index", () => {
+    expect(() => restoreComboIndices([{ comboIndex: 3 }], [0, 1])).toThrow(/sourceIndices/);
+  });
+});
 
 describe("fnv1aHash", () => {
   it("returns consistent hash for same input", () => {

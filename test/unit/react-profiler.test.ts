@@ -280,6 +280,27 @@ describe("detectMemoBailouts", () => {
     };
     expect(detectMemoBailouts(diff)).toEqual(["Card"]);
   });
+
+  it("excludes React Compiler memo-cache slots", () => {
+    const diff: ProfilerDiff = {
+      rerenderFibers: [
+        { name: "_c2", renderCountDelta: 1, isMemo: true },
+        { name: "_c13", renderCountDelta: 1, isMemo: true },
+        { name: "Card", renderCountDelta: 1, isMemo: true },
+      ],
+    };
+    expect(detectMemoBailouts(diff)).toEqual(["Card"]);
+  });
+
+  it("keeps user components whose names merely start with _c", () => {
+    const diff: ProfilerDiff = {
+      rerenderFibers: [
+        { name: "_carousel", renderCountDelta: 1, isMemo: true },
+        { name: "_c2x", renderCountDelta: 1, isMemo: true },
+      ],
+    };
+    expect(detectMemoBailouts(diff)).toEqual(["_carousel", "_c2x"]);
+  });
 });
 
 // ====================================================================
@@ -315,6 +336,16 @@ describe("detectContextFanOut", () => {
     expect(detectContextFanOut(diff)).toEqual(["Input"]);
   });
 
+  it("excludes React Compiler memo-cache slots", () => {
+    const diff: ProfilerDiff = {
+      rerenderFibers: [
+        { name: "_c2", renderCountDelta: 1 },
+        { name: "List", renderCountDelta: 1 },
+      ],
+    };
+    expect(detectContextFanOut(diff)).toEqual(["List"]);
+  });
+
   it("returns empty when no fibers re-rendered", () => {
     const diff: ProfilerDiff = { rerenderFibers: [] };
     expect(detectContextFanOut(diff)).toEqual([]);
@@ -339,6 +370,24 @@ describe("computeRenderAttribution", () => {
     expect(result).toHaveLength(5);
     expect(result[0].component).toBe("Comp7");
     expect(result[4].component).toBe("Comp3");
+  });
+
+  it("omits probe scaffolding and the React root", () => {
+    const snap = makeSnapshot([
+      ["f1", makeFiber({ name: "__120fpsContextProbe", selfDurationMs: 99 })],
+      ["f2", makeFiber({ name: "__120fpsStable2", selfDurationMs: 98 })],
+      ["f3", makeFiber({ name: "Root", selfDurationMs: 97 })],
+      ["f4", makeFiber({ name: "Button", selfDurationMs: 3 })],
+    ]);
+    expect(computeRenderAttribution(snap).map((r) => r.component)).toEqual(["Button"]);
+  });
+
+  it("omits React Compiler memo-cache slots", () => {
+    const snap = makeSnapshot([
+      ["f1", makeFiber({ name: "_c2", selfDurationMs: 99 })],
+      ["f2", makeFiber({ name: "Button", selfDurationMs: 3 })],
+    ]);
+    expect(computeRenderAttribution(snap).map((r) => r.component)).toEqual(["Button"]);
   });
 
   it("returns fewer than 5 when fewer fibers exist", () => {

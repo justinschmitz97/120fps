@@ -77,6 +77,24 @@ export interface ExploreResult {
 
 // --- Pure utilities ---
 
+// `explore` numbers its results by position in the combos array it was handed.
+// A caller that explores a subset must translate those positions back into the
+// full combo space, or downstream joins attach interactions to the wrong props.
+export function restoreComboIndices<T extends { comboIndex: number }>(
+  results: T[],
+  sourceIndices: number[],
+): T[] {
+  return results.map((r) => {
+    const restored = sourceIndices[r.comboIndex];
+    if (restored === undefined) {
+      throw new Error(
+        `explore result ${r.comboIndex} has no entry in sourceIndices (length ${sourceIndices.length})`,
+      );
+    }
+    return { ...r, comboIndex: restored };
+  });
+}
+
 export function fnv1aHash(str: string): string {
   let hash = 0x811c9dc5;
   for (let i = 0; i < str.length; i++) {

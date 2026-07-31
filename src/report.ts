@@ -2,7 +2,7 @@ import path from "node:path";
 import type { InteractionType } from "./discovery.js";
 import { computeScalingCurve, attributeCost, type ScalingCurve, type CostAttribution } from "./metrics.js";
 import type { ReactOptimizations } from "./react-profiler.js";
-import { computeMedian, computeP95, type MountResult, type RerenderResult } from "./measure.js";
+import { computeMedian, computeP95 } from "./measure.js";
 
 export interface Thresholds {
   mountMs: number;
@@ -156,6 +156,7 @@ export interface MatrixAxis {
 }
 
 export interface MatrixCell {
+  comboIndex: number;
   props: Record<string, unknown>;
   mount: TimingWithCV;
   rerender: TimingWithCV;
@@ -163,6 +164,9 @@ export interface MatrixCell {
   domNodeCount: number;
   tier: ComponentTier;
   verdict: "pass" | "warn" | "fail";
+  // Slowest interaction measured on this cell, or null when interactions were
+  // not explored for it (M21 explores only the hottest cells).
+  worstInteractionMs: number | null;
 }
 
 export interface CompoundEffect {
@@ -178,6 +182,9 @@ export interface MatrixReport {
   cells: MatrixCell[];
   hotCells: MatrixCell[];
   coldCells: MatrixCell[];
+  // Every failing cell, regardless of mount cost. A cell can fail on an
+  // interaction while mounting cheaply, so it need not appear in hotCells.
+  failingCells: MatrixCell[];
   compoundEffects: CompoundEffect[];
 }
 
@@ -859,64 +866,33 @@ export function computeCurveVerdict(
 
 export interface BuildMatrixReportInput {
   axes: MatrixAxis[];
-  mounts: MountResult[];
-  rerenders: RerenderResult[];
-  thresholds: Thresholds;
-  flatThresholds?: boolean;
+  // The matrix cells ARE the combos (M21). Projecting them keeps cell verdicts
+  // and the run-level pass/fail derived from one computation instead of two
+  // that drift — the combo verdict already accounts for interactions.
+  combos: ComboReport[];
   propDeltas?: PropDelta[];
 }
 
 export function buildMatrixReport(input: BuildMatrixReportInput): MatrixReport {
-  const cells: MatrixCell[] = [];
-
-  for (const mount of input.mounts) {
-    const rerender = input.rerenders.find((r) => r.comboIndex === mount.comboIndex);
-    const mountTiming = buildTimingWithCV(mount.mount.samples);
-    const rerenderTiming = rerender
-      ? buildTimingWithCV(rerender.stable.samples)
-      : buildTimingWithCV([0]);
-    const unmountTiming = buildTimingWithCV(mount.unmount.samples);
-
-    const tier = input.flatThresholds
-      ? undefined
-      : classifyTier({
-          domNodeCount: mount.domNodeCount,
-          hasPortal: false,
-          hasAnimation: mount.hasAnimation ?? false,
-        });
-
-    const comboForVerdict: ComboReport = {
-      comboIndex: mount.comboIndex,
-      props: mount.props,
-      mount: mountTiming,
-      unmount: unmountTiming,
-      rerender: rerenderTiming,
-      domNodeCount: mount.domNodeCount,
-      heapDelta: 0,
-      interactions: [],
-      scalingCurve: null,
-      relativeMount: 1,
-      verdict: "pass",
-      tier,
-    };
-
-    const tierBudget = tier ? TIER_BUDGETS[tier] : undefined;
-    const verdict = computeVerdict(comboForVerdict, input.thresholds, { tierBudget });
-
-    cells.push({
-      props: mount.props,
-      mount: mountTiming,
-      rerender: rerenderTiming,
-      unmount: unmountTiming,
-      domNodeCount: mount.domNodeCount,
-      tier: tier ?? "T1",
-      verdict,
-    });
-  }
+  const cells: MatrixCell[] = input.combos.map((combo) => ({
+    comboIndex: combo.comboIndex,
+    props: combo.props,
+    mount: combo.mount,
+    rerender: combo.rerender,
+    unmount: combo.unmount,
+    domNodeCount: combo.domNodeCount,
+    tier: combo.tier ?? "T1",
+    verdict: combo.verdict,
+    worstInteractionMs:
+      combo.interactions.length > 0
+        ? Math.max(...combo.interactions.map((i) => i.timing.median))
+        : null,
+  }));
 
   const sorted = [...cells].sort((a, b) => b.mount.median - a.mount.median);
   const hotCells = sorted.slice(0, 5);
   const coldCells = [...cells].sort((a, b) => a.mount.median - b.mount.median).slice(0, 3);
+  const failingCells = cells.filter((c) => c.verdict === "fail");
 
   let compoundEffects: CompoundEffect[] = [];
   if (input.propDeltas && input.propDeltas.length > 0 && input.axes.length >= 2) {
@@ -962,27 +938,40 @@ export function buildMatrixReport(input: BuildMatrixReportInput): MatrixReport {
     }
   }
 
-  return { axes: input.axes, cells, hotCells, coldCells, compoundEffects };
+  return { axes: input.axes, cells, hotCells, coldCells, failingCells, compoundEffects };
 }
 
 function formatMatrixOutput(lines: string[], report: Report): string {
   const mr = report.matrixReport!;
   const axisNames = mr.axes.map((a) => a.propName);
+
+  // A cell can pass on mount yet fail on an interaction, so showing only the
+  // hottest cells can print an all-PASS table above a FAIL result.
+  const shown = [...mr.hotCells];
+  const extraFailures = mr.failingCells.filter(
+    (f) => !shown.some((c) => c.comboIndex === f.comboIndex),
+  );
+  shown.push(...extraFailures);
+
   lines.push(`Prop Matrix (${axisNames.join(" × ")})`);
-  lines.push(`${mr.cells.length} cells measured, ${mr.hotCells.length} hottest shown:`);
+  const shownLabel = extraFailures.length > 0
+    ? `${mr.hotCells.length} hottest + ${extraFailures.length} failing shown`
+    : `${mr.hotCells.length} hottest shown`;
+  lines.push(`${mr.cells.length} cells measured, ${shownLabel}:`);
   lines.push("");
 
-  const cols = [...axisNames, "Mount", "Rerender", "DOM", "Verdict"];
+  const cols = [...axisNames, "Mount", "Rerender", "Interact", "DOM", "Verdict"];
   const widths = cols.map((c) => Math.max(c.length + 2, 10));
 
   lines.push(cols.map((c, i) => c.padEnd(widths[i])).join(""));
   lines.push(cols.map((_, i) => "-".repeat(widths[i] - 2).padEnd(widths[i])).join(""));
 
-  for (const cell of mr.hotCells) {
+  for (const cell of shown) {
     const vals = [
       ...axisNames.map((name) => String(cell.props[name] ?? "")),
       `${cell.mount.median.toFixed(2)}ms`,
       `${cell.rerender.median.toFixed(2)}ms`,
+      cell.worstInteractionMs === null ? "-" : `${cell.worstInteractionMs.toFixed(2)}ms`,
       String(cell.domNodeCount),
       `${cell.verdict.toUpperCase()} (${cell.tier})`,
     ];

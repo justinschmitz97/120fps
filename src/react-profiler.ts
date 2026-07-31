@@ -98,12 +98,24 @@ function isProbeInternal(name: string): boolean {
   return name === "Root" || name === "AppRoot" || name.startsWith("__120fps");
 }
 
+// React Compiler emits memo-cache slot bindings (_c1, _c2, ...) that reach the
+// fiber tree as names. They identify a cache index, not a component the user
+// wrote, so acting on them is impossible.
+function isCompilerCacheSlot(name: string): boolean {
+  return /^_c\d+$/.test(name);
+}
+
+// A name worth showing the user: neither our own harness nor a compiler artifact.
+function isReportableComponent(name: string): boolean {
+  return !isProbeInternal(name) && !isCompilerCacheSlot(name);
+}
+
 // A component without React.memo re-renders whenever its parent does — that is
 // React working as designed, not a defect. Only a memoized component that
 // re-rendered on identical props has had its memoization defeated.
 export function detectMemoBailouts(diff: ProfilerDiff): string[] {
   return diff.rerenderFibers
-    .filter((f) => f.isMemo && !isProbeInternal(f.name))
+    .filter((f) => f.isMemo && isReportableComponent(f.name))
     .map((f) => f.name);
 }
 
@@ -111,7 +123,7 @@ export function detectMemoBailouts(diff: ProfilerDiff): string[] {
 // the synthetic provider reaches only fibers that actually read the context.
 export function detectContextFanOut(diff: ProfilerDiff): string[] {
   return diff.rerenderFibers
-    .filter((f) => !isProbeInternal(f.name))
+    .filter((f) => isReportableComponent(f.name))
     .map((f) => f.name);
 }
 
@@ -119,7 +131,9 @@ export function computeRenderAttribution(
   snapshot: ProfilerSnapshot,
   top = 5,
 ): RenderAttribution[] {
-  const fibers = [...snapshot.fibers.values()];
+  // The probe's own provider and memo boundary are harness scaffolding, not the
+  // user's components; reporting them as hot spots is noise.
+  const fibers = [...snapshot.fibers.values()].filter((f) => isReportableComponent(f.name));
   fibers.sort((a, b) => b.selfDurationMs - a.selfDurationMs);
   return fibers.slice(0, top).map((f) => ({
     component: f.name,

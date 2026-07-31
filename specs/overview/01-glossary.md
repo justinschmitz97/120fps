@@ -45,7 +45,7 @@ status: approved
 | StateNode | `{ id, depth, interactions: InteractionDescriptor[], pathFromRoot: PathStep[] }`. One DOM state in the graph. |
 | StateEdge | `{ id, fromId, toId, interaction, samples, median, p95, traces, stressPattern? }`. Transition between two DOM states via an interaction. |
 | PathStep | `{ interaction: InteractionDescriptor }`. One step in the path from graph root to a state node. |
-| ExploreResult | `{ graph: StateGraph, comboIndex: number, props: PropCombination }`. Exploration output for one prop combo. |
+| ExploreResult | `{ graph: StateGraph, comboIndex: number, props: PropCombination }`. Exploration output for one prop combo. `comboIndex` is the position in the array passed to `explore`, not a global index; callers exploring a subset restore it via `restoreComboIndices`. |
 | ExploreOptions | `{ samples?, maxNodes?, maxWallClockMs?, maxDepth?, cpuThrottle?, warmupRuns?, seed?, combos? }`. Configuration for `explore()`. |
 | DOM hash | FNV-1a hash of `#root` innerHTML. Identifies unique DOM states in the state graph. |
 | Convergence | Last 10 explorations all yield no new state nodes → stop. Binary check, not percentage. |
