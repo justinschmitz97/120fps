@@ -1,0 +1,9 @@
+@import "tailwindcss";
+
+@theme {
+  --color-brand: #654321;
+}
+
+.tw-card {
+  background-color: var(--color-brand);
+}

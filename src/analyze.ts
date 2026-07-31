@@ -2,13 +2,13 @@ import os from "node:os";
 import fs from "node:fs";
 import path from "node:path";
 import { chromium, type Browser } from "playwright";
-import { buildAndServe, detectScaleExport, findProjectRoot, type HarnessResult } from "./harness.js";
+import { buildAndServe, detectGlobalCss, detectScaleExport, detectWrapper, findProjectRoot, type HarnessResult } from "./harness.js";
 import { attachPageErrorCapture, enrichTimeoutError } from "./page-errors.js";
 import { extractProps, extractExports, extractAllProps, detectScalingProps, type ScalingPropMatch } from "./prop-gen.js";
 import { inferComposition, type CompositionTree } from "./composition.js";
 import { detectFramework, runReactAnalysis, hasReactWarning, type ReactOptimizations } from "./react-profiler.js";
 import { generateCombinations, generateDeltaPairs, generateScalingCombos, generatePropMatrix, shouldAutoActivateMatrix, type PropCombination } from "./prop-gen-values.js";
-import { measureMount, measureRerender, type MountResult, type RerenderResult } from "./measure.js";
+import { applyWrapperViewport, measureMount, measureRerender, measureWrapperOverhead, settleStyles, FONT_SETTLE_WARNING, HARNESS_NAV_WAIT, type MountResult, type RerenderResult } from "./measure.js";
 import { explore, type ExploreResult } from "./explorer.js";
 import {
   createCalibrationTrace,
@@ -23,9 +23,22 @@ import {
   resolveComponentBudget,
   resolveTolerances,
   compareBaseline,
+  buildEnvFingerprint,
+  envAdvisory,
   type BaselineEntry,
+  type BaselineEnvPolicy,
+  type BaselineMetrics,
 } from "./budget.js";
 import {
+  computeIsolationVerdict,
+  isolationBaselineMetrics,
+  parseIsolationPhases,
+  runIsolationPhases,
+  selectIsolationCombos,
+  DEFAULT_MEMORY_CYCLES,
+} from "./isolation.js";
+import {
+  attachWrapperReport,
   buildTimingWithCV,
   buildCurveReport,
   computeCurveVerdict,
@@ -46,6 +59,9 @@ import {
   type TierBudget,
   type Thresholds,
   type TimingWithCV,
+  type CssReport,
+  type EnvFingerprint,
+  type WrapperReport,
 } from "./report.js";
 
 export interface AnalyzeOptions {
@@ -71,7 +87,13 @@ export interface AnalyzeOptions {
   saveBaseline?: boolean;
   check?: boolean;
   noBaseline?: boolean;
+  baselineEnv?: BaselineEnvPolicy;
   isolation?: { phases: string[]; memoryCycles?: number };
+  wrapPath?: string;
+  noWrap?: boolean;
+  cssFiles?: string[];
+  noCss?: boolean;
+  reactCompiler?: boolean;
 }
 
 export interface BuildReportInput {
@@ -248,6 +270,80 @@ export function buildReport(input: BuildReportInput): Report {
   return report;
 }
 
+interface BaselineWorkflowContext {
+  options: AnalyzeOptions;
+  projectRoot: string;
+  relativeComponent: string;
+  componentDir: string;
+  currentEnv: EnvFingerprint;
+  envPolicy: BaselineEnvPolicy;
+}
+
+// Shared by every output mode: the isolation branch returns before the combo
+// path would reach its own copy, and both compare the same three metrics.
+function applyBaselineWorkflow(
+  report: Report,
+  metrics: BaselineMetrics | undefined,
+  ctx: BaselineWorkflowContext,
+): void {
+  const baselinePath = path.join(ctx.projectRoot, "120fps-baseline.json");
+
+  if (ctx.options.check && !ctx.options.noBaseline) {
+    const baseline = loadBaseline(baselinePath);
+    const entry = baseline?.entries[ctx.relativeComponent];
+    if (entry) {
+      const tol = resolveTolerances(loadBudgetConfig(ctx.projectRoot));
+      const comparison = compareBaseline(
+        entry,
+        {
+          mount: metrics?.mount ?? 0,
+          rerender: metrics?.rerender ?? 0,
+          unmount: metrics?.unmount ?? 0,
+          interactions: metrics?.interactions ?? {},
+        },
+        tol,
+        metrics?.unstable ?? new Set<string>(),
+        ctx.envPolicy === "ignore" ? undefined : ctx.currentEnv,
+      );
+      report.baseline = comparison;
+      if (comparison.regressions.length > 0) {
+        report.pass = false;
+      }
+      const advisory = envAdvisory(comparison.envMatch, comparison.envMismatches, ctx.envPolicy);
+      if (advisory.warning) {
+        report.warnings = [...(report.warnings ?? []), advisory.warning];
+      }
+      if (advisory.fail) {
+        report.pass = false;
+      }
+    } else {
+      const legacyWarning = legacyBaselineWarning(ctx.projectRoot, ctx.componentDir);
+      if (legacyWarning) {
+        process.stderr.write(`Warning: ${legacyWarning}\n`);
+      }
+    }
+  }
+
+  if (ctx.options.saveBaseline && metrics) {
+    const entry: BaselineEntry = {
+      mount: metrics.mount,
+      rerender: metrics.rerender,
+      unmount: metrics.unmount,
+      domNodeCount: metrics.domNodeCount,
+      interactions: metrics.interactions,
+      tier: metrics.tier,
+      env: ctx.currentEnv,
+    };
+    saveBaselineFile(baselinePath, entry, ctx.relativeComponent);
+  }
+}
+
+function writeReportJson(report: Report, jsonPath: string | undefined): void {
+  const target = path.resolve(jsonPath ?? "120fps-report.json");
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.writeFileSync(target, JSON.stringify(report, mapReplacer, 2), "utf-8");
+}
+
 function computeMedianFromSamples(samples: number[]): number {
   if (samples.length === 0) return 0;
   const sorted = [...samples].sort((a, b) => a - b);
@@ -353,6 +449,36 @@ export async function analyze(
   const harnessPath = useFixture ? fixturePath! : componentPath;
   const metadataPath = inputIsFixture ? componentPath : resolvedPath;
 
+  const { projectRoot, relativeComponent } = resolveProjectPaths(resolvedPath);
+  const { wrapPath, wrapAutoDetected } = resolveWrapPath(options, projectRoot);
+  const resolvedCss = resolveCssFiles(options, projectRoot);
+  const cssReport: CssReport | undefined =
+    resolvedCss.files.length > 0
+      ? {
+          files: resolvedCss.files.map((f) => path.relative(projectRoot, f).replace(/\\/g, "/")),
+          autoDetected: resolvedCss.autoDetected,
+        }
+      : undefined;
+  let fontsSettled = true;
+
+  const attachHarnessContext = (report: Report): void => {
+    if (cssReport) report.css = cssReport;
+    const compiler = harness?.reactCompiler;
+    if (compiler && (compiler.detected || compiler.active)) {
+      report.reactCompiler = {
+        active: compiler.active,
+        detected: compiler.detected,
+        ...(compiler.version ? { version: compiler.version } : {}),
+      };
+    }
+    if (compiler?.warning) {
+      report.warnings = [...(report.warnings ?? []), compiler.warning];
+    }
+    if (!fontsSettled) {
+      report.warnings = [...(report.warnings ?? []), FONT_SETTLE_WARNING];
+    }
+  };
+
   let harness: HarnessResult | undefined;
   let browser: Browser | undefined;
 
@@ -360,6 +486,9 @@ export async function analyze(
     const harnessOpts: import("./harness.js").BuildHarnessOptions = {
       ...(useComposition ? { composition: compositionTree!, exports: componentExports } : {}),
       ...(options.noShims ? { noShims: true } : {}),
+      ...(wrapPath ? { wrapPath } : {}),
+      ...(resolvedCss.files.length > 0 ? { cssFiles: resolvedCss.files } : {}),
+      ...(options.reactCompiler !== undefined ? { reactCompiler: options.reactCompiler } : {}),
     };
     harness = await buildAndServe(harnessPath, harnessOpts);
 
@@ -371,7 +500,7 @@ export async function analyze(
     const chromiumVersion = browser.version();
     const machine = await collectMachineInfo(chromiumVersion);
 
-    await page.goto(harness.url);
+    await page.goto(harness.url, { waitUntil: HARNESS_NAV_WAIT });
     try {
       await page.waitForFunction(
         () => typeof (window as any).__120fps === "object",
@@ -382,6 +511,8 @@ export async function analyze(
       throw enrichTimeoutError(err, pageErrors, "component harness");
     }
 
+    await applyWrapperViewport(page);
+    fontsSettled = await settleStyles(page, harness);
     await cdp.send("Emulation.setCPUThrottlingRate", { rate: cpuThrottle });
 
     const calibrationMetrics = await createCalibrationTrace(page, cdp);
@@ -394,6 +525,17 @@ export async function analyze(
       throw new Error("Calibration produced zero duration — measurement environment is broken");
     }
 
+    let wrapper: WrapperReport | undefined;
+    if (wrapPath) {
+      const overhead = await measureWrapperOverhead(page, cdp, samples);
+      wrapper = {
+        path: path.relative(projectRoot, wrapPath).replace(/\\/g, "/"),
+        autoDetected: wrapAutoDetected,
+        overheadMs: overhead.overheadMs,
+        domNodes: overhead.domNodes,
+      };
+    }
+
     await browser.close();
     browser = undefined;
 
@@ -401,6 +543,102 @@ export async function analyze(
     let schemas: import("./prop-gen.js").PropSchema[] | undefined;
     const resolvedHarnessPath = path.resolve(harnessPath);
     const fixtureHasScale = useFixture && detectScaleExport(resolvedHarnessPath);
+
+    // --- Isolation mode ---
+    if (options.isolation) {
+      const phases = parseIsolationPhases(options.isolation.phases.join(","));
+      if (phases.length === 0) {
+        throw new Error(
+          "--isolate requires at least one phase (mount, rerender, unmount, memory, strictmode, all)",
+        );
+      }
+
+      const isolationCombos =
+        useFixture || useComposition
+          ? [{}]
+          : generateCombinations(await extractProps(harness.componentPath));
+      const selection = selectIsolationCombos(isolationCombos);
+
+      const run = await runIsolationPhases(harness, {
+        phases,
+        comboA: selection.comboA,
+        comboB: selection.comboB,
+        degenerate: selection.degenerate,
+        samples,
+        cpuThrottle,
+        memoryCycles: options.isolation.memoryCycles ?? DEFAULT_MEMORY_CYCLES,
+      });
+
+      // Discovery does not run in isolation mode, so there is no portal signal.
+      const tier = classifyTier({
+        domNodeCount: run.domNodeCount ?? 0,
+        hasPortal: false,
+        hasAnimation: run.hasAnimation ?? false,
+      });
+      const flatMountBudget =
+        options.flatThresholds || options.thresholds?.mountMs !== undefined;
+      const mountBudgetMs = flatMountBudget
+        ? thresholds.mountMs
+        : resolveComponentBudget(loadBudgetConfig(projectRoot), relativeComponent, tier).mountMs;
+
+      const componentName = detectComponentName(metadataPath);
+      const report: Report = {
+        version: 1,
+        timestamp: new Date().toISOString(),
+        machine,
+        componentPath,
+        componentName,
+        calibration,
+        combos: [],
+        thresholds,
+        pass: computeIsolationVerdict(run.isolation, mountBudgetMs),
+        isolation: run.isolation,
+        ...(harness.nextJsShims && harness.nextJsShims.length > 0
+          ? { nextJsShims: harness.nextJsShims }
+          : {}),
+      };
+
+      if (useFixture) {
+        report.fixturePath = inputIsFixture ? componentPath : fixturePath;
+        report.fixtureAutoDetected = fixtureAutoDetected;
+      }
+      if (useComposition) {
+        report.autoComposition = true;
+        report.compositionTree = compositionTree!;
+      }
+
+      if (wrapper) attachWrapperReport(report, wrapper);
+      attachHarnessContext(report);
+      if (run.warnings.length > 0) {
+        report.warnings = [...(report.warnings ?? []), ...run.warnings];
+      }
+
+      applyBaselineWorkflow(
+        report,
+        isolationBaselineMetrics(run.isolation, tier, run.domNodeCount ?? 0),
+        {
+          options,
+          projectRoot,
+          relativeComponent,
+          componentDir: path.dirname(resolvedPath),
+          currentEnv: buildEnvFingerprint({
+            machine,
+            calibration,
+            cpuThrottle,
+            samples,
+            mode: "isolation",
+            ...(cssReport ? { css: cssReport.files } : {}),
+            ...(wrapper ? { wrapper: wrapper.path } : {}),
+            ...(harness.reactCompiler?.active ? { reactCompiler: true } : {}),
+          }),
+          envPolicy: options.baselineEnv ?? "normalize",
+        },
+      );
+
+      writeReportJson(report, options.jsonPath);
+
+      return report;
+    }
 
     // --- Curve mode check ---
     const curveDisabled = options.curveMode === false;
@@ -488,14 +726,10 @@ export async function analyze(
         ...(harness.nextJsShims && harness.nextJsShims.length > 0 ? { nextJsShims: harness.nextJsShims } : {}),
       };
 
-      const jsonPath = options.jsonPath ?? "120fps-report.json";
-      const jsonDir = path.dirname(path.resolve(jsonPath));
-      fs.mkdirSync(jsonDir, { recursive: true });
-      fs.writeFileSync(
-        path.resolve(jsonPath),
-        JSON.stringify(report, mapReplacer, 2),
-        "utf-8",
-      );
+      if (wrapper) attachWrapperReport(report, wrapper);
+      attachHarnessContext(report);
+
+      writeReportJson(report, options.jsonPath);
 
       return report;
     }
@@ -612,15 +846,10 @@ export async function analyze(
       });
 
       if (matrixDeltas) report.propDeltas = matrixDeltas;
+      if (wrapper) attachWrapperReport(report, wrapper);
+      attachHarnessContext(report);
 
-      const jsonPath = options.jsonPath ?? "120fps-report.json";
-      const jsonDir = path.dirname(path.resolve(jsonPath));
-      fs.mkdirSync(jsonDir, { recursive: true });
-      fs.writeFileSync(
-        path.resolve(jsonPath),
-        JSON.stringify(report, mapReplacer, 2),
-        "utf-8",
-      );
+      writeReportJson(report, options.jsonPath);
 
       return report;
     }
@@ -783,6 +1012,9 @@ export async function analyze(
       report.warnings = [...(report.warnings ?? []), ZERO_PROPS_WARNING];
     }
 
+    if (wrapper) attachWrapperReport(report, wrapper);
+    attachHarnessContext(report);
+
     if (propDeltas) {
       report.propDeltas = propDeltas;
     }
@@ -835,8 +1067,6 @@ export async function analyze(
       }
     }
 
-    const { projectRoot, relativeComponent } = resolveProjectPaths(resolvedPath);
-
     // --- React optimization detection (separate pass) ---
     const frameworkMode = options.framework ?? "auto";
     const effectiveFramework = resolveFramework(frameworkMode, projectRoot);
@@ -868,77 +1098,52 @@ export async function analyze(
       }
     }
 
-    if (options.check && !options.noBaseline) {
-      const baselinePath = path.join(projectRoot, "120fps-baseline.json");
-      const baseline = loadBaseline(baselinePath);
-      const entry = baseline?.entries[relativeComponent];
-      if (entry) {
-        const config = loadBudgetConfig(projectRoot);
-        const tol = resolveTolerances(config);
-        const primary = report.combos[0];
-        const unstableMetrics = new Set<string>();
-        if (primary?.mount?.unstable) unstableMetrics.add("mount");
-        if (primary?.rerender?.unstable) unstableMetrics.add("rerender");
-        if (primary?.unmount?.unstable) unstableMetrics.add("unmount");
+    const envPolicy: BaselineEnvPolicy = options.baselineEnv ?? "normalize";
+    const currentEnv = buildEnvFingerprint({
+      machine,
+      calibration,
+      cpuThrottle,
+      samples,
+      mode: "combo",
+      ...(cssReport ? { css: cssReport.files } : {}),
+      ...(wrapper ? { wrapper: wrapper.path } : {}),
+      ...(harness.reactCompiler?.active ? { reactCompiler: true } : {}),
+    });
 
-        const interactionMap: Record<string, number> = {};
-        if (primary) {
-          for (const ix of primary.interactions) {
-            interactionMap[ix.label] = ix.timing.median;
-          }
-        }
+    const primary = report.combos[0];
+    let comboMetrics: BaselineMetrics | undefined;
+    if (primary) {
+      const unstable = new Set<string>();
+      if (primary.mount?.unstable) unstable.add("mount");
+      if (primary.rerender?.unstable) unstable.add("rerender");
+      if (primary.unmount?.unstable) unstable.add("unmount");
 
-        const comparison = compareBaseline(
-          entry,
-          {
-            mount: primary?.mount?.median ?? 0,
-            rerender: primary?.rerender?.median ?? 0,
-            unmount: primary?.unmount?.median ?? 0,
-            interactions: interactionMap,
-          },
-          tol,
-          unstableMetrics,
-        );
-        report.baseline = comparison;
-        if (comparison.regressions.length > 0) {
-          report.pass = false;
-        }
-      } else {
-        const legacyWarning = legacyBaselineWarning(projectRoot, path.dirname(resolvedPath));
-        if (legacyWarning) {
-          process.stderr.write(`Warning: ${legacyWarning}\n`);
-        }
+      const interactions: Record<string, number> = {};
+      for (const ix of primary.interactions) {
+        interactions[ix.label] = ix.timing.median;
       }
+
+      comboMetrics = {
+        mount: primary.mount.median,
+        rerender: primary.rerender.median,
+        unmount: primary.unmount.median,
+        domNodeCount: primary.domNodeCount,
+        interactions,
+        unstable,
+        tier: (primary.tier ?? "T1") as BaselineEntry["tier"],
+      };
     }
 
-    if (options.saveBaseline) {
-      const baselinePath = path.join(projectRoot, "120fps-baseline.json");
-      const primary = report.combos[0];
-      if (primary) {
-        const interactionMap: Record<string, number> = {};
-        for (const ix of primary.interactions) {
-          interactionMap[ix.label] = ix.timing.median;
-        }
-        const entry: BaselineEntry = {
-          mount: primary.mount.median,
-          rerender: primary.rerender.median,
-          unmount: primary.unmount.median,
-          domNodeCount: primary.domNodeCount,
-          interactions: interactionMap,
-          tier: (primary.tier ?? "T1") as BaselineEntry["tier"],
-        };
-        saveBaselineFile(baselinePath, entry, relativeComponent);
-      }
-    }
+    applyBaselineWorkflow(report, comboMetrics, {
+      options,
+      projectRoot,
+      relativeComponent,
+      componentDir: path.dirname(resolvedPath),
+      currentEnv,
+      envPolicy,
+    });
 
-    const jsonPath = options.jsonPath ?? "120fps-report.json";
-    const jsonDir = path.dirname(path.resolve(jsonPath));
-    fs.mkdirSync(jsonDir, { recursive: true });
-    fs.writeFileSync(
-      path.resolve(jsonPath),
-      JSON.stringify(report, mapReplacer, 2),
-      "utf-8",
-    );
+    writeReportJson(report, options.jsonPath);
 
     return report;
   } finally {
@@ -949,6 +1154,52 @@ export async function analyze(
 
 export const ZERO_PROPS_WARNING =
   "No props extracted — component measured with empty props only; if the component has typed props, extraction may have failed";
+
+// --no-css wins over an explicit --css, matching --no-wrap/--wrap. Explicit
+// paths resolve against process.cwd() and suppress detection; detection returns
+// at most one file.
+export function resolveCssFiles(
+  options: Pick<AnalyzeOptions, "cssFiles" | "noCss">,
+  projectRoot: string,
+): { files: string[]; autoDetected: boolean } {
+  if (options.noCss) return { files: [], autoDetected: false };
+
+  if (options.cssFiles && options.cssFiles.length > 0) {
+    const files: string[] = [];
+    for (const raw of options.cssFiles) {
+      const resolved = path.resolve(raw);
+      let stat: fs.Stats;
+      try {
+        stat = fs.statSync(resolved);
+      } catch {
+        throw new Error(`Stylesheet not found: ${raw}`);
+      }
+      if (!stat.isFile()) throw new Error(`Stylesheet is not a file: ${raw}`);
+      if (!files.includes(resolved)) files.push(resolved);
+    }
+    return { files, autoDetected: false };
+  }
+
+  const detected = detectGlobalCss(projectRoot);
+  return detected ? { files: [detected], autoDetected: true } : { files: [], autoDetected: false };
+}
+
+// --no-wrap wins over an explicit --wrap, matching --no-isolate/--isolate.
+export function resolveWrapPath(
+  options: Pick<AnalyzeOptions, "wrapPath" | "noWrap">,
+  projectRoot: string,
+): { wrapPath?: string; wrapAutoDetected: boolean } {
+  if (options.noWrap) return { wrapAutoDetected: false };
+  if (options.wrapPath) {
+    const resolved = path.resolve(options.wrapPath);
+    if (!fs.existsSync(resolved)) {
+      throw new Error(`Wrapper module not found: ${options.wrapPath}`);
+    }
+    return { wrapPath: resolved, wrapAutoDetected: false };
+  }
+  const detected = detectWrapper(projectRoot);
+  return detected ? { wrapPath: detected, wrapAutoDetected: true } : { wrapAutoDetected: false };
+}
 
 // Root for 120fps.config.json / 120fps-baseline.json: nearest ancestor of the
 // component containing package.json, falling back to the component's directory.

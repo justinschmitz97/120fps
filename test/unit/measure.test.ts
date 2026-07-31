@@ -99,13 +99,13 @@ describe("parseTraceDuration", () => {
 });
 
 describe("tryCollectGarbage", () => {
-  it("does not throw when CDP method rejects", async () => {
+  it("does not throw when CDP method rejects, and reports the failure", async () => {
     const fakeCdp = { send: async () => { throw new Error("not supported"); } } as any;
-    await expect(tryCollectGarbage(fakeCdp)).resolves.toBeUndefined();
+    await expect(tryCollectGarbage(fakeCdp)).resolves.toBe(false);
   });
 
-  it("resolves when CDP method succeeds", async () => {
+  it("reports success when CDP method succeeds", async () => {
     const fakeCdp = { send: async () => {} } as any;
-    await expect(tryCollectGarbage(fakeCdp)).resolves.toBeUndefined();
+    await expect(tryCollectGarbage(fakeCdp)).resolves.toBe(true);
   });
 });

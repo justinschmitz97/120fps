@@ -107,18 +107,18 @@ describe("H9: memory 0 cycles", () => {
   });
 });
 
-describe("H10: memory exactly 1024 bytes/cycle", () => {
-  it("NOT a leak (must be >1024)", () => {
-    const report = buildMemoryReport({ cycles: 1, heapBefore: 0, heapAfter: 1024, gcPressure: 0 });
-    expect(report.heapGrowthPerCycle).toBe(1024);
+describe("H10: memory exactly 8192 bytes/cycle", () => {
+  it("NOT a leak (must be >8192)", () => {
+    const report = buildMemoryReport({ cycles: 1, heapBefore: 0, heapAfter: 8192, gcPressure: 0 });
+    expect(report.heapGrowthPerCycle).toBe(8192);
     expect(report.leakSuspected).toBe(false);
   });
 });
 
-describe("H11: memory 1025 bytes/cycle", () => {
+describe("H11: memory 8193 bytes/cycle", () => {
   it("IS a leak", () => {
-    const report = buildMemoryReport({ cycles: 1, heapBefore: 0, heapAfter: 1025, gcPressure: 0 });
-    expect(report.heapGrowthPerCycle).toBe(1025);
+    const report = buildMemoryReport({ cycles: 1, heapBefore: 0, heapAfter: 8193, gcPressure: 0 });
+    expect(report.heapGrowthPerCycle).toBe(8193);
     expect(report.leakSuspected).toBe(true);
   });
 });

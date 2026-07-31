@@ -1,0 +1,6 @@
+@theme {
+  --color-oops: #fff;
+
+.oops {
+  color: var(--color-oops);
+}

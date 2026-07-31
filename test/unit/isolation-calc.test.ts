@@ -80,7 +80,7 @@ describe("buildMemoryReport", () => {
     expect(report.leakSuspected).toBe(false);
   });
 
-  it("detects leak when growth > 1KB/cycle", () => {
+  it("does not flag growth inside the post-warmup noise floor", () => {
     const report = buildMemoryReport({
       cycles: 20,
       heapBefore: 100000,
@@ -88,6 +88,17 @@ describe("buildMemoryReport", () => {
       gcPressure: 5.0,
     });
     expect(report.heapGrowthPerCycle).toBe(5000);
+    expect(report.leakSuspected).toBe(false);
+  });
+
+  it("detects leak when growth exceeds 8KB/cycle", () => {
+    const report = buildMemoryReport({
+      cycles: 20,
+      heapBefore: 100000,
+      heapAfter: 4_100_000,
+      gcPressure: 5.0,
+    });
+    expect(report.heapGrowthPerCycle).toBe(200000);
     expect(report.leakSuspected).toBe(true);
   });
 

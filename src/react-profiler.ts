@@ -1,9 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import { chromium, type Browser, type CDPSession, type Page } from "playwright";
-import type { HarnessResult } from "./harness.js";
+import { renderTreeHelper, wrapImportLine, type HarnessResult } from "./harness.js";
 import type { PropCombination } from "./prop-gen-values.js";
-import { collectTrace, parseTraceDuration, tryCollectGarbage, computeMedian } from "./measure.js";
+import { applyWrapperViewport, collectTrace, parseTraceDuration, settleStyles, tryCollectGarbage, computeMedian, HARNESS_NAV_WAIT } from "./measure.js";
 import { attachPageErrorCapture, enrichTimeoutError } from "./page-errors.js";
 
 export interface FiberInfo {
@@ -12,6 +12,7 @@ export interface FiberInfo {
   actualDurationMs: number;
   selfDurationMs: number;
   descendantCount: number;
+  isMemo: boolean;
 }
 
 export interface ProfilerSnapshot {
@@ -20,7 +21,7 @@ export interface ProfilerSnapshot {
 }
 
 export interface ProfilerDiff {
-  rerenderFibers: Array<{ name: string; renderCountDelta: number }>;
+  rerenderFibers: Array<{ name: string; renderCountDelta: number; isMemo: boolean }>;
 }
 
 export interface CallbackIdentityDelta {
@@ -44,6 +45,7 @@ export interface ReactOptimizations {
   portalOrphans?: number;
   renderAttribution?: RenderAttribution[];
   durationsUnavailable?: boolean;
+  compilerActive?: boolean;
 }
 
 export function detectDurationsUnavailable(snapshot: {
@@ -83,22 +85,33 @@ export function diffSnapshots(
     if (!fiberA) continue;
     const delta = fiberB.renderCount - fiberA.renderCount;
     if (delta > 0) {
-      rerenderFibers.push({ name: fiberB.name, renderCountDelta: delta });
+      rerenderFibers.push({ name: fiberB.name, renderCountDelta: delta, isMemo: fiberB.isMemo });
     }
   }
   rerenderFibers.sort((a, b) => b.renderCountDelta - a.renderCountDelta);
   return { rerenderFibers };
 }
 
+// Bundlers suffix duplicate function names (__120fpsStable → __120fpsStable2),
+// so probe internals are matched by prefix rather than exact name.
+function isProbeInternal(name: string): boolean {
+  return name === "Root" || name === "AppRoot" || name.startsWith("__120fps");
+}
+
+// A component without React.memo re-renders whenever its parent does — that is
+// React working as designed, not a defect. Only a memoized component that
+// re-rendered on identical props has had its memoization defeated.
 export function detectMemoBailouts(diff: ProfilerDiff): string[] {
   return diff.rerenderFibers
-    .filter((f) => f.name !== "Root" && f.name !== "AppRoot")
+    .filter((f) => f.isMemo && !isProbeInternal(f.name))
     .map((f) => f.name);
 }
 
+// The probe renders the component behind a memo boundary, so a value change on
+// the synthetic provider reaches only fibers that actually read the context.
 export function detectContextFanOut(diff: ProfilerDiff): string[] {
   return diff.rerenderFibers
-    .filter((f) => f.name !== "__120fpsContextProbe" && f.name !== "Root" && f.name !== "AppRoot")
+    .filter((f) => !isProbeInternal(f.name))
     .map((f) => f.name);
 }
 
@@ -120,8 +133,10 @@ export function computePortalOrphans(preCount: number, postCount: number): numbe
   return Math.max(0, postCount - preCount);
 }
 
+// Under the compiler, automatic memoization is the compiler's job: a bailout
+// finding is not actionable user code, so it stays informational.
 export function hasReactWarning(opts: ReactOptimizations): boolean {
-  if (opts.memoBailout) return true;
+  if (opts.memoBailout && !opts.compilerActive) return true;
   if (opts.contextFanOut) return true;
   if (opts.portalOrphans && opts.portalOrphans > 0) return true;
   if (opts.callbackIdentityDeltas) {
@@ -139,14 +154,20 @@ export function hasReactWarning(opts: ReactOptimizations): boolean {
 export const PROFILER_HOOK_SCRIPT = `
 (function() {
   var fibers = {};
+  var lastSeen = {};
+  var lastChild = {};
   var commitCount = 0;
 
-  function walkFiber(fiber, depth) {
+  // React double-buffers: a fiber that took part in a render pass is a
+  // different object than it was last commit, while a subtree that bailed out
+  // is reused by reference. Walking the tree per commit therefore visits every
+  // fiber, but only the ones whose identity changed actually rendered.
+  function walkFiber(fiber, depth, path) {
     if (!fiber) return;
     var name = fiber.type
       ? (fiber.type.displayName || fiber.type.name || "Anonymous")
       : (fiber.tag === 3 ? "Root" : "Unknown");
-    var id = (fiber._debugID || fiber.index || 0) + "_" + name + "_" + depth;
+    var id = path + "_" + name;
 
     var descendants = 0;
     var child = fiber.child;
@@ -155,20 +176,34 @@ export const PROFILER_HOOK_SCRIPT = `
       child = child.sibling;
     }
 
+    var isMemo = fiber.tag === 14 || fiber.tag === 15;
     if (!fibers[id]) {
-      fibers[id] = { name: name, renderCount: 0, actualDurationMs: 0, selfDurationMs: 0, descendantCount: descendants };
+      fibers[id] = { name: name, renderCount: 0, actualDurationMs: 0, selfDurationMs: 0, descendantCount: descendants, isMemo: isMemo };
     }
-    fibers[id].renderCount++;
-    if (typeof fiber.actualDuration === "number") {
-      fibers[id].actualDurationMs += fiber.actualDuration;
+
+    var rendered = lastSeen[id] !== fiber;
+    // React clones a memo fiber even when it bails on equal props, so identity
+    // alone would report every visited memo component as re-rendered. A real
+    // bailout reuses the whole child subtree by reference.
+    if (rendered && isMemo && fiber.child !== null && lastChild[id] === fiber.child) {
+      rendered = false;
     }
-    if (typeof fiber.selfBaseDuration === "number") {
-      fibers[id].selfDurationMs += fiber.selfBaseDuration;
+    lastSeen[id] = fiber;
+    lastChild[id] = fiber.child;
+
+    if (rendered) {
+      fibers[id].renderCount++;
+      if (typeof fiber.actualDuration === "number") {
+        fibers[id].actualDurationMs += fiber.actualDuration;
+      }
+      if (typeof fiber.selfBaseDuration === "number") {
+        fibers[id].selfDurationMs += fiber.selfBaseDuration;
+      }
     }
     fibers[id].descendantCount = descendants;
 
-    if (fiber.child) walkFiber(fiber.child, depth + 1);
-    if (fiber.sibling) walkFiber(fiber.sibling, depth);
+    if (fiber.child) walkFiber(fiber.child, depth + 1, path + ".0");
+    if (fiber.sibling) walkFiber(fiber.sibling, depth, path + "s");
   }
 
   window.__120fps_profiler = {
@@ -176,6 +211,8 @@ export const PROFILER_HOOK_SCRIPT = `
     commitCount: 0,
     reset: function() {
       fibers = {};
+      lastSeen = {};
+      lastChild = {};
       window.__120fps_profiler.fibers = fibers;
       window.__120fps_profiler.commitCount = 0;
       commitCount = 0;
@@ -194,7 +231,7 @@ export const PROFILER_HOOK_SCRIPT = `
       commitCount++;
       window.__120fps_profiler.commitCount = commitCount;
       if (root && root.current) {
-        walkFiber(root.current, 0);
+        walkFiber(root.current, 0, "r");
       }
     },
     onCommitFiberUnmount: function() {},
@@ -205,6 +242,9 @@ export const PROFILER_HOOK_SCRIPT = `
 `;
 
 export async function injectProfilerHook(cdp: CDPSession): Promise<void> {
+  // Page.addScriptToEvaluateOnNewDocument silently no-ops while the Page domain
+  // is disabled, leaving every fiber snapshot empty.
+  await cdp.send("Page.enable" as any);
   await cdp.send("Page.addScriptToEvaluateOnNewDocument" as any, {
     source: PROFILER_HOOK_SCRIPT,
   });
@@ -230,6 +270,7 @@ export async function collectProfilerData(page: Page): Promise<ProfilerSnapshot>
       actualDurationMs: f.actualDurationMs ?? 0,
       selfDurationMs: f.selfDurationMs ?? 0,
       descendantCount: f.descendantCount ?? 0,
+      isMemo: f.isMemo === true,
     });
   }
 
@@ -267,6 +308,7 @@ export interface ProbeEntryOptions {
   componentRelative: string;
   componentName: string;
   isDefaultExport: boolean;
+  wrapRelative?: string;
 }
 
 export function generateProbeEntry(opts: ProbeEntryOptions): string {
@@ -277,22 +319,34 @@ export function generateProbeEntry(opts: ProbeEntryOptions): string {
   const componentRef = opts.isDefaultExport ? opts.componentName : "Component";
 
   return `
-import { createElement, createContext, useState, useCallback, type ReactNode } from "react";
+import { createElement, createContext, memo, useState, useCallback, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
-${importLine}
+${wrapImportLine(opts.wrapRelative)}${importLine}
 
 const __120fpsContext = createContext(0);
+__120fpsContext.displayName = "__120fpsProbeContext";
+
+// The memo boundary keeps the provider's own re-render from cascading, so a
+// value change reaches only fibers that actually read the context.
+const __120fpsStable = memo(function __120fpsStable({ node }: { node: ReactNode }) {
+  return node;
+});
 
 function __120fpsContextProbe({ children }: { children: ReactNode }) {
   const [value, setValue] = useState(0);
   (window as any).__120fps_forceContext = () => setValue((v: number) => v + 1);
-  return createElement(__120fpsContext.Provider, { value }, children);
+  return createElement(
+    __120fpsContext.Provider,
+    { value },
+    createElement(__120fpsStable, { node: children }),
+  );
 }
 
 const container = document.getElementById("root")!;
 let root = createRoot(container);
 let mounted = false;
 const stableCallbackCache = new Map<string, Function>();
+${renderTreeHelper(opts.wrapRelative)}
 
 (window as any).__120fps = {
   mount(props: any = {}) {
@@ -300,11 +354,19 @@ const stableCallbackCache = new Map<string, Function>();
       root.unmount();
       root = createRoot(container);
     }
-    root.render(
+    renderTree(
       createElement(__120fpsContextProbe, null,
         createElement(${componentRef}, props)
       )
     );
+    mounted = true;
+  },
+  mountWrapperOnly() {
+    if (mounted) {
+      root.unmount();
+      root = createRoot(container);
+    }
+    renderTree(null);
     mounted = true;
   },
   unmount() {
@@ -315,7 +377,7 @@ const stableCallbackCache = new Map<string, Function>();
     }
   },
   rerender(props: any = {}) {
-    root.render(
+    renderTree(
       createElement(__120fpsContextProbe, null,
         createElement(${componentRef}, props)
       )
@@ -345,7 +407,15 @@ const stableCallbackCache = new Map<string, Function>();
     return container;
   },
 };
+${probeViewportBlock(opts.wrapRelative)}
+`;
+}
 
+function probeViewportBlock(wrapRelative?: string): string {
+  if (!wrapRelative) return "";
+  return `
+const __120fpsViewport = (__120fpsWrapModule as any).viewport;
+if (__120fpsViewport) (window as any).__120fps.viewport = __120fpsViewport;
 `;
 }
 
@@ -422,25 +492,11 @@ export async function runReactAnalysis(
 ): Promise<Map<number, ReactOptimizations>> {
   const { combos, samples = 3, cpuThrottle = 4, warmupRuns = 1, fnPropNames = [] } = options;
 
-  const probeEntryContent = fs.readFileSync(
-    path.join(harness.harnessDir, "entry.tsx"),
-    "utf-8",
-  );
-
-  const componentRelativeMatch = probeEntryContent.match(/from\s+"\/([^"]+)"/);
-  const componentRelative = componentRelativeMatch?.[1] ?? "";
-
-  const componentImportLine = probeEntryContent
-    .split("\n")
-    .find((line) => line.includes(`"/${componentRelative}"`));
-  const nameMatch = componentImportLine?.match(/import\s+(\w+)|import\s+\{\s*(\w+)/);
-  const componentName = nameMatch?.[1] ?? nameMatch?.[2] ?? "Component";
-  const isDefaultExport = !!nameMatch?.[1];
-
   const probeEntry = generateProbeEntry({
-    componentRelative,
-    componentName,
-    isDefaultExport,
+    componentRelative: harness.component.relative,
+    componentName: harness.component.name,
+    isDefaultExport: harness.component.isDefaultExport,
+    ...(harness.wrapRelative ? { wrapRelative: harness.wrapRelative } : {}),
   });
 
   const probeHtml = generateProbeHtml();
@@ -463,7 +519,7 @@ export async function runReactAnalysis(
 
     const errorCapture = attachPageErrorCapture(page);
 
-    await page.goto(probeUrl, { timeout: 30000 });
+    await page.goto(probeUrl, { timeout: 30000, waitUntil: HARNESS_NAV_WAIT });
     try {
       await page.waitForFunction(
         () => typeof (window as any).__120fps === "object",
@@ -474,6 +530,8 @@ export async function runReactAnalysis(
       throw enrichTimeoutError(waitErr, errorCapture, "react analysis harness");
     }
 
+    await applyWrapperViewport(page);
+    await settleStyles(page, harness);
     await cdp.send("Emulation.setCPUThrottlingRate", { rate: cpuThrottle });
 
     // Warmup
@@ -578,6 +636,7 @@ export async function runReactAnalysis(
       if (portalOrphans > 0) opts.portalOrphans = portalOrphans;
       if (renderAttribution.length > 0) opts.renderAttribution = renderAttribution;
       if (detectDurationsUnavailable(fullSnap)) opts.durationsUnavailable = true;
+      if (harness.reactCompiler?.active) opts.compilerActive = true;
 
       results.set(ci, opts);
     }

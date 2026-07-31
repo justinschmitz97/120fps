@@ -3,7 +3,11 @@
 import fs from "node:fs";
 import path from "node:path";
 import { analyze } from "./analyze.js";
+import { parseIsolationPhases } from "./isolation.js";
 import { formatTable, DEFAULT_THRESHOLDS } from "./report.js";
+
+const ISOLATE_USAGE_ERROR =
+  "--isolate requires a comma-separated list of phases (mount,rerender,unmount,memory,strictmode,all)";
 
 export interface CliArgs {
   componentPath?: string;
@@ -31,11 +35,18 @@ export interface CliArgs {
   check?: boolean;
   budget?: boolean;
   noBaseline?: boolean;
+  baselineEnv?: "strict" | "normalize" | "ignore";
   componentPaths?: string[];
   jsonExplicit?: boolean;
   isolate?: string[];
   memoryCycles?: number;
   noIsolate?: boolean;
+  wrapPath?: string;
+  noWrap?: boolean;
+  css?: string[];
+  noCss?: boolean;
+  reactCompiler?: boolean;
+  noReactCompiler?: boolean;
   help: boolean;
   version: boolean;
   error?: string;
@@ -66,9 +77,16 @@ export const KNOWN_FLAGS = new Set([
   "--check",
   "--budget",
   "--no-baseline",
+  "--baseline-env",
   "--isolate",
   "--memory-cycles",
   "--no-isolate",
+  "--wrap",
+  "--no-wrap",
+  "--css",
+  "--no-css",
+  "--react-compiler",
+  "--no-react-compiler",
   "--help",
   "--version",
 ]);
@@ -200,25 +218,37 @@ export function parseArgs(argv: string[]): CliArgs {
       i++;
       continue;
     }
-    if (arg === "--isolate") {
-      if (i + 1 >= argv.length || argv[i + 1].startsWith("--")) {
-        result.error = "--isolate requires a comma-separated list of phases (mount,rerender,unmount,memory,strictmode,all)";
+    if (arg === "--baseline-env") {
+      if (i + 1 >= argv.length) {
+        result.error = "--baseline-env requires a value (strict, normalize, or ignore)";
         return result;
       }
-      const raw = argv[++i];
-      const validPhases = new Set(["mount", "rerender", "unmount", "memory", "strictmode", "all"]);
-      const parts = raw.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
-      for (const p of parts) {
-        if (!validPhases.has(p)) {
-          result.error = `Invalid isolation phase: "${p}". Valid phases: mount, rerender, unmount, memory, strictmode, all`;
-          return result;
-        }
+      const val = argv[++i];
+      if (val !== "strict" && val !== "normalize" && val !== "ignore") {
+        result.error = `--baseline-env must be strict, normalize, or ignore, got "${val}"`;
+        return result;
       }
-      if (parts.length === 1 && parts[0] === "all") {
-        result.isolate = ["mount", "rerender", "unmount", "memory", "strictmode"];
-      } else {
-        result.isolate = [...new Set(parts)];
+      result.baselineEnv = val;
+      i++;
+      continue;
+    }
+    if (arg === "--isolate") {
+      if (i + 1 >= argv.length || argv[i + 1].startsWith("--")) {
+        result.error = ISOLATE_USAGE_ERROR;
+        return result;
       }
+      let phases: string[];
+      try {
+        phases = parseIsolationPhases(argv[++i]);
+      } catch (err) {
+        result.error = err instanceof Error ? err.message : String(err);
+        return result;
+      }
+      if (phases.length === 0) {
+        result.error = ISOLATE_USAGE_ERROR;
+        return result;
+      }
+      result.isolate = phases;
       i++;
       continue;
     }
@@ -238,6 +268,52 @@ export function parseArgs(argv: string[]): CliArgs {
     }
     if (arg === "--no-isolate") {
       result.noIsolate = true;
+      i++;
+      continue;
+    }
+    if (arg === "--wrap") {
+      if (i + 1 >= argv.length || argv[i + 1].startsWith("--")) {
+        result.error = "--wrap requires a path argument";
+        return result;
+      }
+      result.wrapPath = argv[++i];
+      i++;
+      continue;
+    }
+    if (arg === "--no-wrap") {
+      result.noWrap = true;
+      i++;
+      continue;
+    }
+    if (arg === "--css") {
+      if (i + 1 >= argv.length || argv[i + 1].startsWith("--")) {
+        result.error = "--css requires a comma-separated list of stylesheet paths";
+        return result;
+      }
+      const parts = argv[++i]
+        .split(",")
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0);
+      if (parts.length === 0) {
+        result.error = "--css requires at least one stylesheet path";
+        return result;
+      }
+      result.css = parts;
+      i++;
+      continue;
+    }
+    if (arg === "--no-css") {
+      result.noCss = true;
+      i++;
+      continue;
+    }
+    if (arg === "--react-compiler") {
+      result.reactCompiler = true;
+      i++;
+      continue;
+    }
+    if (arg === "--no-react-compiler") {
+      result.noReactCompiler = true;
       i++;
       continue;
     }
@@ -383,6 +459,15 @@ function parseCurveArg(arg: string): { propName: string; propKind: "array" | "nu
   return { propName, propKind: propKind as "array" | "number" };
 }
 
+// --no-react-compiler wins over --react-compiler; undefined means auto-detect.
+export function resolveReactCompilerFlag(
+  args: Pick<CliArgs, "reactCompiler" | "noReactCompiler">,
+): boolean | undefined {
+  if (args.noReactCompiler) return false;
+  if (args.reactCompiler) return true;
+  return undefined;
+}
+
 export function resolveIsolationOption(
   args: Pick<CliArgs, "isolate" | "noIsolate" | "memoryCycles">,
 ): { phases: string[]; memoryCycles?: number } | undefined {
@@ -426,9 +511,16 @@ Options:
   --check                        Compare against baseline, fail on regression
   --budget                       Shorthand for --ci --check
   --no-baseline                  Skip baseline comparison in CI mode
+  --baseline-env <mode>          Baseline environment handling: strict|normalize|ignore (default: normalize)
   --isolate <phases>             Isolated measurement: mount,rerender,unmount,memory,strictmode,all
   --memory-cycles <n>            Mount/unmount cycles for memory mode (default: 20)
   --no-isolate                   Disable isolation mode (overrides --isolate)
+  --wrap <path>                  Provider wrapper module (auto: 120fps.setup.tsx at project root)
+  --no-wrap                      Disable the provider wrapper, including auto-detection
+  --css <path,...>               Global stylesheets to inject (auto: app/globals.css and friends)
+  --no-css                       Disable stylesheet injection, including auto-detection
+  --react-compiler               Force the React Compiler transform on (auto: babel-plugin-react-compiler in package.json)
+  --no-react-compiler            Disable the React Compiler transform, including auto-detection
   --no-shims                     Disable Next.js module shims
   --threshold-mount <ms>         Mount time threshold (default: ${DEFAULT_THRESHOLDS.mountMs})
   --threshold-interaction <ms>   Interaction time threshold (default: ${DEFAULT_THRESHOLDS.interactionMs})
@@ -497,6 +589,20 @@ async function main(): Promise<void> {
     process.exit(2);
   }
 
+  if (args.wrapPath && !args.noWrap && !fs.existsSync(path.resolve(args.wrapPath))) {
+    process.stderr.write(`Error: Wrapper module not found: ${args.wrapPath}\n`);
+    process.exit(2);
+  }
+
+  if (args.css && !args.noCss) {
+    for (const cssPath of args.css) {
+      if (!fs.existsSync(path.resolve(cssPath))) {
+        process.stderr.write(`Error: Stylesheet not found: ${cssPath}\n`);
+        process.exit(2);
+      }
+    }
+  }
+
   const multi = componentPaths.length > 1;
   const reportPaths = multi ? resolveReportPaths(componentPaths) : [args.jsonPath];
   let anyFail = false;
@@ -549,7 +655,13 @@ async function runOne(
       saveBaseline: args.saveBaseline,
       check: args.check,
       noBaseline: args.noBaseline,
+      baselineEnv: args.baselineEnv,
       isolation: resolveIsolationOption(args),
+      wrapPath: args.wrapPath,
+      noWrap: args.noWrap,
+      cssFiles: args.css,
+      noCss: args.noCss,
+      reactCompiler: resolveReactCompilerFlag(args),
       thresholds: {
         ...(args.thresholdMount !== undefined
           ? { mountMs: args.thresholdMount }

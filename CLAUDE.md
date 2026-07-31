@@ -58,7 +58,10 @@ specs/
   overview/         — architecture + glossary
   decisions/        — ADRs (append-only)
   milestones/       — per-milestone specs (transient)
-fixtures/           — test component fixtures
+fixtures/           — test component fixtures; sub-projects with their own
+                      package.json act as separate project roots, and the ones
+                      needing real dependencies are pnpm workspace packages
+                      (pnpm-workspace.yaml)
 test/
   unit/             — vitest unit tests
   e2e/              — Playwright e2e tests

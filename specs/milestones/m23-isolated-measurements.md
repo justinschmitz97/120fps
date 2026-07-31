@@ -1,18 +1,19 @@
 ---
 kind: milestone
-status: partial
+status: approved
 tests:
   - test/unit/isolation-cli.test.ts
   - test/unit/isolation-calc.test.ts
   - test/unit/isolation-report.test.ts
   - test/unit/isolation-harden.test.ts
+  - test/unit/m28-isolation.test.ts
+  - test/unit/m28-isolation-harden.test.ts
+  - test/e2e/isolation.test.ts
 ---
-
-> **Status (M24 audit)**: CLI parsing, pure computation helpers (`src/isolation.ts`), and report formatting are implemented and tested. The browser execution pipeline is NOT wired into `analyze()` — `AnalyzeOptions.isolation` is accepted but unused and `Report.isolation` is never populated, so `--isolate` validates input and then runs the standard pipeline. The measurement contracts below describe intended, not current, behavior.
 
 ## Purpose
 
-Real bench suites isolate specific lifecycle phases: mount-only timing (teardown excluded from measurement), rerender with prop variations (stable/changed/churn), unmount-only timing, memory stability via repeated mount/unmount cycles, and StrictMode double-invoke comparison. 120fps currently bundles all phases together. M23 adds **isolated measurement modes** that capture each phase independently, producing micro-benchmarks comparable to hand-authored vitest bench suites.
+Real bench suites isolate specific lifecycle phases: mount-only timing (teardown excluded from measurement), rerender with prop variations (stable/changed/churn), unmount-only timing, memory stability via repeated mount/unmount cycles, and StrictMode double-invoke comparison. The default pipeline bundles all phases into one sweep. **Isolated measurement modes** capture each phase independently instead, producing micro-benchmarks comparable to hand-authored vitest bench suites.
 
 ## Builds on
 
@@ -22,14 +23,15 @@ M8 (rerender measurement: `measureRerender`). M2 (mount measurement: `measureMou
 
 ### MUST
 
-- Add `--isolate` CLI flag with comma-separated phases: `--isolate mount,rerender,unmount,memory,strictmode`. Default (no flag): all phases measured as today.
+- `--isolate` CLI flag with comma-separated phases: `--isolate mount,rerender,unmount,memory,strictmode`. Without the flag, the standard combo pipeline runs unchanged.
 - Each isolated mode measures ONLY its target phase, excluding setup/teardown cost from timing.
 
 #### Mount isolation (`mount`)
 
 - Measures mount-to-first-paint. No unmount included in timing.
 - Warmup: 3 mount/unmount cycles discarded.
-- Per sample: navigate to blank → trigger mount → capture CDP trace until stable → record duration. Unmount happens after recording stops.
+- Per sample: force GC → unmount → trigger mount → capture CDP trace through a double-rAF settle → record duration. Unmount is traced separately, after recording stops.
+- The page is never re-navigated between samples: a fresh page per sample would discard JIT state and make isolated numbers noisier than the standard pass.
 - Reports: `TimingWithCV` for pure mount.
 
 #### Rerender isolation (`rerender`)
@@ -59,7 +61,7 @@ M8 (rerender measurement: `measureRerender`). M2 (mount measurement: `measureMou
 #### Memory stability (`memory`)
 
 - Repeated mount/unmount cycles to detect leaks.
-- Procedure: force GC → record heap → (mount/unmount) × N → force GC → record heap. N = 20 by default, override via `--memory-cycles`.
+- Procedure: 10 warmup mount/unmount cycles → force GC → record heap → (mount/unmount) × N → force GC → record heap. N = 20 by default, override via `--memory-cycles`. The warmup precedes the first reading so one-time allocation is not counted as growth.
 - Reports:
   ```ts
   interface MemoryReport {
@@ -68,12 +70,13 @@ M8 (rerender measurement: `measureRerender`). M2 (mount measurement: `measureMou
     heapAfter: number; // bytes
     heapGrowth: number; // bytes (after - before)
     heapGrowthPerCycle: number; // bytes / cycle
-    leakSuspected: boolean; // heapGrowthPerCycle > 1024 (1KB/cycle)
-    gcPressure: number; // total GC pause time during cycles (ms)
+    leakSuspected: boolean; // heapGrowthPerCycle > 8192 (8KB/cycle)
+    gcPressure: number; // GC invocations that failed to reclaim to within 10% of heapBefore
   }
   ```
-- Uses CDP `Runtime.evaluate` with `--expose-gc` flag or `Performance.collectGarbage` CDP method.
-- `leakSuspected` threshold: >1KB growth per cycle after 20 cycles suggests accumulation.
+- GC is forced through CDP `HeapProfiler.collectGarbage`; heap is read through `Runtime.getHeapUsage`. Chromium is launched without `--js-flags=--expose-gc`, so `gc()` is not available in the page.
+- `gcPressure` samples every 5 cycles: force GC, read the heap, and count the check when the heap is still more than 10% above `heapBefore`. For a component that retains every mount all checks count; for one that releases none do.
+- `leakSuspected` threshold: >8KB growth per cycle. Measured over 20 cycles at 4× throttle after the 10-cycle warmup, non-leaking components grow 2.2–2.4KB/cycle and a component that retains every mount grows ~200KB/cycle; the threshold sits between them. A 1KB/cycle threshold falls inside the noise floor and reports every component as leaking.
 
 #### StrictMode comparison (`strictmode`)
 
@@ -93,17 +96,18 @@ M8 (rerender measurement: `measureRerender`). M2 (mount measurement: `measureMou
 
 ### Terminal output
 
-When `--isolate` is passed, table format changes to show isolated results:
+The combo table is replaced by one section per measured phase, after the usual machine header. Warnings and the baseline section follow the result line, as in every other mode.
 
 ```
-120fps — Button (isolated: mount, rerender, memory, strictmode)
+120fps — Button
+Machine: ...
 
 Mount (isolated)
   Median: 0.82ms  P95: 1.1ms  CV: 8.2%
 
 Rerender (isolated)
   Stable:      0.31ms (React bailout path)
-  Prop-change: 0.45ms (variant: primary → ghost)
+  Prop-change: 0.45ms
   Churn (10x): 0.52ms (degradation: 1.15×)
 
 Memory (20 cycles)
@@ -113,9 +117,9 @@ Memory (20 cycles)
 StrictMode
   Normal mount:  0.82ms
   Strict mount:  1.58ms (overhead: +92.7%)
-  Double-invoke clean: YES (< 2× expected)
+  Double-invoke clean: YES
 
-Result: PASS (T1)
+Result: PASS
 ```
 
 ### Report extension
@@ -136,7 +140,7 @@ interface Report {
 ### CLI
 
 - `--isolate <phases>` — comma-separated list: `mount`, `rerender`, `unmount`, `memory`, `strictmode`, or `all`.
-- `--isolate all` runs all 5 isolation modes.
+- `all` expands to all five phases wherever it appears in the list. Phases are deduplicated and returned in the canonical order `mount, rerender, unmount, memory, strictmode`, so the same set parses identically however it was spelled. `parseIsolationPhases` is the single validator; the CLI reports its error text and rejects an empty list.
 - `--memory-cycles <N>` — override default 20 cycles for memory mode.
 - `--no-isolate` — disables isolation even when `--isolate` is present (explicit disable wins); no-op otherwise.
 - `CliArgs.isolate?: string[]`.
@@ -152,79 +156,43 @@ interface Report {
 
 ### Invariants
 
-- Isolation modes use the same browser instance, CDP tracing, and CPU throttle as main pipeline.
+- Each phase pass owns its browser, matching every other measurement entry point, and uses the same CDP tracing and CPU throttle as the main pipeline. Mount and unmount share one pass.
+- Every pass enters the harness through the same preamble: navigate with `HARNESS_NAV_WAIT` → `window.__120fps` readiness gate with `enrichTimeoutError` → wrapper viewport → style/font settle gate → CPU throttle.
 - Memory mode forces GC via CDP before and after cycles. If GC forcing is unavailable, skip memory mode with a warning.
 - StrictMode comparison uses paired samples (same machine conditions for both). Run interleaved: normal-strict-normal-strict... not all-normal-then-all-strict.
-- Churn degradation ratio is computed from the last 3 samples divided by the first 3 samples of the 10-cycle run.
+- Churn degradation ratio is computed from the last 3 samples divided by the first 3 samples of the 10-cycle run. Churn skips GC between iterations: accumulated pressure is what it measures.
 - All existing tests pass unchanged.
 
 ## Design
 
 ### Harness modifications
 
-StrictMode comparison requires the harness to conditionally wrap in StrictMode. The entry.tsx template adds:
+Both measurement entry templates read a `strict` query parameter and apply it inside the single `renderTree` helper:
 
 ```tsx
-const params = new URLSearchParams(location.search);
-const Wrapper = params.get("strict") === "1" ? React.StrictMode : React.Fragment;
-
-render(<Wrapper><Component {...props} /></Wrapper>, root);
+const __120fpsStrict = new URLSearchParams(location.search).get("strict") === "1";
+const __120fpsInStrict = (el: any) => __120fpsStrict ? createElement(StrictMode, null, el) : el;
 ```
 
-The measure function navigates with `?strict=1` for StrictMode samples.
+StrictMode nests *inside* the provider wrapper — `wrapper(StrictMode(component))` — so the double-invoke cost measured is the component's, not the providers'. `measureStrictMode` navigates to `?strict=1` and back between pairs. The React probe entry shares `renderTreeHelper` but declares no strict binding and keeps the plain form.
 
-### Memory measurement via CDP
+### Combo selection
 
-```
-async measureMemory(page, harness, combo, cycles):
-  await page.evaluate(() => gc?.()) // --expose-gc or CDP collectGarbage
-  heapBefore = await getHeapUsage(cdpSession) // Runtime.getHeapUsage
-  
-  for i in 0..cycles:
-    mount(combo)
-    unmount()
-  
-  await page.evaluate(() => gc?.())
-  heapAfter = await getHeapUsage(cdpSession)
-  
-  return { heapBefore, heapAfter, cycles }
-```
-
-CDP method: `Runtime.evaluate({ expression: "gc()" })` requires `--js-flags=--expose-gc` on Chromium launch. Alternative: `HeapProfiler.collectGarbage` CDP domain.
-
-### Rerender churn measurement
-
-```
-async measureChurn(page, harness, propsA, propsB, cycles):
-  mount(propsA) // not timed
-  timings = []
-  for i in 0..cycles:
-    t = traceRerender(propsB)
-    timings.push(t)
-    t = traceRerender(propsA)
-    timings.push(t)
-  
-  first3 = avg(timings[0..2])
-  last3 = avg(timings[-3..])
-  degradation = last3 / first3
-```
+Isolation measures one prop combination: `combos[0]` from the standard generation path, or the single `{}` combo for fixture and composed runs. `__120fps_scaleN` combos are excluded. Prop-change and churn use `combos[1]`; without it both degenerate to `combos[0]` and `Report.warnings` gains a note.
 
 ### Integration with `analyze()`
 
-```
-if (options.isolation):
-  // skip normal combo pipeline
-  // run only requested isolation phases
-  // build Report with isolation field populated
-  // verdict from isolation: FAIL if mount exceeds tier budget OR leakSuspected OR churnDegradation > 2.0
-```
+`analyze()` branches on `options.isolation` after calibration and before the curve decision. It runs only the requested phases, never the standard sweeps, `explore`, `runReactAnalysis`, delta analysis, or auto-scaling. `Report.combos` is `[]`; `Report.calibration` is populated as usual.
 
-## Open questions
+Verdict: `pass = false` if the isolated mount median exceeds the resolved mount budget, or `memory.leakSuspected`, or `churnDegradation > 2.0`. `doubleInvokeClean === false` warns and never fails — double-invoke overhead is a React development-mode property.
 
-1. Should memory mode run in a separate browser context to avoid cross-contamination? Decision: yes — fresh browser context per memory run to isolate heap.
-2. Should churn count be configurable? Decision: fixed at 10 cycles for now. 10 is enough to detect degradation without excessive runtime.
-3. Can all isolation modes run in a single browser session? Decision: yes, sequentially. Each mode gets a fresh page/context within the same browser.
+## Decisions
+
+1. **Fresh context per memory run.** Every phase pass owns a browser, so the memory phase measures a heap nothing else has touched.
+2. **Churn count fixed at 10 cycles** (20 samples). Enough to separate a degrading rerender path from a constant one without inflating runtime.
+3. **One browser per phase pass, not one shared session.** Launch cost sits outside every traced window, and self-contained passes match every other measurement entry point.
+4. **`HeapProfiler.collectGarbage` is not deterministic enough for a 1KB/cycle threshold.** Warmup length dominates: measured over 20 cycles, non-leaking components report 13.6KB/cycle after 3 warmup cycles, 2.2KB after 10, and 0.8KB after 20, while a leaking component holds ~200KB/cycle throughout. The phase therefore warms up 10 cycles and the threshold is 8KB/cycle.
 
 ## Test count
 
-63 tests: isolation-cli (13), isolation-calc (19), isolation-report (9), isolation-harden (22).
+The isolation contracts are enforced by `isolation-cli`, `isolation-calc`, `isolation-report`, `isolation-harden`, `m28-isolation`, `m28-isolation-harden` (unit) and `isolation` (e2e).

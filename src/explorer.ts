@@ -14,11 +14,14 @@ import {
   findAriaGroupSiblings,
 } from "./stress-patterns.js";
 import {
+  applyWrapperViewport,
   collectTrace,
   computeMedian,
   computeP95,
   parseTraceDuration,
+  settleStyles,
   tryCollectGarbage,
+  HARNESS_NAV_WAIT,
   type TraceEvent,
 } from "./measure.js";
 import { attachPageErrorCapture, enrichTimeoutError } from "./page-errors.js";
@@ -292,7 +295,7 @@ export async function explore(
     const errorCapture = attachPageErrorCapture(page);
     const cdp = await page.context().newCDPSession(page);
 
-    await page.goto(harness.url);
+    await page.goto(harness.url, { waitUntil: HARNESS_NAV_WAIT });
     try {
       await page.waitForFunction(
         () => typeof (window as any).__120fps === "object",
@@ -303,6 +306,8 @@ export async function explore(
       throw enrichTimeoutError(err, errorCapture, "explorer harness");
     }
 
+    await applyWrapperViewport(page);
+    await settleStyles(page, harness);
     await cdp.send("Emulation.setCPUThrottlingRate", { rate: cpuThrottle });
 
     const results: ExploreResult[] = [];

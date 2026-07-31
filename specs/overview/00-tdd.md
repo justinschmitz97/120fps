@@ -8,8 +8,8 @@ status: approved
 
 ## Pipeline
 1. **Prop extraction** — TS Compiler API (Bundler moduleResolution) → props interface → value generation. Recursively unwraps HOC chains (forwardRef/memo). Handles class components via heritage clause. Cap 64 combos via stratified sampling.
-2. **Harness build** — Vite bundles HTML page importing target component (auto-detects named/default/class/const export). Harness dir placed inside project root for natural dependency resolution. `scanExternalDeps` recursively follows imports (including tsconfig aliases) to pre-populate `optimizeDeps.include`. Auto-scale rendering: when props contain `__120fps_scaleN`, renders N instances. Exposes `window.__120fps` control API.
-3. **Browser** — Playwright headless Chromium. Fresh browser per measurement phase. 4× CPU throttle.
+2. **Harness build** — Vite bundles HTML page importing target component (auto-detects named/default/class/const export). Harness dir placed inside project root for natural dependency resolution. `scanExternalDeps` recursively follows imports (including tsconfig and shim aliases) from the component and the provider wrapper to pre-populate `optimizeDeps.include`. Global stylesheets (`--css`, auto-detected `app/globals.css` and friends, `--no-css`) are injected as side-effect imports ahead of everything else, so the project's PostCSS/Tailwind toolchain runs against the harness page. Optional provider wrapper (`--wrap`, auto-detected `120fps.setup.tsx`) is imported before the component and wraps every render via the entry's `renderTree` helper, which also applies StrictMode inside the wrapper when the page is loaded with `?strict=1`. A project that declares `babel-plugin-react-compiler` is served through `@vitejs/plugin-react` carrying that compiler, resolved from the project itself, so compiled code is measured compiled. Auto-scale rendering: when props contain `__120fps_scaleN`, renders N instances inside one wrapper. Exposes `window.__120fps` control API.
+3. **Browser** — Playwright headless Chromium. Fresh browser per measurement phase. Every session enters through the same preamble: wait for `window.__120fps`, apply the wrapper viewport, run the style/font settle gate, then 4× CPU throttle.
 4. **Exploration loop** — Per prop combo: mount→trace, DOM walk→discover interactables, resolve stress pattern per interaction (pointer-drag, keyboard-sweep, hover-sweep, open-close-10, multi-keystroke, rapid-toggle-11, or single-shot), exercise each N=10→trace, deepen expensive paths (edge P95 > 1.5× global median edge cost), build state graph. Terminate: convergence / 200 nodes / 60s.
 5. **Metrics** — CDP traces → paint, layout shifts, style recalcs, long tasks, frame timing, scripting, DOM count, heap delta.
 6. **Report** — Terminal table + JSON. Scaling curve analysis.
@@ -19,27 +19,31 @@ status: approved
 |---|---|
 | prop-gen | TS Compiler API prop extraction, auto-scaling prop detection |
 | prop-gen-values | Value generation, stratified sampling, combo capping, delta pair generation, scaling combo generation |
-| harness | Vite harness builder, dev server, scale export detection, auto-dep scanning (`scanExternalDeps`), tsconfig alias loading (`loadTsconfigAliases`), auto-scale rendering |
+| harness | Vite harness builder, dev server, entry generation (`generateEntry`, `generateComposedEntry`), scale export detection, auto-dep scanning (`scanExternalDeps`), tsconfig alias loading (`loadTsconfigAliases`), auto-scale rendering, provider wrapper resolution (`detectWrapper`), stylesheet detection and injection (`detectGlobalCss`, `cssImportSpecifier`, `cssImportBlock`), Tailwind Vite plugin loading (`detectTailwindVite`, `loadTailwindVitePlugin`), React Compiler detection and transform (`detectReactCompiler`, `resolveReactCompiler`, `resolveReactCompilerState`, `loadReactCompilerPlugin`, `reactCompilerRuntimeDeps`) |
 | discovery | DOM walker, ARIA pattern recognizer, portal probing |
 | explorer | Exploration loop, state graph builder |
-| measure | CDP trace capture, mount/unmount/rerender measurement, animation detection, GC, median/P95 utilities |
+| measure | CDP trace capture, mount/unmount/rerender measurement, shared session preamble (`enterHarness`, `runHarnessSession`), page actions (`mountAndWait`, `mountAndTrace`, `rerenderAndTrace`), wrapper overhead pass (`measureWrapperOverhead`), wrapper viewport application (`applyWrapperViewport`), style/font settle gate (`needsStyleSettle`, `settleStyles`, `HARNESS_NAV_WAIT`), animation detection, GC, median/P95 utilities |
 | metrics | Full CDP metric extraction, INP, scaling curves, calibration, cost attribution |
-| report | Types (PropDelta, TimingWithCV, ComboReport, Report, ComponentTier, TierBudget, CostAttribution, CostBucket), CV, tier classification, verdict logic, default thresholds, tier budgets, terminal table formatting |
+| report | Types (PropDelta, TimingWithCV, ComboReport, Report, ComponentTier, TierBudget, CostAttribution, CostBucket, WrapperReport, CssReport, ReactCompilerReport, EnvFingerprint, EnvMatch), CV, tier classification, verdict logic, default thresholds, tier budgets, wrapper block + warnings (`attachWrapperReport`), terminal table formatting |
 | stress-patterns | Stress pattern dispatch (including pointer-drag), step execution, ARIA sibling detection, drag target detection |
 | composition | Auto-composition inference: prefix grouping, suffix taxonomy, template selection |
-| analyze | Full pipeline orchestrator (analyze, buildReport), fixture detection (isFixturePath, detectFixture, hasScaleExport), auto-scale combo appending for raw components |
+| analyze | Full pipeline orchestrator (analyze, buildReport), fixture detection (isFixturePath, detectFixture, hasScaleExport), wrapper resolution (resolveWrapPath), auto-scale combo appending for raw components |
 | cli | Entry point, arg parsing, exit codes |
 | react-profiler | Framework detection, DevTools hook injection, profiler snapshot capture, memo/context/callback analysis, portal hygiene |
-| budget | Budget config loading, baseline I/O, regression comparison, tolerance resolution |
+| budget | Budget config loading, baseline I/O (`BaselineMetrics`), regression comparison, tolerance resolution, environment fingerprint (`buildEnvFingerprint`, `classifyEnv`, `describeEnvDiff`, `envAdvisory`) |
 | page-errors | Browser page-error capture (pageerror + console errors), timeout error enrichment |
-| isolation | Isolated measurement types, churn degradation, memory leak detection, strictmode overhead |
+| isolation | Isolated measurement types, phase runners (`measureChurn`, `measureMemory`, `measureStrictMode`), phase orchestration (`runIsolationPhases`), combo selection, churn degradation, memory leak detection, strictmode overhead, isolation verdict and baseline metrics |
 | index | Barrel re-export of all public API |
 
 ## Stack
 TypeScript, pnpm, Playwright, Vite, TS Compiler API, Node ≥20, vitest.
 
 ## Tests
-Current suite: 1242 unit + 153 e2e (vitest; e2e drives real Chromium). Per-milestone "N new tests" notes below are historical; this line is the source of truth.
+Current suite: 1675 unit + 246 e2e (vitest; e2e drives real Chromium). Per-milestone "N new tests" notes below are historical; this line is the source of truth.
+
+The e2e suite is flaky under full-suite parallelism: ~3 tests per run fail on contention (Vite's dep optimizer full-reloads mid-measurement, destroying the execution context) and every one of them passes in isolation. The failing set varies run to run. Files sharing a fixture project root also share `node_modules/.vite`, which is the main trigger; a per-harness `cacheDir` was tried and is worse, because losing dep reuse slows cold start enough to cause more reloads than it prevents. Unresolved.
+
+vitest exports `NODE_PATH` into pnpm's hoisted store, so every installed package resolves from every directory inside a test process. Tests that assert a *failed* package resolution use `withProductionResolution` (`test/node-resolution.ts`) for synchronous calls, or a half-installed package (a manifest with a `main` that does not exist) when the call is async.
 
 ## Milestones
 
@@ -388,7 +392,7 @@ CDP trace capture during mount/unmount across prop combinations. 4× CPU throttl
 
 **Does NOT include**: baseline diffing across branches, GitHub PR comment integration.
 
-### M23 — isolated measurements (partial)
+### M23 — isolated measurements (done)
 **Goal**: Independent micro-benchmarks for each lifecycle phase (mount, rerender, unmount, memory, strictmode), comparable to hand-authored vitest bench suites.
 
 **Builds on M8** (rerender), **M2** (mount), **M5** (CDP tracing), **M13** (tiered budgets).
@@ -400,16 +404,89 @@ CDP trace capture during mount/unmount across prop combinations. 4× CPU throttl
 - StrictMode comparison: interleaved normal/strict sampling, overhead percentage, `doubleInvokeClean` (≤110%).
 - `--memory-cycles <N>` override (default 20). Mutually exclusive with `--curve` and `--matrix`.
 - `Report.isolation?` field with per-phase results. New module: `src/isolation.ts`.
-- See `specs/milestones/m23-isolated-measurements.md`. 63 new tests.
+- Execution pipeline delivered by M28. See `specs/milestones/m23-isolated-measurements.md`.
 
-**Does NOT include**: isolation modes combined with curve/matrix, concurrent phase execution.
-
-**Status (as of M24 audit)**: CLI parsing/validation (`--isolate`, `--memory-cycles`, `--no-isolate`), pure computation helpers (`src/isolation.ts`), and report formatting exist and are tested. The browser execution pipeline is NOT wired into `analyze()` — `AnalyzeOptions.isolation` is accepted but unused and `Report.isolation` is never populated. `--isolate` currently validates its input and then runs the standard pipeline. Completing the execution pipeline is open work.
+**Does NOT include**: isolation modes combined with curve/matrix, concurrent phase execution, interaction measurement inside isolation mode.
 
 ### M24 — debt remediation (done)
 **Goal**: Fix audit debt; no new product features beyond the unfulfilled M22 multi-path promise.
 
 **Scope**: tsconfig reading unified on the TS API (`extends`/JSONC in harness aliases); export detection unified on a shared AST walker (`scanExports`) with selection order default > file-stem match > first PascalCase export; `--no-isolate` wired (overrides `--isolate`); `detectFramework(projectRoot)` reads package.json; `src/page-errors.ts` — harness-init timeouts now carry captured page errors; silent degradations warn (tsconfig parse errors, unsupported baseline version, missing baseline interactions via `BaselineComparison.missingInteractions`, zero-props hint via `Report.warnings`); config/baseline resolved from nearest package.json root with repo-relative keys; stale `.120fps-harness-*` dirs swept after 1h; multi-component CLI paths per M22; packaging/docs sync. See `specs/milestones/m24-debt-remediation.md`.
+
+M25–M29 shipped in the order **M26 → M29 → M25 → M27 → M28**: wrapper first (unblocks context-dependent components, creates the shared `renderTree` helper and `HarnessResult.component`), environment fingerprint second (so later timing shifts land classified, not silent), stylesheets third (its settle gate also covers wrapper-imported CSS), compiler fourth, isolation execution last (builds on `renderTree` and the fingerprint's `mode`).
+
+### M26 — provider wrapper (done)
+**Goal**: Render the component inside a user-authored provider chain so context-dependent components mount at all.
+
+**Scope**:
+- `--wrap <path>` / `--no-wrap` CLI flags; `AnalyzeOptions.wrapPath` / `noWrap`; `resolveWrapPath()`. Auto-detection of `120fps.setup.{tsx,jsx,ts,js}` at the project root, reported as `Report.wrapper.autoDetected`.
+- Wrapper module contract: default-exported `{ children }` component; import-time side effects (stylesheet imports, `data-theme`) supported; optional `viewport` export applied via `applyWrapperViewport()` in every measurement session. Non-callable or missing default export → clear `buildAndServe` error, not a page-error timeout.
+- Entry templates unified on a single `renderTree` helper (one `root.render(` per template), on the normal, composed, and React-probe paths. Auto-scale fan-out is wrapped once, not per instance.
+- `HarnessResult.component` carries component identity; `runReactAnalysis` reads it instead of regex-scraping the entry (the wrapper import would otherwise be mistaken for the component).
+- `scanExternalDeps` runs from the wrapper too, with tsconfig + shim aliases, union feeding `optimizeDeps.include`.
+- `measureWrapperOverhead()` + `__120fps.mountWrapperOnly()` measure wrapper-only mount cost and DOM node delta; `Report.wrapper`, `attachWrapperReport()` warnings, `formatTable` header line.
+- See `specs/milestones/m26-provider-wrapper.md`.
+
+**Does NOT include**: async wrapper setup (MSW/data seeding), per-combo wrappers, Storybook `preview.tsx` parsing. Wrapper-imported CSS and fonts are covered by M25's settle gate, which arms whenever a wrapper is active.
+
+### M29 — baseline environment fingerprint (done)
+**Goal**: Persist the machine and configuration behind every baseline entry so a comparison states which comparison it is doing.
+
+**Scope**:
+- `EnvFingerprint` (`report.ts`) on `BaselineEntry.env`: CPU, cores, OS, Node, Chromium, effective `cpuThrottle`/`samples`, both calibration durations, `mode`, and the feature fields `css` / `wrapper` / `reactCompiler`. Entry-level `shape: 1` versions it independently of `Baseline.version`.
+- `classifyEnv` → `identical` / `normalizable` / `incompatible` / `unknown`; `describeEnvDiff` renders the field-level mismatches; `envAdvisory` decides warning text and strict-mode failure. All pure.
+- `compareBaseline` takes the current fingerprint as a fifth argument: `identical`/`unknown` compare raw, `normalizable` compares calibration-normalized with a 0.5 ms absolute floor, `incompatible` skips comparison without failing the run.
+- `--baseline-env strict|normalize|ignore` (default `normalize`) → `AnalyzeOptions.baselineEnv`. `strict` fails the check on any non-`identical` classification; `ignore` restores pre-M29 raw comparison.
+- `BaselineComparison.envMatch` / `envMismatches`; `formatBaselineSection` prints the environment line, the mismatch list, and a normalized-ratio block.
+- Producers: `wrapper` from `Report.wrapper.path` (M26), `css` from `Report.css.files` (M25). `reactCompiler` (M27) and `mode: "isolation"` (M28) are declared and wired by those milestones.
+- Baselines without `env` keep working through the `unknown` path. See `specs/milestones/m29-baseline-environment.md`.
+
+**Does NOT include**: accurate cross-machine comparison, per-branch baseline history, tolerance retuning, separate script-duration normalization.
+
+### M25 — stylesheet injection (done)
+**Goal**: Measure components against the stylesheet they actually ship with, and stop the first sample from absorbing style and font application cost.
+
+**Scope**:
+- `--css <path,...>` / `--no-css` CLI flags; `AnalyzeOptions.cssFiles` / `noCss`; `resolveCssFiles()`. Auto-detection via `detectGlobalCss(projectRoot)` over eight conventional paths, first file hit wins, at most one file. Explicit paths resolve against `process.cwd()`, dedupe, and suppress detection; `--no-css` wins over both.
+- Injection as side-effect imports at the top of the generated entry — before the React, wrapper, and component imports — on the normal and composed paths (`cssImportBlock`, `cssImportSpecifier`). Root-absolute form inside `projectRoot`, `/@fs/` outside it. `index.html` untouched. `HarnessResult.cssFiles`.
+- CSS toolchain: the project's own `postcss.config.*` runs because Vite's `root` is `projectRoot` (verified against `@tailwindcss/postcss`); `process.cwd()` is never changed. `@tailwindcss/vite` is loaded from the project's `node_modules` when listed and injection is active, with a single stderr warning on failure. A stylesheet that fails to compile reaches the user as a PostCSS message through the page-error capture — the harness runs with `server.hmr.overlay: false` so Vite logs the failure instead of rendering it into the DOM.
+- Settle gate: `settleStyles(page, harness)` awaits `document.fonts.ready` bounded by 5000 ms, then one forced layout and two rAF ticks. Armed by `needsStyleSettle` when stylesheets are injected **or** a provider wrapper is active. One implementation, five call sites (`analyze`, `measureMount`, `measureRerender`, `explore`, `runReactAnalysis`), each after `applyWrapperViewport` and before CPU throttling. A font timeout appends `FONT_SETTLE_WARNING` to `Report.warnings` and continues.
+- All harness navigations use `waitUntil: HARNESS_NAV_WAIT` (`"domcontentloaded"`); readiness is `window.__120fps`, not the `load` event, which a stalled webfont blocks indefinitely.
+- `Report.css` (`{ files, autoDetected }`, projectRoot-relative posix) on the combo, curve, and matrix paths; `formatTable` header line; the same list wired into `EnvFingerprint.css` (M29), omitted when nothing was injected.
+- See `specs/milestones/m25-stylesheet-injection.md`.
+
+**Does NOT include**: theme selection, glob patterns in `--css`, CSS injection into the React probe entry, retuned tier budgets.
+
+### M27 — React Compiler awareness (done)
+**Goal**: Measure a project that ships React Compiler output as it ships, and stop reporting the memoization it does automatically as a defect.
+
+**Scope**:
+- `detectReactCompiler(projectRoot)` — `babel-plugin-react-compiler` in `dependencies`/`devDependencies`/`peerDependencies`. Package presence is the only signal; `next.config.*` is never parsed.
+- `resolveReactCompiler(projectRoot)` resolves the plugin through the *project's* `createRequire`, with the version read by walking up from the resolved entry. `resolveReactCompilerState()` folds detection, the flag, and resolution into `{ detected, active, version?, pluginPath?, warning? }` on `HarnessResult.reactCompiler`, carrying at most one warning.
+- When active, `buildAndServe` appends `@vitejs/plugin-react` (a 120fps dependency, `^4.7.0`) configured with `babel.plugins: [[compilerPath, {}]]`, and adds `react/compiler-runtime` to `optimizeDeps.include` when the project resolves it. The plugin is present if and only if the transform is active; M25's `@tailwindcss/vite` keeps its place ahead of it.
+- `--react-compiler` / `--no-react-compiler` → `AnalyzeOptions.reactCompiler` (`undefined` = auto-detect, `--no-` wins). Forced on with nothing resolvable fails the run with `babel-plugin-react-compiler not found in <projectRoot>` before any harness directory exists; auto-detected but unresolvable warns once on stderr, lands in `Report.warnings`, and measures uncompiled.
+- `ReactOptimizations.compilerActive` is set on every combo result when the transform ran. `hasReactWarning` then ignores `memoBailout` alone; `contextFanOut`, `portalOrphans` and callback identity keep warning, and the bailing components print as informational.
+- `Report.reactCompiler` (`{ active, detected, version? }`), a `React Compiler: active (v…)` header line, the disabled-by-flag warning, and `EnvFingerprint.reactCompiler: true` on save (omitted otherwise, so pre-M27 baselines stay comparable).
+- See `specs/milestones/m27-react-compiler.md`.
+
+**Does NOT include**: enabling the compiler for projects that do not use it, compiler diagnostics, `panicThreshold` or other compiler options, a compiled-vs-uncompiled comparison mode, babel for anything else.
+
+### M28 — isolation execution pipeline (done)
+**Goal**: Complete M23 — make `--isolate` measure.
+
+**Scope**:
+- Phase runners in `src/isolation.ts`: `measureChurn` (untimed mount, then 10 traced A→B→A alternations, no GC between them), `measureMemory` (10 warmup cycles → GC → heap → N cycles → GC → heap, with `gcPressure` sampled every 5 cycles), `measureStrictMode` (interleaved normal/strict pairs, re-navigating to `?strict=1` and back). `runIsolationPhases` orchestrates them plus `measureMount` (one pass serving both mount and unmount, `warmupRuns: 3`) and `measureRerender` over the selected combos.
+- `measure.ts` gains the shared session preamble `enterHarness` (navigate → readiness gate → wrapper viewport → settle gate → CPU throttle) and `runHarnessSession`, now used by `measureMount`, `measureRerender` and every isolation pass, plus the page actions `mountAndWait`, `mountAndTrace`, `rerenderAndTrace`. `tryCollectGarbage` returns whether the CDP call succeeded.
+- Both measurement entry templates read a `strict` query parameter and apply it inside `renderTree`, nesting StrictMode *inside* the provider wrapper. `renderTreeHelper(wrapRelative, strict?)` keeps the probe entry unchanged.
+- `analyze()` branches on `options.isolation` after calibration and before the curve decision, runs no standard-pipeline stage, and returns a report with `combos: []` and `Report.isolation` populated. Verdict fails on mount over budget, `leakSuspected`, or `churnDegradation > 2.0`; `doubleInvokeClean: false` only warns.
+- `parseIsolationPhases` is the CLI's single validator: `all` expands anywhere in the list, phases dedupe into canonical order, an empty list is a usage error.
+- `--check`/`--save-baseline` hoisted into `applyBaselineWorkflow`, shared by the combo and isolation paths; isolation saves `mount`/stable `rerender`/`unmount`, `domNodeCount`, an empty interactions map, and `EnvFingerprint.mode: "isolation"`.
+- `formatTable` renders `report.warnings` in all four output modes, not only the combo branch.
+- `leakSuspected` raised from 1KB to 8KB/cycle with the memory phase warming up 10 cycles — the old threshold sat inside the measurement noise floor.
+- `reactJsxRuntimeDeps` declares the automatic JSX runtime in `optimizeDeps.include`, removing a Vite full-reload race on the first measurement of a project.
+- See `specs/milestones/m28-isolation-execution.md`.
+
+**Does NOT include**: interaction measurement inside isolation mode, concurrent phase execution, isolation combined with curve/matrix, retuned tier budgets.
 
 ## Risks
 | risk | mitigation |

@@ -225,14 +225,24 @@ describe("diffSnapshots", () => {
 // ====================================================================
 
 describe("detectMemoBailouts", () => {
-  it("returns component names that re-rendered", () => {
+  it("returns memoized components that re-rendered", () => {
     const diff: ProfilerDiff = {
       rerenderFibers: [
-        { name: "Button", renderCountDelta: 1 },
-        { name: "Icon", renderCountDelta: 2 },
+        { name: "Button", renderCountDelta: 1, isMemo: true },
+        { name: "Icon", renderCountDelta: 2, isMemo: true },
       ],
     };
     expect(detectMemoBailouts(diff)).toEqual(["Button", "Icon"]);
+  });
+
+  it("ignores components that are not memoized", () => {
+    const diff: ProfilerDiff = {
+      rerenderFibers: [
+        { name: "Button", renderCountDelta: 1, isMemo: false },
+        { name: "Icon", renderCountDelta: 2, isMemo: true },
+      ],
+    };
+    expect(detectMemoBailouts(diff)).toEqual(["Icon"]);
   });
 
   it("returns empty array when no fibers re-rendered", () => {
@@ -243,8 +253,8 @@ describe("detectMemoBailouts", () => {
   it("excludes Root component", () => {
     const diff: ProfilerDiff = {
       rerenderFibers: [
-        { name: "Root", renderCountDelta: 1 },
-        { name: "Button", renderCountDelta: 1 },
+        { name: "Root", renderCountDelta: 1, isMemo: true },
+        { name: "Button", renderCountDelta: 1, isMemo: true },
       ],
     };
     expect(detectMemoBailouts(diff)).toEqual(["Button"]);
@@ -253,8 +263,19 @@ describe("detectMemoBailouts", () => {
   it("excludes AppRoot component", () => {
     const diff: ProfilerDiff = {
       rerenderFibers: [
-        { name: "AppRoot", renderCountDelta: 1 },
-        { name: "Card", renderCountDelta: 1 },
+        { name: "AppRoot", renderCountDelta: 1, isMemo: true },
+        { name: "Card", renderCountDelta: 1, isMemo: true },
+      ],
+    };
+    expect(detectMemoBailouts(diff)).toEqual(["Card"]);
+  });
+
+  it("excludes probe internals whatever suffix the bundler gives them", () => {
+    const diff: ProfilerDiff = {
+      rerenderFibers: [
+        { name: "__120fpsStable2", renderCountDelta: 1, isMemo: true },
+        { name: "__120fpsContextProbe", renderCountDelta: 1, isMemo: true },
+        { name: "Card", renderCountDelta: 1, isMemo: true },
       ],
     };
     expect(detectMemoBailouts(diff)).toEqual(["Card"]);

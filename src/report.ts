@@ -59,6 +59,27 @@ export interface CalibrationResult {
   scriptDuration: number;
 }
 
+export type EnvMatch = "identical" | "normalizable" | "incompatible" | "unknown";
+
+// Persisted per baseline entry. `shape` versions the fingerprint independently
+// of the baseline file's own version, so new fields never invalidate a file.
+export interface EnvFingerprint {
+  shape: 1;
+  cpu: string;
+  cores: number;
+  os: string;
+  nodeVersion: string;
+  chromiumVersion: string;
+  cpuThrottle: number;
+  samples: number;
+  calibrationTotalDuration: number;
+  calibrationScriptDuration: number;
+  mode: "combo" | "curve" | "matrix" | "isolation";
+  css?: string[];
+  wrapper?: string;
+  reactCompiler?: boolean;
+}
+
 export interface TimingWithCV {
   samples: number[];
   median: number;
@@ -160,12 +181,19 @@ export interface MatrixReport {
   compoundEffects: CompoundEffect[];
 }
 
+export interface NormalizedDelta {
+  baseline: number;
+  current: number;
+  deltaPercent: number;
+}
+
 export interface Regression {
   metric: string;
   baseline: number;
   current: number;
   deltaPercent: number;
   tolerance: number;
+  normalized?: NormalizedDelta;
 }
 
 export interface Improvement {
@@ -173,6 +201,7 @@ export interface Improvement {
   baseline: number;
   current: number;
   deltaPercent: number;
+  normalized?: NormalizedDelta;
 }
 
 export interface BaselineComparison {
@@ -180,6 +209,29 @@ export interface BaselineComparison {
   regressions: Regression[];
   improvements: Improvement[];
   missingInteractions?: string[];
+  envMatch?: EnvMatch;
+  envMismatches?: string[];
+}
+
+export interface WrapperReport {
+  path: string;
+  autoDetected: boolean;
+  overheadMs: number;
+  domNodes: number;
+}
+
+// files are projectRoot-relative posix paths, in injection order.
+export interface CssReport {
+  files: string[];
+  autoDetected: boolean;
+}
+
+// `detected` is the package check, `active` is what actually ran; they diverge
+// when a flag overrides detection or when the package cannot be resolved.
+export interface ReactCompilerReport {
+  active: boolean;
+  detected: boolean;
+  version?: string;
 }
 
 export interface Report {
@@ -205,7 +257,31 @@ export interface Report {
   matrixReport?: MatrixReport;
   baseline?: BaselineComparison;
   isolation?: import("./isolation.js").IsolationReport;
+  wrapper?: WrapperReport;
+  css?: CssReport;
+  reactCompiler?: ReactCompilerReport;
   warnings?: string[];
+}
+
+const WRAPPER_OVERHEAD_WARN_MS = 1;
+
+export function attachWrapperReport(report: Report, wrapper: WrapperReport): void {
+  report.wrapper = wrapper;
+
+  const notes: string[] = [];
+  if (wrapper.overheadMs >= WRAPPER_OVERHEAD_WARN_MS) {
+    notes.push(
+      `Wrapper ${wrapper.path} adds ${wrapper.overheadMs.toFixed(2)}ms to every mount measurement.`,
+    );
+  }
+  if (wrapper.domNodes > 0) {
+    notes.push(
+      `Wrapper ${wrapper.path} renders ${wrapper.domNodes} DOM node(s) counted in tier classification.`,
+    );
+  }
+  if (notes.length > 0) {
+    report.warnings = [...(report.warnings ?? []), ...notes];
+  }
 }
 
 export function computeCV(samples: number[]): number {
@@ -266,6 +342,22 @@ export function formatTable(report: Report): string {
   lines.push(`Node ${report.machine.nodeVersion}, Chromium ${report.machine.chromiumVersion}`);
   if (report.nextJsShims && report.nextJsShims.length > 0) {
     lines.push(`Next.js shims: ${report.nextJsShims.join(", ")}`);
+  }
+  if (report.wrapper) {
+    const auto = report.wrapper.autoDetected ? " (auto-detected)" : "";
+    lines.push(
+      `Wrapper: ${report.wrapper.path}${auto}, +${report.wrapper.overheadMs.toFixed(2)}ms mount overhead`,
+    );
+  }
+  if (report.css && report.css.files.length > 0) {
+    const auto = report.css.autoDetected ? " (auto-detected)" : "";
+    lines.push(`Stylesheets: ${report.css.files.join(", ")}${auto}`);
+  }
+  if (report.reactCompiler?.active) {
+    const version = report.reactCompiler.version
+      ? ` (v${report.reactCompiler.version})`
+      : "";
+    lines.push(`React Compiler: active${version}`);
   }
   lines.push("");
 
@@ -360,7 +452,10 @@ export function formatTable(report: Report): string {
         lines.push("  Note: profiler durations unavailable — memo/context findings may be unreliable");
       }
       if (opts.memoBailout && opts.memoBailoutComponents?.length) {
-        lines.push(`  Memo bailout: ${opts.memoBailoutComponents.join(", ")}`);
+        const label = opts.compilerActive
+          ? "Memo bailout (informational, React Compiler active)"
+          : "Memo bailout";
+        lines.push(`  ${label}: ${opts.memoBailoutComponents.join(", ")}`);
       }
       if (opts.contextFanOut && opts.contextFanOutComponents?.length) {
         lines.push(`  Context fan-out: ${opts.contextFanOutComponents.join(", ")}`);
@@ -411,11 +506,7 @@ export function formatTable(report: Report): string {
     lines.push("⚠ Unstable results (CV>15%) — consider increasing sample count");
   }
 
-  if (report.warnings) {
-    for (const warning of report.warnings) {
-      lines.push(`⚠ ${warning}`);
-    }
-  }
+  appendWarnings(lines, report);
 
   const totalInteractions = report.combos.reduce((sum, c) => sum + c.interactions.length, 0);
   if (totalInteractions === 0 && !report.fixturePath) {
@@ -430,6 +521,14 @@ export function formatTable(report: Report): string {
   }
 
   return lines.join("\n");
+}
+
+// Every output mode ends with the run's warnings; a mode that swallowed them
+// would hide the reason its own numbers are what they are.
+function appendWarnings(lines: string[], report: Report): void {
+  for (const warning of report.warnings ?? []) {
+    lines.push(`⚠ ${warning}`);
+  }
 }
 
 function formatIsolationOutput(lines: string[], report: Report): string {
@@ -477,6 +576,7 @@ function formatIsolationOutput(lines: string[], report: Report): string {
   }
 
   lines.push(report.pass ? "Result: PASS" : "Result: FAIL");
+  appendWarnings(lines, report);
 
   if (report.baseline?.hasBaseline) {
     formatBaselineSection(lines, report.baseline);
@@ -485,9 +585,28 @@ function formatIsolationOutput(lines: string[], report: Report): string {
   return lines.join("\n");
 }
 
+const ENV_MATCH_LINES: Record<EnvMatch, string> = {
+  identical: "Environment: identical — comparing raw timings",
+  normalizable: "Environment: normalizable — comparing calibration-normalized values",
+  incompatible: "Environment: incompatible — comparison skipped",
+  unknown: "Environment: unknown — comparing raw timings",
+};
+
+function formatEnvMismatches(lines: string[], mismatches: string[] | undefined): void {
+  for (const mismatch of mismatches ?? []) {
+    lines.push(`    - ${mismatch}`);
+  }
+}
+
 function formatBaselineSection(lines: string[], comparison: BaselineComparison): void {
   lines.push("");
   lines.push("Baseline comparison:");
+
+  if (comparison.envMatch === "incompatible") {
+    lines.push(`  ${ENV_MATCH_LINES.incompatible}`);
+    formatEnvMismatches(lines, comparison.envMismatches);
+    return;
+  }
 
   const allMetrics = new Map<string, { baseline?: number; current?: number; delta?: number; status: string }>();
 
@@ -527,6 +646,25 @@ function formatBaselineSection(lines: string[], comparison: BaselineComparison):
     if (regCount > 0) {
       lines.push(`  ${regCount} regression(s) detected`);
     }
+  }
+
+  const normalized = [...comparison.regressions, ...comparison.improvements].filter(
+    (m) => m.normalized !== undefined,
+  );
+  if (normalized.length > 0) {
+    lines.push("  Normalized (÷ calibration total):");
+    for (const m of normalized) {
+      const n = m.normalized!;
+      const sign = n.deltaPercent >= 0 ? "+" : "";
+      lines.push(
+        `    ${m.metric}: ${n.baseline.toFixed(4)} → ${n.current.toFixed(4)}  ${sign}${n.deltaPercent.toFixed(1)}%`,
+      );
+    }
+  }
+
+  if (comparison.envMatch) {
+    lines.push(`  ${ENV_MATCH_LINES[comparison.envMatch]}`);
+    formatEnvMismatches(lines, comparison.envMismatches);
   }
 
   if (comparison.missingInteractions && comparison.missingInteractions.length > 0) {
@@ -571,6 +709,8 @@ function formatCurveOutput(lines: string[], report: Report): string {
   if (hasUnstable) {
     lines.push("⚠ Unstable results (CV>15%) — consider increasing sample count");
   }
+
+  appendWarnings(lines, report);
 
   return lines.join("\n");
 }
@@ -866,6 +1006,7 @@ function formatMatrixOutput(lines: string[], report: Report): string {
   lines.push("");
   const pass = report.pass ? "PASS" : "FAIL";
   lines.push(`Result: ${pass}`);
+  appendWarnings(lines, report);
 
   return lines.join("\n");
 }

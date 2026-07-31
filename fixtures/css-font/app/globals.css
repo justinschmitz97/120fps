@@ -1,0 +1,13 @@
+@font-face {
+  font-family: "SettleProbe";
+  src: url("/fonts/settle-probe.woff2") format("woff2");
+}
+
+body::after {
+  content: "settle-probe";
+  font-family: "SettleProbe";
+}
+
+.font-probe {
+  color: rgb(3, 3, 3);
+}

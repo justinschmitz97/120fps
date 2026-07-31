@@ -3,7 +3,7 @@ import type { HarnessResult } from "./harness.js";
 import type { PropCombination } from "./prop-gen-values.js";
 import { extractProps } from "./prop-gen.js";
 import { generateCombinations } from "./prop-gen-values.js";
-import { attachPageErrorCapture, enrichTimeoutError } from "./page-errors.js";
+import { attachPageErrorCapture, enrichTimeoutError, type PageErrorCapture } from "./page-errors.js";
 
 const LAYOUT_TRANSITION_PROPS = new Set([
   "transform", "opacity", "height", "width",
@@ -41,12 +41,180 @@ export async function detectAnimations(page: Page): Promise<boolean> {
   }, [...LAYOUT_TRANSITION_PROPS]);
 }
 
-export async function tryCollectGarbage(cdp: CDPSession): Promise<void> {
+// Returns whether the CDP call succeeded; callers that only want best-effort
+// cleanup ignore it.
+export async function tryCollectGarbage(cdp: CDPSession): Promise<boolean> {
   try {
     await cdp.send("HeapProfiler.collectGarbage" as any);
+    return true;
   } catch {
-    // Best-effort: some Chromium builds don't expose HeapProfiler
+    return false;
   }
+}
+
+// Read from the page, not from Node: the wrapper module may import CSS and
+// browser-only packages, so its `viewport` export only exists in the browser.
+export async function applyWrapperViewport(page: Page): Promise<void> {
+  const viewport = await page.evaluate(
+    () => (window as any).__120fps?.viewport as { width?: unknown; height?: unknown } | undefined,
+  );
+  if (!viewport) return;
+  const { width, height } = viewport;
+  if (typeof width !== "number" || typeof height !== "number") return;
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width < 1 || height < 1) return;
+  await page.setViewportSize({ width: Math.round(width), height: Math.round(height) });
+}
+
+// The readiness gate is window.__120fps, not the load event. A stylesheet whose
+// webfont never answers keeps `load` pending forever, which would fail the
+// navigation before the settle gate gets a chance to bound it.
+export const HARNESS_NAV_WAIT = "domcontentloaded" as const;
+
+export const FONT_SETTLE_TIMEOUT_MS = 5000;
+export const FONT_SETTLE_WARNING = "font loading did not settle within 5s";
+
+type StyledHarness = Pick<HarnessResult, "cssFiles" | "wrapRelative">;
+
+// A wrapper module imports stylesheets and fonts at module evaluation time just
+// like --css does, so both arm the gate.
+export function needsStyleSettle(harness: StyledHarness): boolean {
+  return (harness.cssFiles?.length ?? 0) > 0 || harness.wrapRelative !== undefined;
+}
+
+// Runs after window.__120fps exists and before any calibration, warmup, or
+// sample, so the first measurement does not absorb font and stylesheet
+// application cost. Returns false when fonts did not settle within the bound.
+export async function settleStyles(
+  page: Page,
+  harness: StyledHarness,
+): Promise<boolean> {
+  if (!needsStyleSettle(harness)) return true;
+  return page.evaluate(async (timeoutMs: number) => {
+    const fonts = (document as unknown as { fonts?: { ready?: Promise<unknown> } }).fonts;
+    let settled = true;
+    if (fonts?.ready) {
+      settled = await Promise.race([
+        fonts.ready.then(() => true),
+        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), timeoutMs)),
+      ]);
+    }
+    document.body.getBoundingClientRect();
+    await new Promise((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(resolve)),
+    );
+    return settled;
+  }, FONT_SETTLE_TIMEOUT_MS);
+}
+
+const HARNESS_READY_TIMEOUT_MS = 30000;
+
+export interface HarnessSessionOptions {
+  // Names the session in a readiness-timeout error.
+  label: string;
+  cpuThrottle?: number;
+  // Appended to the harness URL, e.g. "?strict=1".
+  search?: string;
+}
+
+// Navigate and bring the page to a measurable state: readiness gate, wrapper
+// viewport, style/font settle, CPU throttle. Re-runnable, so a pass that
+// navigates mid-session repeats the whole preamble.
+export async function enterHarness(
+  page: Page,
+  cdp: CDPSession,
+  harness: HarnessResult,
+  errorCapture: PageErrorCapture,
+  options: HarnessSessionOptions,
+): Promise<void> {
+  const url = harness.url + (options.search ?? "");
+  await page.goto(url, { waitUntil: HARNESS_NAV_WAIT });
+  try {
+    await page.waitForFunction(
+      () => typeof (window as any).__120fps === "object",
+      undefined,
+      { timeout: HARNESS_READY_TIMEOUT_MS },
+    );
+  } catch (err) {
+    throw enrichTimeoutError(err, errorCapture, options.label);
+  }
+
+  await applyWrapperViewport(page);
+  await settleStyles(page, harness);
+  await cdp.send("Emulation.setCPUThrottlingRate", { rate: options.cpuThrottle ?? 4 });
+}
+
+// One browser per pass, matching every other measurement entry point. `enter`
+// re-navigates within the same page and re-runs the preamble.
+export async function runHarnessSession<T>(
+  harness: HarnessResult,
+  options: HarnessSessionOptions,
+  body: (
+    page: Page,
+    cdp: CDPSession,
+    enter: (search?: string) => Promise<void>,
+  ) => Promise<T>,
+): Promise<T> {
+  let browser: Browser | undefined;
+  try {
+    browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage();
+    const errorCapture = attachPageErrorCapture(page);
+    const cdp = await page.context().newCDPSession(page);
+    const enter = (search?: string) =>
+      enterHarness(page, cdp, harness, errorCapture, {
+        ...options,
+        search: search ?? options.search,
+      });
+    await enter();
+    return await body(page, cdp, enter);
+  } finally {
+    if (browser) await browser.close();
+  }
+}
+
+export interface WrapperOverhead {
+  overheadMs: number;
+  domNodes: number;
+}
+
+const WRAPPER_OVERHEAD_WARMUP = 2;
+
+export async function measureWrapperOverhead(
+  page: Page,
+  cdp: CDPSession,
+  samples: number,
+): Promise<WrapperOverhead> {
+  const mountWrapper = async () => {
+    await page.evaluate(() => (window as any).__120fps.mountWrapperOnly());
+    await page.evaluate(
+      () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))),
+    );
+  };
+  const unmount = () => page.evaluate(() => (window as any).__120fps.unmount());
+  const countNodes = () => page.evaluate(() => document.querySelectorAll("*").length);
+
+  for (let w = 0; w < WRAPPER_OVERHEAD_WARMUP; w++) {
+    await mountWrapper();
+    await unmount();
+  }
+
+  const durations: number[] = [];
+  let wrapperNodes = 0;
+  let emptyNodes = 0;
+
+  for (let s = 0; s < samples; s++) {
+    await tryCollectGarbage(cdp);
+    const events = await collectTrace(cdp, mountWrapper);
+    durations.push(parseTraceDuration(events).totalDuration);
+    if (s === 0) wrapperNodes = await countNodes();
+    await unmount();
+    if (s === 0) emptyNodes = await countNodes();
+  }
+
+  return {
+    overheadMs: computeMedian(durations),
+    domNodes: Math.max(0, wrapperNodes - emptyNodes),
+  };
 }
 
 export interface MeasureOptions {
@@ -229,15 +397,15 @@ function buildTimingResult(samples: number[]): TimingResult {
   };
 }
 
-async function runMountUnmount(
+async function traceMount(
   page: Page,
   cdp: CDPSession,
   props: PropCombination,
-): Promise<{ mountDur: number; unmountDur: number; domNodeCount: number; hasAnimation: boolean; mountEvents: TraceEvent[] }> {
+): Promise<TraceEvent[]> {
   await page.evaluate(() => (window as any).__120fps.unmount());
 
   const safeProps = serializeProps(props);
-  const mountEvents = await collectTrace(cdp, async () => {
+  return collectTrace(cdp, async () => {
     await page.evaluate(
       ([p, marker]: [any, string]) => {
         for (const k of Object.keys(p)) {
@@ -251,6 +419,23 @@ async function runMountUnmount(
       () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))),
     );
   });
+}
+
+// Mount cost alone, with teardown outside the traced window.
+export async function mountAndTrace(
+  page: Page,
+  cdp: CDPSession,
+  props: PropCombination,
+): Promise<number> {
+  return parseTraceDuration(await traceMount(page, cdp, props)).totalDuration;
+}
+
+async function runMountUnmount(
+  page: Page,
+  cdp: CDPSession,
+  props: PropCombination,
+): Promise<{ mountDur: number; unmountDur: number; domNodeCount: number; hasAnimation: boolean; mountEvents: TraceEvent[] }> {
+  const mountEvents = await traceMount(page, cdp, props);
 
   const domNodeCount = await page.evaluate(
     () => document.querySelectorAll("*").length,
@@ -293,7 +478,7 @@ export interface MeasureRerenderOptions {
   combos?: PropCombination[];
 }
 
-async function mountAndWait(page: Page, props: PropCombination): Promise<void> {
+export async function mountAndWait(page: Page, props: PropCombination): Promise<void> {
   await page.evaluate(() => (window as any).__120fps.unmount());
   const safeProps = serializeProps(props);
   await page.evaluate(
@@ -310,7 +495,7 @@ async function mountAndWait(page: Page, props: PropCombination): Promise<void> {
   );
 }
 
-async function rerenderAndTrace(
+export async function rerenderAndTrace(
   page: Page,
   cdp: CDPSession,
   props: PropCombination,
@@ -359,18 +544,10 @@ export async function measureRerender(
     const errorCapture = attachPageErrorCapture(page);
     const cdp = await page.context().newCDPSession(page);
 
-    await page.goto(harness.url);
-    try {
-      await page.waitForFunction(
-        () => typeof (window as any).__120fps === "object",
-        undefined,
-        { timeout: 30000 },
-      );
-    } catch (err) {
-      throw enrichTimeoutError(err, errorCapture, "rerender harness");
-    }
-
-    await cdp.send("Emulation.setCPUThrottlingRate", { rate: cpuThrottle });
+    await enterHarness(page, cdp, harness, errorCapture, {
+      label: "rerender harness",
+      cpuThrottle,
+    });
 
     // Warmup
     if (warmupRuns > 0 && combos.length > 0) {
@@ -452,18 +629,10 @@ export async function measureMount(
     const errorCapture = attachPageErrorCapture(page);
     const cdp = await page.context().newCDPSession(page);
 
-    await page.goto(harness.url);
-    try {
-      await page.waitForFunction(
-        () => typeof (window as any).__120fps === "object",
-        undefined,
-        { timeout: 30000 },
-      );
-    } catch (err) {
-      throw enrichTimeoutError(err, errorCapture, "mount harness");
-    }
-
-    await cdp.send("Emulation.setCPUThrottlingRate", { rate: cpuThrottle });
+    await enterHarness(page, cdp, harness, errorCapture, {
+      label: "mount harness",
+      cpuThrottle,
+    });
 
     // Warmup: JIT + module cache stabilization (results discarded)
     if (warmupRuns > 0 && combos.length > 0) {
