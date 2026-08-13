@@ -25,7 +25,9 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      - run: pnpm lint
+      # build is `tsc`, so it type-checks (subsuming `pnpm lint`) and emits
+      # dist/shims/*.js, which the nextjs-shim unit tests read.
+      - run: pnpm build
 
       # e2e (test/e2e/) is deliberately excluded here: it drives real Chromium
       # and is documented as flaky under full-suite parallelism (contention on

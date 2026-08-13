@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
+import { withProductionResolution } from "../node-resolution.js";
 import { parseArgs, resolveIsolationOption } from "../../src/cli.js";
 import {
   parseIsolationPhases,
@@ -367,7 +368,11 @@ describe("H18b: automatic JSX runtime is declared", () => {
   });
 
   it("returns nothing for a project that cannot resolve them", () => {
-    expect(reactJsxRuntimeDeps(path.resolve("C:/"))).toEqual([]);
+    // The filesystem root has no node_modules above it on any OS; a literal
+    // "C:/" is a relative path on POSIX and resolves inside the repo, where
+    // react is a real dependency.
+    const fsRoot = path.parse(process.cwd()).root;
+    expect(withProductionResolution(() => reactJsxRuntimeDeps(fsRoot))).toEqual([]);
   });
 
   it("feeds optimizeDeps.include from buildAndServe", () => {

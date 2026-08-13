@@ -323,7 +323,11 @@ describe("H15 — Vue compiler unavailable", () => {
   // the first await, so wrapping the call is enough.
   it("resolves to undefined outside a Vue project", async () => {
     resetVueCompilerCache();
-    const loaded = await withProductionResolution(() => loadVueCompiler(path.resolve("C:/")));
+    // Filesystem root, not "C:/": that literal is a relative path on POSIX and
+    // would probe the repo's own node_modules.
+    const loaded = await withProductionResolution(() =>
+      loadVueCompiler(path.parse(process.cwd()).root),
+    );
     expect(loaded).toBeUndefined();
     resetVueCompilerCache();
   });
