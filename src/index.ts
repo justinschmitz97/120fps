@@ -354,3 +354,26 @@ export {
 export { warmupsForPosition } from "./measure.js";
 export { churnParitySeries, buildChurnTiming } from "./isolation.js";
 export { EFFECTIVE_SAMPLES_WARNING } from "./analyze.js";
+
+// M57
+export {
+  isVueFile,
+  loadVueCompiler,
+  parseSfcScript,
+  resetVueCompilerCache,
+  virtualScriptPath,
+  VUE_COMPILER_MISSING,
+  VUE_SFC_SPECIFIERS,
+  type SfcScript,
+  type VueSfcCompiler,
+} from "./vue-sfc.js";
+export {
+  rendererFor,
+  vueComponentName,
+  generateVueEntry,
+  vueRenderTreeHelper,
+  sfcProducesComponent,
+  SFC_NO_COMPONENT,
+  type Renderer,
+} from "./harness.js";
+export { strictModeUnsupported, VUE_STRICTMODE_ERROR } from "./isolation.js";

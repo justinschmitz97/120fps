@@ -1,0 +1,6 @@
+{
+  "name": "vue-noplugin-fixture",
+  "private": true,
+  "type": "module",
+  "dependencies": {}
+}

@@ -1,6 +1,6 @@
 # 120fps
 
-Zero-config React component performance profiler. `npx 120fps ./Component.tsx` → real-browser performance report.
+Zero-config UI component performance profiler (React and Vue). `npx 120fps ./Component.tsx` → real-browser performance report.
 
 Read `specs/overview/00-tdd.md` for architecture, milestones, and pipeline.
 
@@ -40,9 +40,10 @@ src/
   prop-gen.ts       — TS Compiler API prop extraction, auto-scaling prop detection, export extraction
   prop-gen-values.ts — value generation + stratified sampling + delta pairs + matrix generation + scaling combo generation
   prop-presets.ts   — <stem>.props.tsx|ts loading, AST-literal value transport, preset application
+  vue-sfc.ts        — project-resolved SFC parser loading, <script setup> extraction, virtual script naming
   composition.ts    — auto-composition inference: prefix grouping, suffix taxonomy, template selection
   preflight.ts      — pre-harness import-graph walk for server-only/async-component hits, project-transform recognition
-  harness.ts        — Vite harness builder + dev server + composed harness generation
+  harness.ts        — Vite harness builder + dev server + composed harness generation + React/Vue renderer adapter
   measure.ts        — CDP trace capture + mount/unmount/rerender timing + animation detection
   metrics.ts        — full CDP metric extraction, INP, scaling curves, calibration, cost attribution
   discovery.ts      — DOM walk for interactive element discovery

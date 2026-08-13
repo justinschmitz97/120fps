@@ -132,12 +132,15 @@ describe("W1 — wrapper auto-detection", () => {
     expect(detectWrapper(tmpDir)).toBeUndefined();
   });
 
-  it("probes candidates in tsx > jsx > ts > js order", () => {
+  // M57 appends the SFC candidate; a Vue run reorders it to the front rather
+  // than changing this list, so React probing order is untouched.
+  it("probes candidates in tsx > jsx > ts > js > vue order", () => {
     expect(WRAPPER_CANDIDATES).toEqual([
       "120fps.setup.tsx",
       "120fps.setup.jsx",
       "120fps.setup.ts",
       "120fps.setup.js",
+      "120fps.setup.vue",
     ]);
   });
 

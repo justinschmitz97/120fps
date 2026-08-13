@@ -7,7 +7,7 @@ import { compareAgainstRef, formatCompare, validateCompareOptions } from "./comp
 import { formatMarkdown, formatJUnit } from "./ci-report.js";
 import { createBrowserPool } from "./measure.js";
 import { createServerPool } from "./harness.js";
-import { parseIsolationPhases } from "./isolation.js";
+import { parseIsolationPhases, strictModeUnsupported, VUE_STRICTMODE_ERROR } from "./isolation.js";
 import { formatTable, DEFAULT_THRESHOLDS } from "./report.js";
 
 const ISOLATE_USAGE_ERROR =
@@ -35,7 +35,7 @@ export interface CliArgs {
   noAttribution?: boolean;
   noAutoCompose?: boolean;
   noReactAnalysis?: boolean;
-  framework?: "react" | "vanilla" | "auto";
+  framework?: "react" | "vue" | "vanilla" | "auto";
   flatThresholds?: boolean;
   noShims?: boolean;
   curve?: boolean | string;
@@ -171,12 +171,12 @@ export function parseArgs(argv: string[]): CliArgs {
     }
     if (arg === "--framework") {
       if (i + 1 >= argv.length) {
-        result.error = "--framework requires a value (react, vanilla, or auto)";
+        result.error = "--framework requires a value (react, vue, vanilla, or auto)";
         return result;
       }
       const val = argv[++i];
-      if (val !== "react" && val !== "vanilla" && val !== "auto") {
-        result.error = `--framework must be react, vanilla, or auto, got "${val}"`;
+      if (val !== "react" && val !== "vue" && val !== "vanilla" && val !== "auto") {
+        result.error = `--framework must be react, vue, vanilla, or auto, got "${val}"`;
         return result;
       }
       result.framework = val;
@@ -552,6 +552,16 @@ export function parseArgs(argv: string[]): CliArgs {
   if (!result.error && result.isolate && result.matrix) {
     result.error = "--isolate cannot be combined with --matrix";
   }
+  // Checked against the paths as typed: directory and glob expansion happens
+  // later, and a phase that cannot mean anything for the target is a usage
+  // error, not a measurement that quietly reports nothing.
+  if (
+    !result.error &&
+    result.isolate &&
+    strictModeUnsupported(result.isolate, result.componentPaths ?? [])
+  ) {
+    result.error = VUE_STRICTMODE_ERROR;
+  }
   // Two whole-run modes: one sweeps scale points, the other a prop matrix, and
   // a run does one or the other. A disable wins over its own enable everywhere
   // else, so it resolves this too instead of erroring on a mode that is off.
@@ -653,7 +663,7 @@ Options:
   --no-attribution               Disable cost attribution analysis
   --no-auto-compose              Disable auto-composition inference
   --no-react-analysis            Disable React optimization detection
-  --framework <react|vanilla|auto>  Framework detection mode (default: auto)
+  --framework <react|vue|vanilla|auto>  Framework detection mode (default: auto)
   --flat-thresholds              Disable tiered budgets, use flat thresholds
   --curve [prop:type]             Enable curve mode (auto-detect or specify prop:array|number)
   --no-curve                     Disable auto-activation of curve mode
@@ -931,7 +941,7 @@ export interface PathReader {
   walk: (root: string) => string[];
 }
 
-const ACCEPTED_COMPONENT_EXTENSIONS = [".tsx", ".jsx"];
+const ACCEPTED_COMPONENT_EXTENSIONS = [".tsx", ".jsx", ".vue"];
 
 // Extension only — directory/glob expansion additionally filters build dirs
 // and test/story/fixture suffixes via isComponentFile below; a plain path
@@ -939,7 +949,7 @@ const ACCEPTED_COMPONENT_EXTENSIONS = [".tsx", ".jsx"];
 export function hasAcceptedComponentExtension(filePath: string): boolean {
   const posix = filePath.replace(/\\/g, "/");
   if (posix.endsWith(".d.ts")) return false;
-  return /\.(tsx|jsx)$/.test(posix);
+  return /\.(tsx|jsx|vue)$/.test(posix);
 }
 
 export function isComponentFile(filePath: string): boolean {

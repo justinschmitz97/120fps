@@ -3,7 +3,8 @@
 Zero-config component performance profiler. Real browser, real metrics.
 
 ```bash
-npx 120fps ./Button.tsx
+npx 120fps ./Button.tsx     # React
+npx 120fps ./Button.vue     # Vue
 ```
 
 Launches headless Chromium, extracts props via the TypeScript Compiler API, generates prop combinations, measures mount/unmount/rerender timing via CDP traces, discovers and stress-tests interactions, and produces a pass/fail verdict with tiered budgets.
@@ -36,7 +37,7 @@ npx 120fps ./src/components/Button.tsx
 ## CLI
 
 ```
-npx 120fps <component.tsx> [options]
+npx 120fps <component.tsx|.jsx|.vue> [options]
 
 Options:
   --fixture <path>               Fixture file for composed components
@@ -51,7 +52,7 @@ Options:
   --threshold-rerender <ms>      Rerender budget (overrides tier budget)
   --threshold-interaction <ms>   Interaction budget (overrides tier budget)
   --flat-thresholds              Use flat budgets instead of tiered
-  --framework <react|vanilla|auto>  Framework mode (default: auto)
+  --framework <react|vue|vanilla|auto>  Framework mode (default: auto)
   --curve [prop:type]            Curve mode: mount/rerender across scale points
   --no-curve                     Disable auto-activation of curve mode
   --matrix                       Prop variation matrix mode
@@ -314,6 +315,29 @@ npx 120fps ./Button.tsx --react-compiler      # force it on
 
 When the transform is active the report header says `React Compiler: active (v1.0.0)`, memo-bailout findings become informational instead of downgrading the verdict, and the baseline fingerprint records it. Disabling it on a project that has it installed adds a warning to the report, because the numbers will be higher than production. If the package is listed but cannot be resolved, the run continues uncompiled and says so; `--react-compiler` turns that into an error instead.
 
+## Vue
+
+Point it at a `.vue` file and the same pipeline runs:
+
+```bash
+npx 120fps ./Button.vue
+npx 120fps "src/components/**/*.vue" --budget
+```
+
+Everything below the renderer is framework-neutral and unchanged: CDP tracing, driven frame pacing, prop combinations, the exploration loop and its stress patterns, tier budgets and verdicts, the noise sentinel, baselines and all four CI output modes.
+
+**What it needs.** `vue` and `@vitejs/plugin-vue` in the profiled project. 120fps ships neither — your components compile against the versions they actually ship with, exactly as with the React Compiler. A `.vue` file in a project without `vue` fails immediately naming the missing dependency; one without `@vitejs/plugin-vue` gets the [project transform](#project-transforms) warning.
+
+**Props.** `defineProps<T>()` and `withDefaults(defineProps<T>(), { … })` in `<script setup lang="ts">`. Prop types imported from other modules resolve, including through tsconfig `paths`. A `withDefaults` default becomes the anchor value that prop deltas and matrix baselines are measured against — the value you called normal. The runtime object form (`defineProps({ label: String })`) carries no types and yields no props, the same as an untyped React component; the component still mounts and measures.
+
+**Rerender means rerender.** Props travel through a reactive reference and `rerender()` awaits `nextTick()`, so the traced window contains Vue's actual DOM patch rather than the scheduling of one, and component state survives a prop change instead of being remounted.
+
+**Wrappers and fixtures.** A `120fps.setup.vue` at the project root is picked up automatically and wraps the component through its default slot; it may export `viewport`, `setup` and `teardown` like the React wrapper. Compound components compose in a `.fixture.vue` next to the component — one component per SFC leaves auto-composition nothing to infer, so it is skipped.
+
+**Two things behave differently.** `--isolate strictmode` is a usage error: StrictMode is a React development-mode double-invoke with no Vue equivalent, and a Vue "strict" pass would report a clean bill of health it never checked. And there is no Vue equivalent of the React optimization pass yet — no memo-bailout or context-fan-out findings — because mapping Vue's own reactivity smells is its own piece of work, and reusing React's finding names would produce advice that does not apply.
+
+A baseline measured under one framework never compares against another; the environment fingerprint records it.
+
 ## Tier Budgets
 
 Components are auto-classified into tiers based on DOM complexity:
@@ -329,7 +353,7 @@ Components are auto-classified into tiers based on DOM complexity:
 
 The harness never reads your `vite.config` — its plugins target their own Vite major and its server options are not measurement-safe. Two consequences, both handled:
 
-**Transforms it can load, it loads.** If your project declares `vite-plugin-svgr` or `@vanilla-extract/vite-plugin`, the harness resolves that plugin from your own `node_modules` and applies it, with its dev-server and HMR hooks stripped so it cannot reach into the harness's server lifecycle. Both are verified end to end against a real project. Active transforms are recorded in the report and in the baseline fingerprint — a component measured with a transform is not comparable to one measured without it.
+**Transforms it can load, it loads.** If your project declares `vite-plugin-svgr`, `@vanilla-extract/vite-plugin` or `@vitejs/plugin-vue`, the harness resolves that plugin from your own `node_modules` and applies it, with its dev-server and HMR hooks stripped so it cannot reach into the harness's server lifecycle. Both are verified end to end against a real project. Active transforms are recorded in the report and in the baseline fingerprint — a component measured with a transform is not comparable to one measured without it.
 
 **Transforms it cannot load, it names.** An import like `icon.svg?react` or `query.graphql` in a project without the corresponding supported plugin produces a warning that names the plugin family and carries a stable code (`[transform:svgr]`), rather than a build failure deep inside Vite that never mentions it. If the run then dies for any reason, the same list is appended to the error.
 
@@ -392,7 +416,7 @@ export default function Wrapper({ children }: { children: React.ReactNode }) {
 
 - Node >= 20
 - A `tsconfig.json` is optional: prop extraction uses the nearest one it finds above the component, and falls back to ES2022 + bundler resolution + `react-jsx` when there is none
-- Components (`.tsx`, `.jsx`) — React `>=18` must be installed in the profiled project for React mode; vanilla mode needs no React
+- Components (`.tsx`, `.jsx`, `.vue`) — React `>=18` must be installed in the profiled project for React mode; a `.vue` component needs `vue` and `@vitejs/plugin-vue` in the project (120fps ships neither, so your components compile against the versions they ship with); vanilla mode needs neither
 - Chromium via Playwright — downloaded automatically on install; if your environment skips browser downloads (`PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD`), run `npx playwright install chromium` once
 
 ## License

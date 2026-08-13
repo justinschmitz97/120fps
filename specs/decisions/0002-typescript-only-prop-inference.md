@@ -23,3 +23,4 @@ TypeScript Compiler API only. No manual scenarios, no Storybook.
 - Must handle **class components** separately — props type lives in heritage clause type arg, not function parameter.
 - `React.FC<P>` adds implicit `children`, but we extract from the user's interface (correct — extract what's declared).
 - Harness export detection regex must allow **type annotations** between name and `=` (`export const X: React.FC<P> = ...`).
+- Extends to Vue unchanged: `defineProps<T>()` in `<script setup lang="ts">` is a type, so it is read; `defineProps({ label: String })` is a runtime object, so it is not. A Vue component written in the runtime form extracts no props, exactly as an untyped JS React component does. The block is type-checked as a virtual `<sfc>.ts` in the SFC's own directory, so Bundler resolution and tsconfig `paths` apply as above.

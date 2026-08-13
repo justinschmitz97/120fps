@@ -37,7 +37,9 @@ export function detectPropPresets(componentPath: string): string | undefined {
 // Literals are evaluated so they flow through the existing pipeline unchanged —
 // combos, deltas, matrix cells and curve anchors all compare real values.
 // Everything else keeps its position and is resolved in the page.
-function literalValue(node: ts.Expression): { ok: true; value: unknown } | { ok: false } {
+// Exported for M57: a Vue `withDefaults` object is the same problem — an AST
+// literal that has to become a real value without executing the module.
+export function literalValue(node: ts.Expression): { ok: true; value: unknown } | { ok: false } {
   if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
     return { ok: true, value: node.text };
   }

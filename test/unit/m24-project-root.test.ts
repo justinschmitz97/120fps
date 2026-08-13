@@ -176,8 +176,15 @@ describe("D4 call-site: resolveFramework precedence", () => {
     expect(resolveFramework("auto", tmpDir)).toBe("react");
   });
 
-  it("auto detects vanilla when no react dependency", () => {
+  // M57: vue is now a framework of its own, so the no-framework case is a
+  // manifest that names neither.
+  it("auto detects vue when the project depends on vue and not react", () => {
     makeTree({ "package.json": JSON.stringify({ dependencies: { vue: "^3.0.0" } }) });
+    expect(resolveFramework("auto", tmpDir)).toBe("vue");
+  });
+
+  it("auto detects vanilla when no framework dependency", () => {
+    makeTree({ "package.json": JSON.stringify({ dependencies: { lodash: "^4.0.0" } }) });
     expect(resolveFramework("auto", tmpDir)).toBe("vanilla");
   });
 });

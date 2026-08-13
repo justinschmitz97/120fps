@@ -373,12 +373,19 @@ describe("H18b: automatic JSX runtime is declared", () => {
   it("feeds optimizeDeps.include from buildAndServe", () => {
     // M34 routes the list through unionCachedDeps as `stableInclude`; the
     // runtime deps must feed that list, and the list must feed optimizeDeps.
+    // M57 moved the per-renderer half of the list into `rendererDeps`, which
+    // stableInclude spreads; the runtime deps still have to reach it.
     const harnessSrc = src("harness.ts");
+    const rendererBlock = harnessSrc.slice(
+      harnessSrc.indexOf("const rendererDeps ="),
+      harnessSrc.indexOf("const stableInclude = unionCachedDeps("),
+    );
+    expect(rendererBlock).toContain("reactJsxRuntimeDeps(projectRoot)");
     const stableBlock = harnessSrc.slice(
       harnessSrc.indexOf("const stableInclude = unionCachedDeps("),
       harnessSrc.indexOf("readDepCacheMetadata(projectRoot)"),
     );
-    expect(stableBlock).toContain("reactJsxRuntimeDeps(projectRoot)");
+    expect(stableBlock).toContain("...rendererDeps");
     const includeBlock = harnessSrc.slice(
       harnessSrc.indexOf("optimizeDeps: {"),
       harnessSrc.indexOf("});", harnessSrc.indexOf("optimizeDeps: {")),

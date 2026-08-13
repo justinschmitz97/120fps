@@ -7,6 +7,30 @@ import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import type { CompositionTree, CompositionNode, ExportInfo } from "./composition.js";
 import { scanExports } from "./prop-gen.js";
+import { isVueFile, loadVueCompiler, type VueSfcCompiler } from "./vue-sfc.js";
+
+// M57. The measured file's own extension decides how it is mounted: a `.vue`
+// SFC cannot be rendered by React and a `.tsx` cannot be rendered by Vue, so
+// this is stronger evidence than anything in package.json.
+export type Renderer = "react" | "vue";
+
+export function rendererFor(filePath: string): Renderer {
+  return isVueFile(filePath) ? "vue" : "react";
+}
+
+// An SFC's component is its default export and has no exported name, so the
+// entry's import binding is derived from the filename. Vue's own convention is
+// kebab-case files, which is not an identifier — `my-button.vue` must not
+// generate `import My-button`.
+export function vueComponentName(filePath: string): string {
+  const stem = path.basename(filePath, path.extname(filePath));
+  const name = stem
+    .split(/[^A-Za-z0-9]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join("");
+  return /^[A-Za-z_$]/.test(name) ? name : `Component${name}`;
+}
 
 export interface ShimEntry {
   module: string;
@@ -406,6 +430,10 @@ export const SUPPORTED_TRANSFORM_PLUGINS: TransformPlugin[] = [
     packageName: "@vanilla-extract/vite-plugin",
     exportName: "vanillaExtractPlugin",
   },
+  // M57. Without it nothing mounts a `.vue` file at all, so this is the one
+  // entry on the list a whole framework depends on. A project with `.vue` files
+  // and no plugin keeps the M48 recognizer warning.
+  { code: "vue", packageName: "@vitejs/plugin-vue" },
 ];
 
 // Three shapes in the wild, all seen in the M48 spike: a real default export, a
@@ -499,10 +527,18 @@ export const WRAPPER_CANDIDATES = [
   "120fps.setup.jsx",
   "120fps.setup.ts",
   "120fps.setup.js",
+  "120fps.setup.vue",
 ];
 
-export function detectWrapper(projectRoot: string): string | undefined {
-  for (const name of WRAPPER_CANDIDATES) {
+// A `.tsx` wrapper in a Vue project cannot render a Vue component, so the SFC
+// is probed first there — otherwise a stray leftover file would silently break
+// the run it was supposed to fix.
+export function detectWrapper(projectRoot: string, framework?: string): string | undefined {
+  const candidates =
+    framework === "vue"
+      ? ["120fps.setup.vue", ...WRAPPER_CANDIDATES.filter((c) => c !== "120fps.setup.vue")]
+      : WRAPPER_CANDIDATES;
+  for (const name of candidates) {
     const candidate = path.join(projectRoot, name);
     try {
       if (fs.statSync(candidate).isFile()) return candidate;
@@ -556,6 +592,70 @@ function hasCallableDefaultExport(sourceText: string, fileName: string): boolean
   return found;
 }
 
+// @vitejs/plugin-vue emits `import _sfc_main from "<sfc>?vue&type=script"`
+// whenever an SFC has any <script> block, so a block that produces no default
+// export fails module evaluation in the browser — the Vue analogue of the
+// missing-default-export wrapper M26 fixed for React. An SFC with no <script>
+// at all is fine: the plugin synthesizes an empty component for it.
+//
+// An empty `<script setup>` counts as absent to the compiler, which is the
+// shape that looks most correct and fails hardest.
+export function sfcProducesComponent(
+  source: string,
+  fileName: string,
+  compiler: VueSfcCompiler,
+): boolean {
+  let descriptor;
+  try {
+    descriptor = compiler.parse(source, { filename: fileName }).descriptor;
+  } catch {
+    // A malformed SFC is the plugin's error to report, with real positions.
+    return true;
+  }
+  const setup = descriptor?.scriptSetup;
+  const script = descriptor?.script;
+  if (!setup && !script) return true;
+  if (setup && setup.content.trim().length > 0) return true;
+  if (script && hasAnyDefaultExport(script.content, `${fileName}.ts`)) return true;
+  return false;
+}
+
+// Vue's Options API default-exports a plain object, which
+// `hasCallableDefaultExport` deliberately rejects for React. Here the question
+// is only whether the module has a default export at all — the plugin imports
+// it either way, and an object is a perfectly good Vue component.
+function hasAnyDefaultExport(sourceText: string, fileName: string): boolean {
+  const sourceFile = ts.createSourceFile(fileName, sourceText, ts.ScriptTarget.Latest, false);
+  let found = false;
+
+  ts.forEachChild(sourceFile, (node) => {
+    if (found) return;
+    if (ts.isExportAssignment(node) && !node.isExportEquals) {
+      found = true;
+      return;
+    }
+    if (
+      ts.canHaveModifiers(node) &&
+      ts.getModifiers(node)?.some((m) => m.kind === ts.SyntaxKind.DefaultKeyword)
+    ) {
+      found = true;
+      return;
+    }
+    if (ts.isExportDeclaration(node) && node.exportClause && ts.isNamedExports(node.exportClause)) {
+      for (const spec of node.exportClause.elements) {
+        if (!spec.isTypeOnly && spec.name.text === "default") found = true;
+      }
+    }
+  });
+
+  return found;
+}
+
+export const SFC_NO_COMPONENT = (relative: string): string =>
+  `${relative} has a <script> block that exports no component, so nothing can be mounted from it. ` +
+  "Add `export default` to that block, or move the code into a non-empty <script setup> " +
+  "(an empty <script setup> counts as absent to the Vue compiler).";
+
 function resolveWrapper(wrapPath: string, projectRoot: string): string {
   const absolute = path.resolve(wrapPath);
   if (!fs.existsSync(absolute)) {
@@ -567,7 +667,18 @@ function resolveWrapper(wrapPath: string, projectRoot: string): string {
       `Wrapper module ${wrapPath} must live inside the project root ${projectRoot}`,
     );
   }
-  if (!hasCallableDefaultExport(fs.readFileSync(absolute, "utf-8"), absolute)) {
+  const source = fs.readFileSync(absolute, "utf-8");
+  if (isVueFile(absolute)) {
+    // An SFC's component is its default export by construction; the only thing
+    // provable here is that the file is an SFC at all.
+    if (!/<template[\s>]|<script[\s>]/.test(source)) {
+      throw new Error(
+        `Wrapper module ${wrapPath} must be a Vue single-file component rendering its default slot`,
+      );
+    }
+    return relative;
+  }
+  if (!hasCallableDefaultExport(source, absolute)) {
     throw new Error(
       `Wrapper module ${wrapPath} must default-export a React component taking { children }`,
     );
@@ -597,6 +708,26 @@ export async function buildAndServe(
   // is a consequence of the user's own flag and travels in the report.
   if (options?.reactCompiler !== false && reactCompiler.warning) {
     process.stderr.write(`Warning: ${reactCompiler.warning}\n`);
+  }
+
+  // M57: an SFC that compiles to no component would otherwise surface as a 30s
+  // readiness timeout with a module-resolution message attached, naming the
+  // harness instead of the file to fix. Checked here so nothing is left behind.
+  const renderer = rendererFor(absoluteComponentPath);
+  if (renderer === "vue") {
+    const compiler = await loadVueCompiler(projectRoot);
+    if (compiler) {
+      const sfcs = [
+        absoluteComponentPath,
+        ...(options?.wrapPath ? [path.resolve(options.wrapPath)] : []),
+      ];
+      for (const sfc of sfcs) {
+        if (!isVueFile(sfc)) continue;
+        if (!sfcProducesComponent(fs.readFileSync(sfc, "utf-8"), sfc, compiler)) {
+          throw new Error(SFC_NO_COMPONENT(path.relative(projectRoot, sfc).replace(/\\/g, "/")));
+        }
+      }
+    }
   }
 
   // Crash leftovers from previous runs: best-effort removal (M24 D8)
@@ -648,17 +779,21 @@ export async function buildAndServe(
       hasScale: detectScaleExport(absoluteComponentPath),
       wrapRelative,
       cssImports,
+      renderer,
       ...(presetRelative ? { presetRelative } : {}),
     });
   }
 
+  // The Vue entry has no JSX, so it is a .ts file — and index.html has to name
+  // whichever one was written.
+  const entryFile = renderer === "vue" ? "entry.ts" : "entry.tsx";
   const indexHtml = `<!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"><title>120fps harness</title></head>
-<body><div id="root"></div><script type="module" src="./entry.tsx"></script></body>
+<body><div id="root"></div><script type="module" src="./${entryFile}"></script></body>
 </html>`;
 
-  fs.writeFileSync(path.join(harnessDir, "entry.tsx"), entryTsx);
+  fs.writeFileSync(path.join(harnessDir, entryFile), entryTsx);
   fs.writeFileSync(path.join(harnessDir, "index.html"), indexHtml);
 
   const tsconfigAliases = loadTsconfigAliases(projectRoot);
@@ -689,14 +824,20 @@ export async function buildAndServe(
     activeShims = shimmed.length > 0 ? shimmed : undefined;
   }
 
+  // A Vue project has no react to pre-bundle, and an unresolvable include
+  // aborts server start — so the renderer decides the base list, not a union.
+  const rendererDeps =
+    renderer === "vue"
+      ? ["vue"]
+      : [
+          "react",
+          "react-dom/client",
+          ...reactJsxRuntimeDeps(projectRoot),
+          ...(reactCompiler.active ? reactCompilerRuntimeDeps(projectRoot) : []),
+        ];
+
   const stableInclude = unionCachedDeps(
-    [
-      "react",
-      "react-dom/client",
-      ...reactJsxRuntimeDeps(projectRoot),
-      ...(reactCompiler.active ? reactCompilerRuntimeDeps(projectRoot) : []),
-      ...externalDeps,
-    ],
+    [...rendererDeps, ...externalDeps],
     readDepCacheMetadata(projectRoot),
   );
 
@@ -749,7 +890,7 @@ export async function buildAndServe(
       },
       resolve: {
         alias,
-        dedupe: ["react", "react-dom"],
+        dedupe: renderer === "vue" ? ["vue"] : ["react", "react-dom"],
       },
       optimizeDeps: {
         include: stableInclude,
@@ -925,7 +1066,7 @@ export function sweepStaleTmpDirs(baseDir: string = os.tmpdir()): void {
   }
 }
 
-const EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".mts"];
+const EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".mts", ".vue"];
 
 function resolveLocalImport(
   fromFile: string,
@@ -1100,6 +1241,12 @@ export function detectComponentExport(filePath: string): {
   name: string;
   isDefaultOnly: boolean;
 } {
+  // One SFC, one component, always the default export — there is nothing to
+  // select and the file is not TypeScript, so the AST walker never runs on it.
+  if (isVueFile(filePath)) {
+    return { name: vueComponentName(filePath), isDefaultOnly: true };
+  }
+
   const content = fs.readFileSync(filePath, "utf-8");
   const exports = scanExports(content, filePath);
 
@@ -1266,9 +1413,114 @@ export interface EntryOptions {
   wrapRelative?: string;
   cssImports?: string[];
   presetRelative?: string;
+  // Defaults to React, so every existing caller produces the entry it did before.
+  renderer?: Renderer;
 }
 
+// The renderer supplies four things: the import block, the mount body, the
+// unmount body, and `renderTree`. Everything around them — the M25 stylesheet
+// block, the M41 setup/teardown blocks, the M44 preset resolver, the M26
+// single-render-site rule — is renderer-independent and shared.
 export function generateEntry(opts: EntryOptions): string {
+  return opts.renderer === "vue" ? generateVueEntry(opts) : generateReactEntry(opts);
+}
+
+// Vue batches updates into a microtask queue drained on nextTick(), so the
+// control API awaits it before resolving `rerender`. Resolving earlier would
+// time scheduling a rerender rather than performing one, and the caller's
+// double-rAF fence proves a frame was presented, not that the queue drained
+// into it — a wrong answer here reports implausibly fast rerenders instead of
+// failing.
+export function generateVueEntry(opts: EntryOptions): string {
+  const { componentRelative, componentName, hasScale, wrapRelative, cssImports, presetRelative } =
+    opts;
+
+  const importLine = `import ${componentName}${hasScale ? ", { scale as __120fps_scale }" : ""} from "/${componentRelative}";`;
+
+  // Auto-scale fans N instances out inside one element, wrapped once (M26).
+  const scaleBranch = hasScale
+    ? `  if (typeof props.__120fps_scaleN === "number" && typeof __120fps_scale === "function") {
+    return __120fps_scale(props.__120fps_scaleN);
+  }`
+    : `  if (typeof props.__120fps_scaleN === "number") {
+    const { __120fps_scaleN: _n, ...rest } = props;
+    return h("div", null, Array.from({ length: props.__120fps_scaleN }, (_, i) =>
+      h(${componentName}, { ...rest, key: i })));
+  }`;
+
+  return `
+${cssImportBlock(cssImports)}import { createApp, h, nextTick, shallowRef } from "vue";
+${wrapImportLine(wrapRelative)}${presetImportLine(presetRelative)}${importLine}
+
+const container = document.getElementById("root")!;
+// A plain object per render, out of a shallowRef: the component sees the same
+// unproxied props a parent would hand it, and a new identity patches the child
+// instead of remounting it.
+const propsRef = shallowRef<any>({});
+let app: any = null;
+let mounted = false;
+let wrapperOnly = false;
+
+const renderComponent = () => {
+  const props = propsRef.value;
+${scaleBranch}
+  return h(${componentName}, { ...props });
+};
+${vueRenderTreeHelper(wrapRelative)}
+const __120fpsRoot = { render: () => renderTree(wrapperOnly ? null : renderComponent()) };
+
+const startApp = () => {
+  app = createApp(__120fpsRoot);
+  app.mount(container);
+  mounted = true;
+};
+const stopApp = () => {
+  if (mounted) {
+    app.unmount();
+    app = null;
+    mounted = false;
+  }
+};
+${presetResolverBlock(presetRelative)}${setupBlock(wrapRelative)}
+(window as any).__120fps = {
+  mount(props: any = {}) {
+    ${presetResolveStatement(presetRelative)}
+    stopApp();
+    wrapperOnly = false;
+    propsRef.value = props;
+    startApp();
+  },
+  mountWrapperOnly() {
+    stopApp();
+    wrapperOnly = true;
+    propsRef.value = {};
+    startApp();
+  },
+  unmount() {
+    stopApp();
+  },
+  async rerender(props: any = {}) {
+    ${presetResolveStatement(presetRelative)}
+    propsRef.value = props;
+    await nextTick();
+  },
+  getContainer() {
+    return container;
+  },
+};
+${setupApiBlock(wrapRelative)}${viewportBlock(wrapRelative)}
+`;
+}
+
+// The default slot keeps the wrapper outside the component exactly as
+// createElement(wrap, null, el) does on the React path.
+export function vueRenderTreeHelper(wrapRelative?: string): string {
+  return wrapRelative
+    ? `const renderTree = (node: any) => __120fpsWrap ? h(__120fpsWrap, null, { default: () => node }) : node;`
+    : `const renderTree = (node: any) => node;`;
+}
+
+function generateReactEntry(opts: EntryOptions): string {
   const { componentRelative, componentName, isDefaultExport, hasScale, wrapRelative, cssImports, presetRelative } = opts;
 
   const importLine = isDefaultExport

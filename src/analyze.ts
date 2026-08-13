@@ -34,6 +34,7 @@ import {
   type CompositionTree,
 } from "./composition.js";
 import { detectFramework, runReactAnalysis, hasReactWarning, type ReactOptimizations } from "./react-profiler.js";
+import { isVueFile, loadVueCompiler, VUE_COMPILER_MISSING } from "./vue-sfc.js";
 import {
   generateCombinations,
   generateDeltaPairs,
@@ -89,7 +90,9 @@ import {
   parseIsolationPhases,
   runIsolationPhases,
   selectIsolationCombos,
+  strictModeUnsupported,
   DEFAULT_MEMORY_CYCLES,
+  VUE_STRICTMODE_ERROR,
 } from "./isolation.js";
 import {
   attachWrapperReport,
@@ -262,7 +265,7 @@ export interface AnalyzeOptions {
   skipAttribution?: boolean;
   skipAutoCompose?: boolean;
   skipReactAnalysis?: boolean;
-  framework?: "react" | "vanilla" | "auto";
+  framework?: "react" | "vue" | "vanilla" | "auto";
   noShims?: boolean;
   curveMode?: boolean | { propName: string; propKind: "array" | "number" };
   matrixMode?: boolean;
@@ -638,6 +641,9 @@ interface ModeContext {
   relativeComponent: string;
   inputIsFixture: boolean;
   useFixture: boolean;
+  // M57: which renderer mounted the scene. Gates the React optimization pass
+  // and travels into the baseline environment record.
+  framework: "react" | "vue" | "vanilla";
   fixturePath?: string;
   fixtureAutoDetected: boolean;
   composed: boolean;
@@ -661,6 +667,12 @@ async function runIsolationMode(
     throw new Error(
       "--isolate requires at least one phase (mount, rerender, unmount, memory, strictmode, all)",
     );
+  }
+  // The CLI rejects this first; the guard is here for direct API callers, whose
+  // Vue "strict" pass would otherwise re-measure the identical page and report
+  // 0% overhead as a clean double-invoke.
+  if (strictModeUnsupported(phases, [harness.componentPath])) {
+    throw new Error(VUE_STRICTMODE_ERROR);
   }
 
   const isolationCombos =
@@ -736,6 +748,7 @@ async function runIsolationMode(
         cpuThrottle: ctx.cpuThrottle,
         samples: ctx.samples,
         mode: "isolation",
+        framework: ctx.framework,
         ...(ctx.cssReport ? { css: ctx.cssReport.files } : {}),
         ...(ctx.wrapper ? { wrapper: ctx.wrapper.path } : {}),
         ...(harness.reactCompiler?.active ? { reactCompiler: true } : {}),
@@ -1298,11 +1311,10 @@ async function runComboMode(ctx: ModeContext, fixtureHasScale: boolean): Promise
   }
 
   // --- React optimization detection (separate pass) ---
-  const frameworkMode = options.framework ?? "auto";
-  const effectiveFramework = resolveFramework(frameworkMode, ctx.projectRoot);
-
-  const shouldRunReact =
-    !options.skipReactAnalysis && effectiveFramework === "react";
+  // M57: `ctx.framework` already folds the flag, the manifest and the measured
+  // file's own type together. A Vue run never reaches this and never carries a
+  // ReactOptimizations block.
+  const shouldRunReact = !options.skipReactAnalysis && ctx.framework === "react";
 
   if (shouldRunReact) {
     const fnPropNames = schemas
@@ -1338,6 +1350,7 @@ async function runComboMode(ctx: ModeContext, fixtureHasScale: boolean): Promise
     // at different real N are not a like-for-like comparison.
     samples: effectiveSamples,
     mode: "combo",
+    framework: ctx.framework,
     ...(ctx.cssReport ? { css: ctx.cssReport.files } : {}),
     ...(ctx.wrapper ? { wrapper: ctx.wrapper.path } : {}),
     ...(harness.reactCompiler?.active ? { reactCompiler: true } : {}),
@@ -1481,6 +1494,7 @@ async function tryReuseStoredVerdict(args: {
   cpuThrottle: number;
   cssReport?: CssReport;
   wrapPath?: string;
+  framework: "react" | "vue" | "vanilla";
   getSourceFingerprint: () => Promise<string>;
 }): Promise<Report | undefined> {
   const { options, projectRoot } = args;
@@ -1515,6 +1529,7 @@ async function tryReuseStoredVerdict(args: {
     // a mismatched verdict.
     samples: args.samples,
     mode: "combo",
+    framework: args.framework,
     ...(args.cssReport ? { css: args.cssReport.files } : {}),
     ...(args.wrapPath
       ? { wrapper: path.relative(projectRoot, args.wrapPath).replace(/\\/g, "/") }
@@ -1609,9 +1624,14 @@ export async function analyze(
     }
   }
 
+  // M57: one component per SFC, so there is nothing for the suffix taxonomy to
+  // infer — auto-composition is skipped for Vue, not adapted to it. Reached
+  // only when no fixture applies, so the measured file is componentPath.
+  const rendererIsVue = isVueFile(componentPath);
+
   let compositionTree: CompositionTree | undefined;
   let componentExports: import("./composition.js").ExportInfo[] | undefined;
-  if (!fixturePath && !inputIsFixture && !options.skipAutoCompose) {
+  if (!fixturePath && !inputIsFixture && !options.skipAutoCompose && !rendererIsVue) {
     componentExports = await extractExports(resolvedPath);
     if (componentExports.length > 1) {
       const allSchemas = await extractAllProps(resolvedPath);
@@ -1626,7 +1646,10 @@ export async function analyze(
   const metadataPath = inputIsFixture ? componentPath : resolvedPath;
 
   const { projectRoot, relativeComponent } = resolveProjectPaths(resolvedPath);
-  const { wrapPath, wrapAutoDetected } = resolveWrapPath(options, projectRoot);
+  // M57: resolved before the wrapper, because a Vue project's wrapper is an SFC
+  // and a `.tsx` one left lying around could not render the component at all.
+  const framework = resolveFramework(options.framework ?? "auto", projectRoot, harnessPath);
+  const { wrapPath, wrapAutoDetected } = resolveWrapPath(options, projectRoot, framework);
   const resolvedCss = resolveCssFiles(options, projectRoot);
   const cssReport: CssReport | undefined =
     resolvedCss.files.length > 0
@@ -1785,11 +1808,20 @@ export async function analyze(
       thresholds,
       samples,
       cpuThrottle,
+      framework,
       ...(cssReport !== undefined ? { cssReport } : {}),
       ...(wrapPath !== undefined ? { wrapPath } : {}),
       getSourceFingerprint,
     });
     if (reused) return reused;
+
+    // M57: the project's own SFC parser, loaded once. A `.vue` target without
+    // it cannot be read at all, so the run fails here naming the missing
+    // dependency rather than deep inside Vite minutes later.
+    const vueCompiler = framework === "vue" ? await loadVueCompiler(projectRoot) : undefined;
+    if (framework === "vue" && !vueCompiler && isVueFile(harnessPath)) {
+      throw new Error(VUE_COMPILER_MISSING(projectRoot));
+    }
 
     // M42: before any harness directory or dev server exists. A component whose
     // graph reaches server-only code cannot mount in a browser at all, and the
@@ -1799,6 +1831,7 @@ export async function analyze(
       entries: [harnessPath, ...(wrapPath ? [wrapPath] : [])],
       // The export the entry actually mounts, not the display name.
       componentName: detectComponentExport(harnessPath).name,
+      ...(vueCompiler ? { vueCompiler } : {}),
     });
     for (const hit of preflight.soft) runWarnings.push(NODE_BUILTIN_WARNING(hit));
 
@@ -1944,6 +1977,7 @@ export async function analyze(
       relativeComponent,
       inputIsFixture,
       useFixture,
+      framework,
       ...(fixturePath !== undefined ? { fixturePath } : {}),
       fixtureAutoDetected,
       composed,
@@ -2046,6 +2080,7 @@ export function resolveCssFiles(
 export function resolveWrapPath(
   options: Pick<AnalyzeOptions, "wrapPath" | "noWrap">,
   projectRoot: string,
+  framework?: string,
 ): { wrapPath?: string; wrapAutoDetected: boolean } {
   if (options.noWrap) return { wrapAutoDetected: false };
   if (options.wrapPath) {
@@ -2055,7 +2090,7 @@ export function resolveWrapPath(
     }
     return { wrapPath: resolved, wrapAutoDetected: false };
   }
-  const detected = detectWrapper(projectRoot);
+  const detected = detectWrapper(projectRoot, framework);
   return detected ? { wrapPath: detected, wrapAutoDetected: true } : { wrapAutoDetected: false };
 }
 
@@ -2085,12 +2120,15 @@ export function legacyBaselineWarning(
   );
 }
 
-// Explicit --framework react|vanilla skips detection; auto detects from the
-// project's package.json.
+// Explicit --framework react|vue|vanilla skips detection; auto detects from the
+// project's package.json. A `.vue` file overrides both: no flag can make React
+// render an SFC, so the file's own type is the stronger evidence.
 export function resolveFramework(
-  mode: "react" | "vanilla" | "auto",
+  mode: "react" | "vue" | "vanilla" | "auto",
   projectRoot: string,
-): "react" | "vanilla" {
+  componentPath?: string,
+): "react" | "vue" | "vanilla" {
+  if (componentPath && isVueFile(componentPath)) return "vue";
   return mode === "auto" ? detectFramework(projectRoot) : mode;
 }
 
@@ -2099,13 +2137,18 @@ export function hasScaleExport(source: string): boolean {
 }
 
 export function isFixturePath(filePath: string): boolean {
-  return /\.fixture\.[jt]sx?$/.test(filePath);
+  return /\.fixture\.([jt]sx?|vue)$/.test(filePath);
 }
 
 export function detectFixture(componentPath: string): string | undefined {
   const ext = path.extname(componentPath);
   const stem = componentPath.slice(0, -ext.length);
-  for (const candidate of [`${stem}.fixture.tsx`, `${stem}.fixture.ts`]) {
+  // A compound Vue component composes in a .fixture.vue: one component per SFC
+  // leaves auto-composition nothing to infer.
+  const candidates = isVueFile(componentPath)
+    ? [`${stem}.fixture.vue`]
+    : [`${stem}.fixture.tsx`, `${stem}.fixture.ts`];
+  for (const candidate of candidates) {
     if (fs.existsSync(candidate)) return candidate;
   }
   return undefined;

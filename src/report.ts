@@ -91,6 +91,10 @@ export interface EnvFingerprint {
   css?: string[];
   wrapper?: string;
   reactCompiler?: boolean;
+  // M57. Omitted for React, which every pre-M57 baseline implicitly was, so
+  // those entries keep comparing. A different framework is a different renderer
+  // and a different measurement, never a regression.
+  framework?: "vue" | "vanilla";
 }
 
 export interface TimingWithCV {

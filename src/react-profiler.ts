@@ -59,17 +59,22 @@ export function detectDurationsUnavailable(snapshot: {
   return true;
 }
 
-export function detectFramework(projectRoot: string): "react" | "vanilla" {
+// React wins a tie: a project with both installed is a React project that also
+// ships some Vue, and the React optimization pass is the one with findings.
+// A `.vue` file overrides this entirely — see analyze's resolveFramework.
+export function detectFramework(projectRoot: string): "react" | "vue" | "vanilla" {
   try {
     const raw = fs.readFileSync(path.join(projectRoot, "package.json"), "utf-8");
     const pkg = JSON.parse(raw);
     if (typeof pkg !== "object" || pkg === null) return "react";
+    let vue = false;
     for (const section of [pkg.dependencies, pkg.devDependencies, pkg.peerDependencies]) {
       if (section == null) continue;
       if (typeof section !== "object") return "react";
       if ("react" in section || "react-dom" in section) return "react";
+      if ("vue" in section) vue = true;
     }
-    return "vanilla";
+    return vue ? "vue" : "vanilla";
   } catch {
     return "react";
   }

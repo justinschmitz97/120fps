@@ -153,6 +153,7 @@ export interface EnvFingerprintInput {
   css?: string[];
   wrapper?: string;
   reactCompiler?: boolean;
+  framework?: "react" | "vue" | "vanilla";
 }
 
 export const UNKNOWN_ENV_WARNING =
@@ -273,6 +274,9 @@ export function computeEnvKey(env: EnvFingerprint | undefined): string {
     (env.css ?? []).join(","),
     env.wrapper ?? "",
     env.reactCompiler ? "1" : "0",
+    // Appended only when it is not React, so every slot written before M57
+    // keeps the key it was written under.
+    ...(env.framework ? [env.framework] : []),
   ].join("\0");
   return crypto.createHash("sha1").update(identity).digest("hex").slice(0, 8);
 }
@@ -466,7 +470,14 @@ export function buildEnvFingerprint(input: EnvFingerprintInput): EnvFingerprint 
     ...(input.css && input.css.length > 0 ? { css: input.css } : {}),
     ...(input.wrapper ? { wrapper: input.wrapper } : {}),
     ...(input.reactCompiler !== undefined ? { reactCompiler: input.reactCompiler } : {}),
+    // React is the absence of the field, which is what a pre-M57 baseline
+    // records — writing it would make every stored entry incomparable.
+    ...(input.framework && input.framework !== "react" ? { framework: input.framework } : {}),
   };
+}
+
+function frameworkLabel(env: EnvFingerprint): string {
+  return env.framework ?? "react";
 }
 
 // Baseline files are user-editable JSON, so every field is treated as untrusted.
@@ -485,7 +496,9 @@ function featuresDiffer(a: EnvFingerprint, b: EnvFingerprint): boolean {
     a.mode !== b.mode ||
     !sameCssList(a.css, b.css) ||
     a.wrapper !== b.wrapper ||
-    a.reactCompiler !== b.reactCompiler
+    a.reactCompiler !== b.reactCompiler ||
+    // M57: a different renderer measured a different thing entirely.
+    frameworkLabel(a) !== frameworkLabel(b)
   );
 }
 
@@ -573,6 +586,9 @@ export function describeEnvDiff(
     diffs.push(
       `React Compiler: baseline ${baseline.reactCompiler ? "on" : "off"}, current ${current.reactCompiler ? "on" : "off"}`,
     );
+  }
+  if (frameworkLabel(baseline) !== frameworkLabel(current)) {
+    diffs.push(`framework: baseline ${frameworkLabel(baseline)}, current ${frameworkLabel(current)}`);
   }
   if (baseline.cpu !== current.cpu) {
     diffs.push(`CPU: baseline "${baseline.cpu}", current "${current.cpu}"`);

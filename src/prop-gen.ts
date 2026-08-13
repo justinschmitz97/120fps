@@ -2,6 +2,15 @@ import ts from "typescript";
 import fs from "node:fs";
 import path from "node:path";
 import type { ExportInfo } from "./composition.js";
+import {
+  isVueFile,
+  loadVueCompiler,
+  parseSfcScript,
+  virtualScriptPath,
+  type SfcScript,
+  type VueSfcCompiler,
+} from "./vue-sfc.js";
+import { literalValue } from "./prop-presets.js";
 
 // M36: a fresh ts.Program per extraction re-parses lib.d.ts and the project's
 // node_modules type graph every time. Between calls only the component file
@@ -55,11 +64,44 @@ function fileStamp(fileName: string): { mtimeMs: number; size: number } | undefi
   }
 }
 
-function createCachedProgram(rootFile: string, options: ts.CompilerOptions): ts.Program {
+// M57: a `.vue` script block has no file of its own. It is served to the
+// program from memory under a `<sfc>.ts` name in the SFC's own directory, so
+// relative imports, tsconfig `paths` and the checker resolve exactly as they do
+// for a real file — and so `./Child.vue` resolves too, because TS's bundler
+// resolution probes `./Child.vue.ts` for a specifier it cannot otherwise place.
+// Never cached by stamp: virtual files have none, which is what keeps them fresh.
+export interface VirtualScripts {
+  has(fileName: string): boolean;
+  read(fileName: string): string | undefined;
+}
+
+function createCachedProgram(
+  rootFile: string,
+  options: ts.CompilerOptions,
+  virtual?: VirtualScripts,
+): ts.Program {
   const optionsKey = stableStringify(options);
   const host = ts.createCompilerHost(options);
+
+  if (virtual) {
+    const baseFileExists = host.fileExists.bind(host);
+    const baseReadFile = host.readFile.bind(host);
+    host.fileExists = (fileName) => virtual.has(fileName) || baseFileExists(fileName);
+    host.readFile = (fileName) =>
+      virtual.has(fileName) ? virtual.read(fileName) : baseReadFile(fileName);
+  }
+
   const baseGetSourceFile = host.getSourceFile.bind(host);
   host.getSourceFile = (fileName, languageVersionOrOptions, onError, shouldCreateNewSourceFile) => {
+    if (virtual?.has(fileName)) {
+      return ts.createSourceFile(
+        fileName,
+        virtual.read(fileName) ?? "",
+        ts.ScriptTarget.Latest,
+        true,
+        fileName.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+      );
+    }
     const caseKey = ts.sys.useCaseSensitiveFileNames ? fileName : fileName.toLowerCase();
     // Bucketed by options like the document registry: a source file bound
     // under one options set is never reused under another.
@@ -151,6 +193,7 @@ export function detectScalingProps(schemas: PropSchema[]): ScalingPropMatch[] {
 
 export async function extractProps(filePath: string): Promise<PropSchema[]> {
   const absolutePath = path.resolve(filePath);
+  if (isVueFile(absolutePath)) return extractVueProps(absolutePath);
 
   const program = createCachedProgram(absolutePath, createCompilerOptions(absolutePath));
   const checker = program.getTypeChecker();
@@ -166,6 +209,163 @@ export async function extractProps(filePath: string): Promise<PropSchema[]> {
   }
 
   return typeToSchema(propsType, checker);
+}
+
+// --- M57: Vue single-file components -----------------------------------------
+
+interface DefinePropsCall {
+  typeNode?: ts.TypeNode;
+  // The second argument of `withDefaults`, when the call is wrapped in one.
+  defaults?: ts.ObjectLiteralExpression;
+}
+
+// `defineProps` is a compiler macro, so the identifier is always literal — no
+// alias to follow. React's props type is a function *parameter* type; this one
+// is a call's type argument, which is why the React finder cannot be reused.
+export function findDefineProps(sourceFile: ts.SourceFile): DefinePropsCall | undefined {
+  let found: DefinePropsCall | undefined;
+
+  const isDefineProps = (node: ts.Node): node is ts.CallExpression =>
+    ts.isCallExpression(node) &&
+    ts.isIdentifier(node.expression) &&
+    node.expression.text === "defineProps";
+
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+
+    if (
+      ts.isCallExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === "withDefaults" &&
+      node.arguments.length > 0 &&
+      isDefineProps(node.arguments[0])
+    ) {
+      const inner = node.arguments[0] as ts.CallExpression;
+      const defaults = node.arguments[1];
+      found = {
+        ...(inner.typeArguments?.[0] ? { typeNode: inner.typeArguments[0] } : {}),
+        ...(defaults && ts.isObjectLiteralExpression(defaults) ? { defaults } : {}),
+      };
+      return;
+    }
+
+    if (isDefineProps(node)) {
+      found = { ...(node.typeArguments?.[0] ? { typeNode: node.typeArguments[0] } : {}) };
+      return;
+    }
+
+    ts.forEachChild(node, visit);
+  };
+
+  visit(sourceFile);
+  return found;
+}
+
+// A defaulted prop is the value the author says is normal, and every anchor in
+// the pipeline reads `values[0]` — deltas, matrix baselines, curve anchors. So
+// the default is moved to the front of the pool rather than transported through
+// a second channel. Vue's array/object defaults are factory functions; their
+// literal bodies are read the same way.
+export function applyWithDefaults(
+  schemas: PropSchema[],
+  defaults: ts.ObjectLiteralExpression | undefined,
+): PropSchema[] {
+  if (!defaults) return schemas;
+
+  const byName = new Map<string, unknown>();
+  for (const property of defaults.properties) {
+    if (!ts.isPropertyAssignment(property)) continue;
+    const name =
+      ts.isIdentifier(property.name) || ts.isStringLiteral(property.name)
+        ? property.name.text
+        : undefined;
+    if (name === undefined) continue;
+
+    let expression: ts.Expression = property.initializer;
+    if (ts.isArrowFunction(expression) && !ts.isBlock(expression.body)) {
+      expression = expression.body;
+    }
+    const literal = literalValue(expression);
+    if (literal.ok) byName.set(name, literal.value);
+  }
+  if (byName.size === 0) return schemas;
+
+  return schemas.map((schema) => {
+    if (!byName.has(schema.name)) return schema;
+    const value = byName.get(schema.name);
+    const rest = schema.values.filter((v) => !Object.is(v, value));
+    return { ...schema, values: [value, ...rest] };
+  });
+}
+
+// Every `<x>.vue.ts` (or `.tsx`, when the block says so) in the tree resolves to
+// the script block of `<x>.vue`, parsed on demand. One entry point serves the
+// measured file and every `.vue` it imports.
+function createVueScripts(compiler: VueSfcCompiler): VirtualScripts {
+  const cache = new Map<string, string | undefined>();
+
+  const scriptFor = (vuePath: string): SfcScript | undefined => {
+    const source = ts.sys.readFile(vuePath);
+    if (source === undefined) return undefined;
+    return parseSfcScript(source, vuePath, compiler);
+  };
+
+  const resolve = (fileName: string): string | undefined => {
+    const key = path.normalize(fileName);
+    if (cache.has(key)) return cache.get(key);
+
+    let content: string | undefined;
+    const match = /^(.*\.vue)\.(ts|tsx)$/i.exec(key);
+    if (match && fs.existsSync(match[1])) {
+      const script = scriptFor(match[1]);
+      // An SFC with no <script setup> is still a module the graph can import;
+      // it just contributes no declarations.
+      const wanted = virtualScriptPath(match[1], script?.lang ?? "ts");
+      if (path.normalize(wanted) === key) content = script?.content ?? "";
+    }
+    cache.set(key, content);
+    return content;
+  };
+
+  return {
+    has: (fileName) => resolve(fileName) !== undefined,
+    read: (fileName) => resolve(fileName),
+  };
+}
+
+// Per ADR 0002 this stays TypeScript-only: the runtime object form
+// (`defineProps({ label: String })`) carries no types and yields no schemas,
+// exactly as an untyped React component does.
+async function extractVueProps(absolutePath: string): Promise<PropSchema[]> {
+  const compiler = await loadVueCompiler(path.dirname(absolutePath));
+  if (!compiler) return [];
+
+  const virtual = createVueScripts(compiler);
+  const root = vueEntryScript(absolutePath, virtual);
+  if (!root) return [];
+
+  const program = createCachedProgram(root, createCompilerOptions(absolutePath), virtual);
+  const sourceFile = program.getSourceFile(root);
+  if (!sourceFile) return [];
+
+  const call = findDefineProps(sourceFile);
+  if (!call?.typeNode) return [];
+
+  const checker = program.getTypeChecker();
+  const propsType = checker.getTypeFromTypeNode(call.typeNode);
+  if (!looksLikePropsType(propsType, checker)) return [];
+
+  return applyWithDefaults(typeToSchema(propsType, checker), call.defaults);
+}
+
+// The virtual name the resolver actually serves for this SFC, or undefined when
+// it has no <script setup> to serve.
+function vueEntryScript(vuePath: string, virtual: VirtualScripts): string | undefined {
+  for (const lang of ["ts", "tsx"]) {
+    const candidate = virtualScriptPath(vuePath, lang);
+    if (virtual.has(candidate)) return candidate;
+  }
+  return undefined;
 }
 
 function findComponentPropsType(
@@ -521,15 +721,32 @@ export function scanExports(sourceText: string, fileName: string): ExportInfo[] 
 // component for fingerprinting. Rides the M36 program cache.
 export async function projectSourceFiles(filePath: string): Promise<string[]> {
   const absolutePath = path.resolve(filePath);
-  const program = createCachedProgram(absolutePath, createCompilerOptions(absolutePath));
   const files: string[] = [];
+
+  // M57: the program roots at a virtual script, which is not a file anyone can
+  // hash. Each `<x>.vue.ts` collapses back to `<x>.vue` — without that an
+  // edited component would keep reusing a stored verdict about different source.
+  let root = absolutePath;
+  let virtual: VirtualScripts | undefined;
+  if (isVueFile(absolutePath)) {
+    files.push(path.normalize(absolutePath));
+    const compiler = await loadVueCompiler(path.dirname(absolutePath));
+    if (!compiler) return files;
+    virtual = createVueScripts(compiler);
+    const entry = vueEntryScript(absolutePath, virtual);
+    if (!entry) return files;
+    root = entry;
+  }
+
+  const program = createCachedProgram(root, createCompilerOptions(absolutePath), virtual);
   for (const sf of program.getSourceFiles()) {
     if (program.isSourceFileDefaultLibrary(sf)) continue;
     if (program.isSourceFileFromExternalLibrary(sf)) continue;
     if (/[\\/]node_modules[\\/]/.test(sf.fileName)) continue;
-    files.push(path.normalize(sf.fileName));
+    const real = /^(.*\.vue)\.(ts|tsx)$/i.exec(path.normalize(sf.fileName))?.[1];
+    files.push(real ?? path.normalize(sf.fileName));
   }
-  return files.sort();
+  return [...new Set(files)].sort();
 }
 
 export async function extractExports(filePath: string): Promise<ExportInfo[]> {

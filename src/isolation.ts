@@ -3,6 +3,7 @@ import type { HarnessResult } from "./harness.js";
 import type { PropCombination } from "./prop-gen-values.js";
 import type { BaselineMetrics } from "./budget.js";
 import { buildTimingWithCV, type ComponentTier, type TimingWithCV } from "./report.js";
+import { isVueFile } from "./vue-sfc.js";
 import {
   measureMount,
   measureRerender,
@@ -92,6 +93,22 @@ export function parseIsolationPhases(raw: string): IsolationPhase[] {
   // Canonical order, so the same set of phases parses to the same list however
   // the user spelled it — `all,mount` and `memory,all` included.
   return ALL_PHASES.filter((p) => seen.has(p));
+}
+
+// M57. StrictMode is a React development-mode double-invoke; Vue has no
+// equivalent, so a Vue "strict" pass would re-measure the identical page and
+// report 0% overhead and a clean double-invoke — a false clean bill of health,
+// which is worse than refusing the phase.
+export const VUE_STRICTMODE_ERROR =
+  "--isolate strictmode is React-only: StrictMode is a React development-mode double-invoke " +
+  "with no Vue equivalent. Drop strictmode from --isolate (the other phases measure .vue " +
+  "components normally).";
+
+export function strictModeUnsupported(
+  phases: readonly string[],
+  componentPaths: readonly string[],
+): boolean {
+  return phases.includes("strictmode") && componentPaths.some((p) => isVueFile(p));
 }
 
 // measureChurn records one B rerender and one A rerender per cycle, so even

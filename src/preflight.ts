@@ -3,6 +3,7 @@ import path from "node:path";
 import { builtinModules } from "node:module";
 import ts from "typescript";
 import { projectCompilerOptions } from "./prop-gen.js";
+import { isVueFile, parseSfcScript, type VueSfcCompiler } from "./vue-sfc.js";
 
 // The marker package a server module imports to make the boundary explicit.
 const SERVER_ONLY_PACKAGES = new Set(["server-only", "next/server-only"]);
@@ -112,10 +113,35 @@ function scriptKind(fileName: string): ts.ScriptKind {
   return ts.ScriptKind.TS;
 }
 
-function parse(fileName: string): ts.SourceFile | undefined {
+// M57: a `.vue` file is not TypeScript. Its `<script setup>` block is, and that
+// is where its imports live — without this the walk would stop at the measured
+// file and every guarantee below it would silently become a no-op.
+function parse(fileName: string, vueCompiler?: VueSfcCompiler): ts.SourceFile | undefined {
   const text = ts.sys.readFile(fileName);
   if (text === undefined) return undefined;
+  if (isVueFile(fileName)) {
+    if (!vueCompiler) return undefined;
+    const script = parseSfcScript(text, fileName, vueCompiler);
+    if (!script) return undefined;
+    return ts.createSourceFile(
+      fileName,
+      script.content,
+      ts.ScriptTarget.Latest,
+      true,
+      script.lang === "tsx" ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+    );
+  }
   return ts.createSourceFile(fileName, text, ts.ScriptTarget.Latest, true, scriptKind(fileName));
+}
+
+// TypeScript cannot resolve a `.vue` specifier, so relative SFC edges are
+// resolved by hand. Aliased ones are not: preflight is a best-effort net, and
+// an unresolved edge costs coverage, never a false failure.
+function resolveVueImport(fromFile: string, specifier: string): string | undefined {
+  if (!specifier.startsWith(".") && !specifier.startsWith("/")) return undefined;
+  const target = path.normalize(path.resolve(path.dirname(fromFile), specifier));
+  if (/[\\/]node_modules[\\/]/.test(target)) return undefined;
+  return fs.existsSync(target) ? target : undefined;
 }
 
 // A statement whose specifiers are all type-only is erased before it reaches a
@@ -226,10 +252,13 @@ export interface PreflightOptions {
   // is active — a server-only import reaches the browser through either.
   entries: string[];
   componentName?: string;
+  // M57: the project's own SFC parser. Absent, `.vue` files are unreadable and
+  // the walk stops at them, exactly as it did before this milestone.
+  vueCompiler?: VueSfcCompiler;
 }
 
 export function runPreflight(options: PreflightOptions): PreflightResult {
-  const { projectRoot, entries } = options;
+  const { projectRoot, entries, vueCompiler } = options;
   const compilerOptions = projectCompilerOptions(entries[0]);
 
   const hard: PreflightHit[] = [];
@@ -258,7 +287,7 @@ export function runPreflight(options: PreflightOptions): PreflightResult {
 
   while (queue.length > 0) {
     const file = queue.shift()!;
-    const sf = parse(file);
+    const sf = parse(file, vueCompiler);
     if (!sf) continue;
 
     if (hasUseServerDirective(sf)) {
@@ -286,6 +315,17 @@ export function runPreflight(options: PreflightOptions): PreflightResult {
           transformCode: recognizer.code,
           transformOwner: recognizer.owner,
         });
+        // A `.vue` edge is a graph edge as well as a transform note: the note
+        // must not end the walk, or a server-only import one SFC deep would
+        // never be reached.
+        if (recognizer.code === "vue" && vueCompiler) {
+          const sfc = resolveVueImport(file, edge.specifier);
+          if (sfc && !seen.has(sfc)) {
+            seen.add(sfc);
+            parents.set(sfc, file);
+            queue.push(sfc);
+          }
+        }
         continue;
       }
 
@@ -311,7 +351,14 @@ export function runPreflight(options: PreflightOptions): PreflightResult {
     }
   }
 
-  if (options.componentName && detectAsyncComponent(entries[0], options.componentName)) {
+  // An async function component is a React Server Component. Vue has no such
+  // export shape — an SFC's component is an object, and `async setup()` is a
+  // browser-side Suspense concern, not a server boundary.
+  if (
+    options.componentName &&
+    !isVueFile(entries[0]) &&
+    detectAsyncComponent(entries[0], options.componentName)
+  ) {
     hard.push({ kind: "async-component", chain: [relative(projectRoot, path.resolve(entries[0]))] });
   }
 
