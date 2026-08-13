@@ -835,6 +835,19 @@ M25–M29 shipped in the order **M26 → M29 → M25 → M27 → M28**: wrapper 
 
 **Does NOT include**: a distinct exit code or error class for retry-budget exhaustion (deferred — wants a CI-owner's perspective); page-error buffer cap changes (deferred — wants a real-world reproduction).
 
+### M57 — Vue support (draft — spec only, no code)
+**Goal**: Mount and measure `.vue` SFCs, making the framework-neutral measurement spine reachable outside React.
+
+Nine modules (`measure`, `explorer`, `discovery`, `stress-patterns`, `isolation`, `observers`, `noise`, `page-errors`, `ci-report`) contain no React reference; `--framework vanilla` already gates only the React optimization pass. What is React-bound is the entry template (`harness.ts`), prop extraction (`prop-gen.ts`), and `react-profiler.ts`.
+
+Planned scope: `.vue` accepted by `hasAcceptedComponentExtension`; `defineProps<T>()`/`withDefaults` extraction via the project's `@vue/compiler-sfc`; a renderer adapter in `harness.ts` supplying imports + mount/unmount/`renderTree` (React's implementation moved, not rewritten); `@vitejs/plugin-vue` promoted from `TRANSFORM_RECOGNIZERS` (warn) to `SUPPORTED_TRANSFORM_PLUGINS` (load) via M48's machinery; framework recorded in `EnvFingerprint`. The control API surface is unchanged, which is what keeps the measurement modules untouched.
+
+The named hazard is scheduling: Vue batches updates into a microtask queue, so `rerender()` must await `nextTick()` before resolving. The double-rAF fence proves a frame presented, not that Vue's queue drained into it, and a wrong answer here reports implausibly fast rerenders rather than failing.
+
+See `specs/milestones/m57-vue-support.md`.
+
+**Does NOT include**: Vue-specific optimization detection (the M18 analogue), Nuxt shims, Options API or non-`<script setup>` SFCs, Vue 2, Svelte/Solid, auto-composition for Vue.
+
 ## Risks
 | risk | mitigation |
 |---|---|
