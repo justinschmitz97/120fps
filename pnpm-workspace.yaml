@@ -1,3 +1,5 @@
 packages:
   - "fixtures/compiler-project"
   - "fixtures/compiler-tailwind"
+  - "fixtures/vue-project"
+  - "fixtures/vue-wrap-project"

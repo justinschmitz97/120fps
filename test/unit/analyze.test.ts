@@ -367,6 +367,144 @@ describe("buildReport", () => {
   });
 });
 
+describe("buildReport — inp", () => {
+  it("computes inp on the combo from explore edge traces", () => {
+    const graph = makeEmptyGraph();
+    graph.edges.push({
+      id: "e1",
+      fromId: "abc",
+      toId: "def",
+      interaction: { type: "click", selector: "button", tagName: "BUTTON", label: "Submit" },
+      samples: [8],
+      median: 8,
+      p95: 8,
+      traces: [
+        [
+          { name: "EventDispatch", dur: 100, ph: "X", ts: 100_000, args: { data: { type: "click" } } } as any,
+          { name: "Paint", dur: 1000, ph: "X", ts: 150_000 },
+        ],
+      ],
+    });
+    const report = buildReport({
+      componentPath: "./Button.tsx",
+      componentName: "Button",
+      machine: baseMachine,
+      calibration: makeCalibration(),
+      mounts: [makeMountResult()],
+      explores: [{ graph, comboIndex: 0, props: {} }],
+      heapDeltas: [0],
+      thresholds: baseThresholds,
+    });
+    // Gap: (150_000 - 100_000) / 1000 = 50ms, same computeINP contract as
+    // test/unit/metrics.test.ts.
+    expect(report.combos[0].inp).toBeCloseTo(50, 0);
+  });
+
+  it("takes the max inp across every edge explored for the combo", () => {
+    const graph = makeEmptyGraph();
+    graph.edges.push({
+      id: "e1",
+      fromId: "abc",
+      toId: "def",
+      interaction: { type: "click", selector: "button", tagName: "BUTTON", label: "A" },
+      samples: [8],
+      median: 8,
+      p95: 8,
+      traces: [
+        [
+          { name: "EventDispatch", dur: 100, ph: "X", ts: 100_000, args: { data: { type: "click" } } } as any,
+          { name: "Paint", dur: 1000, ph: "X", ts: 120_000 },
+        ],
+      ],
+    });
+    graph.edges.push({
+      id: "e2",
+      fromId: "abc",
+      toId: "ghi",
+      interaction: { type: "click", selector: "a", tagName: "A", label: "B" },
+      samples: [8],
+      median: 8,
+      p95: 8,
+      traces: [
+        [
+          { name: "EventDispatch", dur: 100, ph: "X", ts: 100_000, args: { data: { type: "keydown" } } } as any,
+          { name: "Paint", dur: 1000, ph: "X", ts: 200_000 },
+        ],
+      ],
+    });
+    const report = buildReport({
+      componentPath: "./Button.tsx",
+      componentName: "Button",
+      machine: baseMachine,
+      calibration: makeCalibration(),
+      mounts: [makeMountResult()],
+      explores: [{ graph, comboIndex: 0, props: {} }],
+      heapDeltas: [0],
+      thresholds: baseThresholds,
+    });
+    expect(report.combos[0].inp).toBeCloseTo(100, 0);
+  });
+
+  it("leaves inp undefined when explore produced no edges", () => {
+    const report = buildReport({
+      componentPath: "./Button.tsx",
+      componentName: "Button",
+      machine: baseMachine,
+      calibration: makeCalibration(),
+      mounts: [makeMountResult()],
+      explores: [makeExploreResult()],
+      heapDeltas: [0],
+      thresholds: baseThresholds,
+    });
+    expect(report.combos[0].inp).toBeUndefined();
+  });
+
+  it("leaves inp undefined when there is no explore result for the combo", () => {
+    const report = buildReport({
+      componentPath: "./Button.tsx",
+      componentName: "Button",
+      machine: baseMachine,
+      calibration: makeCalibration(),
+      mounts: [makeMountResult({ comboIndex: 0 })],
+      explores: [],
+      heapDeltas: [0],
+      thresholds: baseThresholds,
+    });
+    expect(report.combos[0].inp).toBeUndefined();
+  });
+
+  it("serializes inp into the JSON report shape (plain numeric field)", () => {
+    const graph = makeEmptyGraph();
+    graph.edges.push({
+      id: "e1",
+      fromId: "abc",
+      toId: "def",
+      interaction: { type: "click", selector: "button", tagName: "BUTTON", label: "Submit" },
+      samples: [8],
+      median: 8,
+      p95: 8,
+      traces: [
+        [
+          { name: "EventDispatch", dur: 100, ph: "X", ts: 100_000, args: { data: { type: "click" } } } as any,
+          { name: "Paint", dur: 1000, ph: "X", ts: 150_000 },
+        ],
+      ],
+    });
+    const report = buildReport({
+      componentPath: "./Button.tsx",
+      componentName: "Button",
+      machine: baseMachine,
+      calibration: makeCalibration(),
+      mounts: [makeMountResult()],
+      explores: [{ graph, comboIndex: 0, props: {} }],
+      heapDeltas: [0],
+      thresholds: baseThresholds,
+    });
+    const parsed = JSON.parse(JSON.stringify(report));
+    expect(typeof parsed.combos[0].inp).toBe("number");
+  });
+});
+
 describe("analyze", () => {
   it("throws on non-existent component file", async () => {
     await expect(analyze("./nonexistent-component.tsx")).rejects.toThrow("not found");

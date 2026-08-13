@@ -26,9 +26,9 @@ describe("computeCV", () => {
 
   it("computes correct CV for known values", () => {
     // samples: [2, 4, 4, 4, 5, 5, 7, 9]
-    // mean = 5, stddev = 2, CV = 40%
+    // mean = 5, sample stddev = sqrt(32/7) = 2.1381, CV = 42.76%
     const cv = computeCV([2, 4, 4, 4, 5, 5, 7, 9]);
-    expect(cv).toBeCloseTo(40, 0);
+    expect(cv).toBeCloseTo(42.76, 1);
   });
 
   it("returns 0 when mean is 0", () => {
@@ -41,7 +41,7 @@ describe("buildTimingWithCV", () => {
     const t = buildTimingWithCV([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
     expect(t.samples).toHaveLength(10);
     expect(t.median).toBe(5.5);
-    expect(t.p95).toBe(10);
+    expect(t.p95).toBeCloseTo(9.55, 10);
     expect(typeof t.cv).toBe("number");
     expect(typeof t.unstable).toBe("boolean");
   });
@@ -94,6 +94,7 @@ describe("computeVerdict", () => {
         label: "btn",
         timing: { samples: [150], median: 150, p95: 150, cv: 0, unstable: false },
         relativeTiming: 1.5,
+        steps: 1,
       }],
     });
     expect(computeVerdict(combo, thresholds)).toBe("fail");

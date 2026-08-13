@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { analyze } from "../../src/analyze.js";
+import { sharedAnalyze as analyze } from "./shared-analyze.js";
 import { DEFAULT_THRESHOLDS } from "../../src/report.js";
 import fs from "node:fs";
 import path from "node:path";

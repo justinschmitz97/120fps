@@ -218,7 +218,7 @@ describe("H12: mount budget selection", () => {
     expect(analyzeSrc).toContain(
       "options.flatThresholds || options.thresholds?.mountMs !== undefined",
     );
-    expect(analyzeSrc).toContain("resolveComponentBudget(loadBudgetConfig(projectRoot), relativeComponent, tier).mountMs");
+    expect(analyzeSrc).toContain("resolveComponentBudget(loadBudgetConfig(ctx.projectRoot), ctx.relativeComponent, tier).mountMs");
   });
 });
 
@@ -234,8 +234,8 @@ describe("H13: no portal signal in isolation mode", () => {
   it("passes hasPortal: false from the isolation branch", () => {
     const analyzeSrc = src("analyze.ts");
     const branch = analyzeSrc.slice(
-      analyzeSrc.indexOf("// --- Isolation mode ---"),
-      analyzeSrc.indexOf("// --- Curve mode check ---"),
+      analyzeSrc.indexOf("async function runIsolationMode("),
+      analyzeSrc.indexOf("function writeReportJson("),
     );
     expect(branch).toContain("hasPortal: false");
     expect(branch).toContain("Discovery does not run in isolation mode");
@@ -246,8 +246,8 @@ describe("H13: no portal signal in isolation mode", () => {
 describe("H14: isolation branch scope", () => {
   const analyzeSrc = src("analyze.ts");
   const branch = analyzeSrc.slice(
-    analyzeSrc.indexOf("// --- Isolation mode ---"),
-    analyzeSrc.indexOf("// --- Curve mode check ---"),
+    analyzeSrc.indexOf("async function runIsolationMode("),
+    analyzeSrc.indexOf("function writeReportJson("),
   );
 
   it("does not explore, profile React, or compute deltas", () => {
@@ -371,12 +371,26 @@ describe("H18b: automatic JSX runtime is declared", () => {
   });
 
   it("feeds optimizeDeps.include from buildAndServe", () => {
+    // M34 routes the list through unionCachedDeps as `stableInclude`; the
+    // runtime deps must feed that list, and the list must feed optimizeDeps.
+    // M57 moved the per-renderer half of the list into `rendererDeps`, which
+    // stableInclude spreads; the runtime deps still have to reach it.
     const harnessSrc = src("harness.ts");
+    const rendererBlock = harnessSrc.slice(
+      harnessSrc.indexOf("const rendererDeps ="),
+      harnessSrc.indexOf("const stableInclude = unionCachedDeps("),
+    );
+    expect(rendererBlock).toContain("reactJsxRuntimeDeps(projectRoot)");
+    const stableBlock = harnessSrc.slice(
+      harnessSrc.indexOf("const stableInclude = unionCachedDeps("),
+      harnessSrc.indexOf("readDepCacheMetadata(projectRoot)"),
+    );
+    expect(stableBlock).toContain("...rendererDeps");
     const includeBlock = harnessSrc.slice(
       harnessSrc.indexOf("optimizeDeps: {"),
       harnessSrc.indexOf("});", harnessSrc.indexOf("optimizeDeps: {")),
     );
-    expect(includeBlock).toContain("reactJsxRuntimeDeps(projectRoot)");
+    expect(includeBlock).toContain("include: stableInclude");
   });
 });
 

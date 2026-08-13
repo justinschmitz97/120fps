@@ -3,6 +3,7 @@ import type { HarnessResult } from "./harness.js";
 import type { PropCombination } from "./prop-gen-values.js";
 import type { BaselineMetrics } from "./budget.js";
 import { buildTimingWithCV, type ComponentTier, type TimingWithCV } from "./report.js";
+import { isVueFile } from "./vue-sfc.js";
 import {
   measureMount,
   measureRerender,
@@ -11,6 +12,8 @@ import {
   rerenderAndTrace,
   runHarnessSession,
   tryCollectGarbage,
+  type BrowserPool,
+  type MeasurementPacing,
 } from "./measure.js";
 
 export type IsolationPhase = "mount" | "rerender" | "unmount" | "memory" | "strictmode";
@@ -92,12 +95,61 @@ export function parseIsolationPhases(raw: string): IsolationPhase[] {
   return ALL_PHASES.filter((p) => seen.has(p));
 }
 
+// M57. StrictMode is a React development-mode double-invoke; Vue has no
+// equivalent, so a Vue "strict" pass would re-measure the identical page and
+// report 0% overhead and a clean double-invoke — a false clean bill of health,
+// which is worse than refusing the phase.
+export const VUE_STRICTMODE_ERROR =
+  "--isolate strictmode is React-only: StrictMode is a React development-mode double-invoke " +
+  "with no Vue equivalent. Drop strictmode from --isolate (the other phases measure .vue " +
+  "components normally).";
+
+export function strictModeUnsupported(
+  phases: readonly string[],
+  componentPaths: readonly string[],
+): boolean {
+  return phases.includes("strictmode") && componentPaths.some((p) => isVueFile(p));
+}
+
+// measureChurn records one B rerender and one A rerender per cycle, so even
+// and odd samples have different prop composition. Comparing across the mix
+// measures the A/B gap; each parity is only ever compared against itself.
+export function churnParitySeries(samples: number[]): number[][] {
+  const even: number[] = [];
+  const odd: number[] = [];
+  samples.forEach((value, i) => (i % 2 === 0 ? even : odd).push(value));
+  return [even, odd].filter((series) => series.length > 0);
+}
+
+function seriesDegradation(series: number[]): number | undefined {
+  const edge = Math.min(3, Math.floor(series.length / 2));
+  if (edge === 0) return undefined;
+  const mean = (values: number[]): number => values.reduce((a, b) => a + b, 0) / values.length;
+  const first = mean(series.slice(0, edge));
+  if (first === 0) return undefined;
+  return mean(series.slice(-edge)) / first;
+}
+
+// The worse parity: churn that degrades on one prop target is degradation,
+// however steady the other one stays.
 export function computeChurnDegradation(samples: number[]): number {
-  if (samples.length < 6) return samples.length === 0 ? 1.0 : samples[samples.length - 1] / (samples[0] || 1);
-  const first3 = (samples[0] + samples[1] + samples[2]) / 3;
-  const last3 = (samples[samples.length - 3] + samples[samples.length - 2] + samples[samples.length - 1]) / 3;
-  if (first3 === 0) return 1.0;
-  return last3 / first3;
+  const ratios = churnParitySeries(samples)
+    .map(seriesDegradation)
+    .filter((ratio): ratio is number => ratio !== undefined);
+  return ratios.length === 0 ? 1.0 : Math.max(...ratios);
+}
+
+// Median and P95 describe the whole alternation (that is what a churn cycle
+// costs), but dispersion is read inside a parity — across the mix it would
+// report the A/B gap as instability.
+export function buildChurnTiming(samples: number[]): TimingWithCV {
+  const overall = buildTimingWithCV(samples);
+  const parities = churnParitySeries(samples)
+    .filter((series) => series.length > 1)
+    .map(buildTimingWithCV);
+  if (parities.length === 0) return overall;
+  const worst = parities.reduce((a, b) => (b.cv > a.cv ? b : a));
+  return { ...overall, cv: worst.cv, unstable: worst.unstable };
 }
 
 export function buildMemoryReport(input: {
@@ -144,7 +196,7 @@ export function buildRerenderIsolation(
   return {
     stable: buildTimingWithCV(stableSamples),
     propChange: buildTimingWithCV(propChangeSamples),
-    churn: buildTimingWithCV(churnSamples),
+    churn: buildChurnTiming(churnSamples),
     churnDegradation: computeChurnDegradation(churnSamples),
   };
 }
@@ -184,6 +236,11 @@ export interface PhaseOptions {
   samples?: number;
   cpuThrottle?: number;
   warmupRuns?: number;
+  // M35: "vsync" when the measured combo animates — driven frames would
+  // change how much animation work lands in the traced windows.
+  pacing?: MeasurementPacing;
+  // M37: reuse pooled browsers (fresh context per phase session).
+  pool?: BrowserPool;
 }
 
 // Untimed mount with propsA, then `cycles` traced A→B→A alternations. No GC
@@ -199,7 +256,7 @@ export async function measureChurn(
 
   return runHarnessSession(
     harness,
-    { label: "churn harness", cpuThrottle: options.cpuThrottle },
+    { label: "churn harness", cpuThrottle: options.cpuThrottle, ...(options.pacing ? { pacing: options.pacing } : {}), ...(options.pool ? { pool: options.pool } : {}) },
     async (page, cdp) => {
       await mountAndWait(page, propsA);
       for (let w = 0; w < warmupRuns; w++) {
@@ -239,7 +296,7 @@ export async function measureMemory(
 
   return runHarnessSession(
     harness,
-    { label: "memory harness", cpuThrottle: options.cpuThrottle },
+    { label: "memory harness", cpuThrottle: options.cpuThrottle, ...(options.pacing ? { pacing: options.pacing } : {}), ...(options.pool ? { pool: options.pool } : {}) },
     async (page, cdp) => {
       for (let w = 0; w < warmupRuns; w++) {
         await mountAndWait(page, props);
@@ -294,7 +351,7 @@ export async function measureStrictMode(
 
   return runHarnessSession(
     harness,
-    { label: "strictmode harness", cpuThrottle: options.cpuThrottle },
+    { label: "strictmode harness", cpuThrottle: options.cpuThrottle, ...(options.pacing ? { pacing: options.pacing } : {}), ...(options.pool ? { pool: options.pool } : {}) },
     async (page, cdp, enter) => {
       const normal: number[] = [];
       const strict: number[] = [];
@@ -315,6 +372,8 @@ export interface IsolationRunOptions {
   samples: number;
   cpuThrottle: number;
   memoryCycles: number;
+  // M37: reuse pooled browsers across all phase sessions.
+  pool?: BrowserPool;
 }
 
 export interface IsolationRunResult {
@@ -340,6 +399,7 @@ export async function runIsolationPhases(
       cpuThrottle,
       warmupRuns: ISOLATION_WARMUP_RUNS,
       combos: [comboA],
+      pool: options.pool,
     });
     if (result) {
       if (phases.includes("mount")) isolation.mount = buildTimingWithCV(result.mount.samples);
@@ -349,22 +409,34 @@ export async function runIsolationPhases(
     }
   }
 
+  // M35: animation status comes from the mount pass; when it did not run, the
+  // status is unknown and phases default to driven pacing.
+  const rerenderCombos = options.degenerate ? [comboA] : [comboA, comboB];
+  const animatedPhase: Pick<PhaseOptions, "pacing" | "pool"> = {
+    ...(hasAnimation ? { pacing: "vsync" as const } : {}),
+    ...(options.pool ? { pool: options.pool } : {}),
+  };
+
   if (phases.includes("rerender")) {
     if (options.degenerate) warnings.push(DEGENERATE_COMBO_WARNING);
     const results = await measureRerender(harness, {
       samples,
       cpuThrottle,
       warmupRuns: ISOLATION_WARMUP_RUNS,
-      combos: options.degenerate ? [comboA] : [comboA, comboB],
+      combos: rerenderCombos,
+      pool: options.pool,
+      ...(hasAnimation
+        ? { animatedComboIndices: rerenderCombos.map((_, i) => i) }
+        : {}),
     });
     const primary = results.find((r) => r.comboIndex === 0);
     const stable = primary?.stable.samples ?? [];
-    const churn = await measureChurn(harness, comboA, comboB, CHURN_CYCLES, { cpuThrottle });
+    const churn = await measureChurn(harness, comboA, comboB, CHURN_CYCLES, { cpuThrottle, ...animatedPhase });
     isolation.rerender = buildRerenderIsolation(stable, primary?.change?.samples ?? stable, churn);
   }
 
   if (phases.includes("memory")) {
-    const measurement = await measureMemory(harness, options.memoryCycles, comboA, { cpuThrottle });
+    const measurement = await measureMemory(harness, options.memoryCycles, comboA, { cpuThrottle, ...animatedPhase });
     if (measurement) {
       isolation.memory = buildMemoryReport({ cycles: options.memoryCycles, ...measurement });
     } else {
@@ -373,7 +445,7 @@ export async function runIsolationPhases(
   }
 
   if (phases.includes("strictmode")) {
-    const paired = await measureStrictMode(harness, comboA, { samples, cpuThrottle });
+    const paired = await measureStrictMode(harness, comboA, { samples, cpuThrottle, ...animatedPhase });
     isolation.strictMode = buildStrictModeReport(paired.normal, paired.strict);
   }
 

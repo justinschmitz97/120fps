@@ -1,4 +1,4 @@
-export { extractProps, extractExports, extractAllProps, detectScalingProps, type PropSchema, type ScalingPropMatch } from "./prop-gen.js";
+export { extractProps, extractExports, extractAllProps, detectScalingProps, projectSourceFiles, resetExtractionCache, extractionCacheStats, type PropSchema, type ScalingPropMatch } from "./prop-gen.js";
 export {
   inferComposition,
   type ExportInfo,
@@ -61,12 +61,30 @@ export {
   parseTraceDuration,
   tryCollectGarbage,
   detectAnimations,
+  classifyMeasuredState,
+  installMeasuredStateProbe,
+  readNetworkProbe,
+  probeLateMutation,
+  beginMutationWatch,
+  endMutationWatch,
+  MEASURED_STATE_HOLD_MS,
+  type MeasuredState,
   enterHarness,
   runHarnessSession,
   mountAndWait,
   mountAndTrace,
   rerenderAndTrace,
   HARNESS_NAV_WAIT,
+  MEASUREMENT_BROWSER_ARGS,
+  FRAME_PUMP_WARNING,
+  createFramePump,
+  rafFence,
+  openMeasurementSession,
+  createBrowserPool,
+  type BrowserPool,
+  type FramePump,
+  type MeasurementPacing,
+  type MeasurementSession,
   type TraceEvent,
   type MeasureOptions,
   type MeasureRerenderOptions,
@@ -137,7 +155,7 @@ export {
   type ReactCompilerReport,
 } from "./report.js";
 export { analyze, buildReport, isFixturePath, detectFixture, hasScaleExport, resolveWrapPath, resolveCssFiles, type AnalyzeOptions, type BuildReportInput } from "./analyze.js";
-export { detectScaleExport, loadTsconfigAliases, findProjectRoot, sweepStaleHarnessDirs, detectComponentExport } from "./harness.js";
+export { detectScaleExport, loadTsconfigAliases, findProjectRoot, sweepStaleHarnessDirs, detectComponentExport, createServerPool, SWEEP_DEP_WARNING, type ServerPool } from "./harness.js";
 export { scanExports } from "./prop-gen.js";
 export { attachPageErrorCapture, enrichTimeoutError, type PageErrorCapture } from "./page-errors.js";
 export {
@@ -214,6 +232,7 @@ export {
   compareBaseline,
   buildEnvFingerprint,
   classifyEnv,
+  computeSourceFingerprint,
   describeEnvDiff,
   envAdvisory,
   UNKNOWN_ENV_WARNING,
@@ -227,3 +246,134 @@ export {
   type EnvFingerprintInput,
   type ResolvedTolerance,
 } from "./budget.js";
+
+// M42/M48
+export {
+  runPreflight,
+  recognizeTransform,
+  detectAsyncComponent,
+  preflightFailureMessage,
+  transformFailureNote,
+  NODE_BUILTIN_WARNING,
+  PROJECT_TRANSFORM_WARNING,
+  PREFLIGHT_BYPASSED_WARNING,
+  TRANSFORM_RECOGNIZERS,
+  type PreflightHit,
+  type PreflightResult,
+  type TransformRecognizer,
+} from "./preflight.js";
+
+// M44
+export {
+  detectPropPresets,
+  loadPropPresets,
+  applyPropPresets,
+  isPresetRef,
+  UNKNOWN_PRESET_PROPS_WARNING,
+  PRESET_REF_KEY,
+  type PropPresets,
+  type PresetRef,
+} from "./prop-presets.js";
+
+// M45
+export {
+  computeEnvKey,
+  baselineKey,
+  parseBaselineKey,
+  selectBaselineEntry,
+  BASELINE_VERSION,
+  BASELINE_SLOT_TTL_DAYS,
+  LEGACY_ENV_KEY,
+  NO_ENV_BASELINE_WARNING,
+  PRUNED_SLOTS_NOTICE,
+  type BaselineSelection,
+} from "./budget.js";
+
+// M46
+export {
+  classifyNoise,
+  computeCvPercent,
+  buildNoiseReport,
+  probeMachineNoise,
+  NOISE_CV_PERCENT,
+  HOSTILE_CV_PERCENT,
+  NOISE_PROBE_SAMPLES,
+  NOISY_RUN_WARNING,
+  HOSTILE_RUN_WARNING,
+  type NoiseLevel,
+  type NoiseReport,
+  type NoiseSignals,
+} from "./noise.js";
+
+// M47
+export {
+  probeVolatileRegions,
+  VOLATILITY_PROBE_GAP_MS,
+  VOLATILE_DOM_NOTICE,
+} from "./explorer.js";
+
+// M49
+export {
+  compareAgainstRef,
+  formatCompare,
+  distinguishable,
+  deltaPercent,
+  validateCompareOptions,
+  DEPENDENCY_DRIFT_ERROR,
+  type CompareReport,
+  type CompareCombo,
+  type CompareOptions,
+} from "./compare.js";
+
+// M50
+export { formatMarkdown, formatJUnit } from "./ci-report.js";
+
+// M51
+export {
+  HINTS,
+  hintsForReport,
+  formatHints,
+  MEASUREMENT_BASIS_LINE,
+  type Hint,
+  type HintId,
+} from "./hints.js";
+
+// M52
+export {
+  installObservers,
+  beginObservedWindow,
+  readObservedWindow,
+  observedInteractionMs,
+  EVENT_TIMING_THRESHOLD_MS,
+  type ObservedWindow,
+  type ObservedEvent,
+  type ObservedLongFrame,
+} from "./observers.js";
+
+// M53
+export { warmupsForPosition } from "./measure.js";
+export { churnParitySeries, buildChurnTiming } from "./isolation.js";
+export { EFFECTIVE_SAMPLES_WARNING } from "./analyze.js";
+
+// M57
+export {
+  isVueFile,
+  loadVueCompiler,
+  parseSfcScript,
+  resetVueCompilerCache,
+  virtualScriptPath,
+  VUE_COMPILER_MISSING,
+  VUE_SFC_SPECIFIERS,
+  type SfcScript,
+  type VueSfcCompiler,
+} from "./vue-sfc.js";
+export {
+  rendererFor,
+  vueComponentName,
+  generateVueEntry,
+  vueRenderTreeHelper,
+  sfcProducesComponent,
+  SFC_NO_COMPONENT,
+  type Renderer,
+} from "./harness.js";
+export { strictModeUnsupported, VUE_STRICTMODE_ERROR } from "./isolation.js";

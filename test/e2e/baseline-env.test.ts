@@ -4,7 +4,7 @@ import path from "node:path";
 import { execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
 import { analyze, type AnalyzeOptions } from "../../src/analyze.js";
-import type { Baseline } from "../../src/budget.js";
+import { baselineKey, computeEnvKey, parseBaselineKey, type Baseline, type BaselineEntry } from "../../src/budget.js";
 import type { Report } from "../../src/report.js";
 
 const execFileAsync = promisify(execFile);
@@ -42,9 +42,30 @@ function readBaseline(): Baseline {
   return JSON.parse(fs.readFileSync(BASELINE, "utf-8")) as Baseline;
 }
 
-function patchBaseline(mutate: (b: Baseline) => void): void {
+// M45: entries live in per-environment slots, so the component's key carries an
+// environment digest.
+function slotKey(baseline: Baseline): string {
+  const key = Object.keys(baseline.entries).find(
+    (k) => parseBaselineKey(k).componentPath === ENTRY_KEY,
+  );
+  if (!key) throw new Error(`no baseline slot for ${ENTRY_KEY}`);
+  return key;
+}
+
+function storedEntry(): BaselineEntry {
   const baseline = readBaseline();
-  mutate(baseline);
+  return baseline.entries[slotKey(baseline)];
+}
+
+// Editing the recorded environment moves the entry to the slot that environment
+// describes — which is what a baseline saved on another machine looks like.
+function patchBaseline(mutate: (entry: BaselineEntry) => void): void {
+  const baseline = readBaseline();
+  const key = slotKey(baseline);
+  const entry = baseline.entries[key];
+  mutate(entry);
+  delete baseline.entries[key];
+  baseline.entries[baselineKey(ENTRY_KEY, computeEnvKey(entry.env))] = entry;
   fs.writeFileSync(BASELINE, JSON.stringify(baseline, null, 2), "utf-8");
 }
 
@@ -99,7 +120,7 @@ beforeEach(() => {
 
 describe("baseline environment fingerprint e2e", () => {
   it("saves a fingerprint describing the run", () => {
-    const stored = readBaseline().entries[ENTRY_KEY].env!;
+    const stored = storedEntry().env!;
     expect(stored).toBeDefined();
     expect(stored.shape).toBe(1);
     expect(stored.mode).toBe("combo");
@@ -126,19 +147,23 @@ describe("baseline environment fingerprint e2e", () => {
     expect(envWarnings(report)).toEqual([]);
   }, 300000);
 
-  it("classifies a different CPU as normalizable and still compares", async () => {
-    patchBaseline((b) => {
-      b.entries[ENTRY_KEY].env!.cpu = "Some Other CPU Model";
+  // M45: a different CPU is a different slot, so this is now the explicit
+  // cross-environment fallback rather than the accidental default. It still
+  // compares and still classifies, but it can no longer fail a run.
+  it("falls back across environments for a different CPU, compares, and cannot fail", async () => {
+    patchBaseline((e) => {
+      e.env!.cpu = "Some Other CPU Model";
     });
     const report = await run({ check: true });
     expect(report.baseline?.envMatch).toBe("normalizable");
+    expect(report.baseline?.crossEnvironment).toBe(true);
     expect(report.baseline?.envMismatches.some((m) => m.startsWith("CPU:"))).toBe(true);
-    expect(envWarnings(report)).toEqual([]);
+    expect(envWarnings(report).join(" ")).toContain("No baseline for this environment");
   }, 300000);
 
   it("classifies a wrapper mismatch as incompatible, names it, and does not fail", async () => {
-    patchBaseline((b) => {
-      b.entries[ENTRY_KEY].env!.wrapper = "120fps.setup.tsx";
+    patchBaseline((e) => {
+      e.env!.wrapper = "120fps.setup.tsx";
     });
     const report = await run({ check: true });
     expect(report.baseline?.envMatch).toBe("incompatible");
@@ -148,8 +173,8 @@ describe("baseline environment fingerprint e2e", () => {
   }, 300000);
 
   it("classifies a mode mismatch as incompatible", async () => {
-    patchBaseline((b) => {
-      b.entries[ENTRY_KEY].env!.mode = "isolation";
+    patchBaseline((e) => {
+      e.env!.mode = "isolation";
     });
     const report = await run({ check: true });
     expect(report.baseline?.envMatch).toBe("incompatible");
@@ -157,8 +182,8 @@ describe("baseline environment fingerprint e2e", () => {
   }, 300000);
 
   it("compares a pre-M29 entry raw and warns", async () => {
-    patchBaseline((b) => {
-      delete b.entries[ENTRY_KEY].env;
+    patchBaseline((e) => {
+      delete e.env;
     });
     const report = await run({ check: true });
     expect(report.baseline?.envMatch).toBe("unknown");
@@ -166,8 +191,8 @@ describe("baseline environment fingerprint e2e", () => {
   }, 300000);
 
   it("fails the check under --baseline-env strict when the environment drifted", async () => {
-    patchBaseline((b) => {
-      b.entries[ENTRY_KEY].env!.cpu = "Some Other CPU Model";
+    patchBaseline((e) => {
+      e.env!.cpu = "Some Other CPU Model";
     });
     const report = await run({ check: true, baselineEnv: "strict" });
     expect(report.baseline?.envMatch).toBe("normalizable");
@@ -176,20 +201,25 @@ describe("baseline environment fingerprint e2e", () => {
   }, 300000);
 
   it("compares raw with no environment signal under --baseline-env ignore", async () => {
-    patchBaseline((b) => {
-      b.entries[ENTRY_KEY].env!.wrapper = "120fps.setup.tsx";
-      b.entries[ENTRY_KEY].mount = 0.0001;
+    patchBaseline((e) => {
+      e.env!.wrapper = "120fps.setup.tsx";
+      e.mount = 0.0001;
     });
     const report = await run({ check: true, baselineEnv: "ignore" });
     expect(report.baseline?.envMatch).toBe("unknown");
     expect(report.baseline?.envMismatches).toEqual([]);
-    expect(report.baseline?.regressions.length).toBeGreaterThan(0);
+    // M46 blanks deltas when the machine was hostile, which a loaded CI box can
+    // be. That path has its own coverage; what this test is about is that
+    // `ignore` compares raw and stays silent about the environment.
+    if (report.noise?.level !== "hostile") {
+      expect(report.baseline?.regressions.length).toBeGreaterThan(0);
+    }
     expect(envWarnings(report)).toEqual([]);
   }, 300000);
 
   it("exits 1 from the CLI under --baseline-env strict", async () => {
-    patchBaseline((b) => {
-      b.entries[ENTRY_KEY].env!.cores = b.entries[ENTRY_KEY].env!.cores + 4;
+    patchBaseline((e) => {
+      e.env!.cores = e.env!.cores + 4;
     });
     let code = 0;
     try {

@@ -4,7 +4,15 @@ import path from "node:path";
 import os from "node:os";
 import { findProjectRoot } from "../../src/harness.js";
 import { resolveProjectPaths, legacyBaselineWarning, resolveFramework } from "../../src/analyze.js";
-import { saveBaseline, loadBaseline, loadBudgetConfig } from "../../src/budget.js";
+import { saveBaseline, loadBaseline, loadBudgetConfig,
+  selectBaselineEntry,
+} from "../../src/budget.js";
+
+// M45: entries are keyed by component x environment slot; selectBaselineEntry
+// resolves the slot for us so these assertions stay about the entry, not the key.
+function entryOf(baseline: any, componentPath: string) {
+  return selectBaselineEntry(baseline, componentPath, "unused")!.entry;
+}
 
 let tmpDir: string;
 
@@ -107,7 +115,7 @@ describe("D7: baseline and config land at the package root", () => {
     );
     expect(fs.existsSync(path.join(tmpDir, "120fps-baseline.json"))).toBe(true);
     const loaded = loadBaseline(baselinePath);
-    expect(loaded!.entries["./src/ui/Button.tsx"].mount).toBe(1);
+    expect(entryOf(loaded, "./src/ui/Button.tsx").mount).toBe(1);
   });
 
   it("120fps.config.json at package root is found via resolved root", () => {
@@ -168,8 +176,15 @@ describe("D4 call-site: resolveFramework precedence", () => {
     expect(resolveFramework("auto", tmpDir)).toBe("react");
   });
 
-  it("auto detects vanilla when no react dependency", () => {
+  // M57: vue is now a framework of its own, so the no-framework case is a
+  // manifest that names neither.
+  it("auto detects vue when the project depends on vue and not react", () => {
     makeTree({ "package.json": JSON.stringify({ dependencies: { vue: "^3.0.0" } }) });
+    expect(resolveFramework("auto", tmpDir)).toBe("vue");
+  });
+
+  it("auto detects vanilla when no framework dependency", () => {
+    makeTree({ "package.json": JSON.stringify({ dependencies: { lodash: "^4.0.0" } }) });
     expect(resolveFramework("auto", tmpDir)).toBe("vanilla");
   });
 });

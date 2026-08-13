@@ -10,7 +10,7 @@ import {
   type HarnessResult,
 } from "../../src/harness.js";
 import { generateProbeEntry, hasReactWarning } from "../../src/react-profiler.js";
-import { analyze } from "../../src/analyze.js";
+import { sharedAnalyze as analyze } from "./shared-analyze.js";
 import { chromium, type Browser, type Page } from "playwright";
 
 const COMPILER_PROJECT = "./fixtures/compiler-project/MemoParent.tsx";
@@ -389,7 +389,10 @@ describe("compiler e2e — full pipeline", () => {
       expect(hasReactWarning(opts)).toBe(false);
 
       const baseline = JSON.parse(fs.readFileSync(baselinePath, "utf-8"));
-      const entry = baseline.entries["./MemoParent.tsx"];
+      // M45: entries are keyed by component and environment slot.
+      const entry = baseline.entries[
+        Object.keys(baseline.entries).find((k: string) => k.startsWith("./MemoParent.tsx#"))!
+      ];
       expect("reactCompiler" in entry.env).toBe(false);
     } finally {
       fs.rmSync(baselinePath, { force: true });
@@ -424,7 +427,10 @@ describe("compiler e2e — full pipeline", () => {
       }
 
       const baseline = JSON.parse(fs.readFileSync(baselinePath, "utf-8"));
-      const entry = baseline.entries["./MemoParent.tsx"];
+      // M45: entries are keyed by component and environment slot.
+      const entry = baseline.entries[
+        Object.keys(baseline.entries).find((k: string) => k.startsWith("./MemoParent.tsx#"))!
+      ];
       expect(entry.env.reactCompiler).toBe(true);
     } finally {
       fs.rmSync(baselinePath, { force: true });

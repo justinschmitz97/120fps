@@ -14,8 +14,10 @@ describe("H33: renders-null component", () => {
       expect(results).toHaveLength(1);
       expect(results[0].mount.samples).toHaveLength(2);
       expect(results[0].mount.median).toBeGreaterThanOrEqual(0);
-      // DOM count should be very low (just root div)
-      expect(results[0].domNodeCount).toBeGreaterThan(0);
+      // M31 C1: the count is component DOM only, so a component rendering
+      // null contributes nothing. Previously this read 8 because it counted
+      // html/head/body/#root and Vite's injected scripts.
+      expect(results[0].domNodeCount).toBe(0);
     } finally {
       await harness.cleanup();
     }

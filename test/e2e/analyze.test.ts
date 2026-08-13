@@ -1,5 +1,6 @@
-import { describe, it, expect } from "vitest";
-import { analyze } from "../../src/analyze.js";
+import { describe, it, expect, beforeAll } from "vitest";
+import { sharedAnalyze as analyze } from "./shared-analyze.js";
+import type { Report } from "../../src/report.js";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
@@ -77,14 +78,27 @@ describe("analyze e2e", () => {
   }, 120000);
 
   describe("matrix mode", () => {
+    // Four assertions about two analyses, not four analyses: a matrix pass on
+    // this fixture is ~120s, and running it per assertion put 480s on the
+    // suite's critical path.
+    let report: Report;
+    let strictReport: Report;
+
+    beforeAll(async () => {
+      [report, strictReport] = await Promise.all([
+        analyze("./fixtures/button.tsx", { samples: 3, matrixMode: true }),
+        analyze("./fixtures/button.tsx", {
+          samples: 3,
+          matrixMode: true,
+          thresholds: { interactionMs: 0.001 },
+        }),
+      ]);
+    }, 400000);
+
     // Matrix mode explores only the hottest cells. `explore` numbers its results
     // against the subset it was handed, so without an index restore the
     // interactions land on cells 0..4 whatever was actually measured.
-    it("attaches interactions to the cells that were explored, not the first five", async () => {
-      const report = await analyze("./fixtures/button.tsx", {
-        samples: 3,
-        matrixMode: true,
-      });
+    it("attaches interactions to the cells that were explored, not the first five", () => {
       const mr = report.matrixReport;
       expect(mr).toBeDefined();
       expect(mr!.cells.length).toBeGreaterThan(5);
@@ -100,13 +114,9 @@ describe("analyze e2e", () => {
         .sort((a, b) => a - b);
 
       expect(explored).toEqual(hottest);
-    }, 180000);
+    });
 
-    it("carries the worst interaction onto the matching cell", async () => {
-      const report = await analyze("./fixtures/button.tsx", {
-        samples: 3,
-        matrixMode: true,
-      });
+    it("carries the worst interaction onto the matching cell", () => {
       for (const cell of report.matrixReport!.cells) {
         const combo = report.combos.find((c) => c.comboIndex === cell.comboIndex);
         expect(combo).toBeDefined();
@@ -116,32 +126,22 @@ describe("analyze e2e", () => {
         expect(cell.worstInteractionMs).toBe(expected);
         expect(cell.verdict).toBe(combo!.verdict);
       }
-    }, 180000);
+    });
 
     // Tiered budgets are the default, and the matrix branch used to drop
     // explicitThresholds, so a user-supplied budget was silently ignored.
-    it("applies an explicit interaction threshold under tiered budgets", async () => {
-      const report = await analyze("./fixtures/button.tsx", {
-        samples: 3,
-        matrixMode: true,
-        thresholds: { interactionMs: 0.001 },
-      });
-      const interactive = report.combos.filter((c) => c.interactions.length > 0);
+    it("applies an explicit interaction threshold under tiered budgets", () => {
+      const interactive = strictReport.combos.filter((c) => c.interactions.length > 0);
       expect(interactive.length).toBeGreaterThan(0);
       expect(interactive.every((c) => c.verdict === "fail")).toBe(true);
-      expect(report.pass).toBe(false);
-      expect(report.matrixReport!.failingCells.length).toBe(interactive.length);
-    }, 180000);
+      expect(strictReport.pass).toBe(false);
+      expect(strictReport.matrixReport!.failingCells.length).toBe(interactive.length);
+    });
 
-    it("keeps every failing cell reachable in the report", async () => {
-      const report = await analyze("./fixtures/button.tsx", {
-        samples: 3,
-        matrixMode: true,
-        thresholds: { interactionMs: 0.001 },
-      });
-      const mr = report.matrixReport!;
+    it("keeps every failing cell reachable in the report", () => {
+      const mr = strictReport.matrixReport!;
       const failedCellIndices = mr.cells.filter((c) => c.verdict === "fail").map((c) => c.comboIndex);
       expect(mr.failingCells.map((c) => c.comboIndex)).toEqual(failedCellIndices);
-    }, 180000);
+    });
   });
 });

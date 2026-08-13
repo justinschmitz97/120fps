@@ -1,0 +1,11 @@
+{
+  "name": "vue-wrap-project-fixture",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "vue": "^3.5.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.2.0"
+  }
+}

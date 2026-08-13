@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: ["20.x", "24.x"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm lint
+
+      # e2e (test/e2e/) is deliberately excluded here: it drives real Chromium
+      # and is documented as flaky under full-suite parallelism (contention on
+      # Vite's dep optimizer and shared node_modules/.vite cache dirs) — see
+      # the "Tests" section of specs/overview/00-tdd.md. Only the unit suite
+      # runs in CI.
+      - run: npx vitest run test/unit/

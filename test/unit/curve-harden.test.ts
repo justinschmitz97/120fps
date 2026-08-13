@@ -110,12 +110,12 @@ describe("H1: empty scale points", () => {
       thresholds: THRESHOLDS,
     });
     expect(result.points.length).toBe(0);
-    expect(result.mountCurve.growthClass).toBe("constant");
+    expect(result.mountCurve.growthClass).toBe("inconclusive");
   });
 });
 
 describe("H2: single scale point", () => {
-  it("produces constant growth with 1 point", () => {
+  it("produces inconclusive growth with 1 point", () => {
     const result = buildCurveReport({
       propName: "items",
       propKind: "array",
@@ -129,7 +129,7 @@ describe("H2: single scale point", () => {
       thresholds: THRESHOLDS,
     });
     expect(result.points.length).toBe(1);
-    expect(result.mountCurve.growthClass).toBe("constant");
+    expect(result.mountCurve.growthClass).toBe("inconclusive");
   });
 });
 

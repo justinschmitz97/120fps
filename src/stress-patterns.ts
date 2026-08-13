@@ -2,7 +2,7 @@ import type { Page } from "playwright";
 import type { InteractionDescriptor } from "./discovery.js";
 
 export interface StressStep {
-  action: "click" | "type" | "fill" | "keyboard" | "hover" | "focus" | "select" | "pointer-drag";
+  action: "click" | "type" | "fill" | "keyboard" | "hover" | "focus" | "select" | "pointer-drag" | "scroll";
   selector: string;
   key?: string;
   text?: string;
@@ -14,7 +14,15 @@ export interface StressStep {
 export interface StressPattern {
   name: string;
   steps: StressStep[];
+  // M43. The explorer records this edge's cost but does not let the resulting
+  // DOM define a state: a virtualized list rewrites its rows on every wheel
+  // step, and one node per scroll offset would drown the graph.
+  stateInvariant?: boolean;
 }
+
+// Ten steps each way. Fixed, because the M33 per-event budget has to be known
+// before the sweep runs; the distance per step is what adapts to the container.
+export const SCROLL_SWEEP_STEPS = 10;
 
 const KEYBOARD_SWEEP_ROLES = new Set(["tab", "listbox", "combobox", "menu", "tree"]);
 const DRAG_CURSORS = new Set(["grab", "col-resize", "row-resize"]);
@@ -23,6 +31,12 @@ export function resolveStressPattern(
   descriptor: InteractionDescriptor,
   siblingSelectors?: string[],
 ): StressPattern {
+  // Highest priority: nothing else a scroll container offers is worth more
+  // than what its scroll handler costs.
+  if (descriptor.type === "scroll") {
+    return buildScrollSweep(descriptor.selector, descriptor.scrollAxis ?? "vertical");
+  }
+
   if (isDragTarget(descriptor)) {
     const direction = descriptor.ariaOrientation === "vertical" ? "vertical" : "horizontal";
     return buildPointerDrag(descriptor.selector, direction);
@@ -113,6 +127,18 @@ function buildRapidToggle11(selector: string): StressPattern {
   return { name: "rapid-toggle-11", steps };
 }
 
+// Down then back up, ending where it started, so the state graph sees a round
+// trip rather than a one-way drift (rapid-toggle-11's end-state discipline).
+function buildScrollSweep(selector: string, direction: "horizontal" | "vertical"): StressPattern {
+  return {
+    name: "scroll-sweep",
+    steps: [
+      { action: "scroll", selector, moveCount: SCROLL_SWEEP_STEPS * 2, direction },
+    ],
+    stateInvariant: true,
+  };
+}
+
 function buildPointerDrag(selector: string, direction: "horizontal" | "vertical"): StressPattern {
   return {
     name: "pointer-drag",
@@ -135,6 +161,7 @@ function mapTypeToAction(type: InteractionDescriptor["type"]): StressStep["actio
     case "focus": return "focus";
     case "keyboard": return "keyboard";
     case "hover": return "hover";
+    case "scroll": return "scroll";
   }
 }
 
@@ -166,6 +193,22 @@ export async function executeStressPattern(
         case "select":
           await page.selectOption(step.selector, { index: 0 }, { timeout: 3000 });
           break;
+        case "scroll": {
+          const target = await scrollTarget(page, step.selector, step.direction === "horizontal");
+          if (!target) break;
+          const half = Math.max(1, Math.floor((step.moveCount ?? SCROLL_SWEEP_STEPS * 2) / 2));
+          const horizontal = step.direction === "horizontal";
+          // The wheel goes wherever the pointer is, so it has to sit over the
+          // container before the first tick.
+          await page.mouse.move(target.x, target.y);
+          for (let i = 0; i < half; i++) {
+            await page.mouse.wheel(horizontal ? target.delta : 0, horizontal ? 0 : target.delta);
+          }
+          for (let i = 0; i < half; i++) {
+            await page.mouse.wheel(horizontal ? -target.delta : 0, horizontal ? 0 : -target.delta);
+          }
+          break;
+        }
         case "pointer-drag": {
           const rect = await page.evaluate((sel: string) => {
             const el = document.querySelector(sel);
@@ -200,6 +243,51 @@ export async function executeStressPattern(
       () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))),
     );
   }
+}
+
+// Where to put the pointer and how far one wheel tick travels. The step size
+// adapts so a 10-row list traverses exactly its range while a virtualized list
+// reporting a 400,000px scrollHeight still stops after eight viewports —
+// representative either way, bounded always.
+async function scrollTarget(
+  page: Page,
+  selector: string,
+  horizontal: boolean,
+): Promise<{ x: number; y: number; delta: number } | null> {
+  return page.evaluate(
+    ([sel, isHorizontal, steps]: [string, boolean, number]) => {
+      const viewportW = document.documentElement.clientWidth;
+      const viewportH = document.documentElement.clientHeight;
+      const isRoot = sel === ":root";
+      const el = isRoot
+        ? (document.scrollingElement as HTMLElement | null)
+        : (document.querySelector(sel) as HTMLElement | null);
+      if (!el) return null;
+
+      // Smooth scrolling would measure easing duration instead of handler
+      // cost. Forcing `auto` is idempotent, so repeated sweeps see one state.
+      el.style.scrollBehavior = "auto";
+
+      const range = isHorizontal
+        ? el.scrollWidth - el.clientWidth
+        : el.scrollHeight - el.clientHeight;
+      if (range <= 0) return null;
+
+      const box = isHorizontal ? el.clientWidth : el.clientHeight;
+      const delta = Math.max(1, Math.round(Math.min(box * 0.8, range / steps)));
+
+      if (isRoot) {
+        return { x: Math.floor(viewportW / 2), y: Math.floor(viewportH / 2), delta };
+      }
+      const rect = el.getBoundingClientRect();
+      // Clamped into the viewport: a wheel event at negative coordinates
+      // lands on nothing.
+      const x = Math.min(Math.max(rect.x + rect.width / 2, 1), viewportW - 1);
+      const y = Math.min(Math.max(rect.y + rect.height / 2, 1), viewportH - 1);
+      return { x, y, delta };
+    },
+    [selector, horizontal, SCROLL_SWEEP_STEPS] as [string, boolean, number],
+  );
 }
 
 const ARIA_CONTAINER_MAP: Record<string, { container: string; item: string }> = {
@@ -260,4 +348,12 @@ export async function findAriaGroupSiblings(
     },
     { selector: descriptor.selector, containerSel: mapping.container, itemSel: mapping.item },
   );
+}
+
+// A step is not an event: every pattern enumerates one step per event except
+// pointer-drag, which carries 60 moves in a single step. Budgets are per
+// event, so a drag must not be compared as though it were one interaction.
+export function countPatternEvents(pattern: StressPattern): number {
+  const total = pattern.steps.reduce((sum, step) => sum + (step.moveCount ?? 1), 0);
+  return total > 0 ? total : 1;
 }

@@ -54,6 +54,73 @@ describe("loadBudgetConfig", () => {
     fs.writeFileSync(path.join(tmpDir, "120fps.config.json"), "not json{{{");
     expect(() => loadBudgetConfig(tmpDir)).toThrow();
   });
+
+  describe("schema validation", () => {
+    function writeConfig(raw: unknown) {
+      fs.writeFileSync(path.join(tmpDir, "120fps.config.json"), JSON.stringify(raw));
+    }
+
+    it("throws an actionable error when a per-component budget field is a string", () => {
+      writeConfig({ components: { "./Button.tsx": { mount: "fast" } } });
+      const configPath = path.join(tmpDir, "120fps.config.json");
+      expect(() => loadBudgetConfig(tmpDir)).toThrow(
+        `Invalid ${configPath}: "./Button.tsx".mount must be a finite number >= 0, received "fast" (string)`,
+      );
+    });
+
+    it("throws when a defaults field is negative", () => {
+      writeConfig({ defaults: { mount: -5 } });
+      const configPath = path.join(tmpDir, "120fps.config.json");
+      expect(() => loadBudgetConfig(tmpDir)).toThrow(
+        `Invalid ${configPath}: defaults.mount must be a finite number >= 0, received -5 (number)`,
+      );
+    });
+
+    it("throws when a field is null (JSON has no NaN literal)", () => {
+      writeConfig({ tolerance: { rerender: null } });
+      const configPath = path.join(tmpDir, "120fps.config.json");
+      expect(() => loadBudgetConfig(tmpDir)).toThrow(
+        `Invalid ${configPath}: tolerance.rerender must be a finite number >= 0, received null`,
+      );
+    });
+
+    it("throws on a nested tolerance violation", () => {
+      writeConfig({ tolerance: { mount: 10, interaction: "bad" } });
+      const configPath = path.join(tmpDir, "120fps.config.json");
+      expect(() => loadBudgetConfig(tmpDir)).toThrow(
+        `Invalid ${configPath}: tolerance.interaction must be a finite number >= 0, received "bad" (string)`,
+      );
+    });
+
+    it("throws an actionable error when the config root is not an object", () => {
+      writeConfig(null);
+      const configPath = path.join(tmpDir, "120fps.config.json");
+      expect(() => loadBudgetConfig(tmpDir)).toThrow(
+        `Invalid ${configPath}: config must be a JSON object, received null`,
+      );
+    });
+
+    it("allows unknown extra keys at every level (forward compat)", () => {
+      writeConfig({
+        futureTopLevelKey: true,
+        defaults: { mount: 10, futureField: "x" },
+        components: { "./Button.tsx": { mount: 5, futureField: 1 } },
+        tolerance: { mount: 10, futureField: "y" },
+      });
+      expect(() => loadBudgetConfig(tmpDir)).not.toThrow();
+    });
+
+    it("leaves a fully valid config unchanged", () => {
+      const config: BudgetConfig = {
+        defaults: { mount: 20, rerender: 10, interaction: 200, unmount: 15 },
+        components: { "./Button.tsx": { mount: 10, tier: "T1" } },
+        tolerance: { mount: 15, rerender: 15, interaction: 15, unmount: 15 },
+      };
+      writeConfig(config);
+      const loaded = loadBudgetConfig(tmpDir);
+      expect(loaded).toEqual(config);
+    });
+  });
 });
 
 describe("resolveComponentBudget", () => {

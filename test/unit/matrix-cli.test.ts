@@ -51,10 +51,10 @@ describe("--matrix is a known flag", () => {
 });
 
 describe("--matrix with --curve", () => {
-  it("both flags parsed without error", () => {
+  it("is a usage error naming the conflict", () => {
     const args = parseArgs(["./Button.tsx", "--matrix", "--curve"]);
     expect(args.matrix).toBe(true);
     expect(args.curve).toBe(true);
-    expect(args.error).toBeUndefined();
+    expect(args.error).toBe("--curve cannot be combined with --matrix");
   });
 });

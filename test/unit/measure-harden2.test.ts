@@ -11,7 +11,7 @@ describe("H44: pre-sorted descending input", () => {
     expect(computeMedian([10, 8, 6, 4, 2])).toBe(6);
   });
   it("P95 handles descending input", () => {
-    expect(computeP95([10, 8, 6, 4, 2])).toBe(10);
+    expect(computeP95([10, 8, 6, 4, 2])).toBeCloseTo(9.6, 10);
   });
 });
 
@@ -30,8 +30,8 @@ describe("H45: floating-point precision", () => {
 describe("H46: large sample arrays", () => {
   it("P95 of 1000 sequential values", () => {
     const samples = Array.from({ length: 1000 }, (_, i) => i + 1);
-    // ceil(0.95 * 1000) - 1 = 949 → value 950
-    expect(computeP95(samples)).toBe(950);
+    // type-7: h = (1000-1)*0.95 = 949.05 → 950 + 0.05*(951-950)
+    expect(computeP95(samples)).toBeCloseTo(950.05, 10);
   });
   it("median of 1000 values", () => {
     const samples = Array.from({ length: 1000 }, (_, i) => i + 1);
@@ -90,8 +90,9 @@ describe("H50: outlier in samples", () => {
   it("median is robust to single extreme outlier", () => {
     expect(computeMedian([1, 2, 3, 4, 10000])).toBe(3);
   });
-  it("P95 captures the outlier for small N", () => {
-    expect(computeP95([1, 2, 3, 4, 10000])).toBe(10000);
+  it("P95 is dominated by the outlier for small N", () => {
+    // type-7: h = 3.8 → 4 + 0.8*(10000-4)
+    expect(computeP95([1, 2, 3, 4, 10000])).toBeCloseTo(8000.8, 6);
   });
 });
 

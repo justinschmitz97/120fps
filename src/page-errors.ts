@@ -8,15 +8,26 @@ export interface PageErrorCapture {
 }
 
 export function attachPageErrorCapture(page: Page): PageErrorCapture {
-  const errors: string[] = [];
+  // Retention is by distinct message: repeats of one noisy message must not
+  // evict the one real error under it. `order` holds first-seen order,
+  // `counts` the repeat count per distinct message; the cap applies to the
+  // number of distinct entries, not raw events.
+  const order: string[] = [];
+  const counts = new Map<string, number>();
   let dropped = 0;
 
   const record = (message: string) => {
-    if (errors.length >= BUFFER_CAP) {
+    const existing = counts.get(message);
+    if (existing !== undefined) {
+      counts.set(message, existing + 1);
+      return;
+    }
+    if (counts.size >= BUFFER_CAP) {
       dropped++;
       return;
     }
-    errors.push(message);
+    counts.set(message, 1);
+    order.push(message);
   };
 
   page.on("pageerror", (err) => record(err.message));
@@ -24,10 +35,18 @@ export function attachPageErrorCapture(page: Page): PageErrorCapture {
     if (msg.type() === "error") record(msg.text());
   });
 
+  const renderedErrors = (): string[] =>
+    order.map((message) => {
+      const count = counts.get(message)!;
+      return count > 1 ? `${message} (×${count})` : message;
+    });
+
   return {
-    errors,
+    get errors(): string[] {
+      return renderedErrors();
+    },
     summary() {
-      const lines = errors.map((e) => `  - ${e}`);
+      const lines = renderedErrors().map((e) => `  - ${e}`);
       if (dropped > 0) lines.push(`  (+${dropped} more dropped)`);
       return lines.join("\n");
     },

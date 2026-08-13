@@ -574,8 +574,9 @@ describe("CLI --framework flag", () => {
     expect(result.error).toBeTruthy();
   });
 
+  // "vue" became valid in M57; "svelte" stands in as the unsupported one.
   it("--framework with invalid value returns error", () => {
-    const result = parseArgs(["./Button.tsx", "--framework", "vue"]);
+    const result = parseArgs(["./Button.tsx", "--framework", "svelte"]);
     expect(result.error).toBeTruthy();
   });
 

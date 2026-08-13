@@ -122,20 +122,20 @@ describe("classifyTier", () => {
 // --- TIER_BUDGETS ---
 
 describe("TIER_BUDGETS", () => {
-  it("T1 budget: mount 14ms, rerender 10ms, interaction 250ms", () => {
-    expect(TIER_BUDGETS.T1).toEqual({ mountMs: 14, rerenderMs: 10, interactionMs: 250 });
+  it("T1 budget: mount 14ms, rerender 10ms, interaction 250ms aggregate / 33ms per event", () => {
+    expect(TIER_BUDGETS.T1).toEqual({ mountMs: 14, rerenderMs: 10, interactionMs: 250, interactionStepMs: 33 });
   });
 
-  it("T2 budget: mount 44ms, rerender 30ms, interaction 300ms", () => {
-    expect(TIER_BUDGETS.T2).toEqual({ mountMs: 44, rerenderMs: 30, interactionMs: 300 });
+  it("T2 budget: mount 44ms, rerender 30ms, interaction 300ms aggregate / 50ms per event", () => {
+    expect(TIER_BUDGETS.T2).toEqual({ mountMs: 44, rerenderMs: 30, interactionMs: 300, interactionStepMs: 50 });
   });
 
-  it("T3 budget: mount 60ms, rerender 36ms, interaction 350ms", () => {
-    expect(TIER_BUDGETS.T3).toEqual({ mountMs: 60, rerenderMs: 36, interactionMs: 350 });
+  it("T3 budget: mount 60ms, rerender 36ms, interaction 350ms aggregate / 67ms per event", () => {
+    expect(TIER_BUDGETS.T3).toEqual({ mountMs: 60, rerenderMs: 36, interactionMs: 350, interactionStepMs: 67 });
   });
 
-  it("T4 budget: mount 80ms, rerender 48ms, interaction 400ms", () => {
-    expect(TIER_BUDGETS.T4).toEqual({ mountMs: 80, rerenderMs: 48, interactionMs: 400 });
+  it("T4 budget: mount 80ms, rerender 48ms, interaction 400ms aggregate / 100ms per event", () => {
+    expect(TIER_BUDGETS.T4).toEqual({ mountMs: 80, rerenderMs: 48, interactionMs: 400, interactionStepMs: 100 });
   });
 });
 

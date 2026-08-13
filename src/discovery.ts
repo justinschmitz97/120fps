@@ -6,7 +6,11 @@ export type InteractionType =
   | "select"
   | "focus"
   | "keyboard"
-  | "hover";
+  | "hover"
+  // M43. A scroll container's whole cost model lives in its scroll handler.
+  | "scroll";
+
+export type ScrollAxis = "vertical" | "horizontal";
 
 export interface InteractionDescriptor {
   type: InteractionType;
@@ -20,6 +24,9 @@ export interface InteractionDescriptor {
   ariaValueNow?: boolean;
   ariaOrientation?: string;
   cursor?: string;
+  // M43. Present on any overflowing scroll container, including ones whose
+  // type stayed click/select because they are interactive in their own right.
+  scrollAxis?: ScrollAxis;
 }
 
 export interface DiscoverOptions {
@@ -48,6 +55,7 @@ interface RawElement {
   hasOnkeypress: boolean;
   hasOnmousedown: boolean;
   hasOnmouseup: boolean;
+  scrollAxis: string;
   isContentEditable: boolean;
   isHidden: boolean;
   selector: string;
@@ -86,6 +94,28 @@ export async function discoverInteractions(
   const rawElements: RawElement[] = await page.evaluate(() => {
     const results: any[] = [];
     const seen = new Set<Element>();
+
+    // M43. Overflow style alone is not a scroll container — content has to
+    // actually exceed the box, or every `overflow: auto` wrapper in the tree
+    // would claim a wheel sweep it cannot answer. Vertical wins when both
+    // axes scroll: that is the axis a wheel drives.
+    const SCROLLABLE_OVERFLOW = new Set(["auto", "scroll", "overlay"]);
+    function scrollAxisOf(el: Element): string {
+      const style = window.getComputedStyle(el);
+      if (
+        SCROLLABLE_OVERFLOW.has(style.overflowY) &&
+        el.scrollHeight > el.clientHeight + 1
+      ) {
+        return "vertical";
+      }
+      if (
+        SCROLLABLE_OVERFLOW.has(style.overflowX) &&
+        el.scrollWidth > el.clientWidth + 1
+      ) {
+        return "horizontal";
+      }
+      return "";
+    }
 
     function getSelector(el: Element, root: Element | ShadowRoot): string {
       if (el.id) return `#${CSS.escape(el.id)}`;
@@ -241,6 +271,8 @@ export async function discoverInteractions(
           ? (el as HTMLInputElement).type.toLowerCase()
           : "";
 
+      const scrollAxis = scrollAxisOf(el);
+
       const isInteractive =
         ["BUTTON", "A", "INPUT", "TEXTAREA", "SELECT", "SUMMARY"].includes(
           tag,
@@ -253,7 +285,8 @@ export async function discoverInteractions(
         hasOnkeyup ||
         hasOnkeypress ||
         hasOnmousedown ||
-        hasOnmouseup;
+        hasOnmouseup ||
+        scrollAxis !== "";
 
       if (!isInteractive) return null;
 
@@ -283,6 +316,7 @@ export async function discoverInteractions(
         hasOnmousedown,
         hasOnmouseup,
         isContentEditable,
+        scrollAxis,
         isHidden: false,
         selector: hostSelector + " >>> " + shadowSel,
         inShadow: true,
@@ -318,6 +352,7 @@ export async function discoverInteractions(
         "textbox", "treeitem", "gridcell", "listbox",
       ]);
       const hasInteractiveRole = role !== "" && interactiveRoles.has(role);
+      const scrollAxis = scrollAxisOf(el);
 
       const isInteractive =
         ["BUTTON", "A", "INPUT", "TEXTAREA", "SELECT", "SUMMARY"].includes(
@@ -331,7 +366,8 @@ export async function discoverInteractions(
         hasOnkeyup ||
         hasOnkeypress ||
         hasOnmousedown ||
-        hasOnmouseup;
+        hasOnmouseup ||
+        scrollAxis !== "";
 
       if (!isInteractive) return null;
 
@@ -361,6 +397,7 @@ export async function discoverInteractions(
         hasOnmousedown,
         hasOnmouseup,
         isContentEditable,
+        scrollAxis,
         isHidden: false,
         selector: sel,
         inShadow: false,
@@ -384,6 +421,41 @@ export async function discoverInteractions(
       if (child.tagName.includes("-") && child.tagName.toLowerCase().startsWith("vite")) continue;
       if (seen.has(child)) continue;
       walkTree(child, "", true);
+    }
+
+    // M43. A plain list long enough to overflow the viewport scrolls the
+    // document, not a container — that scrollport is the component's, so it
+    // gets a descriptor of its own. `:root` is the selector the scroll step
+    // recognises as "wheel over the viewport".
+    const scrollport = document.scrollingElement;
+    if (scrollport && scrollport.scrollHeight > scrollport.clientHeight + 1) {
+      results.push({
+        tagName: "HTML",
+        id: "",
+        role: "",
+        ariaLabel: "",
+        ariaControls: "",
+        ariaHaspopup: "",
+        ariaExpanded: "",
+        ariaValueNow: "",
+        ariaOrientation: "",
+        cursor: "",
+        tabindex: null,
+        inputType: "",
+        textContent: "document",
+        dataTestid: "",
+        hasOnclick: false,
+        hasOnkeydown: false,
+        hasOnkeyup: false,
+        hasOnkeypress: false,
+        hasOnmousedown: false,
+        hasOnmouseup: false,
+        isContentEditable: false,
+        scrollAxis: "vertical",
+        isHidden: false,
+        selector: ":root",
+        inShadow: false,
+      });
     }
 
     return results;
@@ -656,13 +728,31 @@ function toDescriptor(raw: RawElement): InteractionDescriptor {
   if (raw.ariaValueNow) desc.ariaValueNow = true;
   if (raw.ariaOrientation) desc.ariaOrientation = raw.ariaOrientation;
   if (raw.cursor) desc.cursor = raw.cursor;
+  if (raw.scrollAxis) desc.scrollAxis = raw.scrollAxis as ScrollAxis;
 
   return desc;
+}
+
+// Scroll only claims the type when nothing else does. A scrollable listbox is
+// still a listbox: its keyboard sweep measures more than a wheel would, and
+// changing its type would silently drop that coverage.
+const NATIVE_INTERACTIVE_TAGS = new Set([
+  "BUTTON", "A", "INPUT", "TEXTAREA", "SELECT", "SUMMARY",
+]);
+
+function isScrollOnly(raw: RawElement): boolean {
+  if (!raw.scrollAxis) return false;
+  if (NATIVE_INTERACTIVE_TAGS.has(raw.tagName)) return false;
+  if (raw.role !== "") return false;
+  if (raw.isContentEditable) return false;
+  return true;
 }
 
 function inferType(raw: RawElement): InteractionType {
   const tag = raw.tagName;
   const role = raw.role;
+
+  if (isScrollOnly(raw)) return "scroll";
 
   if (raw.isContentEditable) return "type";
 

@@ -6,7 +6,7 @@ import { chromium, type Browser, type Page } from "playwright";
 import { buildAndServe, type HarnessResult } from "../../src/harness.js";
 import { needsStyleSettle, settleStyles } from "../../src/measure.js";
 import { attachPageErrorCapture, type PageErrorCapture } from "../../src/page-errors.js";
-import { analyze } from "../../src/analyze.js";
+import { sharedAnalyze as analyze } from "./shared-analyze.js";
 import type { CompositionTree } from "../../src/composition.js";
 
 let browser: Browser | undefined;
@@ -396,7 +396,10 @@ describe("css e2e — full pipeline", () => {
         jsonPath,
       });
       const baseline = JSON.parse(fs.readFileSync(baselinePath, "utf-8"));
-      const entry = baseline.entries["./app/Card.tsx"];
+      // M45: entries are keyed by component and environment slot.
+      const entry = baseline.entries[
+        Object.keys(baseline.entries).find((k: string) => k.startsWith("./app/Card.tsx#"))!
+      ];
       expect(entry.env.css).toEqual(["app/globals.css"]);
     } finally {
       fs.rmSync(baselinePath, { force: true });
@@ -419,7 +422,10 @@ describe("css e2e — full pipeline", () => {
         jsonPath,
       });
       const baseline = JSON.parse(fs.readFileSync(baselinePath, "utf-8"));
-      const entry = baseline.entries["./app/Card.tsx"];
+      // M45: entries are keyed by component and environment slot.
+      const entry = baseline.entries[
+        Object.keys(baseline.entries).find((k: string) => k.startsWith("./app/Card.tsx#"))!
+      ];
       expect("css" in entry.env).toBe(false);
     } finally {
       fs.rmSync(baselinePath, { force: true });

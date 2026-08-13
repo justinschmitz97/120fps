@@ -132,7 +132,7 @@ describe("H8: scaling curve with all-zero metrics", () => {
 });
 
 describe("H9: scaling curve with negative slope", () => {
-  it("classifies decreasing linear as linear", () => {
+  it("classifies declining linear data as constant (cost not growing)", () => {
     const points = [
       { n: 1, metric: 100 },
       { n: 5, metric: 80 },
@@ -141,8 +141,21 @@ describe("H9: scaling curve with negative slope", () => {
     ];
     const curve = computeScalingCurve(points);
     expect(curve.slope).toBeLessThan(0);
-    // Still classified as linear because R² is high
-    expect(["linear", "quadratic"]).toContain(curve.growthClass);
+    // Non-positive slope means cost is not growing — never linear/quadratic/exponential
+    expect(curve.growthClass).toBe("constant");
+  });
+
+  it("classifies curved (quadratic-shaped) declining data as constant, not quadratic", () => {
+    // metric = 2500 - n^2: a textbook quadratic fit (r2≈1 against n^2), but declining.
+    const points = [
+      { n: 1, metric: 2499 },
+      { n: 5, metric: 2475 },
+      { n: 20, metric: 2100 },
+      { n: 50, metric: 0 },
+    ];
+    const curve = computeScalingCurve(points);
+    expect(curve.slope).toBeLessThan(0);
+    expect(curve.growthClass).toBe("constant");
   });
 });
 
@@ -161,8 +174,19 @@ describe("H10: mixed nested and sibling events in parseTraceDuration", () => {
     const result = parseTraceDuration(events);
     // Only top-level: A (10ms) + C (5ms) = 15ms
     expect(result.totalDuration).toBeCloseTo(15, 0);
-    // Script: A (10ms) + B (3ms) + C (5ms) + D (2ms) = 20ms
-    expect(result.scriptDuration).toBeCloseTo(20, 0);
+    // Script duration must also dedup nesting: B is nested in A, D is nested
+    // in C, so only the outer events' durations count: A (10ms) + C (5ms) = 15ms
+    expect(result.scriptDuration).toBeCloseTo(15, 0);
+  });
+
+  it("counts nested script event wall time once (EvaluateScript containing nested FunctionCall)", () => {
+    const events: TraceEvent[] = [
+      { name: "EvaluateScript", dur: 10_000, ph: "X", ts: 0 },
+      { name: "FunctionCall", dur: 4_000, ph: "X", ts: 1_000 },
+    ];
+    const result = parseTraceDuration(events);
+    expect(result.totalDuration).toBeCloseTo(10, 0);
+    expect(result.scriptDuration).toBeCloseTo(10, 0);
   });
 });
 

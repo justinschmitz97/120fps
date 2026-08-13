@@ -1,6 +1,6 @@
 # 120fps
 
-Zero-config React component performance profiler. `npx 120fps ./Component.tsx` → real-browser performance report.
+Zero-config UI component performance profiler (React and Vue). `npx 120fps ./Component.tsx` → real-browser performance report.
 
 Read `specs/overview/00-tdd.md` for architecture, milestones, and pipeline.
 
@@ -38,20 +38,28 @@ Every milestone follows this cycle. Do not skip steps.
 ```
 src/
   prop-gen.ts       — TS Compiler API prop extraction, auto-scaling prop detection, export extraction
-  prop-gen-values.ts — value generation + stratified sampling + scaling combo generation
+  prop-gen-values.ts — value generation + stratified sampling + delta pairs + matrix generation + scaling combo generation
+  prop-presets.ts   — <stem>.props.tsx|ts loading, AST-literal value transport, preset application
+  vue-sfc.ts        — project-resolved SFC parser loading, <script setup> extraction, virtual script naming
   composition.ts    — auto-composition inference: prefix grouping, suffix taxonomy, template selection
-  harness.ts        — Vite harness builder + dev server + composed harness generation
+  preflight.ts      — pre-harness import-graph walk for server-only/async-component hits, project-transform recognition
+  harness.ts        — Vite harness builder + dev server + composed harness generation + React/Vue renderer adapter
   measure.ts        — CDP trace capture + mount/unmount/rerender timing + animation detection
   metrics.ts        — full CDP metric extraction, INP, scaling curves, calibration, cost attribution
   discovery.ts      — DOM walk for interactive element discovery
   explorer.ts       — exploration loop + state graph builder
+  observers.ts      — opt-in Event Timing/LoAF/layout-instability acquisition (explore-mode alternative to trace timing)
   stress-patterns.ts — stress pattern dispatch, step execution, ARIA sibling detection
   react-profiler.ts — framework detection, DevTools hook injection, memo/context/callback analysis, portal hygiene, render attribution
   report.ts         — types, CV, tier classification, verdict logic, terminal table formatting
+  hints.ts          — finding-to-remediation mapping, per-report hint derivation, terminal formatting
   analyze.ts        — full pipeline orchestrator (analyze + buildReport)
-  budget.ts         — budget config loading, baseline I/O, regression comparison
+  budget.ts         — budget config loading + schema validation, baseline I/O, regression comparison
+  noise.ts          — machine-noise probing and run-level quiet/noisy/hostile classification
+  compare.ts        — --compare interleaved A/B measurement against a git ref
+  ci-report.ts      — --report-md / --report-junit serializers
   isolation.ts      — isolated per-phase measurements, churn/leak/strictmode checks
-  page-errors.ts    — browser page-error capture + timeout error enrichment
+  page-errors.ts    — browser page-error capture (deduped, capped) + timeout error enrichment
   cli.ts            — CLI entry point, arg parsing, exit codes
   index.ts          — barrel export
 specs/
