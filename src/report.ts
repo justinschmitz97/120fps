@@ -2,11 +2,17 @@ import path from "node:path";
 import type { InteractionType } from "./discovery.js";
 import { computeScalingCurve, attributeCost, type ScalingCurve, type CostAttribution } from "./metrics.js";
 import type { ReactOptimizations } from "./react-profiler.js";
-import { computeMedian, computeP95 } from "./measure.js";
+import { computeMedian, computeP95, type MeasuredState } from "./measure.js";
+import type { NoiseReport } from "./noise.js";
+import { hintsForReport, formatHints, MEASUREMENT_BASIS_LINE, type HintId } from "./hints.js";
+
+export type { MeasuredState };
 
 export interface Thresholds {
   mountMs: number;
   interactionMs: number;
+  // One 60fps frame under 4x throttle. Used by --flat-thresholds.
+  interactionStepMs: number;
   relativeMount: number;
   rerenderMs: number;
 }
@@ -14,6 +20,7 @@ export interface Thresholds {
 export const DEFAULT_THRESHOLDS: Thresholds = {
   mountMs: 50,
   interactionMs: 400,
+  interactionStepMs: 67,
   relativeMount: 2.0,
   rerenderMs: 16,
 };
@@ -24,13 +31,16 @@ export interface TierBudget {
   mountMs: number;
   rerenderMs: number;
   interactionMs: number;
+  // Cost allowed for one interaction event. A frame at 120fps is 8.33ms, and
+  // measurements run under 4x CPU throttle, so one such frame is 33ms here.
+  interactionStepMs: number;
 }
 
 export const TIER_BUDGETS: Record<ComponentTier, TierBudget> = {
-  T1: { mountMs: 14, rerenderMs: 10, interactionMs: 250 },
-  T2: { mountMs: 44, rerenderMs: 30, interactionMs: 300 },
-  T3: { mountMs: 60, rerenderMs: 36, interactionMs: 350 },
-  T4: { mountMs: 80, rerenderMs: 48, interactionMs: 400 },
+  T1: { mountMs: 14, rerenderMs: 10, interactionMs: 250, interactionStepMs: 33 },
+  T2: { mountMs: 44, rerenderMs: 30, interactionMs: 300, interactionStepMs: 50 },
+  T3: { mountMs: 60, rerenderMs: 36, interactionMs: 350, interactionStepMs: 67 },
+  T4: { mountMs: 80, rerenderMs: 48, interactionMs: 400, interactionStepMs: 100 },
 };
 
 export function classifyTier(info: {
@@ -65,6 +75,9 @@ export type EnvMatch = "identical" | "normalizable" | "incompatible" | "unknown"
 // of the baseline file's own version, so new fields never invalidate a file.
 export interface EnvFingerprint {
   shape: 1;
+  // Measurement revision: absent or 1 predates M31's component-scoped DOM
+  // count. A mismatch makes a baseline incomparable, not merely different.
+  metrics?: number;
   cpu: string;
   cores: number;
   os: string;
@@ -96,6 +109,9 @@ export interface InteractionReport {
   relativeTiming: number;
   portal?: boolean;
   stressPattern?: string;
+  // Steps in the stress pattern behind `timing`. `timing.median` is the cost
+  // of all of them; the budget is per step.
+  steps?: number;
 }
 
 export interface ComboReport {
@@ -114,8 +130,15 @@ export interface ComboReport {
   verdict: "pass" | "warn" | "fail";
   tier?: ComponentTier;
   hasAnimation?: boolean;
+  // M40: whether these numbers describe the settled component or a transient
+  // scene (skeleton, fallback, pre-response render).
+  measuredState?: MeasuredState;
   costAttribution?: CostAttribution;
   reactOptimizations?: ReactOptimizations;
+  // Interaction to Next Paint, in ms — the worst input-to-paint gap across
+  // this combo's explored interactions. Absent when exploration produced no
+  // interaction traces for the combo.
+  inp?: number;
 }
 
 export interface PropDelta {
@@ -148,6 +171,9 @@ export interface ScalingCurveReport {
   interactionCurves: Record<string, ScalingCurve>;
   domGrowth: ScalingCurve;
   heapGrowth: ScalingCurve;
+  // Set when the DOM node count never changed across scale points: the growth
+  // class then describes nothing that was measured.
+  domFlat?: boolean;
 }
 
 export interface MatrixAxis {
@@ -218,6 +244,12 @@ export interface BaselineComparison {
   missingInteractions?: string[];
   envMatch?: EnvMatch;
   envMismatches?: string[];
+  // M40: baseline and current run measured different scenes; comparison skipped.
+  measuredStateMismatch?: { baseline: MeasuredState; current: MeasuredState };
+  // M45: the entry came from another environment's slot. Informational only.
+  crossEnvironment?: boolean;
+  // M46: the machine was too busy to compare against.
+  skippedNoisy?: boolean;
 }
 
 export interface WrapperReport {
@@ -225,6 +257,8 @@ export interface WrapperReport {
   autoDetected: boolean;
   overheadMs: number;
   domNodes: number;
+  // M41: the wrapper exported a callable `setup` that ran before first render.
+  hasSetup?: boolean;
 }
 
 // files are projectRoot-relative posix paths, in injection order.
@@ -265,9 +299,22 @@ export interface Report {
   baseline?: BaselineComparison;
   isolation?: import("./isolation.js").IsolationReport;
   wrapper?: WrapperReport;
+  // M44: the preset module that supplied prop values, and which props it fed.
+  propPresets?: { path: string; props: string[] };
+  // M46: how trustworthy the machine was while this ran.
+  noise?: NoiseReport;
+  // M48: recognizer codes of the project's own Vite transforms that compiled
+  // this run.
+  projectTransforms?: string[];
+  // M51: finding classes this run triggered. Ids, never prose — hints can be
+  // reworded without a schema change.
+  hints?: HintId[];
   css?: CssReport;
   reactCompiler?: ReactCompilerReport;
   warnings?: string[];
+  // M39: verdict reused from a fingerprinted baseline entry — source
+  // unchanged, environment identical, nothing was measured.
+  cached?: boolean;
 }
 
 const WRAPPER_OVERHEAD_WARN_MS = 1;
@@ -301,22 +348,51 @@ export function computeCV(samples: number[]): number {
   if (absMean === 0) return 0;
   let variance = 0;
   for (const s of samples) variance += (s - mean) ** 2;
-  variance /= n;
+  // Sample variance: N measurements are a sample of the component's cost
+  // distribution, not the population. The n divisor understates dispersion at
+  // the sample counts this tool runs (n=3..10).
+  variance /= n - 1;
   const stddev = Math.sqrt(variance);
   return (stddev / absMean) * 100;
 }
+
+// M35: driven pacing shrinks medians to their busy cost, so relative CV on a
+// sub-millisecond metric explodes while absolute noise stays trivial — and an
+// unstable flag would silently skip its baseline comparison (M22). Unstable
+// requires both: high relative CV and noise above the 0.5ms absolute floor
+// (the same floor M29 uses for normalized comparison).
+export const UNSTABLE_NOISE_FLOOR_MS = 0.5;
 
 export function buildTimingWithCV(samples: number[]): TimingWithCV {
   const median = computeMedian(samples);
   const p95 = computeP95(samples);
   const cv = computeCV(samples);
-  return { samples, median, p95, cv, unstable: cv > 15 };
+  const n = samples.length;
+  const mean = n > 0 ? samples.reduce((a, b) => a + b, 0) / n : 0;
+  const stddevMs = (cv / 100) * Math.abs(mean);
+  return {
+    samples,
+    median,
+    p95,
+    cv,
+    unstable: cv > 15 && stddevMs > UNSTABLE_NOISE_FLOOR_MS,
+  };
+}
+
+// Only for translating an explicitly supplied aggregate --threshold-interaction
+// into the per-event budget the verdict uses, so an existing CI flag keeps its
+// meaning. Tier budgets are derived from frames, not from this.
+export const REFERENCE_EVENTS = 11;
+
+export function perStepCost(interaction: InteractionReport): number {
+  const events = interaction.steps && interaction.steps > 0 ? interaction.steps : 1;
+  return interaction.timing.median / events;
 }
 
 export function computeVerdict(
   combo: ComboReport,
   thresholds: Thresholds,
-  options?: { tierBudget?: TierBudget },
+  options?: { tierBudget?: TierBudget; explicitInteraction?: boolean },
 ): "pass" | "warn" | "fail" {
   const mountMs = options?.tierBudget?.mountMs ?? thresholds.mountMs;
   const rerenderMs = options?.tierBudget?.rerenderMs ?? thresholds.rerenderMs;
@@ -328,8 +404,15 @@ export function computeVerdict(
     if (options?.tierBudget) return "warn";
     return "fail";
   }
+  // `Thresholds` is public and predates `interactionStepMs`, so a caller
+  // constructing it by hand must not silently disable the interaction check.
+  const perStepMs = options?.explicitInteraction
+    ? interactionMs / REFERENCE_EVENTS
+    : options?.tierBudget?.interactionStepMs
+      ?? thresholds.interactionStepMs
+      ?? DEFAULT_THRESHOLDS.interactionStepMs;
   for (const interaction of combo.interactions) {
-    if (interaction.timing.median > interactionMs) return "fail";
+    if (perStepCost(interaction) > perStepMs) return "fail";
   }
   if (combo.mount.unstable || combo.unmount.unstable) return "warn";
   if (combo.rerender.unstable) return "warn";
@@ -347,6 +430,14 @@ export function formatTable(report: Report): string {
   lines.push(`120fps — ${report.componentName}`);
   lines.push(`Machine: ${report.machine.cpu} (${report.machine.cores} cores), ${Math.round(report.machine.ramMb / 1024)}GB RAM, ${report.machine.os}`);
   lines.push(`Node ${report.machine.nodeVersion}, Chromium ${report.machine.chromiumVersion}`);
+  lines.push(describeMode(report));
+  // M51: first-run users read 14ms and think their button takes 14ms.
+  lines.push(MEASUREMENT_BASIS_LINE);
+  if (report.cached) {
+    lines.push(
+      "Result reused from baseline: source unchanged, environment identical (--no-cache measures)",
+    );
+  }
   if (report.nextJsShims && report.nextJsShims.length > 0) {
     lines.push(`Next.js shims: ${report.nextJsShims.join(", ")}`);
   }
@@ -421,8 +512,11 @@ export function formatTable(report: Report): string {
       const patternSuffix = interaction.stressPattern && interaction.stressPattern !== "single-shot"
         ? ` (${interaction.stressPattern})`
         : "";
+      const stepSuffix = interaction.steps && interaction.steps > 1
+        ? ` = ${perStepCost(interaction).toFixed(2)}ms x ${interaction.steps} steps`
+        : "";
       lines.push(
-        `    ${interaction.label} (${interaction.type}): ${interaction.timing.median.toFixed(2)}ms [${interaction.relativeTiming.toFixed(2)}x cal]${portalSuffix}${patternSuffix}`,
+        `    ${interaction.label} (${interaction.type}): ${interaction.timing.median.toFixed(2)}ms${stepSuffix} [${interaction.relativeTiming.toFixed(2)}x cal]${portalSuffix}${patternSuffix}`,
       );
     }
   }
@@ -527,6 +621,8 @@ export function formatTable(report: Report): string {
     formatBaselineSection(lines, report.baseline);
   }
 
+  appendHints(lines, report);
+
   return lines.join("\n");
 }
 
@@ -536,6 +632,13 @@ function appendWarnings(lines: string[], report: Report): void {
   for (const warning of report.warnings ?? []) {
     lines.push(`⚠ ${warning}`);
   }
+}
+
+// M51: every mode ends with what to do about what it found. Once per run, after
+// the findings, never as a substitute for them.
+function appendHints(lines: string[], report: Report): void {
+  const hints = formatHints(report.hints ?? hintsForReport(report));
+  if (hints) lines.push(hints);
 }
 
 function formatIsolationOutput(lines: string[], report: Report): string {
@@ -584,6 +687,7 @@ function formatIsolationOutput(lines: string[], report: Report): string {
 
   lines.push(report.pass ? "Result: PASS" : "Result: FAIL");
   appendWarnings(lines, report);
+  appendHints(lines, report);
 
   if (report.baseline?.hasBaseline) {
     formatBaselineSection(lines, report.baseline);
@@ -718,6 +822,8 @@ function formatCurveOutput(lines: string[], report: Report): string {
   }
 
   appendWarnings(lines, report);
+
+  appendHints(lines, report);
 
   return lines.join("\n");
 }
@@ -996,6 +1102,25 @@ function formatMatrixOutput(lines: string[], report: Report): string {
   const pass = report.pass ? "PASS" : "FAIL";
   lines.push(`Result: ${pass}`);
   appendWarnings(lines, report);
+  appendHints(lines, report);
 
   return lines.join("\n");
+}
+
+// M32 D3 — curve mode auto-activates, empties `combos`, and prints a different
+// table. Without this line the reader cannot tell which measurement they got.
+export function describeMode(report: Report): string {
+  if (report.isolation) return "Mode: isolation";
+  if (report.scalingCurveReport) {
+    const c = report.scalingCurveReport;
+    return `Mode: curve over "${c.propName}" (${c.reason})`;
+  }
+  if (report.matrixReport) return "Mode: prop matrix";
+
+  const measured = report.combos.length;
+  const capNote = report.warnings?.find((w) => w.includes("prop combos"));
+  const generated = capNote?.match(/of (\d+) prop combos/)?.[1];
+  return generated
+    ? `Mode: prop combos (${measured} measured of ${generated} generated)`
+    : `Mode: prop combos (${measured} measured)`;
 }

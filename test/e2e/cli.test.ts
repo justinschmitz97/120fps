@@ -3,6 +3,7 @@ import { execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
 import path from "node:path";
 import fs from "node:fs";
+import { resolveReportPaths } from "../../src/cli.js";
 import os from "node:os";
 
 const execFileAsync = promisify(execFile);
@@ -55,6 +56,22 @@ describe("CLI e2e", () => {
     expect(code).toBe(2);
   });
 
+  it("exits 2 with a clean message for a non-component file", async () => {
+    const { stderr, code } = await runCli(["./README.md"]);
+    expect(code).toBe(2);
+    expect(stderr).toContain("not a component file");
+    expect(stderr).not.toContain("ReferenceError");
+  });
+
+  it("exits 2 for --scale with fewer than 2 distinct values", async () => {
+    const { stderr, code } = await runCli([
+      "--scale", "5",
+      "./fixtures/static-buttons.tsx",
+    ]);
+    expect(code).toBe(2);
+    expect(stderr).toContain("--scale requires at least 2 distinct positive integers");
+  });
+
   it("runs full analysis and writes JSON", async () => {
     const jsonPath = path.join(os.tmpdir(), `cli-test-${Date.now()}.json`);
     const { stdout, code } = await runCli([
@@ -74,9 +91,11 @@ describe("CLI e2e", () => {
     const reportA = path.resolve("120fps-report.static-buttons.json");
     const reportB = path.resolve("120fps-report.static-buttons-2.json");
     try {
+      // Two different files with the same stem: passing one file twice now
+      // dedupes (M32 D1), so the collision case needs distinct paths.
       const { code } = await runCli([
         "./fixtures/static-buttons.tsx",
-        "./fixtures/static-buttons.tsx",
+        "./fixtures/dup/static-buttons.tsx",
         "--samples", "2",
         "--ci",
       ]);
@@ -92,14 +111,13 @@ describe("CLI e2e", () => {
     }
   }, 300000);
 
-  it("multi-path with explicit --json exits 2", async () => {
-    const { code, stderr } = await runCli([
-      "./fixtures/static-buttons.tsx",
-      "./fixtures/button.tsx",
-      "--json", "out.json",
-    ]);
-    expect(code).toBe(2);
-    expect(stderr).toContain("--json");
+  // M32 D5: --json names the destination instead of being rejected. Asserted
+  // through resolveReportPaths rather than a full run, which would measure two
+  // components to check a filename.
+  it("multi-path with explicit --json derives per-component names", () => {
+    expect(
+      resolveReportPaths(["./fixtures/static-buttons.tsx", "./fixtures/button.tsx"], "out.json"),
+    ).toEqual(["out.static-buttons.json", "out.button.json"]);
   });
 
   it("multi-path with a missing second file exits 2 before any run", async () => {

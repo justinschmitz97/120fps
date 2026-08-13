@@ -35,8 +35,9 @@ describe("computeMedian", () => {
 });
 
 describe("computeP95", () => {
-  it("returns max for small arrays", () => {
-    expect(computeP95([1, 2, 3])).toBe(3);
+  it("interpolates near the maximum for small arrays", () => {
+    // type-7: h = (3-1)*0.95 = 1.9 → 2 + 0.9*(3-2)
+    expect(computeP95([1, 2, 3])).toBeCloseTo(2.9, 10);
   });
 
   it("returns 0 for empty array", () => {
@@ -45,8 +46,8 @@ describe("computeP95", () => {
 
   it("returns 95th percentile value for 20-element array", () => {
     const samples = Array.from({ length: 20 }, (_, i) => i + 1);
-    // ceil(0.95 * 20) - 1 = 19 - 1 = 18 → value 19
-    expect(computeP95(samples)).toBe(19);
+    // type-7: h = (20-1)*0.95 = 18.05 → 19 + 0.05*(20-19)
+    expect(computeP95(samples)).toBeCloseTo(19.05, 10);
   });
 
   it("works with single element", () => {

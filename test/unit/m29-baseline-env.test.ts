@@ -14,6 +14,7 @@ import {
   UNKNOWN_ENV_WARNING,
   type BaselineEntry,
   type ResolvedTolerance,
+  selectBaselineEntry,
 } from "../../src/budget.js";
 import {
   formatTable,
@@ -24,6 +25,12 @@ import {
   type Thresholds,
 } from "../../src/report.js";
 import { parseArgs, KNOWN_FLAGS } from "../../src/cli.js";
+
+// M45: entries are keyed by component x environment slot; selectBaselineEntry
+// resolves the slot for us so these assertions stay about the entry, not the key.
+function entryOf(baseline: any, componentPath: string) {
+  return selectBaselineEntry(baseline, componentPath, "unused")!.entry;
+}
 
 const TOL: ResolvedTolerance = resolveTolerances(null);
 
@@ -571,7 +578,7 @@ describe("E6 baseline file migration", () => {
     const file = path.join(tmpDir, "120fps-baseline.json");
     saveBaseline(file, makeEntry({ env: env({ samples: 3, cpuThrottle: 6, wrapper: "120fps.setup.tsx" }) }), "./Button.tsx");
     const loaded = loadBaseline(file);
-    const stored = loaded!.entries["./Button.tsx"].env!;
+    const stored = entryOf(loaded, "./Button.tsx").env!;
     expect(stored.shape).toBe(1);
     expect(stored.samples).toBe(3);
     expect(stored.cpuThrottle).toBe(6);
@@ -579,10 +586,10 @@ describe("E6 baseline file migration", () => {
     expect(stored.mode).toBe("combo");
   });
 
-  it("keeps version 1 at the file level", () => {
+  it("writes the current baseline version at the file level", () => {
     const file = path.join(tmpDir, "120fps-baseline.json");
     saveBaseline(file, makeEntry({ env: env() }), "./Button.tsx");
-    expect(loadBaseline(file)!.version).toBe(1);
+    expect(loadBaseline(file)!.version).toBe(2);
   });
 
   it("loads a pre-M29 file and leaves env undefined", () => {
@@ -593,8 +600,8 @@ describe("E6 baseline file migration", () => {
       entries: { "./Button.tsx": makeEntry() },
     }));
     const loaded = loadBaseline(file);
-    expect(loaded!.entries["./Button.tsx"].env).toBeUndefined();
-    expect(classifyEnv(loaded!.entries["./Button.tsx"].env, env())).toBe("unknown");
+    expect(entryOf(loaded, "./Button.tsx").env).toBeUndefined();
+    expect(classifyEnv(entryOf(loaded, "./Button.tsx").env, env())).toBe("unknown");
   });
 
   it("classifies per entry when a file mixes shapes", () => {
@@ -602,15 +609,15 @@ describe("E6 baseline file migration", () => {
     saveBaseline(file, makeEntry(), "./Old.tsx");
     saveBaseline(file, makeEntry({ env: env() }), "./New.tsx");
     const loaded = loadBaseline(file)!;
-    expect(classifyEnv(loaded.entries["./Old.tsx"].env, env())).toBe("unknown");
-    expect(classifyEnv(loaded.entries["./New.tsx"].env, env())).toBe("identical");
+    expect(classifyEnv(entryOf(loaded, "./Old.tsx").env, env())).toBe("unknown");
+    expect(classifyEnv(entryOf(loaded, "./New.tsx").env, env())).toBe("identical");
   });
 
   it("upgrades an entry on re-save", () => {
     const file = path.join(tmpDir, "120fps-baseline.json");
     saveBaseline(file, makeEntry(), "./Button.tsx");
-    expect(loadBaseline(file)!.entries["./Button.tsx"].env).toBeUndefined();
+    expect(entryOf(loadBaseline(file), "./Button.tsx").env).toBeUndefined();
     saveBaseline(file, makeEntry({ env: env() }), "./Button.tsx");
-    expect(loadBaseline(file)!.entries["./Button.tsx"].env).toBeDefined();
+    expect(entryOf(loadBaseline(file), "./Button.tsx").env).toBeDefined();
   });
 });

@@ -227,15 +227,26 @@ describe("H21: settle gate runs before CPU throttling", () => {
   const src = (name: string) => fs.readFileSync(path.resolve("src", name), "utf-8");
 
   it("precedes setCPUThrottlingRate in every session", () => {
+    // A throttle call may legitimately appear earlier in the file for a page
+    // with nothing to settle (M39's blank-page calibration probe); the
+    // invariant is that a session which settles styles throttles only
+    // afterwards, so the assertion anchors on the settle gate and requires a
+    // throttle call after it.
     for (const file of ["analyze.ts", "explorer.ts", "react-profiler.ts"]) {
       const text = src(file);
-      expect(text.indexOf("settleStyles(page")).toBeLessThan(
-        text.indexOf("Emulation.setCPUThrottlingRate"),
-      );
+      const settleIdx = text.indexOf("settleStyles(page");
+      expect(settleIdx).toBeGreaterThan(-1);
+      expect(
+        text.indexOf("Emulation.setCPUThrottlingRate", settleIdx),
+      ).toBeGreaterThan(settleIdx);
     }
+    // Scoped to the session preamble: measure.ts also mentions the throttle in
+    // suspendThrottle (M34), which is inter-sample bookkeeping, not a session.
     const measure = src("measure.ts");
-    const firstGate = measure.indexOf("await settleStyles(page");
-    const firstThrottle = measure.indexOf("Emulation.setCPUThrottlingRate");
+    const preamble = measure.slice(measure.indexOf("export async function enterHarness"));
+    const firstGate = preamble.indexOf("await settleStyles(page");
+    const firstThrottle = preamble.indexOf("Emulation.setCPUThrottlingRate");
+    expect(firstGate).toBeGreaterThanOrEqual(0);
     expect(firstGate).toBeLessThan(firstThrottle);
   });
 });

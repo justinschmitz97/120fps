@@ -10,9 +10,9 @@ export interface DeltaPair {
   flipValue: unknown;
 }
 
-const MAX_DELTA_PAIRS = 128;
+export const MAX_DELTA_PAIRS = 128;
 
-export function generateDeltaPairs(schemas: PropSchema[]): DeltaPair[] {
+function buildAllDeltaPairs(schemas: PropSchema[]): DeltaPair[] {
   if (schemas.length === 0) return [];
 
   const anchor: PropCombination = {};
@@ -62,8 +62,18 @@ export function generateDeltaPairs(schemas: PropSchema[]): DeltaPair[] {
     return aCount - bCount;
   });
 
-  const all = [...boolPairs, ...unionPairs, ...objectPairs];
-  return all.slice(0, MAX_DELTA_PAIRS);
+  return [...boolPairs, ...unionPairs, ...objectPairs];
+}
+
+export function generateDeltaPairs(schemas: PropSchema[]): DeltaPair[] {
+  return buildAllDeltaPairs(schemas).slice(0, MAX_DELTA_PAIRS);
+}
+
+// Total delta pairs the prop space could produce before the MAX_DELTA_PAIRS
+// cap truncates them — lets a caller detect and disclose truncation without
+// re-deriving the counting logic.
+export function countDeltaPairSpace(schemas: PropSchema[]): number {
+  return buildAllDeltaPairs(schemas).length;
 }
 
 export function generateScalingCombos(
@@ -81,10 +91,32 @@ export function generateScalingCombos(
     if (match.kind === "numeric") {
       combo[match.schema.name] = n;
     } else {
-      combo[match.schema.name] = Array.from({ length: n }, (_, i) => `item-${i + 1}`);
+      combo[match.schema.name] = fillArray(match.schema, n);
     }
     return combo;
   });
+}
+
+// Each element gets its own identity so a component keying or mutating them
+// behaves as it would with real data.
+export function fillArray(schema: PropSchema, n: number): unknown[] {
+  const template = schema.elementTemplate;
+  if (template === undefined) {
+    return Array.from({ length: n }, (_, i) => `item-${i + 1}`);
+  }
+  return Array.from({ length: n }, () => cloneTemplate(template));
+}
+
+function cloneTemplate(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(cloneTemplate);
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      out[k] = cloneTemplate(v);
+    }
+    return out;
+  }
+  return value;
 }
 
 export function resolveAnchorValue(schema: PropSchema): unknown {
@@ -128,6 +160,15 @@ export function generateCombinations(schemas: PropSchema[]): PropCombination[] {
   return stratifiedSample(schemas, valuesByProp, MAX_COMBINATIONS);
 }
 
+// Size of the full cartesian prop space before MAX_COMBINATIONS forces a
+// stratified sample — lets a caller detect and disclose the truncation. Can
+// be astronomically large (many multi-valued props); callers must cap how
+// they display it rather than trust arithmetic precision at that scale.
+export function countCombinationSpace(schemas: PropSchema[]): number {
+  const valuesByProp = schemas.map((s) => resolveValues(s));
+  return valuesByProp.reduce((acc, v) => acc * v.length, 1);
+}
+
 function resolveValues(schema: PropSchema): unknown[] {
   const base = resolveBaseValues(schema);
   if (!schema.required) {
@@ -147,7 +188,7 @@ function resolveBaseValues(schema: PropSchema): unknown[] {
     case "union":
       return schema.values;
     case "array":
-      return [[], ["item-1", "item-2", "item-3"]];
+      return [[], fillArray(schema, 3)];
     case "function":
       return [NOOP];
     case "reactnode":
@@ -397,4 +438,19 @@ function countCoveredPairs(
     }
   }
   return count;
+}
+
+export const DEFAULT_MEASURED_COMBOS = 8;
+
+// `generateCombinations` stratifies its sample across the value space, so a
+// prefix throws that work away. Keep the ends and spread the rest.
+export function selectRepresentativeCombos(count: number, max: number): number[] {
+  if (count <= 0 || max <= 0) return [];
+  if (count <= max) return Array.from({ length: count }, (_, i) => i);
+  if (max === 1) return [0];
+  const picked: number[] = [];
+  for (let i = 0; i < max; i++) {
+    picked.push(Math.round((i * (count - 1)) / (max - 1)));
+  }
+  return [...new Set(picked)];
 }

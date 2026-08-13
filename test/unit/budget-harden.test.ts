@@ -13,8 +13,17 @@ import {
   type Baseline,
   type BaselineEntry,
   type BudgetConfig,
+  selectBaselineEntry,
+  baselineKey,
+  computeEnvKey,
 } from "../../src/budget.js";
 import { TIER_BUDGETS, formatTable, buildTimingWithCV, type Report, type BaselineComparison } from "../../src/report.js";
+
+// M45: entries are keyed by component x environment slot; selectBaselineEntry
+// resolves the slot for us so these assertions stay about the entry, not the key.
+function entryOf(baseline: any, componentPath: string) {
+  return selectBaselineEntry(baseline, componentPath, "unused")!.entry;
+}
 
 let tmpDir: string;
 
@@ -90,8 +99,8 @@ describe("H3: saveBaseline on empty/missing file", () => {
     saveBaseline(filePath, makeEntry({ mount: 3.0 }), "./New.tsx");
     const loaded = loadBaseline(filePath);
     expect(loaded).not.toBeNull();
-    expect(loaded!.version).toBe(1);
-    expect(loaded!.entries["./New.tsx"].mount).toBe(3.0);
+    expect(loaded!.version).toBe(2);
+    expect(entryOf(loaded, "./New.tsx").mount).toBe(3.0);
   });
 });
 
@@ -102,8 +111,8 @@ describe("H4: saveBaseline preserves unrelated entries", () => {
     saveBaseline(filePath, makeEntry({ mount: 2.0 }), "./B.tsx");
     saveBaseline(filePath, makeEntry({ mount: 9.0 }), "./A.tsx");
     const loaded = loadBaseline(filePath);
-    expect(loaded!.entries["./A.tsx"].mount).toBe(9.0);
-    expect(loaded!.entries["./B.tsx"].mount).toBe(2.0);
+    expect(entryOf(loaded, "./A.tsx").mount).toBe(9.0);
+    expect(entryOf(loaded, "./B.tsx").mount).toBe(2.0);
   });
 });
 
@@ -190,9 +199,9 @@ describe("H12: --save-baseline writes valid JSON", () => {
     saveBaseline(filePath, makeEntry({ mount: 1.5, tier: "T2" }), "./Comp.tsx");
     const raw = fs.readFileSync(filePath, "utf-8");
     const parsed = JSON.parse(raw);
-    expect(parsed.version).toBe(1);
+    expect(parsed.version).toBe(2);
     expect(typeof parsed.timestamp).toBe("string");
-    expect(parsed.entries["./Comp.tsx"].tier).toBe("T2");
+    expect(parsed.entries[baselineKey("./Comp.tsx", computeEnvKey(undefined))].tier).toBe("T2");
   });
 });
 
@@ -264,7 +273,7 @@ describe("H18: round-trip save then compare identical", () => {
     saveBaseline(filePath, entry, "./Button.tsx");
 
     const loaded = loadBaseline(filePath);
-    const savedEntry = loaded!.entries["./Button.tsx"];
+    const savedEntry = entryOf(loaded, "./Button.tsx");
     const tol = resolveTolerances(null);
     const result = compareBaseline(savedEntry, {
       mount: savedEntry.mount,

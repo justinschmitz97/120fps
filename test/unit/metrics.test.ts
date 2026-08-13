@@ -68,14 +68,27 @@ describe("parseMetrics", () => {
   });
 
   it("sums scripting duration from FunctionCall, EvaluateScript, v8.compile, v8.run", () => {
+    // Non-overlapping timestamps: each event is a top-level sibling, not nested.
     const events: TraceEvent[] = [
-      { name: "FunctionCall", dur: 1000, ph: "X", ts: 100 },
-      { name: "EvaluateScript", dur: 2000, ph: "X", ts: 200 },
-      { name: "v8.compile", dur: 500, ph: "X", ts: 300 },
-      { name: "v8.run", dur: 500, ph: "X", ts: 400 },
+      { name: "FunctionCall", dur: 1000, ph: "X", ts: 0 },
+      { name: "EvaluateScript", dur: 2000, ph: "X", ts: 2_000 },
+      { name: "v8.compile", dur: 500, ph: "X", ts: 5_000 },
+      { name: "v8.run", dur: 500, ph: "X", ts: 6_000 },
     ];
     const m = parseMetrics(events);
     expect(m.scriptDuration).toBeCloseTo(4, 0);
+  });
+
+  it("counts nested script event wall time once (EvaluateScript containing nested FunctionCall)", () => {
+    const events: TraceEvent[] = [
+      { name: "EvaluateScript", dur: 10_000, ph: "X", ts: 0 },
+      { name: "FunctionCall", dur: 4_000, ph: "X", ts: 1_000 },
+    ];
+    const m = parseMetrics(events);
+    // FunctionCall (1000-5000) is fully nested inside EvaluateScript (0-10000);
+    // only the outer event's 10ms should be counted, not 10 + 4 = 14ms.
+    expect(m.scriptDuration).toBeCloseTo(10, 0);
+    expect(m.totalDuration).toBeCloseTo(10, 0);
   });
 
   it("detects long tasks (scripting spans > 50ms)", () => {
@@ -319,8 +332,20 @@ describe("computeScalingCurve", () => {
     expect(curve.growthClass).toBe("exponential");
   });
 
-  it("returns constant for single point", () => {
+  it("returns inconclusive for single point", () => {
     const curve = computeScalingCurve([{ n: 1, metric: 10 }]);
-    expect(curve.growthClass).toBe("constant");
+    expect(curve.growthClass).toBe("inconclusive");
+  });
+
+  it("returns inconclusive for two points even with a perfect fit", () => {
+    const points = [
+      { n: 1, metric: 10 },
+      { n: 50, metric: 500 },
+    ];
+    const curve = computeScalingCurve(points);
+    expect(curve.growthClass).toBe("inconclusive");
+    // slope/intercept/r2 are still computed and returned
+    expect(curve.slope).toBeCloseTo((500 - 10) / (50 - 1), 5);
+    expect(curve.r2).toBeCloseTo(1, 5);
   });
 });

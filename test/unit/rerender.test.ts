@@ -51,9 +51,10 @@ describe("parseArgs --scale", () => {
     expect(result.scale).toEqual([1, 10, 100]);
   });
 
-  it("parses single scale value", () => {
+  it("rejects a single scale value (needs 2+ distinct points)", () => {
     const result = parseArgs(["./comp.tsx", "--scale", "5"]);
-    expect(result.scale).toEqual([5]);
+    expect(result.scale).toBeUndefined();
+    expect(result.error).toBeTruthy();
   });
 
   it("returns error when --scale has no value", () => {

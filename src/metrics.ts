@@ -1,5 +1,5 @@
 import type { CDPSession, Page } from "playwright";
-import { collectTrace, type TraceEvent } from "./measure.js";
+import { collectTrace, countComponentNodes, type TraceEvent } from "./measure.js";
 
 export interface LongTask {
   startTime: number;
@@ -33,7 +33,7 @@ export interface ScalingCurve {
   slope: number;
   intercept: number;
   r2: number;
-  growthClass: "constant" | "linear" | "quadratic" | "exponential";
+  growthClass: "constant" | "linear" | "quadratic" | "exponential" | "inconclusive";
 }
 
 export interface CostBucket {
@@ -356,7 +356,9 @@ export function parseMetrics(
     }
 
     if (event.name && SCRIPT_EVENTS.has(event.name)) {
-      metrics.scriptDuration += durMs;
+      if (!isNested) {
+        metrics.scriptDuration += durMs;
+      }
       if (durMs > LONG_TASK_THRESHOLD_MS) {
         metrics.longTasks.push({
           startTime: eventStart / 1000,
@@ -465,15 +467,56 @@ export function linearRegression(
   return { slope, intercept, r2 };
 }
 
+// Goodness of an arbitrary model on the raw metric. Non-finite (an overflowing
+// back-transform) means the model explains nothing, not that it wins.
+function rawR2(
+  points: { n: number; metric: number }[],
+  predict: (n: number) => number,
+): number {
+  const mean = points.reduce((sum, p) => sum + p.metric, 0) / points.length;
+  let ssTot = 0;
+  let ssRes = 0;
+  for (const p of points) {
+    ssTot += (p.metric - mean) ** 2;
+    ssRes += (p.metric - predict(p.n)) ** 2;
+  }
+  if (ssTot === 0) return 0;
+  const r2 = 1 - ssRes / ssTot;
+  return Number.isFinite(r2) ? r2 : 0;
+}
+
 export function computeScalingCurve(
   points: { n: number; metric: number }[],
 ): ScalingCurve {
   if (points.length <= 1) {
-    return { slope: 0, intercept: points[0]?.metric ?? 0, r2: 0, growthClass: "constant" };
+    return { slope: 0, intercept: points[0]?.metric ?? 0, r2: 0, growthClass: "inconclusive" };
   }
 
   const linPoints = points.map((p) => ({ x: p.n, y: p.metric }));
   const linResult = linearRegression(linPoints);
+
+  // Fewer than 3 distinct x values can't discriminate between growth models —
+  // any candidate model fits an under-determined system with r2≈1.
+  const distinctN = new Set(points.map((p) => p.n)).size;
+  if (distinctN < 3) {
+    return {
+      slope: linResult.slope,
+      intercept: linResult.intercept,
+      r2: linResult.r2,
+      growthClass: "inconclusive",
+    };
+  }
+
+  // A non-positive slope means cost isn't growing with n — never classify as
+  // linear/quadratic/exponential growth, even if a curved model fits well.
+  if (linResult.slope <= 0) {
+    return {
+      slope: linResult.slope,
+      intercept: linResult.intercept,
+      r2: linResult.r2,
+      growthClass: "constant",
+    };
+  }
 
   if (linResult.r2 < 0.5) {
     return {
@@ -487,15 +530,21 @@ export function computeScalingCurve(
   const quadPoints = points.map((p) => ({ x: p.n ** 2, y: p.metric }));
   const quadResult = linearRegression(quadPoints);
 
+  // The exponential candidate is fitted on log y but ranked against fits on
+  // raw y, so its goodness is re-measured on raw y after back-transforming.
+  // An r² across two response variables compares nothing.
   const allPositive = points.every((p) => p.metric > 0);
-  const expResult = allPositive
+  const expFit = allPositive
     ? linearRegression(points.map((p) => ({ x: p.n, y: Math.log(p.metric) })))
-    : { slope: 0, intercept: 0, r2: 0 };
+    : undefined;
+  const expR2 = expFit
+    ? rawR2(points, (n) => Math.exp(expFit.intercept + expFit.slope * n))
+    : 0;
 
   const candidates: { r2: number; growthClass: ScalingCurve["growthClass"] }[] = [
     { r2: linResult.r2, growthClass: "linear" },
     { r2: quadResult.r2, growthClass: "quadratic" },
-    { r2: expResult.r2, growthClass: "exponential" },
+    { r2: expR2, growthClass: "exponential" },
   ];
 
   candidates.sort((a, b) => b.r2 - a.r2);
@@ -534,9 +583,7 @@ export async function createCalibrationTrace(
     );
   });
 
-  const domNodeCount = await page.evaluate(
-    () => document.querySelectorAll("*").length,
-  );
+  const domNodeCount = await countComponentNodes(page);
 
   await page.evaluate(() => {
     const el = document.getElementById("__120fps_calibration");
@@ -547,3 +594,23 @@ export async function createCalibrationTrace(
   metrics.domNodeCount = domNodeCount;
   return metrics;
 }
+
+export interface DomScalePoint {
+  n: number;
+  domNodeCount?: number;
+}
+
+// A sweep that never changes the DOM did not exercise growth: either the
+// component does not render its scaled prop, or the generated values do not
+// satisfy it. Either way the growth class describes nothing.
+export function isDomFlat(points: DomScalePoint[]): boolean {
+  const counts = points
+    .map((p) => p.domNodeCount)
+    .filter((c): c is number => typeof c === "number");
+  if (counts.length < 2) return false;
+  return counts.every((c) => c === counts[0]);
+}
+
+export const SCALING_NO_EFFECT_WARNING = (propName: string): string =>
+  `scaling prop "${propName}" did not change the DOM node count across scale points; ` +
+  `the growth class describes nothing measured. Check that the component renders this prop.`;

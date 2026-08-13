@@ -41,9 +41,9 @@ function makeEntry(overrides: Partial<BaselineEntry> = {}): BaselineEntry {
 const TOL = resolveTolerances(null);
 
 describe("D6: loadBaseline version warning", () => {
-  it("warns on stderr and returns null for version 2", () => {
+  it("warns on stderr and returns null for an unsupported version", () => {
     const p = path.join(tmpDir, "120fps-baseline.json");
-    fs.writeFileSync(p, JSON.stringify({ version: 2, timestamp: "x", entries: {} }));
+    fs.writeFileSync(p, JSON.stringify({ version: 99, timestamp: "x", entries: {} }));
     expect(loadBaseline(p)).toBeNull();
     expect(stderrText()).toMatch(/unsupported baseline version, ignoring/);
   });

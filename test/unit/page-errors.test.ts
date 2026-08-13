@@ -120,6 +120,52 @@ describe("attachPageErrorCapture", () => {
     expect(capture.errors).toHaveLength(2);
     expect(capture.summary()).toContain("late");
   });
+
+  it("collapses repeated identical messages into one entry with a repeat count", () => {
+    const { page, emitter } = makeFakePage();
+    const capture = attachPageErrorCapture(page);
+    for (let i = 0; i < 25; i++) {
+      emitter.emit("pageerror", new Error("noisy"));
+    }
+    emitter.emit("pageerror", new Error("the real error"));
+    expect(capture.errors).toEqual(["noisy (×25)", "the real error"]);
+    expect(capture.summary()).not.toContain("dropped");
+  });
+
+  it("caps retention at 20 DISTINCT messages, not 20 raw events", () => {
+    const { page, emitter } = makeFakePage();
+    const capture = attachPageErrorCapture(page);
+    for (let i = 0; i < 20; i++) {
+      emitter.emit("pageerror", new Error(`distinct ${i}`));
+    }
+    // 40 repeats of one already-seen message must not evict any distinct entry.
+    for (let i = 0; i < 40; i++) {
+      emitter.emit("pageerror", new Error("distinct 0"));
+    }
+    expect(capture.errors).toHaveLength(20);
+    expect(capture.errors[0]).toBe("distinct 0 (×41)");
+    expect(capture.errors[19]).toBe("distinct 19");
+  });
+
+  it("drops a new distinct message once 20 distinct messages are already buffered", () => {
+    const { page, emitter } = makeFakePage();
+    const capture = attachPageErrorCapture(page);
+    for (let i = 0; i < 20; i++) {
+      emitter.emit("pageerror", new Error(`distinct ${i}`));
+    }
+    emitter.emit("pageerror", new Error("21st distinct"));
+    expect(capture.errors).toHaveLength(20);
+    expect(capture.summary()).toContain("1 more dropped");
+  });
+
+  it("does not report a dropped-notice at exactly 20 distinct messages", () => {
+    const { page, emitter } = makeFakePage();
+    const capture = attachPageErrorCapture(page);
+    for (let i = 0; i < 20; i++) {
+      emitter.emit("pageerror", new Error(`distinct ${i}`));
+    }
+    expect(capture.summary()).not.toContain("dropped");
+  });
 });
 
 // ====================================================================

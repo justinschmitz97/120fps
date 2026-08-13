@@ -1,6 +1,96 @@
 import ts from "typescript";
+import fs from "node:fs";
 import path from "node:path";
 import type { ExportInfo } from "./composition.js";
+
+// M36: a fresh ts.Program per extraction re-parses lib.d.ts and the project's
+// node_modules type graph every time. Between calls only the component file
+// differs, so parsed source files are cached for the process lifetime (keyed
+// by options bucket + file stamp, mirroring the LanguageService document
+// registry) and programs chain through `oldProgram` within an options bucket.
+interface ExtractionCache {
+  sourceFiles: Map<string, { sf: ts.SourceFile; mtimeMs: number; size: number }>;
+  lastProgram?: ts.Program;
+  lastOptionsKey?: string;
+  programsCreated: number;
+  sourceFilesParsed: number;
+}
+
+function emptyExtractionCache(): ExtractionCache {
+  return { sourceFiles: new Map(), programsCreated: 0, sourceFilesParsed: 0 };
+}
+
+let extractionCache = emptyExtractionCache();
+
+export function resetExtractionCache(): void {
+  extractionCache = emptyExtractionCache();
+}
+
+export function extractionCacheStats(): { programsCreated: number; sourceFilesParsed: number } {
+  return {
+    programsCreated: extractionCache.programsCreated,
+    sourceFilesParsed: extractionCache.sourceFilesParsed,
+  };
+}
+
+function stableStringify(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "undefined";
+  if (Array.isArray(value)) return "[" + value.map(stableStringify).join(",") + "]";
+  return (
+    "{" +
+    Object.keys(value as object)
+      .sort()
+      .map((k) => JSON.stringify(k) + ":" + stableStringify((value as Record<string, unknown>)[k]))
+      .join(",") +
+    "}"
+  );
+}
+
+function fileStamp(fileName: string): { mtimeMs: number; size: number } | undefined {
+  try {
+    const st = fs.statSync(fileName);
+    return { mtimeMs: st.mtimeMs, size: st.size };
+  } catch {
+    return undefined;
+  }
+}
+
+function createCachedProgram(rootFile: string, options: ts.CompilerOptions): ts.Program {
+  const optionsKey = stableStringify(options);
+  const host = ts.createCompilerHost(options);
+  const baseGetSourceFile = host.getSourceFile.bind(host);
+  host.getSourceFile = (fileName, languageVersionOrOptions, onError, shouldCreateNewSourceFile) => {
+    const caseKey = ts.sys.useCaseSensitiveFileNames ? fileName : fileName.toLowerCase();
+    // Bucketed by options like the document registry: a source file bound
+    // under one options set is never reused under another.
+    const key = optionsKey + "|" + caseKey;
+    const stamp = fileStamp(fileName);
+    const cached = extractionCache.sourceFiles.get(key);
+    if (
+      cached &&
+      stamp &&
+      !shouldCreateNewSourceFile &&
+      cached.mtimeMs === stamp.mtimeMs &&
+      cached.size === stamp.size
+    ) {
+      return cached.sf;
+    }
+    const sf = baseGetSourceFile(fileName, languageVersionOrOptions, onError, shouldCreateNewSourceFile);
+    if (sf && stamp) {
+      extractionCache.sourceFiles.set(key, { sf, mtimeMs: stamp.mtimeMs, size: stamp.size });
+      extractionCache.sourceFilesParsed++;
+    }
+    return sf;
+  };
+
+  const oldProgram =
+    extractionCache.lastOptionsKey === optionsKey ? extractionCache.lastProgram : undefined;
+  const program = ts.createProgram([rootFile], options, host, oldProgram);
+  extractionCache.lastProgram = program;
+  extractionCache.lastOptionsKey = optionsKey;
+  extractionCache.programsCreated++;
+  return program;
+}
 
 export interface PropSchema {
   name: string;
@@ -16,6 +106,9 @@ export interface PropSchema {
     | "unknown";
   required: boolean;
   values: unknown[];
+  // Array props only: a value shaped like one element, synthesized from the
+  // element type. Absent when the element type has no synthesizable shape.
+  elementTemplate?: unknown;
 }
 
 export interface ScalingPropMatch {
@@ -59,7 +152,7 @@ export function detectScalingProps(schemas: PropSchema[]): ScalingPropMatch[] {
 export async function extractProps(filePath: string): Promise<PropSchema[]> {
   const absolutePath = path.resolve(filePath);
 
-  const program = ts.createProgram([absolutePath], createCompilerOptions(absolutePath));
+  const program = createCachedProgram(absolutePath, createCompilerOptions(absolutePath));
   const checker = program.getTypeChecker();
   const sourceFile = program.getSourceFile(absolutePath);
 
@@ -264,7 +357,14 @@ function classifyType(
 
   // Array
   if (checker.isArrayType(classifyTarget)) {
-    return { name, kind: "array", required, values: [[], ["item"]] };
+    const elementTemplate = synthesizeElement(classifyTarget, checker);
+    return {
+      name,
+      kind: "array",
+      required,
+      values: [[], [elementTemplate === undefined ? "item" : elementTemplate]],
+      ...(elementTemplate === undefined ? {} : { elementTemplate }),
+    };
   }
 
   // Object
@@ -273,6 +373,66 @@ function classifyType(
   }
 
   return { name, kind: "unknown", required, values: [] };
+}
+
+const SYNTH_MAX_DEPTH = 3;
+
+// An array whose elements are strings satisfies no object-shaped element type,
+// so a scaling sweep over it renders nothing and reports constant growth.
+// Build one value shaped like the declared element instead.
+export function synthesizeElement(arrayType: ts.Type, checker: ts.TypeChecker): unknown {
+  const element = checker.getTypeArguments(arrayType as ts.TypeReference)[0];
+  if (!element) return undefined;
+  return synthesizeValue(element, checker, 0);
+}
+
+function synthesizeValue(type: ts.Type, checker: ts.TypeChecker, depth: number): unknown {
+  if (depth >= SYNTH_MAX_DEPTH) return undefined;
+
+  if (type.isStringLiteral()) return type.value;
+  if (type.isNumberLiteral()) return type.value;
+  if (type.flags & ts.TypeFlags.BooleanLiteral) {
+    return checker.typeToString(type) === "true";
+  }
+  if (type.flags & ts.TypeFlags.String) return "text";
+  if (type.flags & ts.TypeFlags.Number) return 1;
+  if (type.flags & (ts.TypeFlags.Boolean | ts.TypeFlags.BooleanLike)) return true;
+  if (type.flags & (ts.TypeFlags.Null | ts.TypeFlags.Undefined | ts.TypeFlags.Void)) {
+    return undefined;
+  }
+
+  if (type.isUnion()) {
+    for (const member of type.types) {
+      if (member.flags & (ts.TypeFlags.Undefined | ts.TypeFlags.Null)) continue;
+      const value = synthesizeValue(member, checker, depth);
+      if (value !== undefined) return value;
+    }
+    return undefined;
+  }
+
+  if (checker.isArrayType(type)) {
+    const inner = checker.getTypeArguments(type as ts.TypeReference)[0];
+    if (!inner) return [];
+    const value = synthesizeValue(inner, checker, depth + 1);
+    return value === undefined ? [] : [value];
+  }
+
+  if (type.flags & ts.TypeFlags.Object) {
+    // Functions and other callables have no data shape worth inventing.
+    if (checker.getSignaturesOfType(type, ts.SignatureKind.Call).length > 0) {
+      return undefined;
+    }
+    const props = checker.getPropertiesOfType(type);
+    if (props.length === 0) return undefined;
+    const record: Record<string, unknown> = {};
+    for (const prop of props) {
+      const propType = checker.getTypeOfSymbol(prop);
+      record[prop.name] = synthesizeValue(propType, checker, depth + 1);
+    }
+    return record;
+  }
+
+  return undefined;
 }
 
 function isBooleanUnion(types: ts.Type[]): boolean {
@@ -356,6 +516,22 @@ export function scanExports(sourceText: string, fileName: string): ExportInfo[] 
   return [...byName.values()];
 }
 
+// M39: every source file a component's type-check touches, minus default
+// libs and external libraries — the file set whose contents identify the
+// component for fingerprinting. Rides the M36 program cache.
+export async function projectSourceFiles(filePath: string): Promise<string[]> {
+  const absolutePath = path.resolve(filePath);
+  const program = createCachedProgram(absolutePath, createCompilerOptions(absolutePath));
+  const files: string[] = [];
+  for (const sf of program.getSourceFiles()) {
+    if (program.isSourceFileDefaultLibrary(sf)) continue;
+    if (program.isSourceFileFromExternalLibrary(sf)) continue;
+    if (/[\\/]node_modules[\\/]/.test(sf.fileName)) continue;
+    files.push(path.normalize(sf.fileName));
+  }
+  return files.sort();
+}
+
 export async function extractExports(filePath: string): Promise<ExportInfo[]> {
   const absolutePath = path.resolve(filePath);
   const sourceText = ts.sys.readFile(absolutePath);
@@ -366,7 +542,7 @@ export async function extractExports(filePath: string): Promise<ExportInfo[]> {
 export async function extractAllProps(filePath: string): Promise<Map<string, PropSchema[]>> {
   const absolutePath = path.resolve(filePath);
   const options = createCompilerOptions(absolutePath);
-  const program = ts.createProgram([absolutePath], options);
+  const program = createCachedProgram(absolutePath, options);
   const checker = program.getTypeChecker();
   const sourceFile = program.getSourceFile(absolutePath);
   if (!sourceFile) return new Map();
@@ -418,6 +594,12 @@ function warnTsconfigOnce(configPath: string, detail: string): void {
   if (warnedTsconfigPaths.has(configPath)) return;
   warnedTsconfigPaths.add(configPath);
   process.stderr.write(`Warning: problem reading tsconfig at ${configPath}: ${detail}\n`);
+}
+
+// The same options prop extraction resolves under, so a preflight walk follows
+// the same tsconfig paths the measured graph does.
+export function projectCompilerOptions(absolutePath: string): ts.CompilerOptions {
+  return createCompilerOptions(path.resolve(absolutePath));
 }
 
 function createCompilerOptions(absolutePath: string): ts.CompilerOptions {

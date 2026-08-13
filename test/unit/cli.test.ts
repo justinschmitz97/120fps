@@ -72,3 +72,38 @@ describe("parseArgs", () => {
     expect(result.error).toBeTruthy();
   });
 });
+
+describe("--scale validation", () => {
+  it("accepts 2 or more distinct positive integers", () => {
+    const result = parseArgs(["./Button.tsx", "--scale", "1,5,20"]);
+    expect(result.error).toBeUndefined();
+    expect(result.scale).toEqual([1, 5, 20]);
+  });
+
+  it("errors with a single value", () => {
+    const result = parseArgs(["./Button.tsx", "--scale", "5"]);
+    expect(result.error).toBeTruthy();
+  });
+
+  it("errors when duplicates collapse the set below 2 distinct values", () => {
+    const result = parseArgs(["./Button.tsx", "--scale", "5,5"]);
+    expect(result.error).toBeTruthy();
+  });
+
+  it("errors on non-numeric values", () => {
+    const result = parseArgs(["./Button.tsx", "--scale", "5,abc"]);
+    expect(result.error).toBeTruthy();
+  });
+
+  it("errors on zero", () => {
+    expect(parseArgs(["./Button.tsx", "--scale", "0,5"]).error).toBeTruthy();
+  });
+
+  it("errors on negative values", () => {
+    expect(parseArgs(["./Button.tsx", "--scale", "-1,5"]).error).toBeTruthy();
+  });
+
+  it("errors when --scale has no value", () => {
+    expect(parseArgs(["./Button.tsx", "--scale"]).error).toBeTruthy();
+  });
+});

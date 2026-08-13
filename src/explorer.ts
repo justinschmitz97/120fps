@@ -2,7 +2,7 @@ import { chromium, type Browser, type CDPSession, type Page } from "playwright";
 import type { HarnessResult } from "./harness.js";
 import type { PropCombination } from "./prop-gen-values.js";
 import { extractProps } from "./prop-gen.js";
-import { generateCombinations } from "./prop-gen-values.js";
+import { generateCombinations, selectRepresentativeCombos } from "./prop-gen-values.js";
 import {
   discoverInteractions,
   type InteractionDescriptor,
@@ -12,6 +12,7 @@ import {
   resolveStressPattern,
   executeStressPattern,
   findAriaGroupSiblings,
+  countPatternEvents,
 } from "./stress-patterns.js";
 import {
   applyWrapperViewport,
@@ -21,10 +22,22 @@ import {
   parseTraceDuration,
   settleStyles,
   tryCollectGarbage,
+  suspendThrottle,
+  withContextRetry,
+  createRetryBudget,
+  refreshCdpSession,
+  type CdpHolder,
+  type RetryBudget,
   HARNESS_NAV_WAIT,
   type TraceEvent,
 } from "./measure.js";
 import { attachPageErrorCapture, enrichTimeoutError } from "./page-errors.js";
+import {
+  installObservers,
+  beginObservedWindow,
+  readObservedWindow,
+  observedInteractionMs,
+} from "./observers.js";
 
 // --- Types ---
 
@@ -49,6 +62,7 @@ export interface StateEdge {
   p95: number;
   traces: TraceEvent[][];
   stressPattern?: string;
+  stressSteps?: number;
 }
 
 export interface StateGraph {
@@ -56,6 +70,8 @@ export interface StateGraph {
   edges: StateEdge[];
   initialNodeId: string;
   wallClockMs: number;
+  // M47: paths whose content moved on its own, excluded from state hashes.
+  volatilePaths?: string[];
 }
 
 export interface ExploreOptions {
@@ -67,13 +83,45 @@ export interface ExploreOptions {
   warmupRuns?: number;
   seed?: number;
   combos?: PropCombination[];
+  totalWallClockMs?: number;
+  maxCombos?: number;
+  // M37: reuse the pooled vsync browser (fresh context per pass). Explore
+  // always paces at vsync — its metrics depend on real frame scheduling.
+  pool?: import("./measure.js").BrowserPool;
+  onWarning?: (warning: string) => void;
+  // M52: time interactions with in-page observers instead of a per-sample CDP
+  // trace. Opt-in until the A/B acceptance in the milestone spec is met.
+  observerTiming?: boolean;
 }
+
+// `maxWallClockMs` is spent per combo. Without a run-level bound, a component
+// with the full 64-combo matrix can explore for over an hour.
+export const DEFAULT_TOTAL_WALL_CLOCK_MS = 300000;
+export const DEFAULT_MAX_COMBOS = 8;
+
+// One selection algorithm serves exploration and measurement, so the two never
+// disagree about which combos represent the value space.
+export function selectExploreCombos(count: number, maxCombos: number): number[] {
+  return selectRepresentativeCombos(count, maxCombos);
+}
+
+export const EXPLORE_BUDGET_WARNING = (explored: number, total: number): string =>
+  `explored ${explored} of ${total} prop combos; ${total - explored} were skipped to stay inside ` +
+  `the exploration budget. Skipped combos report no interactions.`;
 
 export interface ExploreResult {
   graph: StateGraph;
   comboIndex: number;
   props: PropCombination;
+  // M47: how many DOM regions changed on their own between two idle probes.
+  // Non-zero is a finding in itself: the component renders non-deterministically.
+  volatileRegions?: number;
 }
+
+export const VOLATILE_DOM_NOTICE = (comboIndex: number, regions: number): string =>
+  `combo ${comboIndex} has ${regions} DOM ${regions === 1 ? "region" : "regions"} that changed ` +
+  "without input (timestamps, random ids, or animation). Their content is excluded from state " +
+  "detection so exploration does not chase phantom states; structural change through them still counts.";
 
 // --- Pure utilities ---
 
@@ -158,12 +206,95 @@ async function waitForRender(page: Page): Promise<void> {
   );
 }
 
-async function computeDomHash(page: Page): Promise<string> {
-  const html = await page.evaluate(() => {
-    const root = document.getElementById("root");
-    return root ? root.innerHTML : "";
-  });
-  return fnv1aHash(html);
+// M47: the gap has to outlast a frame and a short timer without costing more
+// than a combo can afford. A once-per-second clock beats it; that miss is
+// documented rather than paid for on every combo.
+export const VOLATILITY_PROBE_GAP_MS = 250;
+
+// Structure is what the element tree is; content is what it says. A timestamp
+// re-rendering is content churn, and attributing state change to it inflates
+// the graph toward its node cap chasing phantoms.
+//
+// Outside a volatile region everything counts. Inside one, attribute values and
+// text drop out while tags and attribute names stay: an element appearing or
+// disappearing through a volatile region is still a state change.
+function serializeTree(volatilePaths: string[]): string {
+  const volatile = new Set(volatilePaths);
+  const root = document.getElementById("root");
+  if (!root) return "";
+  let out = "";
+  const walk = (el: Element, path: string, inVolatile: boolean): void => {
+    const here = inVolatile || volatile.has(path);
+    out += "<" + el.tagName;
+    for (const name of el.getAttributeNames().sort()) {
+      out += " " + name;
+      if (!here) out += "=" + el.getAttribute(name);
+    }
+    out += ">";
+    let elementIndex = 0;
+    for (const child of Array.from(el.childNodes)) {
+      if (child.nodeType === 3) {
+        if (!here) out += child.nodeValue;
+      } else if (child.nodeType === 1) {
+        const childEl = child as Element;
+        walk(childEl, path + "/" + childEl.tagName + "[" + elementIndex + "]", here);
+        elementIndex++;
+      }
+    }
+    out += "</" + el.tagName + ">";
+  };
+  walk(root, "", false);
+  return out;
+}
+
+// Per-element content fingerprints, addressed structurally so a remount between
+// the two probes maps to the same regions.
+function contentMap(): Record<string, string> {
+  const root = document.getElementById("root");
+  const map: Record<string, string> = {};
+  if (!root) return map;
+  const walk = (el: Element, path: string): void => {
+    let content = "";
+    for (const name of el.getAttributeNames().sort()) {
+      content += name + "=" + el.getAttribute(name) + ";";
+    }
+    let elementIndex = 0;
+    for (const child of Array.from(el.childNodes)) {
+      if (child.nodeType === 3) {
+        content += child.nodeValue;
+      } else if (child.nodeType === 1) {
+        const childEl = child as Element;
+        walk(childEl, path + "/" + childEl.tagName + "[" + elementIndex + "]");
+        elementIndex++;
+      }
+    }
+    map[path] = content;
+  };
+  walk(root, "");
+  return map;
+}
+
+// Two idle samples with no input in between. Anything whose content moved on
+// its own is the DOM's noise floor, not a state.
+export async function probeVolatileRegions(
+  page: Page,
+  gapMs: number = VOLATILITY_PROBE_GAP_MS,
+): Promise<string[]> {
+  const first = await page.evaluate(contentMap);
+  await page.evaluate((ms: number) => new Promise((r) => setTimeout(r, ms)), gapMs);
+  const second = await page.evaluate(contentMap);
+
+  const volatile: string[] = [];
+  for (const [path, content] of Object.entries(first)) {
+    // A path present in only one sample is a structural change, which state
+    // detection is supposed to see.
+    if (path in second && second[path] !== content) volatile.push(path);
+  }
+  return volatile.sort();
+}
+
+async function computeDomHash(page: Page, volatilePaths: string[] = []): Promise<string> {
+  return fnv1aHash(await page.evaluate(serializeTree, volatilePaths));
 }
 
 async function exerciseInteraction(
@@ -194,6 +325,10 @@ async function exerciseInteraction(
           break;
         case "hover":
           await page.hover(desc.selector, { timeout: 3000 });
+          break;
+        case "scroll":
+          // Nothing to reach: scroll edges are state-invariant, so no state
+          // node is ever behind one and no replay path contains one.
           break;
       }
     }
@@ -295,6 +430,8 @@ export async function explore(
     cpuThrottle = 4,
     warmupRuns = 2,
     seed = 42,
+    totalWallClockMs = DEFAULT_TOTAL_WALL_CLOCK_MS,
+    maxCombos = DEFAULT_MAX_COMBOS,
   } = options;
 
   let combos: PropCombination[];
@@ -307,34 +444,56 @@ export async function explore(
   }
 
   let browser: Browser | undefined;
+  let context: import("playwright").BrowserContext | undefined;
   try {
-    browser = await chromium.launch({ headless: true });
-    const page = await browser.newPage();
-    const errorCapture = attachPageErrorCapture(page);
-    const cdp = await page.context().newCDPSession(page);
-
-    await page.goto(harness.url, { waitUntil: HARNESS_NAV_WAIT });
-    try {
-      await page.waitForFunction(
-        () => typeof (window as any).__120fps === "object",
-        undefined,
-        { timeout: 30000 },
-      );
-    } catch (err) {
-      throw enrichTimeoutError(err, errorCapture, "explorer harness");
+    if (options.pool) {
+      context = await (await options.pool.acquire(false)).newContext();
+    } else {
+      browser = await chromium.launch({ headless: true });
     }
+    const page = context ? await context.newPage() : await browser!.newPage();
+    const errorCapture = attachPageErrorCapture(page);
+    const initialCdp = await page.context().newCDPSession(page);
 
-    await applyWrapperViewport(page);
-    await settleStyles(page, harness);
-    await cdp.send("Emulation.setCPUThrottlingRate", { rate: cpuThrottle });
+    // Renamed so a leftover reference to the pre-recovery session cannot
+    // compile; see measureMount for the same guard.
+    const session: CdpHolder = { cdp: initialCdp };
+    const enter = async (): Promise<void> => {
+      await refreshCdpSession(page, session);
+      await page.goto(harness.url, { waitUntil: HARNESS_NAV_WAIT });
+      try {
+        await page.waitForFunction(
+          () => typeof (window as any).__120fps === "object",
+          undefined,
+          { timeout: 30000 },
+        );
+      } catch (err) {
+        throw enrichTimeoutError(err, errorCapture, "explorer harness");
+      }
+
+      await applyWrapperViewport(page);
+      await settleStyles(page, harness);
+      await session.cdp.send("Emulation.setCPUThrottlingRate", { rate: cpuThrottle });
+    };
+
+    // One entry path, used for the first entry and for every recovery: the
+    // extra CDP session at startup is cheaper than a second copy of the
+    // preamble drifting out of sync with this one.
+    await enter();
+    const retryBudget = createRetryBudget();
 
     const results: ExploreResult[] = [];
+    const selected = selectExploreCombos(combos.length, maxCombos);
+    const runStart = Date.now();
 
-    for (let ci = 0; ci < combos.length; ci++) {
+    for (const ci of selected) {
+      // The combo already running finishes; only new ones are refused, so a
+      // partial state graph is never returned.
+      if (results.length > 0 && Date.now() - runStart >= totalWallClockMs) break;
       const props = combos[ci];
       const graph = await exploreCombo(
         page,
-        cdp,
+        session,
         props,
         {
           sampleCount,
@@ -343,14 +502,25 @@ export async function explore(
           maxDepth,
           warmupRuns,
           seed,
+          cpuThrottle,
+          observerTiming: options.observerTiming === true,
         },
+        enter,
+        options.onWarning,
+        retryBudget,
       );
 
-      results.push({ graph, comboIndex: ci, props });
+      results.push({
+        graph,
+        comboIndex: ci,
+        props,
+        ...(graph.volatilePaths ? { volatileRegions: graph.volatilePaths.length } : {}),
+      });
     }
 
     return results;
   } finally {
+    if (context) await context.close();
     if (browser) await browser.close();
   }
 }
@@ -362,13 +532,18 @@ interface InternalOptions {
   maxDepth: number;
   warmupRuns: number;
   seed: number;
+  cpuThrottle: number;
+  observerTiming: boolean;
 }
 
 async function exploreCombo(
   page: Page,
-  cdp: CDPSession,
+  session: CdpHolder,
   props: PropCombination,
   opts: InternalOptions,
+  enter: () => Promise<void>,
+  onWarning?: (warning: string) => void,
+  budget?: RetryBudget,
 ): Promise<StateGraph> {
   const rng = createRng(opts.seed);
   const startTime = Date.now();
@@ -378,18 +553,29 @@ async function exploreCombo(
   const convergenceWindow: boolean[] = [];
   const CONVERGENCE_SIZE = 10;
 
-  // Warmup
-  for (let w = 0; w < opts.warmupRuns; w++) {
-    await mountComponent(page, props);
-  }
+  // Warmup and initial state share the retry: a reload here loses the whole
+  // combo, not one sample, so it is the costliest place to be unprotected.
+  const { initialHash, initialInteractions, volatile } = await withContextRetry(
+    enter,
+    async () => {
+      for (let w = 0; w < opts.warmupRuns; w++) {
+        await mountComponent(page, props);
+      }
 
-  // Initial state
-  await mountComponent(page, props);
-  const initialHash = await computeDomHash(page);
-  const initialInteractions = await discoverInteractions(page, {
-    probePortals: true,
-    remount: () => mountComponent(page, props),
-  });
+      await mountComponent(page, props);
+      // M47: measure the DOM's own noise floor before attributing any change to
+      // an interaction. Runs before discovery so every hash in this combo,
+      // including the initial one, speaks the same language.
+      const volatile = await probeVolatileRegions(page);
+      const hash = await computeDomHash(page, volatile);
+      const interactions = await discoverInteractions(page, {
+        probePortals: true,
+        remount: () => mountComponent(page, props),
+      });
+      return { initialHash: hash, initialInteractions: interactions, volatile };
+    },
+    { onRetry: onWarning, budget },
+  );
 
   nodes.set(initialHash, {
     id: initialHash,
@@ -440,19 +626,51 @@ async function exploreCombo(
     for (let s = 0; s < opts.sampleCount; s++) {
       if (Date.now() - startTime >= opts.maxWallClockMs) break;
 
-      await tryCollectGarbage(cdp);
-      await navigateToState(page, props, sourceNode.pathFromRoot);
+      // M52: the same exercise, timed two ways. The observer path skips the
+      // per-sample trace lifecycle, which is what dominates explore's wall
+      // clock; the trace path stays the default until the A/B says otherwise.
+      if (opts.observerTiming) {
+        const observed = await withContextRetry(
+          enter,
+          async () => {
+            await suspendThrottle(session.cdp, opts.cpuThrottle, () => tryCollectGarbage(session.cdp));
+            await navigateToState(page, props, sourceNode.pathFromRoot);
+            await installObservers(page);
+            await beginObservedWindow(page);
+            await executeStressPattern(page, pattern);
+            return readObservedWindow(page);
+          },
+          { onRetry: onWarning, budget },
+        );
+        samples.push(observedInteractionMs(observed));
+        traces.push([]);
+        if (s === 0) {
+          targetHash = pattern.stateInvariant ? item.stateId : await computeDomHash(page, volatile);
+        }
+        continue;
+      }
 
-      const traceEvents = await collectTrace(cdp, async () => {
-        await executeStressPattern(page, pattern);
-      });
+      const traceEvents = await withContextRetry(
+        enter,
+        async () => {
+          await suspendThrottle(session.cdp, opts.cpuThrottle, () => tryCollectGarbage(session.cdp));
+          await navigateToState(page, props, sourceNode.pathFromRoot);
+          return collectTrace(session.cdp, async () => {
+            await executeStressPattern(page, pattern);
+          });
+        },
+        { onRetry: onWarning, budget },
+      );
 
       const parsed = parseTraceDuration(traceEvents);
       samples.push(parsed.totalDuration);
       traces.push(traceEvents);
 
       if (s === 0) {
-        targetHash = await computeDomHash(page);
+        // M43: a state-invariant pattern ends where it started, so the edge is
+        // a self-loop. Hashing the DOM here would mint one node per scroll
+        // offset as virtualized windowing rewrites the rows.
+        targetHash = pattern.stateInvariant ? item.stateId : await computeDomHash(page, volatile);
       }
     }
 
@@ -469,6 +687,7 @@ async function exploreCombo(
       p95: computeP95(samples),
       traces,
       stressPattern: pattern.name,
+      stressSteps: countPatternEvents(pattern),
     };
     edges.push(edge);
 
@@ -477,9 +696,15 @@ async function exploreCombo(
       discoveredNew = true;
 
       // Navigate to target state to discover its interactions
-      await navigateToState(page, props, sourceNode.pathFromRoot);
-      await exerciseInteraction(page, item.interaction);
-      const targetInteractions = await discoverInteractions(page);
+      const targetInteractions = await withContextRetry(
+        enter,
+        async () => {
+          await navigateToState(page, props, sourceNode.pathFromRoot);
+          await exerciseInteraction(page, item.interaction);
+          return discoverInteractions(page);
+        },
+        { onRetry: onWarning, budget },
+      );
 
       nodes.set(targetHash, {
         id: targetHash,
@@ -522,5 +747,6 @@ async function exploreCombo(
     edges,
     initialNodeId: initialHash,
     wallClockMs: Date.now() - startTime,
+    ...(volatile.length > 0 ? { volatilePaths: volatile } : {}),
   };
 }

@@ -1,5 +1,15 @@
 import { describe, it, expect } from "vitest";
-import { parseArgs, resolveIsolationOption, formatCliError, helpText, KNOWN_FLAGS } from "../../src/cli.js";
+import {
+  parseArgs,
+  resolveIsolationOption,
+  formatCliError,
+  helpText,
+  KNOWN_FLAGS,
+  isDebugStackEnabled,
+  wrapperNotFoundMessage,
+  stylesheetNotFoundMessage,
+} from "../../src/cli.js";
+import { resolveWrapPath, resolveCssFiles } from "../../src/analyze.js";
 
 describe("D3: resolveIsolationOption", () => {
   it("returns isolation options when --isolate is set and --no-isolate is not", () => {
@@ -110,5 +120,75 @@ describe("D6: formatCliError", () => {
   it("no stack for non-Error even with DEBUG set", () => {
     const out = formatCliError("bare failure", "120fps");
     expect(out).toBe("Error: bare failure\n");
+  });
+});
+
+describe("D7: isDebugStackEnabled — DEBUG convention", () => {
+  it("enabled when DEBUG is exactly '1'", () => {
+    expect(isDebugStackEnabled("1")).toBe(true);
+  });
+
+  it("enabled when DEBUG is exactly 'true'", () => {
+    expect(isDebugStackEnabled("true")).toBe(true);
+  });
+
+  it("enabled when DEBUG is exactly '*'", () => {
+    expect(isDebugStackEnabled("*")).toBe(true);
+  });
+
+  it("enabled when DEBUG contains 120fps", () => {
+    expect(isDebugStackEnabled("120fps:*")).toBe(true);
+  });
+
+  it("disabled when DEBUG is a superstring of '1' that isn't exact and doesn't contain 120fps", () => {
+    expect(isDebugStackEnabled("10")).toBe(false);
+  });
+
+  it("disabled when DEBUG is '0' or 'false'", () => {
+    expect(isDebugStackEnabled("0")).toBe(false);
+    expect(isDebugStackEnabled("false")).toBe(false);
+  });
+
+  it("disabled when DEBUG is unset", () => {
+    expect(isDebugStackEnabled(undefined)).toBe(false);
+  });
+
+  it("formatCliError prints a stack when DEBUG=1", () => {
+    const out = formatCliError(new Error("boom"), "1");
+    expect(out).toContain("at ");
+  });
+
+  it("formatCliError prints a stack when DEBUG=true", () => {
+    const out = formatCliError(new Error("boom"), "true");
+    expect(out).toContain("at ");
+  });
+
+  it("formatCliError prints a stack when DEBUG=*", () => {
+    const out = formatCliError(new Error("boom"), "*");
+    expect(out).toContain("at ");
+  });
+});
+
+describe("D8: --wrap / --css error wording matches analyze.ts", () => {
+  it("cli wrapperNotFoundMessage matches the message resolveWrapPath throws", () => {
+    const missing = "./definitely-not-a-real-wrap-file.tsx";
+    let thrown: string | undefined;
+    try {
+      resolveWrapPath({ wrapPath: missing }, process.cwd());
+    } catch (err) {
+      thrown = err instanceof Error ? err.message : String(err);
+    }
+    expect(thrown).toBe(wrapperNotFoundMessage(missing));
+  });
+
+  it("cli stylesheetNotFoundMessage matches the message resolveCssFiles throws", () => {
+    const missing = "./definitely-not-a-real-stylesheet.css";
+    let thrown: string | undefined;
+    try {
+      resolveCssFiles({ cssFiles: [missing] }, process.cwd());
+    } catch (err) {
+      thrown = err instanceof Error ? err.message : String(err);
+    }
+    expect(thrown).toBe(stylesheetNotFoundMessage(missing));
   });
 });

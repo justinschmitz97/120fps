@@ -14,9 +14,16 @@ import {
   MISSING_CALIBRATION_NOTE,
   type BaselineEntry,
   type ResolvedTolerance,
+  selectBaselineEntry,
 } from "../../src/budget.js";
 import { formatTable, buildTimingWithCV, type EnvFingerprint, type Report, type Thresholds } from "../../src/report.js";
 import { parseArgs } from "../../src/cli.js";
+
+// M45: entries are keyed by component x environment slot; selectBaselineEntry
+// resolves the slot for us so these assertions stay about the entry, not the key.
+function entryOf(baseline: any, componentPath: string) {
+  return selectBaselineEntry(baseline, componentPath, "unused")!.entry;
+}
 
 const TOL: ResolvedTolerance = resolveTolerances(null);
 
@@ -219,8 +226,8 @@ describe("H10 mixed baseline file", () => {
     const loaded = loadBaseline(file)!;
 
     const current = { mount: 1.5, rerender: 0.5, unmount: 0.1, interactions: {} };
-    expect(compareBaseline(loaded.entries["./Old.tsx"], current, TOL, undefined, env()).envMatch).toBe("unknown");
-    expect(compareBaseline(loaded.entries["./New.tsx"], current, TOL, undefined, env()).envMatch).toBe("identical");
+    expect(compareBaseline(entryOf(loaded, "./Old.tsx"), current, TOL, undefined, env()).envMatch).toBe("unknown");
+    expect(compareBaseline(entryOf(loaded, "./New.tsx"), current, TOL, undefined, env()).envMatch).toBe("identical");
   });
 
   it("preserves an unrelated entry's fingerprint when another is re-saved", () => {
@@ -228,8 +235,8 @@ describe("H10 mixed baseline file", () => {
     saveBaseline(file, makeEntry({ env: env({ wrapper: "a.tsx" }) }), "./A.tsx");
     saveBaseline(file, makeEntry({ env: env({ wrapper: "b.tsx" }) }), "./B.tsx");
     const loaded = loadBaseline(file)!;
-    expect(loaded.entries["./A.tsx"].env!.wrapper).toBe("a.tsx");
-    expect(loaded.entries["./B.tsx"].env!.wrapper).toBe("b.tsx");
+    expect(entryOf(loaded, "./A.tsx").env!.wrapper).toBe("a.tsx");
+    expect(entryOf(loaded, "./B.tsx").env!.wrapper).toBe("b.tsx");
   });
 });
 

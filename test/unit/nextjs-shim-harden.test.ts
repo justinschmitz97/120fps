@@ -170,7 +170,8 @@ describe("H6: formatTable with single shim", () => {
     const lines = output.split("\n");
     const chromiumLine = lines.findIndex((l) => l.includes("Chromium"));
     const shimLine = lines.findIndex((l) => l.includes("Next.js shims"));
-    expect(shimLine).toBe(chromiumLine + 1);
+    // Ordering, not adjacency: the header grows (M32 added the mode line).
+    expect(shimLine).toBeGreaterThan(chromiumLine);
   });
 });
 

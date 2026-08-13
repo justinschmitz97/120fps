@@ -177,11 +177,11 @@ describe("H7: --matrix and --no-matrix together", () => {
 });
 
 describe("H8: --matrix and --curve together", () => {
-  it("both flags parsed without error", () => {
+  it("is rejected instead of silently resolving curve-wins", () => {
     const args = parseArgs(["./Button.tsx", "--matrix", "--curve"]);
     expect(args.matrix).toBe(true);
     expect(args.curve).toBe(true);
-    expect(args.error).toBeUndefined();
+    expect(args.error).toBe("--curve cannot be combined with --matrix");
   });
 });
 

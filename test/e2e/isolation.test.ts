@@ -294,7 +294,7 @@ describe("isolation baselines", () => {
     expect(saved.isolation!.mount!.median).toBeGreaterThan(0);
 
     const baseline = JSON.parse(fs.readFileSync(PROJECT_BASELINE, "utf-8")) as Baseline;
-    const entry = baseline.entries[PROJECT_ENTRY_KEY];
+    const entry = baseline.entries[Object.keys(baseline.entries).find((k) => k.startsWith(PROJECT_ENTRY_KEY))!];
     expect(entry).toBeDefined();
     expect(entry.env!.mode).toBe("isolation");
     expect(entry.mount).toBeGreaterThan(0);
@@ -315,6 +315,11 @@ describe("isolation baselines", () => {
   }, 600000);
 
   it("classifies a combo baseline checked from isolation mode as incompatible", async () => {
+    // M45 gives each mode its own slot, so the previous test's isolation slot
+    // would otherwise satisfy this check exactly. Start from a file whose only
+    // slot is the combo one, which is the situation this test is about.
+    fs.rmSync(PROJECT_BASELINE, { force: true });
+
     await analyze(PROJECT_COMPONENT, {
       ...FAST,
       saveBaseline: true,

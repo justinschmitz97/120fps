@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { chromium, type Browser, type CDPSession, type Page } from "playwright";
-import { renderTreeHelper, wrapImportLine, type HarnessResult } from "./harness.js";
+import { renderTreeHelper, setupApiBlock, setupBlock, wrapImportLine, type HarnessResult } from "./harness.js";
 import type { PropCombination } from "./prop-gen-values.js";
 import { applyWrapperViewport, collectTrace, parseTraceDuration, settleStyles, tryCollectGarbage, computeMedian, HARNESS_NAV_WAIT } from "./measure.js";
 import { attachPageErrorCapture, enrichTimeoutError } from "./page-errors.js";
@@ -361,7 +361,7 @@ let root = createRoot(container);
 let mounted = false;
 const stableCallbackCache = new Map<string, Function>();
 ${renderTreeHelper(opts.wrapRelative)}
-
+${setupBlock(opts.wrapRelative)}
 (window as any).__120fps = {
   mount(props: any = {}) {
     if (mounted) {
@@ -421,7 +421,7 @@ ${renderTreeHelper(opts.wrapRelative)}
     return container;
   },
 };
-${probeViewportBlock(opts.wrapRelative)}
+${setupApiBlock(opts.wrapRelative)}${probeViewportBlock(opts.wrapRelative)}
 `;
 }
 
@@ -451,6 +451,8 @@ export interface ReactAnalysisOptions {
   cpuThrottle?: number;
   warmupRuns?: number;
   fnPropNames?: string[];
+  // M37: reuse the pooled vsync browser (fresh context per pass).
+  pool?: import("./measure.js").BrowserPool;
 }
 
 const FUNCTION_MARKER = "__120fps_fn__";
@@ -523,10 +525,15 @@ export async function runReactAnalysis(
 
   const results = new Map<number, ReactOptimizations>();
   let browser: Browser | undefined;
+  let context: import("playwright").BrowserContext | undefined;
 
   try {
-    browser = await chromium.launch({ headless: true });
-    const page = await browser.newPage();
+    if (options.pool) {
+      context = await (await options.pool.acquire(false)).newContext();
+    } else {
+      browser = await chromium.launch({ headless: true });
+    }
+    const page = context ? await context.newPage() : await browser!.newPage();
     const cdp = await page.context().newCDPSession(page);
 
     await injectProfilerHook(cdp);
@@ -657,6 +664,7 @@ export async function runReactAnalysis(
 
     return results;
   } finally {
+    if (context) await context.close();
     if (browser) await browser.close();
     try {
       fs.unlinkSync(path.join(harness.harnessDir, "probe-entry.tsx"));

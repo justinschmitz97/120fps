@@ -7,10 +7,17 @@ import {
   saveBaseline,
   compareBaseline,
   resolveTolerances,
+  selectBaselineEntry,
   type Baseline,
   type BaselineEntry,
   type ResolvedTolerance,
 } from "../../src/budget.js";
+
+// M45: entries are keyed by component x environment slot; selectBaselineEntry
+// resolves the slot for us so these assertions stay about the entry, not the key.
+function entryOf(baseline: Baseline | null, componentPath: string): BaselineEntry {
+  return selectBaselineEntry(baseline, componentPath, "unused")!.entry;
+}
 
 let tmpDir: string;
 
@@ -51,7 +58,7 @@ describe("loadBaseline", () => {
     fs.writeFileSync(filePath, JSON.stringify(baseline));
     const loaded = loadBaseline(filePath);
     expect(loaded).not.toBeNull();
-    expect(loaded!.entries["./Button.tsx"].mount).toBe(1.0);
+    expect(entryOf(loaded, "./Button.tsx").mount).toBe(1.0);
   });
 
   it("returns null for wrong version", () => {
@@ -68,8 +75,8 @@ describe("saveBaseline", () => {
     saveBaseline(filePath, makeEntry({ mount: 2.0 }), "./Button.tsx");
     const loaded = loadBaseline(filePath);
     expect(loaded).not.toBeNull();
-    expect(loaded!.entries["./Button.tsx"].mount).toBe(2.0);
-    expect(loaded!.version).toBe(1);
+    expect(entryOf(loaded, "./Button.tsx").mount).toBe(2.0);
+    expect(loaded!.version).toBe(2);
   });
 
   it("merges with existing entries", () => {
@@ -77,8 +84,8 @@ describe("saveBaseline", () => {
     saveBaseline(filePath, makeEntry({ mount: 1.0 }), "./Button.tsx");
     saveBaseline(filePath, makeEntry({ mount: 3.0 }), "./Accordion.tsx");
     const loaded = loadBaseline(filePath);
-    expect(loaded!.entries["./Button.tsx"].mount).toBe(1.0);
-    expect(loaded!.entries["./Accordion.tsx"].mount).toBe(3.0);
+    expect(entryOf(loaded, "./Button.tsx").mount).toBe(1.0);
+    expect(entryOf(loaded, "./Accordion.tsx").mount).toBe(3.0);
   });
 
   it("overwrites existing entry for same component", () => {
@@ -86,7 +93,7 @@ describe("saveBaseline", () => {
     saveBaseline(filePath, makeEntry({ mount: 1.0 }), "./Button.tsx");
     saveBaseline(filePath, makeEntry({ mount: 5.0 }), "./Button.tsx");
     const loaded = loadBaseline(filePath);
-    expect(loaded!.entries["./Button.tsx"].mount).toBe(5.0);
+    expect(entryOf(loaded, "./Button.tsx").mount).toBe(5.0);
   });
 });
 

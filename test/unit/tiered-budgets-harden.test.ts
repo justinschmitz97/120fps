@@ -276,8 +276,10 @@ describe("H14: TIER_BUDGETS immutability", () => {
 });
 
 // H15: interaction at exact T2 boundary
-describe("H15: interaction at exact T2 budget (250ms) passes", () => {
-  it("250ms interaction passes T2", () => {
+describe("H15: interaction at exactly T2's per-event budget passes", () => {
+  // M33 E2: T2 allows 50ms for one event, so the boundary moved from the
+  // 250ms aggregate to 50ms per event.
+  it("50ms single-event interaction passes T2", () => {
     const combo = makeCombo({
       mount: { samples: [10], median: 10, p95: 10, cv: 0, unstable: false },
       rerender: { samples: [4], median: 4, p95: 4, cv: 0, unstable: false },
@@ -286,12 +288,13 @@ describe("H15: interaction at exact T2 budget (250ms) passes", () => {
         selector: "button",
         type: "click",
         label: "btn",
-        timing: { samples: [250], median: 250, p95: 250, cv: 0, unstable: false },
+        timing: { samples: [50], median: 50, p95: 50, cv: 0, unstable: false },
         relativeTiming: 1.0,
+        steps: 1,
       }],
     });
     const verdict = computeVerdict(combo, DEFAULT_THRESHOLDS, { tierBudget: TIER_BUDGETS.T2 });
-    expect(verdict).toBe("pass"); // 250 is not > 250
+    expect(verdict).toBe("pass"); // 50 is not > 50
   });
 });
 

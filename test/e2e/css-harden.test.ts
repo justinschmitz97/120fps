@@ -7,7 +7,7 @@ import { chromium, type Browser, type Page } from "playwright";
 import { buildAndServe, type HarnessResult } from "../../src/harness.js";
 import { FONT_SETTLE_WARNING } from "../../src/measure.js";
 import { attachPageErrorCapture, type PageErrorCapture } from "../../src/page-errors.js";
-import { analyze } from "../../src/analyze.js";
+import { sharedAnalyze as analyze } from "./shared-analyze.js";
 
 let browser: Browser | undefined;
 

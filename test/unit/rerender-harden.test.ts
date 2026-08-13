@@ -66,21 +66,21 @@ describe("H4: scale without default export detection", () => {
   });
 });
 
-// H5: --scale with single value
+// H5: --scale with a single value — rejected, a curve needs 2+ distinct points
 describe("H5: --scale single value", () => {
-  it("accepts single integer", () => {
+  it("rejects a single integer", () => {
     const result = parseArgs(["./comp.tsx", "--scale", "42"]);
-    expect(result.scale).toEqual([42]);
-    expect(result.error).toBeUndefined();
+    expect(result.scale).toBeUndefined();
+    expect(result.error).toBeTruthy();
   });
 });
 
-// H6: --scale with duplicates
+// H6: --scale with duplicates collapsing below 2 distinct values — rejected
 describe("H6: --scale duplicate values", () => {
-  it("accepts duplicate values", () => {
+  it("rejects values that collapse to a single distinct point", () => {
     const result = parseArgs(["./comp.tsx", "--scale", "5,5,5"]);
-    expect(result.scale).toEqual([5, 5, 5]);
-    expect(result.error).toBeUndefined();
+    expect(result.scale).toBeUndefined();
+    expect(result.error).toBeTruthy();
   });
 });
 
