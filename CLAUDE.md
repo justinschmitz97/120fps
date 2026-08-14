@@ -29,7 +29,7 @@ Every milestone follows this cycle. Do not skip steps.
 ## Tech
 
 - TypeScript, pnpm, vitest, Playwright, Vite, TS Compiler API
-- Node >= 20 (but we want to move to 24 if possible)
+- Node >= 22 (CI tests 22.x, 24.x, and 26.x)
 - Tests: `npx vitest run test/unit/` and `npx vitest run test/e2e/`
 - Fixtures: `fixtures/` directory
 

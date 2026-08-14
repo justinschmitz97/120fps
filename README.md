@@ -414,7 +414,7 @@ export default function Wrapper({ children }: { children: React.ReactNode }) {
 
 ## Requirements
 
-- Node >= 20
+- Node >= 22
 - A `tsconfig.json` is optional: prop extraction uses the nearest one it finds above the component, and falls back to ES2022 + bundler resolution + `react-jsx` when there is none
 - Components (`.tsx`, `.jsx`, `.vue`) — React `>=18` must be installed in the profiled project for React mode; a `.vue` component needs `vue` and `@vitejs/plugin-vue` in the project (120fps ships neither, so your components compile against the versions they ship with); vanilla mode needs neither
 - Chromium via Playwright — downloaded automatically on install; if your environment skips browser downloads (`PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD`), run `npx playwright install chromium` once
