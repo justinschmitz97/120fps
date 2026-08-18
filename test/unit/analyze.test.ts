@@ -168,7 +168,7 @@ describe("buildReport", () => {
   });
 
   // M61: only combos marked as the sibling-copies probe (`__120fps_scaleN`,
-  // surfaced as `scaleProbe`) receive a fitted curve — merely differing DOM
+  // surfaced as `scaleProbe`) receive a fitted curve: merely differing DOM
   // sizes across real combos is not enough (see the sibling test below).
   it("computes scaling curve across scale-probe combos with different DOM sizes", () => {
     const input: BuildReportInput = {
@@ -370,7 +370,7 @@ describe("buildReport", () => {
   });
 });
 
-describe("buildReport — inp", () => {
+describe("buildReport: inp", () => {
   it("computes inp on the combo from explore edge traces", () => {
     const graph = makeEmptyGraph();
     graph.edges.push({

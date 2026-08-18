@@ -43,7 +43,7 @@ describe("attributeCost hardening", () => {
   });
 
   // H3: Vite chunk file without identifiable package
-  it("H3: Vite chunk files classified as user code", () => {
+  it("H3: Vite chunk files classified as package", () => {
     const events: TraceEvent[] = [
       makeEvent("FunctionCall", 2000, 1000,
         "http://localhost:5173/node_modules/.vite/deps/chunk-ABCDEF.js?v=123"),

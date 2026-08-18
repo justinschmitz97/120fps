@@ -29,7 +29,7 @@ function mkProject(files: Record<string, string>): string {
 
 const fwd = (p: string) => p.replace(/\\/g, "/");
 
-describe("loadTsconfigAliases (M24 D1)", () => {
+describe("loadTsconfigAliases", () => {
   it("resolves plain paths without baseUrl relative to the config dir", () => {
     const dir = mkProject({
       "tsconfig.json": JSON.stringify({

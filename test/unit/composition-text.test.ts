@@ -26,7 +26,7 @@ function collectTextNodes(node: CompositionNode, out: CompositionNode[]): void {
   for (const child of node.children) collectTextNodes(child, out);
 }
 
-describe("CompositionNode.text typing (M24 D9)", () => {
+describe("CompositionNode.text typing", () => {
   it("text nodes carry a typed string under props.text", () => {
     const names = ["Dialog", "DialogTrigger", "DialogPortal", "DialogContent", "DialogTitle"];
     const tree = inferComposition(makeExports(...names), schemasWithChildren(...names));
@@ -36,7 +36,7 @@ describe("CompositionNode.text typing (M24 D9)", () => {
     for (const node of tree!.structure) collectTextNodes(node, textNodes);
     expect(textNodes.length).toBeGreaterThan(0);
     for (const node of textNodes) {
-      // typed access — no cast; compile failure here means the D9 shape regressed
+      // typed access: no cast; compile failure here means the D9 shape regressed
       const text: string | undefined = node.props.text;
       expect(typeof text).toBe("string");
     }

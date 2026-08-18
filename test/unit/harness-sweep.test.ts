@@ -23,7 +23,7 @@ function ageEntry(fullPath: string, hoursAgo: number): void {
   fs.utimesSync(fullPath, then, then);
 }
 
-describe("sweepStaleHarnessDirs (M24 D8)", () => {
+describe("sweepStaleHarnessDirs", () => {
   it("removes .120fps-harness-* dirs older than 1 hour", () => {
     const root = mkRoot();
     const old = path.join(root, ".120fps-harness-abc123");

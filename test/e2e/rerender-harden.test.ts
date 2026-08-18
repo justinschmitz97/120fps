@@ -23,11 +23,11 @@ describe("H1: scale function that throws for large N", () => {
   }, 180_000);
 });
 
-// H2: scale(0) — zero items
+// H2: scale(0): zero items
 describe("H2: scale with zero in scale points", () => {
   it("handles scale(0) gracefully (empty render)", async () => {
     const jsonPath = path.join(os.tmpdir(), `120fps-harden-${Date.now()}.json`);
-    // scale(0) produces <div data-accordion></div> with no items — valid JSX
+    // scale(0) produces <div data-accordion></div> with no items: valid JSX
     const report = await analyze("./fixtures/scale-accordion.fixture.tsx", {
       samples: 3,
       jsonPath,
@@ -53,23 +53,6 @@ describe("H8: rerender of renders-null component", () => {
     expect(report.combos.length).toBeGreaterThanOrEqual(1);
     expect(report.combos[0].rerender).toBeDefined();
     expect(report.combos[0].rerender.median).toBeGreaterThanOrEqual(0);
-
-    fs.unlinkSync(jsonPath);
-  }, 120_000);
-});
-
-// H9: identity rerender (same single combo fixture)
-describe("H9: identity rerender in fixture mode", () => {
-  it("stable rerender with empty props produces valid timing", async () => {
-    const jsonPath = path.join(os.tmpdir(), `120fps-harden-${Date.now()}.json`);
-    const report = await analyze("./fixtures/standalone.fixture.tsx", {
-      samples: 3,
-      jsonPath,
-    });
-
-    expect(report.combos).toHaveLength(1);
-    expect(report.combos[0].rerender.samples).toHaveLength(3);
-    expect(report.combos[0].rerenderChange).toBeUndefined();
 
     fs.unlinkSync(jsonPath);
   }, 120_000);

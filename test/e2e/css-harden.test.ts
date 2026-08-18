@@ -55,7 +55,7 @@ function tmpJson(): string {
   );
 }
 
-// H8 — injection combined with a wrapper that imports its own stylesheet
+// H8: injection combined with a wrapper that imports its own stylesheet
 describe("H8: --css alongside a wrapper stylesheet", () => {
   it("applies both, with the wrapper import last in the cascade", async () => {
     const harness = await buildAndServe("./fixtures/theme-probe.tsx", {
@@ -84,7 +84,7 @@ describe("H8: --css alongside a wrapper stylesheet", () => {
   }, 120000);
 });
 
-// H10 — the 5s font bound is non-fatal
+// H10: the 5s font bound is non-fatal
 describe("H10: font settle timeout", () => {
   it("warns and completes the run when a font request never answers", async () => {
     const stallServer = http.createServer(() => {
@@ -125,7 +125,7 @@ describe("H10: font settle timeout", () => {
   }, 300000);
 });
 
-// H12 — @tailwindcss/vite present in the project's own node_modules,
+// H12: @tailwindcss/vite present in the project's own node_modules,
 // alongside a postcss.config.* in the same project (open question 3)
 describe("H12: @tailwindcss/vite plugin path", () => {
   it("loads the plugin from the project and still runs the project's PostCSS config", async () => {
@@ -214,7 +214,7 @@ describe("H12: @tailwindcss/vite plugin path", () => {
   }, 120000);
 });
 
-// H14 — syntax error inside a PostCSS-configured project
+// H14: syntax error inside a PostCSS-configured project
 describe("H14: stylesheet syntax error", () => {
   it("reaches the user as a page error, not a bare timeout", async () => {
     const harness = await buildAndServe("./fixtures/css-tailwind/app/Card.tsx", {
@@ -235,7 +235,7 @@ describe("H14: stylesheet syntax error", () => {
   }, 120000);
 });
 
-// H15 — a stylesheet referencing a font that 404s
+// H15: a stylesheet referencing a font that 404s
 describe("H15: unreachable font file", () => {
   it("still mounts and applies the rest of the stylesheet", async () => {
     const harness = await buildAndServe("./fixtures/css-font/app/Probe.tsx", {
@@ -256,7 +256,7 @@ describe("H15: unreachable font file", () => {
   }, 120000);
 });
 
-// H16 — paths containing spaces
+// H16: paths containing spaces
 describe("H16: stylesheet path with spaces", () => {
   it("injects and applies it", async () => {
     const harness = await buildAndServe("./fixtures/spaced dir/spaced-comp.tsx", {
@@ -277,7 +277,7 @@ describe("H16: stylesheet path with spaces", () => {
   }, 120000);
 });
 
-// H17 — the injected file is also imported by the component's own module graph
+// H17: the injected file is also imported by the component's own module graph
 describe("H17: stylesheet already in the component graph", () => {
   it("applies once and does not error", async () => {
     const harness = await buildAndServe("./fixtures/with-css.tsx", {
@@ -304,7 +304,7 @@ describe("H17: stylesheet already in the component graph", () => {
   }, 120000);
 });
 
-// H20 — Report.css survives the JSON round trip
+// H20: Report.css survives the JSON round trip
 describe("H20: report serialization", () => {
   it("writes the stylesheet block to the JSON report", async () => {
     const jsonPath = tmpJson();

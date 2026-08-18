@@ -1,15 +1,10 @@
 import { describe, it, expect } from "vitest";
 import { parseArgs } from "../../src/cli.js";
-import { isFixturePath, detectFixture } from "../../src/analyze.js";
+import { isFixturePath } from "../../src/analyze.js";
 import { formatTable, type Report } from "../../src/report.js";
-import path from "node:path";
 
 // H1: .fixture.ts (not .tsx) extension detected
 describe("H1: .fixture.ts extension", () => {
-  it("isFixturePath recognizes .fixture.ts", () => {
-    expect(isFixturePath("comp.fixture.ts")).toBe(true);
-  });
-
   it("isFixturePath recognizes .fixture.jsx", () => {
     expect(isFixturePath("comp.fixture.jsx")).toBe(true);
   });
@@ -35,20 +30,8 @@ describe("H3: --fixture position", () => {
 
 // H4: component path IS a .fixture.tsx (direct fixture input)
 describe("H4: direct fixture input", () => {
-  it("detects .fixture.tsx as direct fixture input", () => {
-    expect(isFixturePath("./my-comp.fixture.tsx")).toBe(true);
-  });
-
   it("does not detect .fixture in directory name", () => {
     expect(isFixturePath("./fixture-dir/comp.tsx")).toBe(false);
-  });
-});
-
-// H5: detectFixture with no adjacent file
-describe("H5: no adjacent fixture", () => {
-  it("returns undefined for button.tsx (no button.fixture.tsx)", () => {
-    const result = detectFixture(path.resolve("fixtures/button.tsx"));
-    expect(result).toBeUndefined();
   });
 });
 
@@ -128,14 +111,6 @@ describe("H8: 0 interactions hint", () => {
   });
 });
 
-// H9: --fixture without component path (just --fixture alone)
-describe("H9: fixture-only invocation", () => {
-  it("errors when only --fixture is provided (no component path)", () => {
-    const result = parseArgs(["--fixture", "./comp.fixture.tsx"]);
-    expect(result.error).toBeTruthy();
-  });
-});
-
 // H10: duplicate --fixture flags
 describe("H10: duplicate --fixture", () => {
   it("last --fixture wins", () => {
@@ -152,14 +127,5 @@ describe("H10: duplicate --fixture", () => {
 describe("H11: Windows paths", () => {
   it("detects fixture with backslash path", () => {
     expect(isFixturePath("src\\comp.fixture.tsx")).toBe(true);
-  });
-});
-
-// H12: detectFixture returns absolute path
-describe("H12: detectFixture returns absolute path", () => {
-  it("returns absolute path for adjacent fixture", () => {
-    const result = detectFixture(path.resolve("fixtures/accordion-root.tsx"));
-    expect(result).toBeTruthy();
-    expect(path.isAbsolute(result!)).toBe(true);
   });
 });

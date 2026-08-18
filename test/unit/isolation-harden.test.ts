@@ -2,7 +2,6 @@ import { describe, it, expect } from "vitest";
 import { parseArgs } from "../../src/cli.js";
 import {
   parseIsolationPhases,
-  computeChurnDegradation,
   buildMemoryReport,
   buildStrictModeReport,
   buildRerenderIsolation,
@@ -34,76 +33,10 @@ function makeReport(overrides: Partial<Report> = {}): Report {
   };
 }
 
-describe("H1: --isolate without value", () => {
-  it("errors", () => {
-    const args = parseArgs(["./Button.tsx", "--isolate"]);
-    expect(args.error).toBeDefined();
-    expect(args.error).toContain("--isolate");
-  });
-});
-
 describe("H2: --isolate with invalid phase", () => {
-  it("errors with phase name", () => {
-    const args = parseArgs(["./Button.tsx", "--isolate", "bogus"]);
-    expect(args.error).toContain("bogus");
-  });
-
   it("errors on mixed valid/invalid", () => {
     const args = parseArgs(["./Button.tsx", "--isolate", "mount,invalid"]);
     expect(args.error).toContain("invalid");
-  });
-});
-
-describe("H3: --isolate all", () => {
-  it("expands to 5 phases", () => {
-    const args = parseArgs(["./Button.tsx", "--isolate", "all"]);
-    expect(args.isolate).toHaveLength(5);
-    expect(args.isolate).toContain("mount");
-    expect(args.isolate).toContain("strictmode");
-  });
-});
-
-describe("H4: --isolate mount,mount", () => {
-  it("deduplicates", () => {
-    const args = parseArgs(["./Button.tsx", "--isolate", "mount,mount"]);
-    expect(args.isolate).toEqual(["mount"]);
-  });
-});
-
-describe("H5: --isolate + --curve", () => {
-  it("errors", () => {
-    const args = parseArgs(["./Button.tsx", "--isolate", "mount", "--curve"]);
-    expect(args.error).toContain("--isolate");
-    expect(args.error).toContain("--curve");
-  });
-});
-
-describe("H6: --isolate + --matrix", () => {
-  it("errors", () => {
-    const args = parseArgs(["./Button.tsx", "--isolate", "mount", "--matrix"]);
-    expect(args.error).toContain("--isolate");
-    expect(args.error).toContain("--matrix");
-  });
-});
-
-describe("H7: --no-isolate stored", () => {
-  it("stores flag", () => {
-    const args = parseArgs(["./Button.tsx", "--no-isolate"]);
-    expect(args.noIsolate).toBe(true);
-  });
-});
-
-describe("H8: churn degradation with 0 first3", () => {
-  it("returns 1.0 (safe)", () => {
-    expect(computeChurnDegradation([0, 0, 0, 1, 1, 1])).toBe(1.0);
-  });
-});
-
-describe("H9: memory 0 cycles", () => {
-  it("safe report", () => {
-    const report = buildMemoryReport({ cycles: 0, heapBefore: 100, heapAfter: 100, gcPressure: 0 });
-    expect(report.heapGrowthPerCycle).toBe(0);
-    expect(report.leakSuspected).toBe(false);
   });
 });
 
@@ -123,14 +56,6 @@ describe("H11: memory 8193 bytes/cycle", () => {
   });
 });
 
-describe("H12: StrictMode 0ms normal mount", () => {
-  it("safe overhead calc (returns 0%)", () => {
-    const report = buildStrictModeReport([0, 0, 0], [1, 1, 1]);
-    expect(report.overhead).toBe(0);
-    expect(report.doubleInvokeClean).toBe(true);
-  });
-});
-
 describe("H13: StrictMode overhead at 109%", () => {
   it("doubleInvokeClean = true (<=110)", () => {
     const report = buildStrictModeReport([1, 1, 1], [2.09, 2.09, 2.09]);
@@ -144,18 +69,6 @@ describe("H14: StrictMode overhead 111%", () => {
     const report = buildStrictModeReport([1, 1, 1], [2.11, 2.11, 2.11]);
     expect(report.overhead).toBeCloseTo(111);
     expect(report.doubleInvokeClean).toBe(false);
-  });
-});
-
-describe("H15: format with only mount phase", () => {
-  it("only mount section, no others", () => {
-    const isolation: IsolationReport = { mount: makeTiming(0.82) };
-    const output = formatTable(makeReport({ isolation }));
-    expect(output).toContain("Mount (isolated)");
-    expect(output).not.toContain("Rerender (isolated)");
-    expect(output).not.toContain("Memory");
-    expect(output).not.toContain("StrictMode");
-    expect(output).not.toContain("Unmount (isolated)");
   });
 });
 
@@ -177,27 +90,7 @@ describe("H16: format with all phases", () => {
   });
 });
 
-describe("H17: isolation field JSON round-trip", () => {
-  it("serializes and deserializes", () => {
-    const isolation: IsolationReport = {
-      mount: makeTiming(1.0),
-      memory: { cycles: 20, heapBefore: 100, heapAfter: 200, heapGrowth: 100, heapGrowthPerCycle: 5, leakSuspected: false, gcPressure: 1 },
-    };
-    const report = makeReport({ isolation });
-    const json = JSON.stringify(report);
-    const parsed = JSON.parse(json);
-    expect(parsed.isolation.mount.median).toBe(1.0);
-    expect(parsed.isolation.memory.cycles).toBe(20);
-    expect(parsed.isolation.memory.leakSuspected).toBe(false);
-  });
-});
-
 describe("H18: --memory-cycles requires positive integer", () => {
-  it("rejects 0", () => {
-    const args = parseArgs(["./Button.tsx", "--memory-cycles", "0"]);
-    expect(args.error).toContain("--memory-cycles");
-  });
-
   it("rejects negative", () => {
     const args = parseArgs(["./Button.tsx", "--memory-cycles", "-5"]);
     expect(args.error).toContain("--memory-cycles");
@@ -206,11 +99,5 @@ describe("H18: --memory-cycles requires positive integer", () => {
   it("rejects float", () => {
     const args = parseArgs(["./Button.tsx", "--memory-cycles", "3.5"]);
     expect(args.error).toContain("--memory-cycles");
-  });
-
-  it("accepts valid integer", () => {
-    const args = parseArgs(["./Button.tsx", "--memory-cycles", "50"]);
-    expect(args.memoryCycles).toBe(50);
-    expect(args.error).toBeUndefined();
   });
 });

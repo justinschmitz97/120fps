@@ -33,6 +33,8 @@ describe("rerender e2e", () => {
     expect(report.combos).toHaveLength(1);
     expect(report.combos[0].rerender).toBeDefined();
     expect(report.combos[0].rerender.median).toBeGreaterThanOrEqual(0);
+    expect(report.combos[0].rerender.samples.length).toBe(3);
+    expect(report.combos[0].rerenderChange).toBeUndefined();
 
     fs.unlinkSync(jsonPath);
   }, 120_000);
@@ -138,7 +140,7 @@ describe("scale fixture e2e", () => {
     fs.unlinkSync(jsonPath);
   }, 120_000);
 
-  it("all existing tests pass — backward compat with no fixture", async () => {
+  it("produces a valid report for a component with no fixture and no scale export", async () => {
     const jsonPath = path.join(os.tmpdir(), `120fps-scale-${Date.now()}.json`);
     const report = await analyze("./fixtures/no-props.tsx", {
       samples: 3,

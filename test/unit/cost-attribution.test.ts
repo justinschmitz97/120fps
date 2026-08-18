@@ -274,7 +274,7 @@ describe("attributeCost", () => {
     expect(browser).toBeDefined();
   });
 
-  it("is deterministic — same events produce same result", () => {
+  it("is deterministic: same events produce same result", () => {
     const events: TraceEvent[] = [
       makeEvent("FunctionCall", 5000, 1000,
         "http://localhost:5173/node_modules/.vite/deps/motion.js"),

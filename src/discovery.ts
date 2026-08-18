@@ -95,7 +95,7 @@ export async function discoverInteractions(
     const results: any[] = [];
     const seen = new Set<Element>();
 
-    // M43. Overflow style alone is not a scroll container — content has to
+    // M43. Overflow style alone is not a scroll container: content has to
     // actually exceed the box, or every `overflow: auto` wrapper in the tree
     // would claim a wheel sweep it cannot answer. Vertical wins when both
     // axes scroll: that is the axis a wheel drives.
@@ -424,7 +424,7 @@ export async function discoverInteractions(
     }
 
     // M43. A plain list long enough to overflow the viewport scrolls the
-    // document, not a container — that scrollport is the component's, so it
+    // document, not a container: that scrollport is the component's, so it
     // gets a descriptor of its own. `:root` is the selector the scroll step
     // recognises as "wheel over the viewport".
     const scrollport = document.scrollingElement;

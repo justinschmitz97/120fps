@@ -55,7 +55,7 @@ function makeReactOptimizations(overrides: Partial<ReactOptimizations> = {}): Re
 }
 
 // ====================================================================
-// formatTable — React Optimizations section
+// formatTable: React Optimizations section
 // ====================================================================
 
 describe("formatTable React Optimizations section", () => {
@@ -252,7 +252,7 @@ describe("formatTable React Optimizations section", () => {
     });
     const table = formatTable(r);
     expect(table).toContain("React Optimizations");
-    expect(table).toContain("profiler durations unavailable — memo/context findings may be unreliable");
+    expect(table).toContain("profiler durations unavailable: memo/context findings may be unreliable");
   });
 
   it("omits durations-unavailable note when flag is absent or false", () => {
@@ -291,29 +291,5 @@ describe("formatTable React Optimizations section", () => {
     const table = formatTable(r);
     const occurrences = table.split("profiler durations unavailable").length - 1;
     expect(occurrences).toBe(1);
-  });
-
-  it("handles reactOptimizations with all fields populated", () => {
-    const r = makeReport({
-      combos: [makeCombo({
-        reactOptimizations: {
-          memoBailout: true,
-          memoBailoutComponents: ["Button"],
-          contextFanOut: true,
-          contextFanOutComponents: ["Sidebar"],
-          callbackIdentityDeltas: [{ propName: "onClick", deltaMs: 3.0 }],
-          portalOrphans: 2,
-          renderAttribution: [
-            { component: "App", renderCount: 10, totalDurationMs: 20, selfDurationMs: 15 },
-          ],
-        },
-      })],
-    });
-    const table = formatTable(r);
-    expect(table).toContain("Memo bailout");
-    expect(table).toContain("Context fan-out");
-    expect(table).toContain("Callback identity");
-    expect(table).toContain("Portal orphans");
-    expect(table).toContain("Render attribution");
   });
 });

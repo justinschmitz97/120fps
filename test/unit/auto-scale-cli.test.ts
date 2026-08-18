@@ -13,11 +13,6 @@ describe("--no-auto-scale CLI flag", () => {
     expect(args.noAutoScale).toBeUndefined();
   });
 
-  it("--no-auto-scale is a known flag (no error)", () => {
-    const args = parseArgs(["./Button.tsx", "--no-auto-scale"]);
-    expect(args.error).toBeUndefined();
-  });
-
   it("--no-auto-scale works alongside other flags", () => {
     const args = parseArgs(["./Button.tsx", "--no-auto-scale", "--ci", "--no-deltas"]);
     expect(args.noAutoScale).toBe(true);

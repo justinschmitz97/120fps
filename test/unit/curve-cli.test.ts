@@ -30,11 +30,6 @@ describe("--curve CLI flag", () => {
     expect(args.curve).toBeUndefined();
   });
 
-  it("--curve is a known flag (no error)", () => {
-    const args = parseArgs(["./Button.tsx", "--curve"]);
-    expect(args.error).toBeUndefined();
-  });
-
   it("--curve works alongside other flags", () => {
     const args = parseArgs(["./Button.tsx", "--curve", "--ci", "--scale", "1,5,20"]);
     expect(args.curve).toBe(true);
@@ -54,11 +49,6 @@ describe("--no-curve CLI flag", () => {
   it("noCurve defaults to undefined when not specified", () => {
     const args = parseArgs(["./Button.tsx"]);
     expect(args.noCurve).toBeUndefined();
-  });
-
-  it("--no-curve is a known flag (no error)", () => {
-    const args = parseArgs(["./Button.tsx", "--no-curve"]);
-    expect(args.error).toBeUndefined();
   });
 
   it("--curve and --no-curve together: --no-curve wins", () => {

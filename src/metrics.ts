@@ -479,7 +479,7 @@ function rawR2(
 
 // The share of the linear fit's leftover variance a candidate must still
 // explain to be admitted. All three candidates are two-parameter fits, so an
-// information criterion reduces to ranking by residual sum of squares — the
+// information criterion reduces to ranking by residual sum of squares: the
 // rule that let noise flip an unchanged component between linear and
 // quadratic. The margin has to be relative: on the default sweep a perfect
 // quadratic only beats its own linear fit by 0.052 of R².
@@ -520,7 +520,7 @@ export function computeScalingCurve(
   const linPoints = points.map((p) => ({ x: p.n, y: p.metric }));
   const linResult = linearRegression(linPoints);
 
-  // Fewer than 3 distinct x values can't discriminate between growth models —
+  // Fewer than 3 distinct x values can't discriminate between growth models:
   // any candidate model fits an under-determined system with r2≈1.
   const distinctN = new Set(points.map((p) => p.n)).size;
   if (distinctN < 3) {
@@ -532,7 +532,7 @@ export function computeScalingCurve(
     };
   }
 
-  // A non-positive slope means cost isn't growing with n — never classify as
+  // A non-positive slope means cost isn't growing with n: never classify as
   // linear/quadratic/exponential growth, even if a curved model fits well.
   if (linResult.slope <= 0) {
     return {

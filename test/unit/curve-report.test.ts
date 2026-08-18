@@ -184,17 +184,3 @@ describe("formatTable with scalingCurveReport", () => {
   });
 });
 
-describe("curve mode verdict logic", () => {
-  it("FAIL when growth is super-linear (quadratic)", () => {
-    const cr = makeCurveReport({ mountCurve: makeScalingCurve("quadratic") });
-    const report = makeReport({ scalingCurveReport: cr });
-    expect(report.pass).toBe(true);
-    // verdict is computed during buildReport/analyze, test the logic separately
-  });
-
-  it("points are sorted ascending by n", () => {
-    const cr = makeCurveReport();
-    const ns = cr.points.map((p) => p.n);
-    expect(ns).toEqual([...ns].sort((a, b) => a - b));
-  });
-});

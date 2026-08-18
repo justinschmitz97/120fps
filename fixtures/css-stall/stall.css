@@ -1,3 +1,0 @@
-@font-face { font-family: "StallProbe"; src: url("http://127.0.0.1:49189/stall.woff2") format("woff2"); }
-body::after { content: "stall"; font-family: "StallProbe"; }
-.stall { color: rgb(6, 6, 6); }

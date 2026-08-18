@@ -125,7 +125,7 @@ const IDENTIFIER = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
 
 // M65: `<file>#Export`. Decided from the text alone, so a path containing `#`
 // never depends on whether the file happens to exist yet. An export name is an
-// identifier — it can hold neither `.` nor a separator — and the left side must
+// identifier: it can hold neither `.` nor a separator: and the left side must
 // already look like a component file, so `C:\p\c#1\B.tsx` and `C:\p\B#2.tsx`
 // stay whole paths.
 export function splitTargetSpec(arg: string): { path: string; target?: string } {
@@ -581,7 +581,7 @@ export function parseArgs(argv: string[]): CliArgs {
 
   if (!result.error && result.fixturePath && result.targets) {
     result.error =
-      "--fixture cannot be combined with a named export target (<file>#Export) — a fixture already decides what renders";
+      "--fixture cannot be combined with a named export target (<file>#Export): a fixture already decides what renders";
   }
 
   if (!result.error && result.componentPaths && result.componentPaths.length > 1) {
@@ -756,7 +756,7 @@ Named exports:
   Append #ExportName to a component path to measure that export instead of the
   one the resolver picks: 120fps ./kbd.tsx#KbdCombo. The name must be exported by
   the file; the error lists the file's component exports when it is not. A path
-  whose own name contains # is left alone — only a trailing #Identifier after a
+  whose own name contains # is left alone: only a trailing #Identifier after a
   .tsx/.jsx/.vue path is read as a target.
 
 Combo caps:
@@ -815,7 +815,7 @@ export function formatJsonSplitNotice(reportPaths: string[]): string {
   const shown = reportPaths.slice(0, JSON_NOTICE_LIST_CAP);
   const rest = reportPaths.length - shown.length;
   const suffix = rest > 0 ? `, +${rest} more` : "";
-  return `JSON: ${reportPaths.length} per-component reports — ${shown.join(", ")}${suffix}`;
+  return `JSON: ${reportPaths.length} per-component reports: ${shown.join(", ")}${suffix}`;
 }
 
 function componentStem(componentPath: string): string {
@@ -859,7 +859,7 @@ async function main(): Promise<void> {
     process.stdout.write(`Measuring ${componentPaths.length} components\n`);
   }
 
-  // M65: a dry run — resolution only. Before every check that exists to protect
+  // M65: a dry run: resolution only. Before every check that exists to protect
   // a measurement, because it never starts one.
   if (args.explainProps) {
     let failed = false;
@@ -898,7 +898,7 @@ async function main(): Promise<void> {
     }
   }
 
-  // M49: its own mode — two sides, interleaved, no verdict. Budgets and
+  // M49: its own mode: two sides, interleaved, no verdict. Budgets and
   // baselines keep owning CI, so compare never sets a non-zero exit.
   if (args.compare) {
     const invalid = validateCompareOptions({
@@ -933,7 +933,7 @@ async function main(): Promise<void> {
   // M50: collected across the sweep so both formats describe the whole run.
   const ciReports: import("./report.js").Report[] = [];
 
-  // M37: browsers are project-agnostic — one pool serves every component of
+  // M37: browsers are project-agnostic: one pool serves every component of
   // the sweep (two Chromium processes total instead of ~5 launches each).
   // M38: one dev server per project/config tuple serves every harness dir.
   const pool = createBrowserPool();
@@ -1049,7 +1049,7 @@ export interface PathReader {
 
 const ACCEPTED_COMPONENT_EXTENSIONS = [".tsx", ".jsx", ".vue"];
 
-// Extension only — directory/glob expansion additionally filters build dirs
+// Extension only: directory/glob expansion additionally filters build dirs
 // and test/story/fixture suffixes via isComponentFile below; a plain path
 // the user named explicitly should only be rejected for its extension.
 export function hasAcceptedComponentExtension(filePath: string): boolean {
@@ -1124,7 +1124,7 @@ export function expandComponentPaths(
       if (!hasAcceptedComponentExtension(arg)) {
         return {
           paths: [],
-          error: `${arg} is not a component file — 120fps only measures ${ACCEPTED_COMPONENT_EXTENSIONS.join(", ")} files`,
+          error: `${arg} is not a component file: 120fps only measures ${ACCEPTED_COMPONENT_EXTENSIONS.join(", ")} files`,
         };
       }
       matches.push(arg);

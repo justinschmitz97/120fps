@@ -20,7 +20,7 @@ export function rendererFor(filePath: string): Renderer {
 
 // An SFC's component is its default export and has no exported name, so the
 // entry's import binding is derived from the filename. Vue's own convention is
-// kebab-case files, which is not an identifier — `my-button.vue` must not
+// kebab-case files, which is not an identifier: `my-button.vue` must not
 // generate `import My-button`.
 export function vueComponentName(filePath: string): string {
   const stem = path.basename(filePath, path.extname(filePath));
@@ -98,7 +98,7 @@ export interface HarnessResult {
 
 // M38: the dev server's root is projectRoot and every harness dir lives under
 // it, so one server per config tuple serves a whole sweep. Vite serves files
-// created after boot on demand — later components need no restart.
+// created after boot on demand: later components need no restart.
 export interface ServerPool {
   acquire(
     key: string,
@@ -110,7 +110,7 @@ export interface ServerPool {
 }
 
 export function createServerPool(): ServerPool {
-  // M56: once per session, best-effort — errors are swallowed inside the
+  // M56: once per session, best-effort: errors are swallowed inside the
   // sweep itself, so this can never fail or block pool creation.
   sweepStaleTmpDirs();
   const servers = new Map<string, Promise<{ server: ViteDevServer; include: Set<string> }>>();
@@ -140,7 +140,7 @@ export function createServerPool(): ServerPool {
         try {
           await (await entry).server.close();
         } catch {
-          // Already closed, or boot failed — nothing left to release.
+          // Already closed, or boot failed: nothing left to release.
         }
       }
       servers.clear();
@@ -156,7 +156,7 @@ export function SWEEP_DEP_WARNING(missing: string[]): string {
 }
 
 // M56: names both the cause (whatever Vite or the address check reported) and
-// where — the one detail that turns "something failed" into something a user
+// where: the one detail that turns "something failed" into something a user
 // can act on (check the harness dir, or the underlying message, for why).
 export function VITE_START_FAILED(harnessDir: string, detail: string): string {
   return `Failed to start Vite dev server in ${harnessDir}: ${detail}`;
@@ -233,7 +233,7 @@ export function detectTailwindVite(projectRoot: string): boolean {
 }
 
 // Loaded from the project's own node_modules: the harness never carries a
-// Tailwind version of its own. Import failure is non-fatal — PostCSS may still
+// Tailwind version of its own. Import failure is non-fatal: PostCSS may still
 // be configured, and a missing plugin must not abort a measurement run.
 export async function loadTailwindVitePlugin(projectRoot: string): Promise<unknown[]> {
   try {
@@ -365,7 +365,7 @@ export function resolveReactCompilerState(
 // Compiled output imports react/compiler-runtime. @vitejs/plugin-react only
 // pre-bundles that module when it recognises the babel plugin by its bare name,
 // and K2 requires the project-resolved absolute path, so the import has to be
-// declared here — otherwise Vite discovers it on the first page load and forces
+// declared here: otherwise Vite discovers it on the first page load and forces
 // a full reload that destroys the execution context mid-measurement. React 18
 // projects have no such module; there the entry is skipped.
 export function reactCompilerRuntimeDeps(projectRoot: string): string[] {
@@ -380,7 +380,7 @@ export function reactCompilerRuntimeDeps(projectRoot: string): string[] {
 // Vite transforms the generated .tsx entry with the automatic JSX runtime, so
 // the page imports react/jsx-dev-runtime even though nothing declares it. Left
 // undeclared, Vite discovers it on the first page load of a project whose
-// optimizer cache is cold, pre-bundles it, and full-reloads — destroying the
+// optimizer cache is cold, pre-bundles it, and full-reloads: destroying the
 // execution context mid-measurement. Resolved from the project: React 16 has no
 // automatic runtime, and an unresolvable include aborts server start.
 export function reactJsxRuntimeDeps(projectRoot: string): string[] {
@@ -479,7 +479,7 @@ export function detectProjectTransforms(projectRoot: string): TransformPlugin[] 
 
 // Server and HMR hooks are stripped: the harness owns the server's lifecycle,
 // and a project plugin reaching into it is the class of failure M30 documented.
-// Build-time hooks — resolve/load/transform — are the whole point.
+// Build-time hooks: resolve/load/transform: are the whole point.
 const STRIPPED_PLUGIN_HOOKS = [
   "configureServer",
   "configurePreviewServer",
@@ -535,7 +535,7 @@ export const WRAPPER_CANDIDATES = [
 ];
 
 // A `.tsx` wrapper in a Vue project cannot render a Vue component, so the SFC
-// is probed first there — otherwise a stray leftover file would silently break
+// is probed first there: otherwise a stray leftover file would silently break
 // the run it was supposed to fix.
 export function detectWrapper(projectRoot: string, framework?: string): string | undefined {
   const candidates =
@@ -598,7 +598,7 @@ function hasCallableDefaultExport(sourceText: string, fileName: string): boolean
 
 // @vitejs/plugin-vue emits `import _sfc_main from "<sfc>?vue&type=script"`
 // whenever an SFC has any <script> block, so a block that produces no default
-// export fails module evaluation in the browser — the Vue analogue of the
+// export fails module evaluation in the browser: the Vue analogue of the
 // missing-default-export wrapper M26 fixed for React. An SFC with no <script>
 // at all is fine: the plugin synthesizes an empty component for it.
 //
@@ -626,7 +626,7 @@ export function sfcProducesComponent(
 
 // Vue's Options API default-exports a plain object, which
 // `hasCallableDefaultExport` deliberately rejects for React. Here the question
-// is only whether the module has a default export at all — the plugin imports
+// is only whether the module has a default export at all: the plugin imports
 // it either way, and an object is a perfectly good Vue component.
 function hasAnyDefaultExport(sourceText: string, fileName: string): boolean {
   const sourceFile = ts.createSourceFile(fileName, sourceText, ts.ScriptTarget.Latest, false);
@@ -791,7 +791,7 @@ export async function buildAndServe(
     });
   }
 
-  // The Vue entry has no JSX, so it is a .ts file — and index.html has to name
+  // The Vue entry has no JSX, so it is a .ts file: and index.html has to name
   // whichever one was written.
   const entryFile = renderer === "vue" ? "entry.ts" : "entry.tsx";
   const indexHtml = `<!DOCTYPE html>
@@ -812,7 +812,7 @@ export async function buildAndServe(
   ];
 
   // The wrapper is imported by the entry, so its packages must be pre-bundled
-  // too — otherwise the first mount pays Vite's on-demand optimize cost.
+  // too: otherwise the first mount pays Vite's on-demand optimize cost.
   const importedSpecifiers = new Set<string>();
   const externalDeps = [
     ...new Set([
@@ -824,7 +824,7 @@ export async function buildAndServe(
   ];
 
   // Shims are keyed by module specifier ("next/image"), which scanExternalDeps
-  // collapses to a package name ("next") for optimizeDeps — match on the raw
+  // collapses to a package name ("next") for optimizeDeps: match on the raw
   // specifiers instead.
   let activeShims: string[] | undefined;
   if (hasNextJs) {
@@ -835,7 +835,7 @@ export async function buildAndServe(
   }
 
   // A Vue project has no react to pre-bundle, and an unresolvable include
-  // aborts server start — so the renderer decides the base list, not a union.
+  // aborts server start: so the renderer decides the base list, not a union.
   const rendererDeps =
     renderer === "vue"
       ? ["vue"]
@@ -892,7 +892,7 @@ export async function buildAndServe(
         // message, which the page-error capture turns into a usable diagnosis.
         hmr: { overlay: false },
         // M34: nothing edits files during a measurement run, so file watching is
-        // pure cost — chokidar's initial scan of a real repo (a Next.js .next/
+        // pure cost: chokidar's initial scan of a real repo (a Next.js .next/
         // dir has thousands of files) saturates the fs threadpool exactly when
         // the first module loads, and a watcher-triggered reload mid-measurement
         // is the failure M30's context retry exists for.
@@ -1049,7 +1049,7 @@ export const TMP_SWEEP_MAX_REMOVALS = 500;
 // M56: best-effort removal of this tool's own OS-tmp leftovers (e.g.
 // `120fps-ctx-*`, `120fps-memo-*`) older than 24h. A directory belonging to a
 // live run is by construction younger than the cutoff, so no lockfile is
-// needed — prefix + location + age is a three-factor guard against deleting
+// needed: prefix + location + age is a three-factor guard against deleting
 // anything foreign. Takes baseDir as a parameter for testability; real runs
 // use the OS temp dir.
 export function sweepStaleTmpDirs(baseDir: string = os.tmpdir()): void {
@@ -1079,7 +1079,7 @@ export function sweepStaleTmpDirs(baseDir: string = os.tmpdir()): void {
 const EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".mts", ".vue"];
 
 // M62: the alias that resolved a bare specifier matters for shim-usage
-// reporting, not just where it points — a shim alias redirects a real
+// reporting, not just where it points: a shim alias redirects a real
 // package specifier to a local file, and that specifier is still "imported"
 // even though this function treats the result as local. Returning
 // viaShimAlias lets the caller record it without this function knowing
@@ -1155,7 +1155,7 @@ export function scanExternalDeps(
       if (localResolved) {
         queue.push(localResolved.path);
         // M62: a shim alias redirects the specifier to a local file, but the
-        // specifier itself was still imported and must be reported — the
+        // specifier itself was still imported and must be reported: the
         // resolution stays local (queued above), only the bookkeeping changes.
         if (isBareSpecifier && localResolved.viaShimAlias) specifiersOut?.add(spec);
       } else if (isBareSpecifier) {
@@ -1237,7 +1237,7 @@ export function loadTsconfigAliases(
   const aliases: Array<{ find: RegExp; replacement: string }> = [];
   for (const [pattern, targets] of Object.entries(paths)) {
     if (!targets.length) continue;
-    // First target only — Vite aliases support a single replacement.
+    // First target only: Vite aliases support a single replacement.
     const target = targets[0];
     if (pattern.endsWith("/*") && target.endsWith("/*")) {
       const prefix = pattern.slice(0, -2);
@@ -1281,7 +1281,7 @@ export function detectComponentExport(
   name: string;
   isDefaultOnly: boolean;
 } {
-  // One SFC, one component, always the default export — there is nothing to
+  // One SFC, one component, always the default export: there is nothing to
   // select and the file is not TypeScript, so the AST walker never runs on it.
   if (isVueFile(filePath)) {
     const name = vueComponentName(filePath);
@@ -1377,7 +1377,7 @@ const __120fpsInStrict = (el: any) => __120fpsStrict ? createElement(StrictMode,
 
 // M44. Functions and JSX cannot cross the CDP boundary, so combo generation
 // carries their position instead and the entry substitutes the real value at
-// render time. Literal preset values never become refs — they travel as
+// render time. Literal preset values never become refs: they travel as
 // themselves, so deltas and matrix cells compare real data.
 export function presetImportLine(presetRelative?: string): string {
   return presetRelative
@@ -1468,9 +1468,9 @@ export interface EntryOptions {
 }
 
 // The renderer supplies four things: the import block, the mount body, the
-// unmount body, and `renderTree`. Everything around them — the M25 stylesheet
+// unmount body, and `renderTree`. Everything around them: the M25 stylesheet
 // block, the M41 setup/teardown blocks, the M44 preset resolver, the M26
-// single-render-site rule — is renderer-independent and shared.
+// single-render-site rule: is renderer-independent and shared.
 export function generateEntry(opts: EntryOptions): string {
   return opts.renderer === "vue" ? generateVueEntry(opts) : generateReactEntry(opts);
 }
@@ -1479,7 +1479,7 @@ export function generateEntry(opts: EntryOptions): string {
 // control API awaits it before resolving `rerender`. Resolving earlier would
 // time scheduling a rerender rather than performing one, and the caller's
 // double-rAF fence proves a frame was presented, not that the queue drained
-// into it — a wrong answer here reports implausibly fast rerenders instead of
+// into it: a wrong answer here reports implausibly fast rerenders instead of
 // failing.
 export function generateVueEntry(opts: EntryOptions): string {
   const { componentRelative, componentName, hasScale, wrapRelative, cssImports, presetRelative } =

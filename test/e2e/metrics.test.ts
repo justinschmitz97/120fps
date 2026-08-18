@@ -8,6 +8,27 @@ import {
 } from "../../src/measure.js";
 import { parseMetrics, createCalibrationTrace } from "../../src/metrics.js";
 
+describe("H15: calibration DOM cleanup", () => {
+  it("removes calibration element after measurement", async () => {
+    let browser;
+    try {
+      browser = await chromium.launch({ headless: true });
+      const page = await browser.newPage();
+      const cdp = await page.context().newCDPSession(page);
+
+      await page.goto("about:blank");
+      await createCalibrationTrace(page, cdp);
+
+      const hasCalibration = await page.evaluate(
+        () => document.getElementById("__120fps_calibration") !== null,
+      );
+      expect(hasCalibration).toBe(false);
+    } finally {
+      if (browser) await browser.close();
+    }
+  }, 30_000);
+});
+
 describe("parseMetrics e2e", () => {
   it("extracts real metrics from a mount trace", async () => {
     const harness = await buildAndServe("./fixtures/counter.tsx");

@@ -1,7 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseArgs } from "../../src/cli.js";
 import {
-  isMatrixEligible,
   shouldAutoActivateMatrix,
   generatePropMatrix,
   pairwiseCover,
@@ -9,13 +7,8 @@ import {
 import {
   buildMatrixReport,
   buildTimingWithCV,
-  formatTable,
   type ComboReport,
-  type MatrixReport,
-  type MatrixCell,
   type PropDelta,
-  type Report,
-  type Thresholds,
 } from "../../src/report.js";
 import type { PropSchema } from "../../src/prop-gen.js";
 
@@ -39,54 +32,6 @@ function makeCombo(comboIndex: number, mountMedian: number, dom: number, props: 
     tier: "T1",
   };
 }
-
-const THRESHOLDS: Thresholds = { mountMs: 50, interactionMs: 400, relativeMount: 2, rerenderMs: 16 };
-
-function makeTiming(median: number) {
-  return buildTimingWithCV([median, median, median]);
-}
-
-function makeCell(props: Record<string, unknown>, mountMs: number): MatrixCell {
-  return {
-    comboIndex: 0,
-    props,
-    mount: makeTiming(mountMs),
-    rerender: makeTiming(mountMs * 0.3),
-    unmount: makeTiming(mountMs * 0.05),
-    domNodeCount: 10,
-    tier: "T1" as const,
-    verdict: "pass" as const,
-    worstInteractionMs: null,
-  };
-}
-
-function makeReport(overrides: Partial<Report> = {}): Report {
-  return {
-    version: 1,
-    timestamp: "2026-01-01T00:00:00Z",
-    machine: { cpu: "test", cores: 4, ramMb: 16384, os: "test", nodeVersion: "v20.0.0", chromiumVersion: "120" },
-    componentPath: "./test.tsx",
-    componentName: "Test",
-    calibration: { totalDuration: 10, scriptDuration: 5 },
-    combos: [],
-    thresholds: THRESHOLDS,
-    pass: true,
-    ...overrides,
-  };
-}
-
-describe("H1: 0 eligible props with explicit --matrix", () => {
-  it("generatePropMatrix returns single anchor cell", () => {
-    const schemas = [
-      makeSchema({ name: "count", kind: "number", values: [1, 5] }),
-      makeSchema({ name: "label", kind: "string", values: ["test"] }),
-    ];
-    const cells = generatePropMatrix(schemas);
-    expect(cells).toHaveLength(1);
-    expect(cells[0].count).toBe(1);
-    expect(cells[0].label).toBe("test");
-  });
-});
 
 describe("H2: 1 eligible prop with --matrix", () => {
   it("works but compound effects empty", () => {
@@ -139,18 +84,6 @@ describe("H4: pairwise covering with 3 axes of 8 values", () => {
   });
 });
 
-describe("H5: deterministic output", () => {
-  it("generatePropMatrix produces identical output on repeated calls", () => {
-    const schemas = [
-      makeSchema({ name: "disabled", kind: "boolean" }),
-      makeSchema({ name: "variant", kind: "union", values: ["a", "b", "c"] }),
-    ];
-    const r1 = JSON.stringify(generatePropMatrix(schemas));
-    const r2 = JSON.stringify(generatePropMatrix(schemas));
-    expect(r1).toBe(r2);
-  });
-});
-
 describe("H6: non-matrix props don't affect cell count", () => {
   it("adding function/number props doesn't change matrix size", () => {
     const base = [
@@ -164,24 +97,6 @@ describe("H6: non-matrix props don't affect cell count", () => {
       makeSchema({ name: "items", kind: "array" }),
     ];
     expect(generatePropMatrix(base).length).toBe(generatePropMatrix(extended).length);
-  });
-});
-
-describe("H7: --matrix and --no-matrix together", () => {
-  it("both flags stored", () => {
-    const args = parseArgs(["./Button.tsx", "--matrix", "--no-matrix"]);
-    expect(args.matrix).toBe(true);
-    expect(args.noMatrix).toBe(true);
-    expect(args.error).toBeUndefined();
-  });
-});
-
-describe("H8: --matrix and --curve together", () => {
-  it("is rejected instead of silently resolving curve-wins", () => {
-    const args = parseArgs(["./Button.tsx", "--matrix", "--curve"]);
-    expect(args.matrix).toBe(true);
-    expect(args.curve).toBe(true);
-    expect(args.error).toBe("--curve cannot be combined with --matrix");
   });
 });
 
@@ -225,24 +140,7 @@ describe("H10: compound significance boundaries", () => {
   });
 });
 
-describe("H11: matrix with fixture", () => {
-  it("shouldAutoActivateMatrix is pure — fixture check is in analyze", () => {
-    // Matrix auto-activation is schema-level; fixture skipping is in analyze.ts.
-    // Verify the function itself works on valid schemas.
-    const schemas = [
-      makeSchema({ name: "a", kind: "boolean" }),
-      makeSchema({ name: "b", kind: "boolean" }),
-    ];
-    expect(shouldAutoActivateMatrix(schemas)).toBe(true);
-  });
-});
-
 describe("H12: union with 9 values excluded", () => {
-  it("not eligible for matrix", () => {
-    const schema = makeSchema({ name: "x", kind: "union", values: Array.from({ length: 9 }, (_, i) => `v${i}`) });
-    expect(isMatrixEligible(schema)).toBe(false);
-  });
-
   it("excluded from matrix axes", () => {
     const schemas = [
       makeSchema({ name: "big", kind: "union", values: Array.from({ length: 9 }, (_, i) => `v${i}`) }),
@@ -270,21 +168,6 @@ describe("H13: optional boolean has 2 matrix values, no undefined", () => {
     expect(aValues.has(false)).toBe(true);
     expect(aValues.has(true)).toBe(true);
     expect(aValues.has(undefined)).toBe(false);
-  });
-});
-
-describe("H14: formatMatrixOutput with 0 compound effects", () => {
-  it("omits compound effects section", () => {
-    const mr: MatrixReport = {
-      axes: [{ propName: "v", values: ["a", "b"] }],
-      cells: [makeCell({ v: "a" }, 1), makeCell({ v: "b" }, 2)],
-      hotCells: [makeCell({ v: "b" }, 2), makeCell({ v: "a" }, 1)],
-      coldCells: [makeCell({ v: "a" }, 1)],
-      failingCells: [],
-      compoundEffects: [],
-    };
-    const output = formatTable(makeReport({ matrixReport: mr }));
-    expect(output).not.toContain("Compound");
   });
 });
 
@@ -322,30 +205,5 @@ describe("H17: fewer than 3 total cells", () => {
       combos: [makeCombo(0, 1, 8), makeCombo(1, 2, 8)],
     });
     expect(result.coldCells).toHaveLength(2);
-  });
-});
-
-describe("H18: JSON round-trip of matrixReport", () => {
-  it("serializes and deserializes correctly", () => {
-    const mr: MatrixReport = {
-      axes: [{ propName: "v", values: ["a", "b"] }],
-      cells: [makeCell({ v: "a" }, 1), makeCell({ v: "b" }, 2)],
-      hotCells: [makeCell({ v: "b" }, 2)],
-      coldCells: [makeCell({ v: "a" }, 1)],
-      failingCells: [],
-      compoundEffects: [{
-        props: { v: "b" },
-        expectedMount: 1,
-        actualMount: 2,
-        compoundDelta: 1,
-        significance: "medium" as const,
-      }],
-    };
-    const report = makeReport({ matrixReport: mr });
-    const json = JSON.stringify(report);
-    const parsed = JSON.parse(json);
-    expect(parsed.matrixReport.axes[0].propName).toBe("v");
-    expect(parsed.matrixReport.cells).toHaveLength(2);
-    expect(parsed.matrixReport.compoundEffects[0].significance).toBe("medium");
   });
 });

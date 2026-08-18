@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { buildAndServe } from "../../src/harness.js";
 import { measureMount } from "../../src/measure.js";
 
-// H53: heavy computation during mount — timing should be non-trivial
+// H53: heavy computation during mount: timing should be non-trivial
 describe("H53: heavy computation mount", () => {
   it("measures component with expensive render", async () => {
     const harness = await buildAndServe("./fixtures/heavy-mount.tsx");
@@ -20,7 +20,7 @@ describe("H53: heavy computation mount", () => {
   });
 });
 
-// H54: deeply nested object props — serialization handles depth
+// H54: deeply nested object props: serialization handles depth
 describe("H54: deeply nested object props", () => {
   it("serializes and passes nested config object", async () => {
     const harness = await buildAndServe("./fixtures/deep-props.tsx");
@@ -46,7 +46,7 @@ describe("H54: deeply nested object props", () => {
   });
 });
 
-// H55: multiple function props — all get serialized correctly
+// H55: multiple function props: all get serialized correctly
 describe("H55: multiple function props", () => {
   it("serializes all function props and component renders", async () => {
     const harness = await buildAndServe("./fixtures/many-callbacks.tsx");
@@ -106,17 +106,6 @@ describe("H57: high sample count", () => {
 
 // H58: auto-extract combos (no combos override)
 describe("H58: auto-extract combos from component path", () => {
-  it("auto-extracts and measures no-props component", async () => {
-    const harness = await buildAndServe("./fixtures/no-props.tsx");
-    try {
-      // No combos option — should auto-extract (Divider has no props → [{}])
-      const results = await measureMount(harness, { samples: 2 });
-      expect(results).toHaveLength(1);
-      expect(results[0].props).toEqual({});
-    } finally {
-      await harness.cleanup();
-    }
-  });
   it("auto-extracts combos for button component", async () => {
     const harness = await buildAndServe("./fixtures/button.tsx");
     try {

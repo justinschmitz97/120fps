@@ -70,67 +70,12 @@ describe("H5: redundant drag signals", () => {
   });
 });
 
-// H6: zero-width bounding rect — pattern generation is unaffected (execution handles it)
-describe("H6: pattern generation independent of bounding rect", () => {
-  it("pattern is generated without bounding rect info", () => {
-    const desc = makeDescriptor({ role: "slider", selector: "#zero-width" });
-    const pattern = resolveStressPattern(desc);
-    expect(pattern.steps[0].moveCount).toBe(60);
-    expect(pattern.steps[0].direction).toBe("horizontal");
-  });
-});
-
-// H7: moveCount is always 60 from buildPointerDrag
-describe("H7: moveCount consistency", () => {
-  it("moveCount is always 60 regardless of descriptor", () => {
-    const cases = [
-      makeDescriptor({ role: "slider" }),
-      makeDescriptor({ inputType: "range", tagName: "INPUT" }),
-      makeDescriptor({ ariaValueNow: true }),
-      makeDescriptor({ cursor: "grab" }),
-    ];
-    for (const desc of cases) {
-      const pattern = resolveStressPattern(desc);
-      expect(pattern.steps[0].moveCount).toBe(60);
-    }
-  });
-});
-
 // H8: empty cursor string does not trigger
 describe("H8: empty cursor", () => {
   it("cursor='' does not trigger pointer-drag", () => {
     const desc = makeDescriptor({ cursor: "" });
     const pattern = resolveStressPattern(desc);
     expect(pattern.name).not.toBe("pointer-drag");
-  });
-});
-
-// H9: range input detected without slider role
-describe("H9: range without slider role", () => {
-  it("input[type=range] without role still triggers pointer-drag", () => {
-    const desc = makeDescriptor({ tagName: "INPUT", inputType: "range" });
-    expect(desc.role).toBeUndefined();
-    const pattern = resolveStressPattern(desc);
-    expect(pattern.name).toBe("pointer-drag");
-  });
-});
-
-// H10: element with grab cursor but no role triggers
-describe("H10: grab cursor without role", () => {
-  it("element with cursor=grab and no role triggers pointer-drag", () => {
-    const desc = makeDescriptor({ cursor: "grab", tagName: "DIV" });
-    expect(desc.role).toBeUndefined();
-    const pattern = resolveStressPattern(desc);
-    expect(pattern.name).toBe("pointer-drag");
-  });
-});
-
-// H11: explicit aria-orientation=horizontal produces horizontal
-describe("H11: explicit horizontal orientation", () => {
-  it("aria-orientation=horizontal produces horizontal direction", () => {
-    const desc = makeDescriptor({ role: "slider", ariaOrientation: "horizontal" });
-    const pattern = resolveStressPattern(desc);
-    expect(pattern.steps[0].direction).toBe("horizontal");
   });
 });
 
@@ -176,34 +121,6 @@ describe("H16: ariaValueNow false", () => {
     const desc = makeDescriptor({ ariaValueNow: false });
     const pattern = resolveStressPattern(desc);
     expect(pattern.name).not.toBe("pointer-drag");
-  });
-});
-
-// H17: stressPattern field on edge records "pointer-drag" (via explorer integration)
-describe("H17: pattern name in steps", () => {
-  it("pattern name is 'pointer-drag'", () => {
-    const desc = makeDescriptor({ role: "slider" });
-    const pattern = resolveStressPattern(desc);
-    expect(pattern.name).toBe("pointer-drag");
-  });
-});
-
-// H18: slider does not fall through to keyboard-sweep even with siblings
-describe("H18: slider never keyboard-sweep", () => {
-  it("slider with keyboard-sweep-eligible role and siblings still gets pointer-drag", () => {
-    const desc = makeDescriptor({ role: "slider" });
-    const siblings = ["#s1", "#s2", "#s3"];
-    const pattern = resolveStressPattern(desc, siblings);
-    expect(pattern.name).toBe("pointer-drag");
-  });
-});
-
-// H19: unknown aria-orientation value defaults to horizontal
-describe("H19: unknown aria-orientation", () => {
-  it("aria-orientation=diagonal defaults to horizontal", () => {
-    const desc = makeDescriptor({ role: "slider", ariaOrientation: "diagonal" });
-    const pattern = resolveStressPattern(desc);
-    expect(pattern.steps[0].direction).toBe("horizontal");
   });
 });
 

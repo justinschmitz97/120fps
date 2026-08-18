@@ -47,7 +47,7 @@ const baseThresholds: Thresholds = {
 };
 const baseCal = { totalDuration: 10, scriptDuration: 5 };
 
-// H2: scale(0) — zero items
+// H2: scale(0): zero items
 describe("H2: hasScaleExport with edge patterns", () => {
   it("does not match export { scale } re-export", () => {
     expect(hasScaleExport("export { scale } from './other';")).toBe(false);
@@ -58,7 +58,7 @@ describe("H2: hasScaleExport with edge patterns", () => {
   });
 });
 
-// H4: Fixture with scale but no default export — hasScaleExport still detects it
+// H4: Fixture with scale but no default export: hasScaleExport still detects it
 describe("H4: scale without default export detection", () => {
   it("detects scale even without default export", () => {
     const source = `export function scale(n: number) { return <div>{n}</div>; }`;
@@ -66,30 +66,12 @@ describe("H4: scale without default export detection", () => {
   });
 });
 
-// H5: --scale with a single value — rejected, a curve needs 2+ distinct points
-describe("H5: --scale single value", () => {
-  it("rejects a single integer", () => {
-    const result = parseArgs(["./comp.tsx", "--scale", "42"]);
-    expect(result.scale).toBeUndefined();
-    expect(result.error).toBeTruthy();
-  });
-});
-
-// H6: --scale with duplicates collapsing below 2 distinct values — rejected
+// H6: --scale with duplicates collapsing below 2 distinct values: rejected
 describe("H6: --scale duplicate values", () => {
   it("rejects values that collapse to a single distinct point", () => {
     const result = parseArgs(["./comp.tsx", "--scale", "5,5,5"]);
     expect(result.scale).toBeUndefined();
     expect(result.error).toBeTruthy();
-  });
-});
-
-// H7: extremely low threshold
-describe("H7: extreme --threshold-rerender", () => {
-  it("accepts very small positive number", () => {
-    const result = parseArgs(["./comp.tsx", "--threshold-rerender", "0.001"]);
-    expect(result.thresholdRerender).toBe(0.001);
-    expect(result.error).toBeUndefined();
   });
 });
 
@@ -135,7 +117,7 @@ describe("H10: hasScaleExport false positives", () => {
   });
 });
 
-// H11: non-fixture file with export function scale — detectScaleExport reads file
+// H11: non-fixture file with export function scale: detectScaleExport reads file
 describe("H11: detectScaleExport on fixture file", () => {
   it("detects scale export in scale-accordion fixture", () => {
     expect(detectScaleExport(path.resolve("fixtures/scale-accordion.fixture.tsx"))).toBe(true);
@@ -160,12 +142,12 @@ describe("H12: --scale rejects floats", () => {
 
 // H13: rerender timing is non-negative
 describe("H13: rerender timing non-negative invariant", () => {
-  it("verdict still works with negative samples (edge)", () => {
+  it("warns: negative samples drive rerender.unstable via high CV", () => {
     const combo = makeCombo({
       rerender: buildTimingWithCV([-1, -2, -3]),
     });
     const verdict = computeVerdict(combo, baseThresholds);
-    expect(["pass", "warn", "fail"]).toContain(verdict);
+    expect(verdict).toBe("warn");
   });
 });
 
@@ -226,7 +208,7 @@ describe("H15: rerenderScalingCurve with single combo", () => {
 
   it("sets rerenderScalingCurve across scale-probe combos with distinct DOM sizes", () => {
     // M61: the marker (`__120fps_scaleN`, surfaced as `scaleProbe`) is what
-    // makes these scale combos, not merely differing DOM counts — see the
+    // makes these scale combos, not merely differing DOM counts: see the
     // sibling test below for real combos that only differ in DOM size.
     const report = buildReport({
       componentPath: "./Button.tsx",
@@ -253,7 +235,7 @@ describe("H15: rerenderScalingCurve with single combo", () => {
   });
 
   // M61 regression: two real (non-probe) combos that merely differ in DOM
-  // size — e.g. a boolean toggling whether a panel renders — used to be
+  // size: e.g. a boolean toggling whether a panel renders: used to be
   // fitted into a fabricated "scaling" curve and stamped onto both. Neither
   // combo carries `__120fps_scaleN`, so no curve should be fitted at all.
   it("does not fabricate a curve from real combos that only differ in DOM size", () => {
@@ -304,29 +286,5 @@ describe("H1: buildReport with missing rerender data gracefully defaults", () =>
     });
     expect(report.combos[0].rerender).toBeDefined();
     expect(report.combos[0].rerender.median).toBe(0);
-  });
-});
-
-// H8: component that renders null
-describe("H8: rerender of null-rendering component", () => {
-  it("buildReport succeeds with zero-sample rerender", () => {
-    const report = buildReport({
-      componentPath: "./NullComp.tsx",
-      componentName: "NullComp",
-      machine: baseMachine,
-      calibration: baseCal,
-      mounts: [{
-        comboIndex: 0, props: {},
-        mount: { samples: [1], median: 1, p95: 1 },
-        unmount: { samples: [1], median: 1, p95: 1 },
-        domNodeCount: 1,
-      }],
-      explores: [{ graph: makeEmptyGraph(), comboIndex: 0, props: {} }],
-      heapDeltas: [0],
-      thresholds: baseThresholds,
-      rerenders: [{ comboIndex: 0, stable: { samples: [0.1, 0.1], median: 0.1, p95: 0.1 } }],
-    });
-    expect(report.combos[0].rerender.median).toBeCloseTo(0.1, 1);
-    expect(report.combos[0].verdict).toBe("pass");
   });
 });

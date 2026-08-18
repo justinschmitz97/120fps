@@ -78,7 +78,7 @@ describe("H38: throwing component", () => {
   it("measureMount with crash-prone props still returns result", async () => {
     const harness = await buildAndServe("./fixtures/throws-on-render.tsx");
     try {
-      // Mount with valid props — should work fine
+      // Mount with valid props: should work fine
       const results = await measureMount(harness, {
         samples: 2,
         combos: [{ data: { id: "1", name: "Test" } }],

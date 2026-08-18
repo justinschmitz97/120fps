@@ -134,7 +134,7 @@ import {
 } from "./report.js";
 
 // M40: the numbers are real, but they describe a transient scene. Warn, never
-// fail — the defect would be presenting the skeleton's cost as the whole story.
+// fail: the defect would be presenting the skeleton's cost as the whole story.
 const MEASURED_STATE_CAUSE: Record<Exclude<MeasuredState, "settled">, string> = {
   "pending-network": "fetch/XHR requests started during mount were still in flight when the sample window closed",
   "late-mutation": "the component DOM changed after the mount fence without any input",
@@ -167,7 +167,7 @@ export const MATRIX_CELL_CAP_WARNING = (kept: number, total: number): string =>
   `Raise it with --max-combos <n>.`;
 
 // M61: the most lenient tier budget the tool has. A component whose single
-// instance already costs this much will not cost less per copy at N=5/20/50 —
+// instance already costs this much will not cost less per copy at N=5/20/50:
 // quadrupling the instance count is exactly the shape of dogfooding's 46.9s
 // single-probe reproduction.
 export const SCALE_PROBE_GATE_MS = TIER_BUDGETS.T4.mountMs;
@@ -178,9 +178,9 @@ export const SCALE_PROBE_COST_WARNING = (
   skipped: number[],
 ): string =>
   `scale probe: N=${probeN} already mounts at ${probeMs.toFixed(1)}ms (over the ${SCALE_PROBE_GATE_MS}ms ` +
-  `T4 budget) — skipped N=${skipped.join(", ")} to avoid a multi-minute probe. Raise the ceiling with --scale.`;
+  `T4 budget): skipped N=${skipped.join(", ")} to avoid a multi-minute probe. Raise the ceiling with --scale.`;
 
-// Pure decision over an already-measured probe cost — no browser involved, so
+// Pure decision over an already-measured probe cost: no browser involved, so
 // it is unit-testable independent of the measurement call that produces
 // `probeMs`.
 export function boundScalePointsByProbeCost(
@@ -213,7 +213,7 @@ export const DELTA_PAIR_CAP_WARNING = (measured: number, total: number): string 
 
 export const MATRIX_PAIRWISE_COVER_WARNING = (covered: number, full: number): string =>
   `matrix has ${full} possible cells; measured ${covered} via pairwise cover (every value pair, not every ` +
-  `cell) — coverage is not exhaustive.`;
+  `cell): coverage is not exhaustive.`;
 
 export const MATRIX_AUTO_ACTIVATED_NOTICE = (cellCount: number): string =>
   `Matrix mode auto-activated: measuring all ${cellCount} prop combinations, which multiplies run time ` +
@@ -275,7 +275,7 @@ export function optionsAllowVerdictReuse(
     modeDisabledOrAbsent(options.curveMode) &&
     modeDisabledOrAbsent(options.matrixMode) &&
     // "ignore" explicitly requests a raw comparison and "strict" a hard
-    // verification of a real run — both must measure.
+    // verification of a real run: both must measure.
     (options.baselineEnv ?? "normalize") === "normalize"
   );
 }
@@ -326,7 +326,7 @@ export interface AnalyzeOptions {
   // when none is provided.
   browserPool?: BrowserPool;
   // M38: share one dev server per config tuple across a sweep. analyze()
-  // never creates or closes one — single-component runs gain nothing.
+  // never creates or closes one: single-component runs gain nothing.
   serverPool?: import("./harness.js").ServerPool;
   // M39: force measurement even when a fingerprinted baseline would allow
   // reusing the stored verdict.
@@ -407,7 +407,7 @@ export function buildReport(input: BuildReportInput): Report {
 
     // Interaction to Next Paint across every interaction explored for this
     // combo. Edges retain their raw per-sample traces (M4), so this needs no
-    // extra measurement pass — only present when exploration produced traces.
+    // extra measurement pass: only present when exploration produced traces.
     let inp: number | undefined;
     if (exploreResult) {
       const interactionTraces = exploreResult.graph.edges.flatMap((edge) => edge.traces);
@@ -430,7 +430,7 @@ export function buildReport(input: BuildReportInput): Report {
       : buildTimingWithCV([0]);
 
     // M61: `__120fps_scaleN` is the harness trigger key for the sibling-copies
-    // probe, not a real prop — it never belongs in the report's `props`.
+    // probe, not a real prop: it never belongs in the report's `props`.
     // `scaleProbe` is where that identity now lives instead.
     const rawProps = mount.props as Record<string, unknown>;
     const scaleProbeValue = rawProps["__120fps_scaleN"];
@@ -483,7 +483,7 @@ export function buildReport(input: BuildReportInput): Report {
     combos.push(combo);
   }
 
-  // M61: domNodeCount growth used to be fitted across every combo — mixing
+  // M61: domNodeCount growth used to be fitted across every combo: mixing
   // the sibling-copies probe's real N-copies growth with whatever incidental
   // DOM differences unrelated real prop combos happened to have, then
   // stamping the result onto all of them (the GameControls fabrication:
@@ -646,7 +646,7 @@ function applyBaselineWorkflow(
       }
       // M46: on a hostile machine the run is not measuring the component, so
       // its deltas would only manufacture false alarms. What noise invalidates
-      // is the *timing* comparison — which environment the baseline came from
+      // is the *timing* comparison: which environment the baseline came from
       // is a fact about the file, not about the machine's mood, so the
       // classification and its mismatch detail survive.
       if (report.noise?.level === "hostile") {
@@ -656,7 +656,7 @@ function applyBaselineWorkflow(
       }
 
       report.baseline = comparison;
-      // A noisy run's regressions are reported but do not fail — the same
+      // A noisy run's regressions are reported but do not fail: the same
       // philosophy as M22's unstable-metric downgrade, run-scoped instead of
       // metric-scoped. Budget breaches are unaffected; they are absolute.
       const noiseDowngrade = report.noise?.level === "noisy";
@@ -965,7 +965,7 @@ async function runCurveMode(ctx: ModeContext, match: ScalingPropMatch): Promise<
 
   // M59: a curve report has scale points, not combos, so the per-combo gate
   // cannot reach it. A point that rendered nothing while the page threw still
-  // has to fail the run — every other point on the curve measured the same
+  // has to fail the run: every other point on the curve measured the same
   // broken render.
   const brokenPoints = curveMounts.filter(
     (m) => m.domNodeCount === 0 && m.pageErrors?.fatal,
@@ -1023,7 +1023,7 @@ async function runMatrixMode(ctx: ModeContext, matrixAutoActivated: boolean): Pr
   }
 
   // M61: --max-combos previously did nothing once matrix mode auto-activated
-  // — a 4-prop badge ran all 64 cells regardless of the flag or the implicit
+  //: a 4-prop badge ran all 64 cells regardless of the flag or the implicit
   // default. The same cap (default 8) now bounds cells measured, keeping the
   // base cell and single-axis deviations first.
   const matrixComboCap = options.maxCombos ?? DEFAULT_MEASURED_COMBOS;
@@ -1045,7 +1045,7 @@ async function runMatrixMode(ctx: ModeContext, matrixAutoActivated: boolean): Pr
     process.stdout.write(MATRIX_AUTO_ACTIVATED_NOTICE(matrixCombos.length) + "\n");
   }
 
-  // Same cost throttle the plain-combo path applies — a forced --matrix run
+  // Same cost throttle the plain-combo path applies: a forced --matrix run
   // with many cells must not skip it just because it took the matrix branch
   // instead.
   const matrixEffectiveSamples = computeEffectiveSamples(matrixCombos.length, samples);
@@ -1299,7 +1299,7 @@ async function applyAutoScalingCurves(
   }));
 
   // M61: the sibling-copies probe already carries its own scale-probe curve
-  // (buildReport) — overwriting it here with the real detected-prop curve
+  // (buildReport): overwriting it here with the real detected-prop curve
   // would silently replace a synthetic-copies fact with an unrelated one
   // under the same field. Only combos that are not scale probes take this
   // curve.
@@ -1324,7 +1324,7 @@ async function applyAutoScalingCurves(
   report.autoScalingReason = match.reason;
 }
 
-// M61: measures the cheapest requested scale point alone (3 samples — a
+// M61: measures the cheapest requested scale point alone (3 samples: a
 // go/no-go check, not a reported number) and applies the pure gate to decide
 // whether the rest are worth measuring. The cheapest point is remeasured
 // inside the main batch rather than spliced in: measureMount assigns
@@ -1750,7 +1750,7 @@ export function formatExplainProps(explained: PropsExplanation): string {
   lines.push(
     explained.curve
       ? `Curve mode:   would activate on ${explained.curve.propName} (${explained.curve.reason})`
-      : "Curve mode:   would not activate — no array or numeric scaling prop",
+      : "Curve mode:   would not activate: no array or numeric scaling prop",
   );
   lines.push(
     explained.matrixWouldActivate
@@ -1820,7 +1820,7 @@ async function collectMachineInfo(
 
 // M39: identical source in an identical environment redraws the same
 // distribution, so a check-mode run may reuse the stored verdict instead of
-// measuring. Explicit mode enables always measure — auto-activation is a
+// measuring. Explicit mode enables always measure: auto-activation is a
 // function of the fingerprinted source, flags are not. Returns the reused
 // report, or undefined when the run must measure.
 async function tryReuseStoredVerdict(args: {
@@ -1853,7 +1853,7 @@ async function tryReuseStoredVerdict(args: {
   const fingerprint = await args.getSourceFingerprint();
   if (fingerprint !== entry.sourceFingerprint) return undefined;
 
-  // Machine identity only — no page, no calibration. A single calibration
+  // Machine identity only: no page, no calibration. A single calibration
   // sample swings 20–40% on a real machine, and thermal drift changes
   // measured values, never the verdict of unchanged code
   // (sameMachineIdentity). Features are the current run's real ones, so a
@@ -1866,7 +1866,7 @@ async function tryReuseStoredVerdict(args: {
     cpuThrottle: args.cpuThrottle,
     // The requested count: combos are not extracted yet, so the effective one
     // is unknown here. A stored entry that was throttled therefore fails the
-    // gate and the run measures — reuse errs towards measuring, never towards
+    // gate and the run measures: reuse errs towards measuring, never towards
     // a mismatched verdict.
     samples: args.samples,
     mode: "combo",
@@ -1950,8 +1950,8 @@ export async function analyze(
   let fixtureAutoDetected = false;
   const inputIsFixture = isFixturePath(componentPath);
 
-  // M65: `<file>#Export` names one export to render, so a fixture — which owns
-  // its whole scene — cannot also apply. Validated here, before any harness
+  // M65: `<file>#Export` names one export to render, so a fixture: which owns
+  // its whole scene: cannot also apply. Validated here, before any harness
   // directory exists, so a typo costs a source read rather than a boot.
   if (options.target) {
     if (options.fixturePath || inputIsFixture) throw new Error(TARGET_WITH_FIXTURE_ERROR);
@@ -1976,7 +1976,7 @@ export async function analyze(
   }
 
   // M57: one component per SFC, so there is nothing for the suffix taxonomy to
-  // infer — auto-composition is skipped for Vue, not adapted to it. Reached
+  // infer: auto-composition is skipped for Vue, not adapted to it. Reached
   // only when no fixture applies, so the measured file is componentPath.
   const rendererIsVue = isVueFile(componentPath);
 
@@ -2022,7 +2022,7 @@ export async function analyze(
   let transformHits: import("./preflight.js").PreflightHit[] = [];
   let activeTransforms: string[] | undefined;
   const runWarnings: string[] = [];
-  // M46: counted before dedup — one surviving reload is a noise signal, and the
+  // M46: counted before dedup: one surviving reload is a noise signal, and the
   // warning list deliberately shows it once however often it happened.
   let contextRetries = 0;
   let noiseProbe: number[] = [];
@@ -2056,8 +2056,8 @@ export async function analyze(
     css: cssReport?.files ?? [],
     wrap: wrapPath ? path.relative(projectRoot, wrapPath).replace(/\\/g, "/") : null,
     reactCompiler: options.reactCompiler ?? "auto",
-    // Only present when targeted, so an untargeted run's fingerprint — and
-    // every baseline already stored against it — is byte-identical.
+    // Only present when targeted, so an untargeted run's fingerprint: and
+    // every baseline already stored against it: is byte-identical.
     ...(options.target ? { target: options.target } : {}),
     samples,
     cpuThrottle,
@@ -2211,7 +2211,7 @@ export async function analyze(
     transformHits = preflight.transforms.filter(
       (hit) => !hit.transformCode || !loadableTransforms.has(hit.transformCode),
     );
-    // Named up front, and again on the way out if the run dies — a transform
+    // Named up front, and again on the way out if the run dies: a transform
     // the harness cannot apply is the first thing to check.
     for (const hit of transformHits) runWarnings.push(PROJECT_TRANSFORM_WARNING(hit));
     if (loadableTransforms.size > 0) {
@@ -2295,7 +2295,7 @@ export async function analyze(
     }
     const composed = compositionTree !== undefined;
 
-    // M46: unthrottled and outside every traced window — the question is what
+    // M46: unthrottled and outside every traced window: the question is what
     // the machine is doing, not what the component costs.
     noiseProbe = await suspendThrottle(cdp, cpuThrottle, () => probeMachineNoise(page));
 
@@ -2309,7 +2309,7 @@ export async function analyze(
     };
 
     if (calibration.totalDuration === 0) {
-      throw new Error("Calibration produced zero duration — measurement environment is broken");
+      throw new Error("Calibration produced zero duration: measurement environment is broken");
     }
 
     let wrapper: WrapperReport | undefined;
@@ -2422,11 +2422,11 @@ function animatedIndices(mounts: MountResult[]): number[] {
 }
 
 export const ZERO_PROPS_WARNING =
-  "No props extracted — component measured with empty props only; if the component has typed props, extraction may have failed";
+  "No props extracted: component measured with empty props only; if the component has typed props, extraction may have failed";
 
 // M65: `<file>#Export` and `--fixture` both decide what gets rendered.
 export const TARGET_WITH_FIXTURE_ERROR =
-  "A named export target (<file>#Export) cannot be combined with --fixture — a fixture already decides what renders";
+  "A named export target (<file>#Export) cannot be combined with --fixture: a fixture already decides what renders";
 
 // M65: whether M59's gate (per combo) or its curve-mode equivalent (a run
 // warning) declared this run's render broken.
@@ -2509,7 +2509,7 @@ export function legacyBaselineWarning(
   return (
     `no baseline entry found at ${path.join(projectRoot, "120fps-baseline.json")}, ` +
     `but a legacy 120fps-baseline.json exists next to the component in ${componentDir}. ` +
-    `Baselines now live at the package root — re-run with --save-baseline to migrate.`
+    `Baselines now live at the package root: re-run with --save-baseline to migrate.`
   );
 }
 

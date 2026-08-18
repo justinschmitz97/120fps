@@ -252,6 +252,7 @@ describe("formatTable animation display", () => {
     const table = formatTable(report);
     expect(table).toContain("[anim]");
     expect(table).toContain("(T2)");
+    expect(table).toContain("PASS (T2) [anim]");
   });
 
   it("does not show [anim] when hasAnimation=false", () => {

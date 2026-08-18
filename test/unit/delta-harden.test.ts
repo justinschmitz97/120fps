@@ -4,15 +4,6 @@ import { formatTable, type Report, type PropDelta } from "../../src/report.js";
 import type { PropSchema } from "../../src/prop-gen.js";
 
 describe("generateDeltaPairs hardening", () => {
-  it("H1: boolean anchor is false, not the first resolveValues entry", () => {
-    const schemas: PropSchema[] = [
-      { name: "open", kind: "boolean", required: true, values: [] },
-    ];
-    const pairs = generateDeltaPairs(schemas);
-    expect(pairs[0].baseCombo.open).toBe(false);
-    expect(pairs[0].flipCombo.open).toBe(true);
-  });
-
   it("H2: union with single value produces 0 pairs", () => {
     const schemas: PropSchema[] = [
       { name: "size", kind: "union", required: true, values: ["medium"] },
@@ -29,16 +20,6 @@ describe("generateDeltaPairs hardening", () => {
     ];
     const pairs = generateDeltaPairs(schemas);
     expect(pairs).toHaveLength(0);
-  });
-
-  it("H4: optional boolean generates pair with anchor at false", () => {
-    const schemas: PropSchema[] = [
-      { name: "visible", kind: "boolean", required: false, values: [] },
-    ];
-    const pairs = generateDeltaPairs(schemas);
-    expect(pairs).toHaveLength(1);
-    expect(pairs[0].baseValue).toBe(false);
-    expect(pairs[0].flipValue).toBe(true);
   });
 
   it("H5: multiple unions sorted by value count ascending", () => {

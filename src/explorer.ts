@@ -91,7 +91,7 @@ export interface ExploreOptions {
   totalWallClockMs?: number;
   maxCombos?: number;
   // M37: reuse the pooled vsync browser (fresh context per pass). Explore
-  // always paces at vsync — its metrics depend on real frame scheduling.
+  // always paces at vsync: its metrics depend on real frame scheduling.
   pool?: import("./measure.js").BrowserPool;
   onWarning?: (warning: string) => void;
   // M52: time interactions with in-page observers instead of a per-sample CDP

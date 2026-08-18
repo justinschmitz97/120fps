@@ -407,7 +407,7 @@ export function buildFixtureScaffold(
   const body = tree.structure.map((n) => renderNode(n, 0)).join("\n");
 
   const todo = unplaced.length > 0
-    ? `\n      {/* TODO: place ${unplaced.join(", ")} — auto-composition could not infer where they belong */}`
+    ? `\n      {/* TODO: place ${unplaced.join(", ")}: auto-composition could not infer where they belong */}`
     : "";
 
   // A fragment whenever the body is not exactly one element: two siblings

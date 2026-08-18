@@ -247,7 +247,7 @@ export async function executeStressPattern(
 
 // Where to put the pointer and how far one wheel tick travels. The step size
 // adapts so a 10-row list traverses exactly its range while a virtualized list
-// reporting a 400,000px scrollHeight still stops after eight viewports —
+// reporting a 400,000px scrollHeight still stops after eight viewports:
 // representative either way, bounded always.
 async function scrollTarget(
   page: Page,

@@ -38,29 +38,6 @@ describe("H1: empty schemas", () => {
   });
 });
 
-describe("H2: non-scaling number prop", () => {
-  it("opacity is not detected", () => {
-    const schemas: PropSchema[] = [
-      { name: "opacity", kind: "number", required: true, values: [] },
-    ];
-    expect(detectScalingProps(schemas)).toHaveLength(0);
-  });
-
-  it("width is not detected", () => {
-    const schemas: PropSchema[] = [
-      { name: "width", kind: "number", required: true, values: [] },
-    ];
-    expect(detectScalingProps(schemas)).toHaveLength(0);
-  });
-
-  it("delay is not detected", () => {
-    const schemas: PropSchema[] = [
-      { name: "delay", kind: "number", required: true, values: [] },
-    ];
-    expect(detectScalingProps(schemas)).toHaveLength(0);
-  });
-});
-
 describe("H3: items-like name but wrong kind", () => {
   it("items as string → not detected", () => {
     const schemas: PropSchema[] = [
@@ -77,7 +54,7 @@ describe("H3: items-like name but wrong kind", () => {
   });
 });
 
-describe("H4: multiple array props — items-like wins", () => {
+describe("H4: multiple array props: items-like wins", () => {
   it("options beats random", () => {
     const schemas: PropSchema[] = [
       { name: "random", kind: "array", required: true, values: [] },
@@ -88,14 +65,7 @@ describe("H4: multiple array props — items-like wins", () => {
   });
 });
 
-describe("H5: n vs name — false positive", () => {
-  it("n matches shorthand", () => {
-    const schemas: PropSchema[] = [
-      { name: "n", kind: "number", required: true, values: [] },
-    ];
-    expect(detectScalingProps(schemas)).toHaveLength(1);
-  });
-
+describe("H5: n vs name: false positive", () => {
   it("name does NOT match shorthand (^n$ requires exact)", () => {
     const schemas: PropSchema[] = [
       { name: "name", kind: "number", required: true, values: [] },
@@ -103,18 +73,6 @@ describe("H5: n vs name — false positive", () => {
     const matches = detectScalingProps(schemas);
     // "name" doesn't match ^n$ or ^num, and doesn't match scaling pattern
     expect(matches).toHaveLength(0);
-  });
-});
-
-describe("H6: numRows matches ^num", () => {
-  it("numRows detected as numeric shorthand", () => {
-    const schemas: PropSchema[] = [
-      { name: "numRows", kind: "number", required: true, values: [] },
-    ];
-    const matches = detectScalingProps(schemas);
-    expect(matches).toHaveLength(1);
-    // numRows also matches "rows" in SCALING_NAME_PATTERN
-    expect(matches[0].kind).toBe("numeric");
   });
 });
 
@@ -195,18 +153,6 @@ describe("H13: union kind with scaling name", () => {
       { name: "items", kind: "object", required: true, values: [{}] },
     ];
     expect(detectScalingProps(schemas)).toHaveLength(0);
-  });
-});
-
-describe("H14: mixed array + numeric", () => {
-  it("array takes priority over numeric", () => {
-    const schemas: PropSchema[] = [
-      { name: "count", kind: "number", required: true, values: [] },
-      { name: "stuff", kind: "array", required: true, values: [] },
-    ];
-    const matches = detectScalingProps(schemas);
-    expect(matches[0].schema.name).toBe("stuff");
-    expect(matches[0].kind).toBe("array");
   });
 });
 

@@ -59,8 +59,8 @@ export function computeCvPercent(samples: number[]): number {
 
 // A fixed arithmetic loop, timed K times. Deliberately not calibration: that
 // measures a DOM insert plus forced layout and feeds normalization, and one
-// sample of it swings 20–40% (M39). This asks a narrower question — can this
-// machine repeat identical work identically right now — and answers it with
+// sample of it swings 20–40% (M39). This asks a narrower question: can this
+// machine repeat identical work identically right now: and answers it with
 // enough samples to mean something.
 export async function probeMachineNoise(
   page: Page,

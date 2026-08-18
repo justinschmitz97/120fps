@@ -158,11 +158,11 @@ describe("discoverInteractions e2e", () => {
     expect(summary!.type).toBe("click");
   });
 
-  it("deduplicates — same element appears once even if matched by multiple criteria", async () => {
+  it("deduplicates: same element appears once even if matched by multiple criteria", async () => {
     const p = await setup("./fixtures/aria-tabs.tsx");
     const descriptors = await discoverInteractions(p);
 
-    // tab buttons match both as <button> and [role=tab] — should appear once per element
+    // tab buttons match both as <button> and [role=tab]: should appear once per element
     const selectors = descriptors.map((d) => d.selector);
     const unique = new Set(selectors);
     expect(unique.size).toBe(selectors.length);
@@ -199,7 +199,7 @@ describe("discoverInteractions e2e", () => {
     }
   });
 
-  it("deterministic — same call twice yields identical results", async () => {
+  it("deterministic: same call twice yields identical results", async () => {
     const p = await setup("./fixtures/interactive-basic.tsx");
     const first = await discoverInteractions(p);
     const second = await discoverInteractions(p);

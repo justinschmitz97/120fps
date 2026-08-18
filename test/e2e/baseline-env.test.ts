@@ -58,7 +58,7 @@ function storedEntry(): BaselineEntry {
 }
 
 // Editing the recorded environment moves the entry to the slot that environment
-// describes — which is what a baseline saved on another machine looks like.
+// describes: which is what a baseline saved on another machine looks like.
 function patchBaseline(mutate: (entry: BaselineEntry) => void): void {
   const baseline = readBaseline();
   const key = slotKey(baseline);
@@ -136,7 +136,7 @@ describe("baseline environment fingerprint e2e", () => {
   });
 
   // Calibration drifts with machine load, so an unchanged same-machine check is
-  // identical or normalizable — never incompatible, never unfingerprinted, and
+  // identical or normalizable: never incompatible, never unfingerprinted, and
   // never a feature mismatch. Exact classification is unit-tested on the pure
   // function; this asserts the round trip carries the fingerprint through.
   it("compares an unchanged same-machine baseline without a feature mismatch or warning", async () => {
@@ -181,7 +181,7 @@ describe("baseline environment fingerprint e2e", () => {
     expect(report.baseline?.envMismatches.join(" ")).toContain("mode");
   }, 300000);
 
-  it("compares a pre-M29 entry raw and warns", async () => {
+  it("compares a pre-env-field entry raw and warns", async () => {
     patchBaseline((e) => {
       delete e.env;
     });

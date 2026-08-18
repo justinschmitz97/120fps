@@ -70,7 +70,7 @@ export function generateDeltaPairs(schemas: PropSchema[]): DeltaPair[] {
 }
 
 // Total delta pairs the prop space could produce before the MAX_DELTA_PAIRS
-// cap truncates them — lets a caller detect and disclose truncation without
+// cap truncates them: lets a caller detect and disclose truncation without
 // re-deriving the counting logic.
 export function countDeltaPairSpace(schemas: PropSchema[]): number {
   return buildAllDeltaPairs(schemas).length;
@@ -154,7 +154,7 @@ const REACT_PLACEHOLDER = "120fps-placeholder";
 
 // Identity for measurement purposes: two combos with this key would time the
 // same render twice and be reported as distinct rows. Covers the values the
-// pipeline can carry — JSON data plus Date/RegExp — and never conflates a key
+// pipeline can carry: JSON data plus Date/RegExp: and never conflates a key
 // that is present-but-undefined with one that is absent.
 export function comboKey(value: unknown): string {
   if (value === undefined) return "~undef";
@@ -191,7 +191,7 @@ export function generateCombinations(schemas: PropSchema[]): PropCombination[] {
   const total = valuesByProp.reduce((acc, v) => acc * v.length, 1);
 
   // Belt and braces: the pools are already de-duplicated, so this only catches
-  // a future source of duplicates — cheaply, and before any cap is applied.
+  // a future source of duplicates: cheaply, and before any cap is applied.
   if (total <= MAX_COMBINATIONS) {
     return dedupeCombos(cartesian(schemas, valuesByProp));
   }
@@ -200,7 +200,7 @@ export function generateCombinations(schemas: PropSchema[]): PropCombination[] {
 }
 
 // Size of the full cartesian prop space before MAX_COMBINATIONS forces a
-// stratified sample — lets a caller detect and disclose the truncation. Can
+// stratified sample: lets a caller detect and disclose the truncation. Can
 // be astronomically large (many multi-valued props); callers must cap how
 // they display it rather than trust arithmetic precision at that scale.
 export function countCombinationSpace(schemas: PropSchema[]): number {
@@ -209,7 +209,7 @@ export function countCombinationSpace(schemas: PropSchema[]): number {
 }
 
 // An optional prop is worth measuring absent, but only once: a pool that is
-// already `[undefined]` — an unknown type, or a preset that says so — must not
+// already `[undefined]`: an unknown type, or a preset that says so: must not
 // gain a second one and cartesian-double every combination.
 function resolveValues(schema: PropSchema): unknown[] {
   const base = resolveBaseValues(schema);
@@ -496,7 +496,7 @@ export interface MatrixAxisLike {
 
 // M61: --max-combos never bounded matrix cells at all. Capping needs an
 // order: keep the all-anchor base cell (every axis at its first/anchor
-// value — never dropped), then cells one axis away from it (the same
+// value: never dropped), then cells one axis away from it (the same
 // single-prop-effect story --max-combos already tells in plain-combo mode),
 // then two axes away, and so on. Ties keep generation order, so a
 // lexicographic cartesian or a pairwise-cover fallback both cap

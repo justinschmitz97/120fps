@@ -20,7 +20,7 @@ function writeFixture(name: string, content: string): string {
   return filePath;
 }
 
-describe("detectComponentExport (M24 D2)", () => {
+describe("detectComponentExport", () => {
   it("picks export default function", () => {
     const file = writeFixture(
       "widget.tsx",

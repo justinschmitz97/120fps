@@ -43,7 +43,7 @@ describe("STRATIFIED_SAMPLE_WARNING", () => {
   });
 
   it("caps an astronomically large raw count instead of printing it verbatim", () => {
-    const astronomical = 2 ** 100; // ~1.27e30 — finite, but not fit for display
+    const astronomical = 2 ** 100; // ~1.27e30: finite, but not fit for display
     const warning = STRATIFIED_SAMPLE_WARNING(astronomical, 64);
     expect(warning).not.toContain("Infinity");
     expect(warning).not.toContain("NaN");

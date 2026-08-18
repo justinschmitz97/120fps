@@ -187,7 +187,7 @@ describe("parseMetrics", () => {
 describe("parseTraceDuration nested event fix", () => {
   it("excludes nested event durations from totalDuration", () => {
     // Parent: ts=100, dur=10000 (10ms)
-    // Child: ts=200, dur=3000 (3ms) — nested inside parent
+    // Child: ts=200, dur=3000 (3ms): nested inside parent
     const events: TraceEvent[] = [
       { name: "FunctionCall", dur: 10_000, ph: "X", ts: 100 },
       { name: "v8.compile", dur: 3_000, ph: "X", ts: 200 },

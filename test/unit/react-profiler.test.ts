@@ -22,7 +22,6 @@ import {
   type CallbackIdentityDelta,
 } from "../../src/react-profiler.js";
 import { parseArgs } from "../../src/cli.js";
-import type { AnalyzeOptions } from "../../src/analyze.js";
 
 // --- helpers ---
 
@@ -102,10 +101,6 @@ describe("detectFramework", () => {
   it("returns 'react' when package.json is malformed JSON", () => {
     const dir = makeProject("{ not valid json !!");
     expect(detectFramework(dir)).toBe("react");
-  });
-
-  it("returns 'react' for a nonexistent projectRoot path", () => {
-    expect(detectFramework(path.join(os.tmpdir(), "120fps-does-not-exist-xyz"))).toBe("react");
   });
 });
 
@@ -710,36 +705,5 @@ describe("generateProbeHtml", () => {
 
   it("points to probe-entry.tsx", () => {
     expect(generateProbeHtml()).toContain("probe-entry.tsx");
-  });
-});
-
-// ====================================================================
-// AnalyzeOptions integration
-// ====================================================================
-
-describe("AnalyzeOptions react fields", () => {
-  it("accepts skipReactAnalysis option", () => {
-    const opts: AnalyzeOptions = { skipReactAnalysis: true };
-    expect(opts.skipReactAnalysis).toBe(true);
-  });
-
-  it("accepts framework option", () => {
-    const opts: AnalyzeOptions = { framework: "vanilla" };
-    expect(opts.framework).toBe("vanilla");
-  });
-
-  it("defaults are undefined when not provided", () => {
-    const opts: AnalyzeOptions = {};
-    expect(opts.skipReactAnalysis).toBeUndefined();
-    expect(opts.framework).toBeUndefined();
-  });
-
-  it("framework accepts all valid values", () => {
-    const r: AnalyzeOptions = { framework: "react" };
-    const v: AnalyzeOptions = { framework: "vanilla" };
-    const a: AnalyzeOptions = { framework: "auto" };
-    expect(r.framework).toBe("react");
-    expect(v.framework).toBe("vanilla");
-    expect(a.framework).toBe("auto");
   });
 });

@@ -34,7 +34,7 @@ function tsconfigWarnings(write: ReturnType<typeof vi.spyOn>): string[] {
     .filter((s) => s.includes("tsconfig"));
 }
 
-describe("prop-gen tsconfig warnings (M24 D6)", () => {
+describe("prop-gen tsconfig warnings", () => {
   it("malformed tsconfig: extraction still works, warns once across two calls", async () => {
     const write = vi
       .spyOn(process.stderr, "write")

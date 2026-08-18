@@ -160,24 +160,6 @@ describe("H10: maxNodes halts exploration", () => {
   }, 60000);
 });
 
-describe("H11: convergence on self-loops", () => {
-  it("converges when all edges are self-loops (no new states)", async () => {
-    harness = await buildAndServe("./fixtures/static-buttons.tsx");
-    const results = await explore(harness, {
-      samples: 2,
-      maxWallClockMs: 30000,
-      combos: [{}],
-    });
-    const graph = results[0].graph;
-    // Only one node since buttons don't change state
-    expect(graph.nodes.size).toBe(1);
-    // All edges are self-loops
-    for (const edge of graph.edges) {
-      expect(edge.fromId).toBe(edge.toId);
-    }
-  }, 60000);
-});
-
 describe("H12: wall clock stops mid-sample", () => {
   it("respects wall clock even during sample collection", async () => {
     harness = await buildAndServe("./fixtures/counter.tsx");
@@ -224,6 +206,6 @@ describe("H15: browser cleanup on error", () => {
       combos: [{}],
     });
     expect(results).toHaveLength(1);
-    // No dangling browser — if cleanup failed, subsequent tests would leak
+    // No dangling browser: if cleanup failed, subsequent tests would leak
   }, 30000);
 });

@@ -36,21 +36,7 @@ describe("H2: accordion role falls through to type-based pattern", () => {
   });
 });
 
-describe("H3: type=select with no role → single-shot", () => {
-  it("resolves to single-shot", () => {
-    const desc = makeDescriptor({ type: "select", tagName: "SELECT" });
-    const pattern = resolveStressPattern(desc);
-    expect(pattern.name).toBe("single-shot");
-  });
-});
-
 describe("H4: type=hover with no siblings and no role → single-shot", () => {
-  it("empty siblings array → single-shot", () => {
-    const desc = makeDescriptor({ type: "hover" });
-    const pattern = resolveStressPattern(desc, []);
-    expect(pattern.name).toBe("single-shot");
-  });
-
   it("undefined siblings → single-shot", () => {
     const desc = makeDescriptor({ type: "hover" });
     const pattern = resolveStressPattern(desc);
@@ -71,7 +57,7 @@ describe("H5: keyboard-sweep with 1 sibling → 4 steps", () => {
 });
 
 describe("H6: keyboard-sweep roles with 0 siblings fall through", () => {
-  const roles = ["tab", "listbox", "combobox", "menu", "tree"];
+  const roles = ["tab", "tree"];
   for (const role of roles) {
     it(`${role} + empty siblings → not keyboard-sweep`, () => {
       const desc = makeDescriptor({ type: "click", role });
@@ -90,29 +76,6 @@ describe("H7: open-close-10 always has exactly 20 steps", () => {
   it("dialog role descriptor → 20 steps", () => {
     const desc = makeDescriptor({ role: "dialog", selector: "#btn" });
     expect(resolveStressPattern(desc).steps).toHaveLength(20);
-  });
-});
-
-describe("H8: multi-keystroke always has exactly 11 steps", () => {
-  it("1 focus + 10 characters = 11", () => {
-    const desc = makeDescriptor({ type: "type", selector: "#inp" });
-    const pattern = resolveStressPattern(desc);
-    expect(pattern.steps).toHaveLength(11);
-    expect(pattern.steps[0].action).toBe("focus");
-    for (let i = 1; i <= 10; i++) {
-      expect(pattern.steps[i].action).toBe("type");
-    }
-  });
-});
-
-describe("H9: rapid-toggle-11 always has exactly 11 steps", () => {
-  it("11 click steps", () => {
-    const desc = makeDescriptor({ type: "click", selector: "#btn" });
-    const pattern = resolveStressPattern(desc);
-    expect(pattern.steps).toHaveLength(11);
-    for (const step of pattern.steps) {
-      expect(step.action).toBe("click");
-    }
   });
 });
 

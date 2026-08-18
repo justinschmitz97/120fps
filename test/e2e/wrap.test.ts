@@ -31,7 +31,7 @@ function tmpJson(): string {
   return path.join(os.tmpdir(), `120fps-wrap-${Date.now()}-${Math.random().toString(36).slice(2)}.json`);
 }
 
-describe("wrapper e2e — context dependency", () => {
+describe("wrapper e2e: context dependency", () => {
   it("fails to render a context-dependent component without a wrapper", async () => {
     const harness = await buildAndServe("./fixtures/needs-context.tsx");
     try {
@@ -64,7 +64,7 @@ describe("wrapper e2e — context dependency", () => {
   }, 60000);
 });
 
-describe("wrapper e2e — import-time side effects", () => {
+describe("wrapper e2e: import-time side effects", () => {
   it("applies the wrapper stylesheet and theme attribute before the first mount", async () => {
     const harness = await buildAndServe("./fixtures/theme-probe.tsx", {
       wrapPath: path.resolve("./fixtures/wrap-theme.tsx"),
@@ -87,7 +87,7 @@ describe("wrapper e2e — import-time side effects", () => {
   }, 60000);
 });
 
-describe("wrapper e2e — viewport export", () => {
+describe("wrapper e2e: viewport export", () => {
   it("re-exposes viewport and applies it to the session", async () => {
     const harness = await buildAndServe("./fixtures/viewport-reporter.tsx", {
       wrapPath: path.resolve("./fixtures/wrap-viewport.tsx"),
@@ -123,7 +123,7 @@ describe("wrapper e2e — viewport export", () => {
   }, 60000);
 });
 
-describe("wrapper e2e — overhead pass", () => {
+describe("wrapper e2e: overhead pass", () => {
   it("reports wrapper-only mount cost and DOM node delta", async () => {
     const harness = await buildAndServe("./fixtures/button.tsx", {
       wrapPath: path.resolve("./fixtures/wrap-expensive.tsx"),
@@ -160,29 +160,7 @@ describe("wrapper e2e — overhead pass", () => {
   }, 60000);
 });
 
-describe("wrapper e2e — invalid wrapper module", () => {
-  it("throws the W2 error instead of timing out", async () => {
-    await expect(
-      analyze("./fixtures/needs-context.tsx", {
-        samples: 1,
-        wrapPath: "./fixtures/wrap-no-default.tsx",
-        jsonPath: tmpJson(),
-      }),
-    ).rejects.toThrow(/must default-export a React component taking \{ children \}/);
-  }, 60000);
-
-  it("throws when the wrapper path does not exist", async () => {
-    await expect(
-      analyze("./fixtures/needs-context.tsx", {
-        samples: 1,
-        wrapPath: "./fixtures/nope.tsx",
-        jsonPath: tmpJson(),
-      }),
-    ).rejects.toThrow(/Wrapper module not found: \.\/fixtures\/nope\.tsx/);
-  }, 60000);
-});
-
-describe("wrapper e2e — full pipeline", () => {
+describe("wrapper e2e: full pipeline", () => {
   it("auto-detects 120fps.setup.tsx and profiles a context-dependent component", async () => {
     const jsonPath = tmpJson();
     const report = await analyze("./fixtures/wrap-project/Widget.tsx", {

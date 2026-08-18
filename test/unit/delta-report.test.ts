@@ -42,18 +42,6 @@ describe("PropDelta in Report", () => {
     expect(report.propDeltas).toBeUndefined();
   });
 
-  it("propDeltas sorted by |mountDelta| descending", () => {
-    const deltas: PropDelta[] = [
-      { propName: "a", baseValue: false, flipValue: true, mountDelta: 0.1, rerenderDelta: 0 },
-      { propName: "b", baseValue: false, flipValue: true, mountDelta: -0.5, rerenderDelta: 0 },
-      { propName: "c", baseValue: false, flipValue: true, mountDelta: 0.3, rerenderDelta: 0 },
-    ];
-    const sorted = [...deltas].sort((a, b) => Math.abs(b.mountDelta) - Math.abs(a.mountDelta));
-    expect(sorted[0].propName).toBe("b");
-    expect(sorted[1].propName).toBe("c");
-    expect(sorted[2].propName).toBe("a");
-  });
-
   it("formatTable includes Prop Deltas section", () => {
     const report = makeReport([
       { propName: "spotlight", baseValue: false, flipValue: true, mountDelta: 0.42, rerenderDelta: 0.18 },

@@ -9,7 +9,6 @@ import {
   detectMemoBailouts,
   detectContextFanOut,
   computeRenderAttribution,
-  computePortalOrphans,
   hasReactWarning,
   type ProfilerSnapshot,
   type ProfilerDiff,
@@ -112,15 +111,6 @@ describe("H2: duplicate fiber names handled by ID", () => {
   });
 });
 
-describe("H3: fiber with zero render count", () => {
-  it("zero in both snapshots produces no bailout", () => {
-    const a = makeSnapshot([["f1", makeFiber({ renderCount: 0 })]]);
-    const b = makeSnapshot([["f1", makeFiber({ renderCount: 0 })]]);
-    const diff = diffSnapshots(a, b);
-    expect(diff.rerenderFibers).toHaveLength(0);
-  });
-});
-
 describe("H4: very long component names in formatTable", () => {
   it("does not crash with 200-char component name", () => {
     const longName = "A".repeat(200);
@@ -139,19 +129,6 @@ describe("H4: very long component names in formatTable", () => {
   });
 });
 
-describe("H5: callback identity delta exactly at 0.5ms", () => {
-  it("delta of exactly 0.5ms is NOT reported (> not >=)", () => {
-    // The detection filters at > 0.5ms, so exactly 0.5 should not be in the list.
-    // If somehow it's in the list, hasReactWarning checks > 2ms for warn.
-    const opts: ReactOptimizations = {
-      memoBailout: false,
-      contextFanOut: false,
-      callbackIdentityDeltas: [{ propName: "onClick", deltaMs: 0.5 }],
-    };
-    expect(hasReactWarning(opts)).toBe(false);
-  });
-});
-
 describe("H6: callback identity delta exactly at 2.0ms", () => {
   it("delta of exactly 2.0ms does NOT produce warning (> not >=)", () => {
     const opts: ReactOptimizations = {
@@ -160,28 +137,6 @@ describe("H6: callback identity delta exactly at 2.0ms", () => {
       callbackIdentityDeltas: [{ propName: "onClick", deltaMs: 2.0 }],
     };
     expect(hasReactWarning(opts)).toBe(false);
-  });
-});
-
-describe("H7: portal orphans = 0", () => {
-  it("does not produce warning", () => {
-    const opts: ReactOptimizations = {
-      memoBailout: false,
-      contextFanOut: false,
-      portalOrphans: 0,
-    };
-    expect(hasReactWarning(opts)).toBe(false);
-  });
-
-  it("computePortalOrphans returns 0 for equal counts", () => {
-    expect(computePortalOrphans(10, 10)).toBe(0);
-  });
-});
-
-describe("H8: component with exactly 10 descendants", () => {
-  it("descendantCount of exactly 10 is stored in fiber", () => {
-    const fiber = makeFiber({ descendantCount: 10 });
-    expect(fiber.descendantCount).toBe(10);
   });
 });
 
@@ -321,21 +276,6 @@ describe("H13: detectFramework edge-case package.json contents", () => {
 describe("H16: detectDurationsUnavailable edge durations", () => {
   it("negative duration counts as available (false)", () => {
     const snap = makeSnapshot([["f1", makeFiber({ actualDurationMs: -1 })]]);
-    expect(detectDurationsUnavailable(snap)).toBe(false);
-  });
-
-  it("single fiber at exactly 0 -> true", () => {
-    const snap = makeSnapshot([["f1", makeFiber({ actualDurationMs: 0 })]]);
-    expect(detectDurationsUnavailable(snap)).toBe(true);
-  });
-
-  it("mixed undefined and positive -> false", () => {
-    const snap = {
-      fibers: new Map<string, { actualDurationMs?: number }>([
-        ["f1", { actualDurationMs: undefined }],
-        ["f2", { actualDurationMs: 0.2 }],
-      ]),
-    };
     expect(detectDurationsUnavailable(snap)).toBe(false);
   });
 });

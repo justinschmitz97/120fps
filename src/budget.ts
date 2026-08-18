@@ -41,12 +41,12 @@ export interface BaselineEntry {
   tier: ComponentTier;
   env?: EnvFingerprint;
   // M39: identity of the sources this entry measured, and the verdict of the
-  // run that saved it — together they let an unchanged component reuse the
+  // run that saved it: together they let an unchanged component reuse the
   // entry instead of re-measuring.
   sourceFingerprint?: string;
   pass?: boolean;
   // M40: the scene the entry measured. Absent on pre-M40 baselines, which
-  // recorded no scene at all — an unknown state is not a changed state.
+  // recorded no scene at all: an unknown state is not a changed state.
   measuredState?: MeasuredState;
   // M45: when this slot was last written, for pruning. Absent means pre-M45,
   // which is kept: absence is not age.
@@ -54,7 +54,7 @@ export interface BaselineEntry {
 }
 
 // M39: order-independent identity over file contents plus a config string.
-// Missing files hash as missing — absence is part of the identity, not an
+// Missing files hash as missing: absence is part of the identity, not an
 // error, so a deleted import invalidates the fingerprint like an edit does.
 export function computeSourceFingerprint(
   projectRoot: string,
@@ -115,10 +115,10 @@ export interface BaselineComparison {
   envMatch: EnvMatch;
   envMismatches: string[];
   // M40: set when baseline and current run measured different scenes. The
-  // comparison is skipped — a skeleton against settled content is a different
+  // comparison is skipped: a skeleton against settled content is a different
   // component, not a regression.
   measuredStateMismatch?: { baseline: MeasuredState; current: MeasuredState };
-  // M45: the entry came from another environment's slot. Informational — such a
+  // M45: the entry came from another environment's slot. Informational: such a
   // comparison never fails a run.
   crossEnvironment?: boolean;
   // M46: the machine was too busy to compare against. No verdicts were drawn.
@@ -175,7 +175,7 @@ const DEFAULT_TOLERANCE: ResolvedTolerance = {
   unmount: 20,
 };
 
-// Fields resolveComponentBudget/resolveTolerances read as budget numbers —
+// Fields resolveComponentBudget/resolveTolerances read as budget numbers:
 // shared by `defaults`, each `components[...]` entry, and `tolerance`.
 const NUMERIC_BUDGET_FIELDS = ["mount", "rerender", "interaction", "unmount"] as const;
 
@@ -201,7 +201,7 @@ function checkBudgetNumber(configPath: string, keyPath: string, value: unknown):
 
 // Malformed-but-parseable values (mount: "fast", negative numbers, null)
 // would otherwise silently reach resolveComponentBudget/resolveTolerances and
-// produce nonsense budgets. Unknown keys are left untouched — forward compat
+// produce nonsense budgets. Unknown keys are left untouched: forward compat
 // for fields a newer version of 120fps understands.
 function validateBudgetConfig(configPath: string, config: unknown): asserts config is BudgetConfig {
   if (config === null || typeof config !== "object" || Array.isArray(config)) {
@@ -257,7 +257,7 @@ export const LEGACY_ENV_KEY = "legacy";
 const BASELINE_KEY_SEPARATOR = "#";
 
 // Slots are indexed by machine identity, not by measurement conditions.
-// Calibration is excluded on M39's evidence — a single sample swings 20–40%, so
+// Calibration is excluded on M39's evidence: a single sample swings 20–40%, so
 // gating on it would fragment slots by thermal luck. Chromium is keyed by major
 // version only: patch bumps land weekly and have not been shown to move timing.
 export function computeEnvKey(env: EnvFingerprint | undefined): string {
@@ -344,7 +344,7 @@ export function saveBaseline(
     try {
       return loadBaseline(baselinePath);
     } catch {
-      // Unreadable or unparseable — start fresh rather than lose the run.
+      // Unreadable or unparseable: start fresh rather than lose the run.
       return null;
     }
   })();
@@ -471,7 +471,7 @@ export function buildEnvFingerprint(input: EnvFingerprintInput): EnvFingerprint 
     ...(input.wrapper ? { wrapper: input.wrapper } : {}),
     ...(input.reactCompiler !== undefined ? { reactCompiler: input.reactCompiler } : {}),
     // React is the absence of the field, which is what a pre-M57 baseline
-    // records — writing it would make every stored entry incomparable.
+    // records: writing it would make every stored entry incomparable.
     ...(input.framework && input.framework !== "react" ? { framework: input.framework } : {}),
   };
 }
@@ -509,7 +509,7 @@ function calibrationClose(a: number, b: number): boolean {
 
 // M39: the reuse gate needs machine identity, not thermal identity. A single
 // calibration sample swings 20–40% on a real machine (measured 41.7 vs 57.3
-// within one sweep), so requiring calibrationClose made reuse a lottery —
+// within one sweep), so requiring calibrationClose made reuse a lottery:
 // and drift changes measured values, never the verdict of unchanged code.
 export function sameMachineIdentity(
   baseline: EnvFingerprint | undefined,

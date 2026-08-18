@@ -86,6 +86,8 @@ describe("formatTable with baseline", () => {
     const output = formatTable(makeReport({ baseline: comparison }));
     expect(output).toContain("Baseline");
     expect(output).toContain("REGRESSED");
+    expect(output).toContain("mount");
+    expect(output).toContain("tolerance");
   });
 
   it("omits baseline section when no baseline", () => {

@@ -68,7 +68,7 @@ function fileStamp(fileName: string): { mtimeMs: number; size: number } | undefi
 // M57: a `.vue` script block has no file of its own. It is served to the
 // program from memory under a `<sfc>.ts` name in the SFC's own directory, so
 // relative imports, tsconfig `paths` and the checker resolve exactly as they do
-// for a real file — and so `./Child.vue` resolves too, because TS's bundler
+// for a real file: and so `./Child.vue` resolves too, because TS's bundler
 // resolution probes `./Child.vue.ts` for a specifier it cannot otherwise place.
 // Never cached by stamp: virtual files have none, which is what keeps them fresh.
 export interface VirtualScripts {
@@ -285,7 +285,7 @@ interface DefinePropsCall {
   defaults?: ts.ObjectLiteralExpression;
 }
 
-// `defineProps` is a compiler macro, so the identifier is always literal — no
+// `defineProps` is a compiler macro, so the identifier is always literal: no
 // alias to follow. React's props type is a function *parameter* type; this one
 // is a call's type argument, which is why the React finder cannot be reused.
 export function findDefineProps(sourceFile: ts.SourceFile): DefinePropsCall | undefined {
@@ -328,7 +328,7 @@ export function findDefineProps(sourceFile: ts.SourceFile): DefinePropsCall | un
 }
 
 // A defaulted prop is the value the author says is normal, and every anchor in
-// the pipeline reads `values[0]` — deltas, matrix baselines, curve anchors. So
+// the pipeline reads `values[0]`: deltas, matrix baselines, curve anchors. So
 // the default is moved to the front of the pool rather than transported through
 // a second channel. Vue's array/object defaults are factory functions; their
 // literal bodies are read the same way.
@@ -452,7 +452,7 @@ interface ComponentCandidate {
     | ts.VariableDeclaration
     | ts.ArrowFunction
     | ts.FunctionExpression
-    // `export default memo(Imported)` — the component is not declared here.
+    // `export default memo(Imported)`: the component is not declared here.
     | ts.ExportAssignment;
   exported: boolean;
   isDefault: boolean;
@@ -463,7 +463,7 @@ interface ComponentCandidate {
 
 interface BoundProps {
   type: ts.Type;
-  // The function the type came from, when one was reachable — the source of
+  // The function the type came from, when one was reachable: the source of
   // the destructured parameter names the self-consistency guard compares.
   fn?: ts.SignatureDeclaration;
 }
@@ -496,7 +496,7 @@ function collectComponentCandidates(sourceFile: ts.SourceFile): ComponentCandida
           aliases: [],
         });
       } else if (isDefault) {
-        // export default function (props: Props) — nameless but still the target.
+        // export default function (props: Props): nameless but still the target.
         candidates.push({ name: "default", declaration: node, exported, isDefault, aliases: [] });
       }
       return;
@@ -606,7 +606,7 @@ function selectTargetCandidate(
   return candidates[0];
 }
 
-// `memo(Inner)` / `forwardRef(Inner)` / `Inner` — the identifier a wrapper chain
+// `memo(Inner)` / `forwardRef(Inner)` / `Inner`: the identifier a wrapper chain
 // ultimately names, when it names one.
 function identifierBehind(expression: ts.Expression): ts.Identifier | undefined {
   if (ts.isIdentifier(expression)) return expression;
@@ -667,7 +667,7 @@ function bindProps(
     if (bound) return bound;
   }
 
-  // const Component = memo(Inner) — follow the identifier to its declaration.
+  // const Component = memo(Inner): follow the identifier to its declaration.
   if (!fn && hops < IDENTIFIER_HOPS) {
     const identifier = identifierBehind(expression);
     const referenced = identifier ? byName.get(identifier.text) : undefined;
@@ -760,7 +760,7 @@ function warnUnboundTarget(
 ): void {
   emit(
     `${path.resolve(fileName)}::${targetName}`,
-    `Warning: could not resolve props for ${targetName} in ${fileName} — measuring with no props. ` +
+    `Warning: could not resolve props for ${targetName} in ${fileName}: measuring with no props. ` +
       `Another declaration in this file has props, but it is not the component being measured.\n`,
     sink,
   );
@@ -811,7 +811,7 @@ function warnUnenumerableProps(
 ): void {
   emit(
     `${path.resolve(fileName)}::computed::${targetName}`,
-    `Warning: props type ${annotation} for ${targetName} in ${fileName} could not be enumerated — ` +
+    `Warning: props type ${annotation} for ${targetName} in ${fileName} could not be enumerated: ` +
       `measuring with no props. Add ${presetFileName(fileName)} to supply values.\n`,
     sink,
   );
@@ -822,7 +822,7 @@ interface PropsBinding {
   targetName?: string;
   // 1-based source line of the target's declaration.
   targetLine?: number;
-  // The target's first-parameter annotation, when it is a computed type — the
+  // The target's first-parameter annotation, when it is a computed type: the
   // only case where an empty schema is a resolution failure rather than a fact.
   computedAnnotation?: string;
 }
@@ -1032,7 +1032,7 @@ function classifyType(
   checker: ts.TypeChecker,
 ): PropSchema {
   // Absent members carry no shape. `null` and `void` are stripped next to
-  // `undefined` because a nullable literal union is still a literal union —
+  // `undefined` because a nullable literal union is still a literal union:
   // that is what makes cva's `VariantProps<typeof x>` enumerable.
   const nonUndefinedTypes = type.isUnion()
     ? type.types.filter(
@@ -1045,17 +1045,17 @@ function classifyType(
   const classifyTarget =
     nonUndefinedTypes.length === 1 ? nonUndefinedTypes[0] : type;
 
-  // ReactNode / ReactElement — check all non-undefined members
+  // ReactNode / ReactElement: check all non-undefined members
   if (nonUndefinedTypes.some((t) => isReactNodeType(t, checker))) {
     return { name, kind: "reactnode", required, values: [] };
   }
 
-  // Function/callback — check all non-undefined members
+  // Function/callback: check all non-undefined members
   if (nonUndefinedTypes.some((t) => t.getCallSignatures().length > 0)) {
     return { name, kind: "function", required, values: [] };
   }
 
-  // Boolean — either BooleanLike flag or union of true|false literals
+  // Boolean: either BooleanLike flag or union of true|false literals
   if (
     classifyTarget.flags & ts.TypeFlags.BooleanLike ||
     isBooleanUnion(nonUndefinedTypes)
@@ -1101,7 +1101,7 @@ function classifyType(
     return { name, kind: "number", required, values: [1, 5, 20] };
   }
 
-  // Tuple — fixed arity, so it is neither an open array nor a bag of fields.
+  // Tuple: fixed arity, so it is neither an open array nor a bag of fields.
   if (checker.isTupleType(classifyTarget)) {
     return tupleSchema(name, classifyTarget, required, checker);
   }
@@ -1118,7 +1118,7 @@ function classifyType(
     };
   }
 
-  // Object — one shape, an intersection of them, or a union. A union stands in
+  // Object: one shape, an intersection of them, or a union. A union stands in
   // for its first member, exactly as an array element type does.
   if (isObjectLike(classifyTarget)) {
     return objectSchema(name, classifyTarget, required, checker);
@@ -1264,7 +1264,7 @@ function collectionValue(
   if (!name || (!MAP_TYPES.has(name) && !SET_TYPES.has(name))) return undefined;
 
   const args = checker.getTypeArguments(type as ts.TypeReference);
-  const reason = `${name} cannot be transported to the browser — passed as entries`;
+  const reason = `${name} cannot be transported to the browser: passed as entries`;
 
   if (SET_TYPES.has(name)) {
     const member = args[0] ? synthesizeValue(args[0], checker, 1, newSynth()) : undefined;
@@ -1514,14 +1514,14 @@ export function scanExports(sourceText: string, fileName: string): ExportInfo[] 
 }
 
 // M39: every source file a component's type-check touches, minus default
-// libs and external libraries — the file set whose contents identify the
+// libs and external libraries: the file set whose contents identify the
 // component for fingerprinting. Rides the M36 program cache.
 export async function projectSourceFiles(filePath: string): Promise<string[]> {
   const absolutePath = path.resolve(filePath);
   const files: string[] = [];
 
   // M57: the program roots at a virtual script, which is not a file anyone can
-  // hash. Each `<x>.vue.ts` collapses back to `<x>.vue` — without that an
+  // hash. Each `<x>.vue.ts` collapses back to `<x>.vue`: without that an
   // edited component would keep reusing a stored verdict about different source.
   let root = absolutePath;
   let virtual: VirtualScripts | undefined;
@@ -1651,7 +1651,7 @@ function createCompilerOptions(absolutePath: string): ts.CompilerOptions {
           ts.flattenDiagnosticMessageText(parsed.errors[0].messageText, " "),
         );
       }
-      // Override resolution to Bundler — user components use extensionless imports
+      // Override resolution to Bundler: user components use extensionless imports
       compilerOptions = {
         ...parsed.options,
         skipLibCheck: true,

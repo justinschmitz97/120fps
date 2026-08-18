@@ -26,7 +26,7 @@ function schemasWithChildren(...names: string[]): Map<string, PropSchema[]> {
 
 // ─── Phase 1: Prefix Grouping ───
 
-describe("Phase 1 — prefix grouping", () => {
+describe("Phase 1: prefix grouping", () => {
   it("identifies root as shortest shared prefix among exports", () => {
     const exports = makeExports("Dialog", "DialogTrigger", "DialogContent");
     const result = inferComposition(exports, emptySchemas("Dialog", "DialogTrigger", "DialogContent"));
@@ -77,7 +77,7 @@ describe("Phase 1 — prefix grouping", () => {
 
 // ─── Phase 2: Nesting Inference ───
 
-describe("Phase 2 — suffix taxonomy", () => {
+describe("Phase 2: suffix taxonomy", () => {
   it("builds item-based template: Accordion pattern", () => {
     const names = ["Accordion", "AccordionItem", "AccordionTrigger", "AccordionContent"];
     const exports = makeExports(...names);
@@ -299,6 +299,13 @@ describe("repeatNode and repeatCount", () => {
     const exports = makeExports(...names);
     const result = inferComposition(exports, schemasWithChildren(...names));
     expect(result!.repeatNode).toBeUndefined();
+
+    const root = result!.structure[0];
+    const portal = root.children.find((c) => c.component === "DialogPortal");
+    expect(portal).toBeDefined();
+    const content = portal!.children.find((c) => c.component === "DialogContent");
+    expect(content).toBeDefined();
+    expect(content!.children).toHaveLength(0);
   });
 
   it("sets repeatNode for flat template with *Item", () => {

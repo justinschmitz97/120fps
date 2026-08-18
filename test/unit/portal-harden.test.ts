@@ -1,5 +1,4 @@
 import { describe, it, expect } from "vitest";
-import type { InteractionDescriptor } from "../../src/discovery.js";
 import {
   buildTimingWithCV,
   computeVerdict,
@@ -40,7 +39,7 @@ function makeReport(combos: ComboReport[]): Report {
   };
 }
 
-describe("H11: portal interactions affect verdict", () => {
+describe("H11: portal flag does not exempt an interaction from verdict thresholds", () => {
   it("portal interaction exceeding threshold causes fail verdict", () => {
     const combo = makeCombo([
       { selector: "btn", type: "click", label: "Portal Close", timing: buildTimingWithCV([500]), relativeTiming: 20, portal: true },
@@ -78,66 +77,7 @@ describe("H12: formatTable with mix of portal and non-portal", () => {
   });
 });
 
-describe("H13: InteractionDescriptor JSON serialization", () => {
-  it("portal and triggeredBy serialize to JSON correctly", () => {
-    const desc: InteractionDescriptor = {
-      type: "click",
-      selector: "[data-testid=\"close\"]",
-      tagName: "BUTTON",
-      label: "Close",
-      portal: true,
-      triggeredBy: "[data-testid=\"open\"]",
-    };
-    const json = JSON.stringify(desc);
-    const parsed = JSON.parse(json);
-    expect(parsed.portal).toBe(true);
-    expect(parsed.triggeredBy).toBe("[data-testid=\"open\"]");
-  });
-
-  it("omits portal and triggeredBy when not set", () => {
-    const desc: InteractionDescriptor = {
-      type: "click",
-      selector: "button",
-      tagName: "BUTTON",
-      label: "Submit",
-    };
-    const json = JSON.stringify(desc);
-    const parsed = JSON.parse(json);
-    expect(parsed.portal).toBeUndefined();
-    expect(parsed.triggeredBy).toBeUndefined();
-  });
-});
-
-describe("H14: InteractionReport portal field in JSON", () => {
-  it("portal field present in JSON when true", () => {
-    const report: InteractionReport = {
-      selector: "btn",
-      type: "click",
-      label: "Close",
-      timing: buildTimingWithCV([5]),
-      relativeTiming: 0.5,
-      portal: true,
-    };
-    const json = JSON.stringify(report);
-    const parsed = JSON.parse(json);
-    expect(parsed.portal).toBe(true);
-  });
-
-  it("portal field absent in JSON when undefined", () => {
-    const report: InteractionReport = {
-      selector: "btn",
-      type: "click",
-      label: "Submit",
-      timing: buildTimingWithCV([5]),
-      relativeTiming: 0.5,
-    };
-    const json = JSON.stringify(report);
-    const parsed = JSON.parse(json);
-    expect("portal" in parsed).toBe(false);
-  });
-});
-
-describe("H15: unstable portal interaction causes warn verdict", () => {
+describe("H15: portal flag does not exempt an interaction from the CV instability threshold", () => {
   it("warns when portal interaction CV > 15%", () => {
     const combo = makeCombo([
       { selector: "btn", type: "click", label: "Portal Close", timing: buildTimingWithCV([1, 1, 1, 100]), relativeTiming: 0.5, portal: true },

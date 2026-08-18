@@ -61,7 +61,7 @@ export const HINTS: Record<HintId, Hint> = {
     lines: [
       "Nodes the component portalled onto document.body were still there after unmount. Return",
       "a cleanup from the effect that created the container, and remove the container element",
-      "itself — React removes what it rendered, not a host node you appended.",
+      "itself: React removes what it rendered, not a host node you appended.",
     ],
     anchor: "#portal-orphans",
   },
@@ -131,7 +131,7 @@ export const HINTS: Record<HintId, Hint> = {
     lines: [
       "The component was still fetching or still settling when the sample window closed, so",
       "these numbers are the skeleton's. Add a setup export to your wrapper module that stubs",
-      "the request before first render — see the async wrapper setup section.",
+      "the request before first render: see the async wrapper setup section.",
     ],
     anchor: "#async-wrapper-setup",
   },
@@ -185,10 +185,10 @@ export const MEASUREMENT_BASIS_LINE =
   "Numbers are comparative, not production wall-clock.";
 
 // M65: the preflight import graph already knows which provider-dependent
-// libraries the component pulls in. Named only once a render actually failed —
+// libraries the component pulls in. Named only once a render actually failed:
 // a healthy run is never told about an import that behaved.
 export const PROVIDER_HINT_LINE = (candidate: string): string =>
-  `component imports ${candidate} — likely needs a provider wrapper; see --wrap / 120fps.setup.tsx`;
+  `component imports ${candidate}: likely needs a provider wrapper; see --wrap / 120fps.setup.tsx`;
 
 function extraHintLines(id: HintId, report: Report | undefined): string[] {
   if (id !== "renderError") return [];

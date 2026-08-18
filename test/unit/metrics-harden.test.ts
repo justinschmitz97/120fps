@@ -3,6 +3,7 @@ import {
   parseMetrics,
   computeINP,
   computeScalingCurve,
+  isDomFlat,
 } from "../../src/metrics.js";
 import { parseTraceDuration, type TraceEvent } from "../../src/measure.js";
 
@@ -83,14 +84,6 @@ describe("H4: LayoutShift with missing args", () => {
   });
 });
 
-describe("H5: negative heap delta", () => {
-  it("preserves negative values", () => {
-    const m = parseMetrics([]);
-    m.heapDelta = -1024;
-    expect(m.heapDelta).toBe(-1024);
-  });
-});
-
 describe("H6: INP multiple inputs before single paint", () => {
   it("uses the last input event before paint", () => {
     const traces: TraceEvent[][] = [
@@ -141,7 +134,7 @@ describe("H9: scaling curve with negative slope", () => {
     ];
     const curve = computeScalingCurve(points);
     expect(curve.slope).toBeLessThan(0);
-    // Non-positive slope means cost is not growing — never linear/quadratic/exponential
+    // Non-positive slope means cost is not growing: never linear/quadratic/exponential
     expect(curve.growthClass).toBe("constant");
   });
 
@@ -245,5 +238,15 @@ describe("H14: DrawFrame events in frames array", () => {
     expect(m.frames).toHaveLength(2);
     expect(m.frames[0].duration).toBeCloseTo(8, 0);
     expect(m.jankFrameCount).toBe(1);
+  });
+});
+
+describe("H18-H19: isDomFlat guards", () => {
+  it("H18 a growing DOM is never flat", () => {
+    expect(isDomFlat([{ n: 1, domNodeCount: 9 }, { n: 2, domNodeCount: 10 }])).toBe(false);
+  });
+
+  it("H19 all-unknown node counts are not flat", () => {
+    expect(isDomFlat([{ n: 1 }, { n: 2 }])).toBe(false);
   });
 });

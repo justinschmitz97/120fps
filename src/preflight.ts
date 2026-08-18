@@ -21,7 +21,7 @@ export type PreflightKind =
 
 // The harness never loads the project's vite.config (M30): its plugins target
 // its own Vite major and its server options are not measurement-safe. That is
-// the right architecture and the wrong error experience — a run would otherwise
+// the right architecture and the wrong error experience: a run would otherwise
 // fail deep inside Vite without ever naming the transform that was missing.
 //
 // Each entry carries a stable `code` so dogfooding and issue reports reveal
@@ -102,7 +102,7 @@ export interface PreflightResult {
   hard: PreflightHit[];
   soft: PreflightHit[];
   // M48: imports the harness cannot compile because it does not load the
-  // project's Vite plugins. Reported, never fatal — some of these still build.
+  // project's Vite plugins. Reported, never fatal: some of these still build.
   transforms: PreflightHit[];
   // M65: libraries and local modules whose hooks throw outside their provider.
   // Evidence for a render error, never a finding on its own.
@@ -142,7 +142,7 @@ export function detectProviderImport(
 }
 
 // The shape of a context hook that refuses to run outside its provider: a
-// context is created here, and something in the file throws. Text only — the
+// context is created here, and something in the file throws. Text only: the
 // point is to name a suspect, not to prove it.
 export function detectLocalProviderModule(
   sourceText: string,
@@ -173,7 +173,7 @@ function scriptKind(fileName: string): ts.ScriptKind {
 }
 
 // M57: a `.vue` file is not TypeScript. Its `<script setup>` block is, and that
-// is where its imports live — without this the walk would stop at the measured
+// is where its imports live: without this the walk would stop at the measured
 // file and every guarantee below it would silently become a no-op.
 function parse(fileName: string, vueCompiler?: VueSfcCompiler): ts.SourceFile | undefined {
   const text = ts.sys.readFile(fileName);
@@ -308,7 +308,7 @@ function relative(projectRoot: string, file: string): string {
 export interface PreflightOptions {
   projectRoot: string;
   // Entry points into the graph: the measured file, and the wrapper when one
-  // is active — a server-only import reaches the browser through either.
+  // is active: a server-only import reaches the browser through either.
   entries: string[];
   componentName?: string;
   // M57: the project's own SFC parser. Absent, `.vue` files are unreadable and
@@ -357,7 +357,7 @@ export function runPreflight(options: PreflightOptions): PreflightResult {
       hard.push({ kind: "use-server", chain: chainTo(file) });
     }
 
-    // M65: only *imported* modules are provider candidates — a component that
+    // M65: only *imported* modules are provider candidates: a component that
     // creates its own context supplies it too.
     if (!entryFiles.has(file)) {
       const local = detectLocalProviderModule(sf.text);
@@ -437,7 +437,7 @@ export function runPreflight(options: PreflightOptions): PreflightResult {
   }
 
   // An async function component is a React Server Component. Vue has no such
-  // export shape — an SFC's component is an object, and `async setup()` is a
+  // export shape: an SFC's component is an object, and `async setup()` is a
   // browser-side Suspense concern, not a server boundary.
   if (
     options.componentName &&
@@ -482,13 +482,13 @@ export function preflightFailureMessage(hits: PreflightHit[]): string {
 }
 
 export const NODE_BUILTIN_WARNING = (hit: PreflightHit): string =>
-  `${chainText(hit)} — a Node builtin in the component graph. ` +
+  `${chainText(hit)}: a Node builtin in the component graph. ` +
   "Vite may externalize it; if the run fails to boot, this is the first place to look.";
 
 // Names the transform, not the symptom. Without this the run fails deep inside
 // Vite with a message that never mentions the plugin the project relies on.
 export const PROJECT_TRANSFORM_WARNING = (hit: PreflightHit): string =>
-  `[transform:${hit.transformCode}] ${chainText(hit)} — this project compiles that with ` +
+  `[transform:${hit.transformCode}] ${chainText(hit)}: this project compiles that with ` +
   `${hit.transformOwner}, which 120fps does not load (the harness never reads your vite.config). ` +
   "The import may fail to build, or build unstyled.";
 

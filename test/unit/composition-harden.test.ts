@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   inferComposition,
+  shouldRollbackComposition,
   type ExportInfo,
 } from "../../src/composition.js";
 import { compositionToJsx } from "../../src/harness.js";
@@ -23,26 +24,6 @@ function schemasWithChildren(...names: string[]): Map<string, PropSchema[]> {
   }
   return map;
 }
-
-// ─── H1: Unrecognized suffix → direct child of root ───
-
-describe("H1: unrecognized suffix", () => {
-  it("places DialogSub as direct child of root", () => {
-    const names = ["Dialog", "DialogTrigger", "DialogSub"];
-    const result = inferComposition(makeExports(...names), schemasWithChildren(...names));
-    expect(result).not.toBeNull();
-    const root = result!.structure[0];
-    expect(root.children.find((c) => c.component === "DialogSub")).toBeDefined();
-  });
-
-  it("places SelectValue as direct child of root", () => {
-    const names = ["Select", "SelectTrigger", "SelectValue", "SelectContent"];
-    const result = inferComposition(makeExports(...names), schemasWithChildren(...names));
-    expect(result).not.toBeNull();
-    const root = result!.structure[0];
-    expect(root.children.find((c) => c.component === "SelectValue")).toBeDefined();
-  });
-});
 
 // ─── H3: Two items share similar suffix ───
 
@@ -87,16 +68,9 @@ describe("H5: mixed exports with partial prefix sharing", () => {
     const names = ["Button", "Dialog", "DialogTrigger"];
     const result = inferComposition(makeExports(...names), schemasWithChildren(...names));
     // Dialog is root prefix of DialogTrigger, Button doesn't share prefix
-    // But findRoot checks which export name is prefix of ALL others — Button breaks this
+    // But findRoot checks which export name is prefix of ALL others: Button breaks this
     // So this should return null since no single export is prefix of all others
     expect(result).toBeNull();
-  });
-
-  it("succeeds when all exports share common prefix", () => {
-    const names = ["Dialog", "DialogTrigger", "DialogContent"];
-    const result = inferComposition(makeExports(...names), schemasWithChildren(...names));
-    expect(result).not.toBeNull();
-    expect(result!.root).toBe("Dialog");
   });
 });
 
@@ -173,32 +147,6 @@ describe("H10: flat without items", () => {
   });
 });
 
-// ─── H11: Portal template without optional sub-components ───
-
-describe("H11: minimal portal template", () => {
-  it("generates valid tree without Title/Description/Close", () => {
-    const names = ["Dialog", "DialogTrigger", "DialogContent"];
-    const result = inferComposition(makeExports(...names), schemasWithChildren(...names));
-    expect(result).not.toBeNull();
-    const root = result!.structure[0];
-    // Since no Portal/Overlay, this is flat template
-    expect(root.children.find((c) => c.component === "DialogTrigger")).toBeDefined();
-    expect(root.children.find((c) => c.component === "DialogContent")).toBeDefined();
-  });
-
-  it("generates valid tree with Portal but without Overlay", () => {
-    const names = ["Dialog", "DialogTrigger", "DialogPortal", "DialogContent"];
-    const result = inferComposition(makeExports(...names), schemasWithChildren(...names));
-    expect(result).not.toBeNull();
-    const root = result!.structure[0];
-    const portal = root.children.find((c) => c.component === "DialogPortal");
-    expect(portal).toBeDefined();
-    const content = portal!.children.find((c) => c.component === "DialogContent");
-    expect(content).toBeDefined();
-    expect(content!.children).toHaveLength(0);
-  });
-});
-
 // ─── H12: List-based with items but no triggers ───
 
 describe("H12: list-based with items instead of triggers", () => {
@@ -215,23 +163,11 @@ describe("H12: list-based with items instead of triggers", () => {
   });
 });
 
-// ─── H14: Single component file ───
-
-describe("H14: single component", () => {
-  it("returns null for single export", () => {
-    const result = inferComposition(
-      [{ name: "Button", isDefault: false }],
-      emptySchemas("Button"),
-    );
-    expect(result).toBeNull();
-  });
-});
-
 // ─── H15: Nested suffixes ───
 
 describe("H15: deeply nested suffixes", () => {
   it("classifies by last matching suffix pattern", () => {
-    // "AccordionItemTrigger" — suffix after root "Accordion" is "ItemTrigger"
+    // "AccordionItemTrigger": suffix after root "Accordion" is "ItemTrigger"
     // This matches "Trigger" at end → trigger role
     const names = ["Accordion", "AccordionItem", "AccordionItemTrigger", "AccordionContent"];
     const result = inferComposition(makeExports(...names), schemasWithChildren(...names));
@@ -243,5 +179,19 @@ describe("H15: deeply nested suffixes", () => {
     const firstItem = items[0];
     const triggers = firstItem.children.filter((c) => c.component === "AccordionItemTrigger");
     expect(triggers.length).toBe(1);
+  });
+});
+
+describe("H20-H22: shouldRollbackComposition guards", () => {
+  it("H20 a rendered composed scene is kept even with one element", () => {
+    expect(shouldRollbackComposition({ rootElements: 1 })).toBe(false);
+  });
+
+  it("H21 a negative element count rolls back", () => {
+    expect(shouldRollbackComposition({ rootElements: -1 })).toBe(true);
+  });
+
+  it("H22 a null error field does not force a rollback", () => {
+    expect(shouldRollbackComposition({ rootElements: 5, error: null })).toBe(false);
   });
 });

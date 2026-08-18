@@ -34,10 +34,10 @@ export function detectPropPresets(componentPath: string): string | undefined {
   return undefined;
 }
 
-// Literals are evaluated so they flow through the existing pipeline unchanged —
+// Literals are evaluated so they flow through the existing pipeline unchanged:
 // combos, deltas, matrix cells and curve anchors all compare real values.
 // Everything else keeps its position and is resolved in the page.
-// Exported for M57: a Vue `withDefaults` object is the same problem — an AST
+// Exported for M57: a Vue `withDefaults` object is the same problem: an AST
 // literal that has to become a real value without executing the module.
 export function literalValue(node: ts.Expression): { ok: true; value: unknown } | { ok: false } {
   if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
@@ -90,7 +90,7 @@ function findDefaultExport(sf: ts.SourceFile): ts.ObjectLiteralExpression | unde
       if (ts.isAsExpression(expr) && ts.isObjectLiteralExpression(expr.expression)) {
         return expr.expression;
       }
-      // `export default presets` — follow the binding.
+      // `export default presets`: follow the binding.
       if (ts.isIdentifier(expr)) {
         for (const candidate of sf.statements) {
           if (!ts.isVariableStatement(candidate)) continue;

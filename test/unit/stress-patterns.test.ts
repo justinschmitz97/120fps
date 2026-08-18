@@ -17,33 +17,15 @@ function makeDescriptor(
 // --- Pattern dispatch ---
 
 describe("resolveStressPattern dispatch", () => {
-  it("tab role + siblings → keyboard-sweep", () => {
-    const desc = makeDescriptor({ type: "click", role: "tab" });
-    const pattern = resolveStressPattern(desc, ["[role=tab]:nth-of-type(1)", "[role=tab]:nth-of-type(2)"]);
-    expect(pattern.name).toBe("keyboard-sweep");
-  });
-
-  it("listbox role + siblings → keyboard-sweep", () => {
-    const desc = makeDescriptor({ type: "select", role: "listbox" });
-    const pattern = resolveStressPattern(desc, ["[role=option]:nth-of-type(1)"]);
-    expect(pattern.name).toBe("keyboard-sweep");
-  });
-
-  it("combobox role + siblings → keyboard-sweep", () => {
-    const desc = makeDescriptor({ type: "type", role: "combobox" });
-    const pattern = resolveStressPattern(desc, ["[role=option]:nth-of-type(1)"]);
-    expect(pattern.name).toBe("keyboard-sweep");
-  });
-
-  it("menu role + siblings → keyboard-sweep", () => {
-    const desc = makeDescriptor({ type: "click", role: "menu" });
-    const pattern = resolveStressPattern(desc, ["[role=menuitem]:nth-of-type(1)"]);
-    expect(pattern.name).toBe("keyboard-sweep");
-  });
-
-  it("tree role + siblings → keyboard-sweep", () => {
-    const desc = makeDescriptor({ type: "click", role: "tree" });
-    const pattern = resolveStressPattern(desc, ["[role=treeitem]:nth-of-type(1)"]);
+  it.each([
+    ["tab", "click", "[role=tab]"],
+    ["listbox", "select", "[role=option]"],
+    ["combobox", "type", "[role=option]"],
+    ["menu", "click", "[role=menuitem]"],
+    ["tree", "click", "[role=treeitem]"],
+  ] as const)("%s role + siblings → keyboard-sweep", (role, type, siblingSelector) => {
+    const desc = makeDescriptor({ type, role });
+    const pattern = resolveStressPattern(desc, [`${siblingSelector}:nth-of-type(1)`]);
     expect(pattern.name).toBe("keyboard-sweep");
   });
 
@@ -99,12 +81,6 @@ describe("resolveStressPattern dispatch", () => {
 // --- Dispatch priority ---
 
 describe("resolveStressPattern priority", () => {
-  it("role takes priority over type for tab+click", () => {
-    const desc = makeDescriptor({ type: "click", role: "tab" });
-    const pattern = resolveStressPattern(desc, ["[role=tab]:nth-of-type(1)"]);
-    expect(pattern.name).toBe("keyboard-sweep");
-  });
-
   it("tab role without siblings falls through to rapid-toggle-11 (click type)", () => {
     const desc = makeDescriptor({ type: "click", role: "tab" });
     const pattern = resolveStressPattern(desc, []);

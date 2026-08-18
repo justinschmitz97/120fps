@@ -121,6 +121,7 @@ describe("formatTable with isolation", () => {
     expect(output).not.toContain("Rerender (isolated)");
     expect(output).not.toContain("Memory");
     expect(output).not.toContain("StrictMode");
+    expect(output).not.toContain("Unmount (isolated)");
   });
 
   it("does not show normal combo table when isolation is present", () => {

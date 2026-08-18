@@ -84,12 +84,12 @@ describe("measureMount e2e", () => {
   it("cleans up browser even on error", async () => {
     const harness = await buildAndServe("./fixtures/button.tsx");
     try {
-      // Force an invalid combo that will crash the component — measure should still clean up
+      // Force an invalid combo that will crash the component: measure should still clean up
       const results = await measureMount(harness, {
         samples: 2,
         combos: [{}],
       });
-      // Button with no label — should still produce a result (renders empty button)
+      // Button with no label: should still produce a result (renders empty button)
       expect(results).toHaveLength(1);
     } finally {
       await harness.cleanup();

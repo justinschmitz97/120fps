@@ -163,3 +163,34 @@ describe("compareBaseline", () => {
     expect(metrics).toEqual(["mount", "rerender", "unmount"]);
   });
 });
+
+describe("compareBaseline missingInteractions", () => {
+  it("reports baseline interactions absent from the current run", () => {
+    const entry = makeEntry({ interactions: { "click button": 100, "hover card": 50 } });
+    const current = { mount: 1.0, rerender: 0.5, unmount: 0.1, interactions: { "click button": 100 } };
+    const result = compareBaseline(entry, current, DEFAULT_TOL);
+    expect(result.missingInteractions).toEqual(["hover card"]);
+  });
+
+  it("is an empty array when all baseline interactions are present", () => {
+    const entry = makeEntry({ interactions: { "click button": 100 } });
+    const current = { mount: 1.0, rerender: 0.5, unmount: 0.1, interactions: { "click button": 100 } };
+    const result = compareBaseline(entry, current, DEFAULT_TOL);
+    expect(result.missingInteractions).toEqual([]);
+  });
+
+  it("is an empty array when baseline has no interactions", () => {
+    const entry = makeEntry({ interactions: {} });
+    const current = { mount: 1.0, rerender: 0.5, unmount: 0.1, interactions: { "new one": 10 } };
+    const result = compareBaseline(entry, current, DEFAULT_TOL);
+    expect(result.missingInteractions).toEqual([]);
+  });
+
+  it("missing interactions never produce regressions", () => {
+    const entry = makeEntry({ interactions: { gone: 100 } });
+    const current = { mount: 1.0, rerender: 0.5, unmount: 0.1, interactions: {} };
+    const result = compareBaseline(entry, current, DEFAULT_TOL);
+    expect(result.missingInteractions).toEqual(["gone"]);
+    expect(result.regressions).toHaveLength(0);
+  });
+});

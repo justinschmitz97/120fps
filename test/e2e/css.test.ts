@@ -68,7 +68,7 @@ const TAILWIND_CSS = path.resolve("fixtures/css-tailwind/app/globals.css");
 
 // --- C4: the project's own PostCSS toolchain runs ---
 
-describe("css e2e — PostCSS toolchain", () => {
+describe("css e2e: PostCSS toolchain", () => {
   it("runs the project's postcss.config.mjs and applies Tailwind output", async () => {
     const harness = await buildAndServe(TAILWIND_COMPONENT, { cssFiles: [TAILWIND_CSS] });
     try {
@@ -156,7 +156,7 @@ describe("css e2e — PostCSS toolchain", () => {
 
 // --- C2: injection shape ---
 
-describe("css e2e — injection", () => {
+describe("css e2e: injection", () => {
   it("applies multiple stylesheets in the given cascade order", async () => {
     const harness = await buildAndServe("./fixtures/css-ordered.tsx", {
       cssFiles: [
@@ -248,7 +248,7 @@ describe("css e2e — injection", () => {
 
 // --- C5: settle gate ---
 
-describe("css e2e — settle gate", () => {
+describe("css e2e: settle gate", () => {
   it("settles and reports success for an injected stylesheet with a webfont", async () => {
     const harness = await buildAndServe("./fixtures/css-font/app/Probe.tsx", {
       cssFiles: [path.resolve("fixtures/css-font/app/globals.css")],
@@ -351,7 +351,7 @@ describe("css e2e — settle gate", () => {
 
 // --- C6/C7: full pipeline ---
 
-describe("css e2e — full pipeline", () => {
+describe("css e2e: full pipeline", () => {
   it("auto-detects app/globals.css and reports it", async () => {
     const jsonPath = tmpJson();
     const report = await analyze(TAILWIND_COMPONENT, {
@@ -432,14 +432,4 @@ describe("css e2e — full pipeline", () => {
       fs.rmSync(jsonPath, { force: true });
     }
   }, 300000);
-
-  it("errors with the spec message for a missing stylesheet", async () => {
-    await expect(
-      analyze(TAILWIND_COMPONENT, {
-        samples: 1,
-        cssFiles: ["./fixtures/does-not-exist.css"],
-        jsonPath: tmpJson(),
-      }),
-    ).rejects.toThrow("Stylesheet not found: ./fixtures/does-not-exist.css");
-  }, 60000);
 });

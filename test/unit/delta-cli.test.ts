@@ -12,9 +12,4 @@ describe("--no-deltas CLI flag", () => {
     const args = parseArgs(["./Button.tsx"]);
     expect(args.noDeltas).toBeUndefined();
   });
-
-  it("--no-deltas is a known flag (no error)", () => {
-    const args = parseArgs(["./Button.tsx", "--no-deltas"]);
-    expect(args.error).toBeUndefined();
-  });
 });

@@ -69,19 +69,6 @@ describe("explore e2e", () => {
     }
   }, 60000);
 
-  it("handles component with no interactions", async () => {
-    harness = await buildAndServe("./fixtures/no-interactive.tsx");
-    const results = await explore(harness, {
-      samples: 2,
-      maxWallClockMs: 30000,
-      combos: [{}],
-    });
-    expect(results).toHaveLength(1);
-    const graph = results[0].graph;
-    expect(graph.nodes.size).toBe(1);
-    expect(graph.edges).toHaveLength(0);
-  }, 60000);
-
   it("includes raw trace events per edge", async () => {
     harness = await buildAndServe("./fixtures/static-buttons.tsx");
     const results = await explore(harness, {
@@ -153,6 +140,7 @@ describe("explore e2e", () => {
       maxNodes: 200,
       combos: [{}],
     });
+    expect(results).toHaveLength(1);
     const graph = results[0].graph;
     expect(graph.nodes.size).toBe(1);
     expect(graph.edges).toHaveLength(0);

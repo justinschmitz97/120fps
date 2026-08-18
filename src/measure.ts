@@ -19,8 +19,8 @@ import {
 // M64: animation is what the page is *doing*, never what its stylesheet
 // declares. A Tailwind `transition-all` on an idle button declares a transition
 // and animates nothing, and reading it as animation forced static toolbars into
-// T3. Every real case — a CSS animation, a running transition, a WAAPI
-// animation — produces an `Animation` object here; a declared-but-untriggered
+// T3. Every real case: a CSS animation, a running transition, a WAAPI
+// animation: produces an `Animation` object here; a declared-but-untriggered
 // transition produces none.
 //
 // Exported as source rather than a closure so the rule is one definition and
@@ -211,7 +211,7 @@ export async function endMutationWatch(page: Page, holdMs: number): Promise<bool
   );
 }
 
-// Begin, hold, end — the composed form, for callers that have nothing to do in
+// Begin, hold, end: the composed form, for callers that have nothing to do in
 // between.
 export async function probeLateMutation(
   page: Page,
@@ -370,7 +370,7 @@ export const CONTEXT_RETRY_WARNING =
 
 // Promoted to user-facing text (M56): the retry above absorbs one reload, but
 // exhausting the shared budget means the pattern kept recurring across the
-// run — that points at the environment, not the component under test.
+// run: that points at the environment, not the component under test.
 export const RETRY_BUDGET_EXHAUSTED_NOTE =
   " The context-retry budget is exhausted: repeated dev-server reloads (environment), not the " +
   "component, are the likely cause.";
@@ -409,7 +409,7 @@ export async function refreshCdpSession(page: Page, holder: CdpHolder): Promise<
 // window paid ~33 ms of vsync idle per double-rAF fence. With begin-frame
 // control the compositor produces frames when told to; the pump tells it to,
 // back-to-back, so a fence costs one protocol round trip (~2 ms) instead of
-// two vsync ticks. Frames still happen — driven, not scheduled — so samples
+// two vsync ticks. Frames still happen: driven, not scheduled: so samples
 // stay paint-inclusive.
 export const MEASUREMENT_BROWSER_ARGS = [
   "--enable-begin-frame-control",
@@ -510,7 +510,7 @@ export type MeasurementPacing = "driven" | "vsync";
 
 // M37: browser processes are project-agnostic; what a phase needs fresh is
 // page state, and a new context delivers that (its pages get their own
-// renderer process — V8 as cold as in a fresh browser). The pool holds at
+// renderer process: V8 as cold as in a fresh browser). The pool holds at
 // most one driven and one vsync Chromium for its lifetime.
 export interface BrowserPool {
   acquire(driven: boolean): Promise<Browser>;
@@ -553,7 +553,7 @@ export function createBrowserPool(
 }
 
 // M41: the wrapper's session-scoped counterpart to setup, run once before the
-// session's page goes away. Best-effort — a completed measurement must not fail
+// session's page goes away. Best-effort: a completed measurement must not fail
 // because a teardown threw or the page was already gone.
 export async function runWrapperTeardown(page: Page): Promise<void> {
   try {
@@ -719,7 +719,7 @@ export async function runHarnessSession<T>(
 export interface WrapperOverhead {
   overheadMs: number;
   domNodes: number;
-  // M41: read from the page rather than parsed from the wrapper source — the
+  // M41: read from the page rather than parsed from the wrapper source: the
   // control API knows whether the export was actually a callable setup.
   hasSetup: boolean;
 }
@@ -863,7 +863,7 @@ export function computeMedian(values: number[]): number {
 
 // Type-7 quantile (the default of R and numpy), so the printed number
 // reproduces in any standard tool. Below n≈20 it is dominated by the slowest
-// sample and estimates no tail — see the glossary.
+// sample and estimates no tail: see the glossary.
 export function computeP95(values: number[]): number {
   if (values.length === 0) return 0;
   const sorted = [...values].sort((a, b) => a - b);
@@ -979,7 +979,7 @@ export async function collectTrace(
     if (timer !== undefined) clearTimeout(timer);
     cdp.off("Tracing.dataCollected", onData);
     // A trace that never completed leaves the session started, and the next
-    // Tracing.start then fails with "already been started" — turning one lost
+    // Tracing.start then fails with "already been started": turning one lost
     // sample into a dead run. Recovery is best-effort and never masks the
     // original error.
     if (failed) {
@@ -1245,7 +1245,7 @@ export async function measureRerender(
       // Prop-change rerender: mount with current props, rerender with next combo's props.
       // The pairing follows the full combo list, so partitioning by pacing
       // cannot change which combo rerenders into which.
-      // Skip when either combo is a scale combo — cross-scale rerenders are not meaningful
+      // Skip when either combo is a scale combo: cross-scale rerenders are not meaningful
       if (combos.length > 1) {
         const nextProps = combos[(ci + 1) % combos.length];
         const isScale = "__120fps_scaleN" in props;
@@ -1429,7 +1429,7 @@ export async function measureMount(
       runPass(
         driven,
         combos.map((_, i) => i),
-        // A probe fallback already runs the whole pass under vsync — nothing to
+        // A probe fallback already runs the whole pass under vsync: nothing to
         // bail to in that case.
         driven.pacing === "driven",
       ),

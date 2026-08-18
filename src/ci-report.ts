@@ -6,7 +6,7 @@ import { CHURN_DEGRADATION_LIMIT, LEAK_BYTES_PER_CYCLE } from "./isolation.js";
 // Both formats derive from `Report` alone: no measurement state, no filesystem,
 // no network. 120fps emits what forges consume and never talks to a forge.
 
-// M55: curve, isolation, and cached reports ship `combos: []` — the mode's
+// M55: curve, isolation, and cached reports ship `combos: []`: the mode's
 // real data lives in a different field. One dispatch point per serializer
 // (per M55's design) keeps a future mode from silently rendering as "empty".
 type ReportMode = "combo" | "cached" | "curve" | "isolation" | "empty";
@@ -25,7 +25,7 @@ function reportMode(report: Report): ReportMode {
 
 function isolationWarnSignal(iso: IsolationReport): boolean {
   // computeIsolationVerdict (src/isolation.ts) never fails a run on StrictMode
-  // overhead by design — it only warns. That is the one isolation-native warn
+  // overhead by design: it only warns. That is the one isolation-native warn
   // condition; anything else that flips `pass` is already a hard fail.
   return !!iso.strictMode && !iso.strictMode.doubleInvokeClean;
 }
@@ -84,7 +84,7 @@ function modeTimings(report: Report): { mount: string; rerender: string } {
       };
     }
     case "cached":
-      // No new measurement was taken — a dash here is correct, not a bug.
+      // No new measurement was taken: a dash here is correct, not a bug.
       return { mount: "—", rerender: "—" };
     default:
       return { mount: "no measurable data", rerender: "no measurable data" };
@@ -137,7 +137,7 @@ function curveFailureLines(cr: ScalingCurveReport, thresholds: Thresholds): stri
 // Leak and churn are checked with the exact constants the pipeline uses, so
 // they never drift from what actually failed the run. Mount has no stored
 // budget on `Report` (isolation resolves a tiered budget analyze.ts does not
-// persist) — reported by elimination only when nothing else explains the fail.
+// persist): reported by elimination only when nothing else explains the fail.
 function isolationFailureLines(iso: IsolationReport): string[] {
   const lines: string[] = [];
   if (iso.memory?.leakSuspected) {
@@ -169,7 +169,7 @@ function curveDetailLines(cr: ScalingCurveReport, thresholds: Thresholds, pass: 
   }
   lines.push(`Growth class (mount): ${cr.mountCurve.growthClass}`);
   if (cr.domFlat) {
-    lines.push("DOM node count never changed across scale points — growth class reflects no structural growth.");
+    lines.push("DOM node count never changed across scale points: growth class reflects no structural growth.");
   }
   if (!pass) {
     const detail = curveFailureLines(cr, thresholds);
@@ -217,7 +217,7 @@ export function formatMarkdown(reports: Report[]): string {
   const lines: string[] = [
     "## 120fps",
     "",
-    `${failing.length === 0 ? "**PASS**" : "**FAIL**"} — ${reports.length} ` +
+    `${failing.length === 0 ? "**PASS**" : "**FAIL**"}: ${reports.length} ` +
     `component${reports.length === 1 ? "" : "s"}, ${regressionCount} ` +
     `regression${regressionCount === 1 ? "" : "s"}`,
     "",
@@ -256,7 +256,7 @@ export function formatMarkdown(reports: Report[]): string {
   // Curve and isolation reports carry more than two numbers; the summary row
   // shows the headline value, this fold shows every scale point / phase, and
   // on failure the same lines the JUnit failure body carries. Unlike the
-  // regressions fold, this one is not gated on failure — the M55 contract
+  // regressions fold, this one is not gated on failure: the M55 contract
   // treats these numbers as always-relevant, and both modes are typically run
   // one component at a time, so it does not threaten comment size the way a
   // thirty-component regression list would.
@@ -323,14 +323,14 @@ function failureBody(report: Report): string {
         // naming a tier here would send the reader after the wrong number.
         if (combo.renderHealth === "error") {
           lines.push(
-            `combo ${combo.comboIndex}: rendered 0 DOM nodes while the page threw — ` +
+            `combo ${combo.comboIndex}: rendered 0 DOM nodes while the page threw: ` +
             (combo.pageErrors ?? []).join("; "),
           );
           continue;
         }
         lines.push(
           `combo ${combo.comboIndex}: mount ${combo.mount.median.toFixed(2)}ms, ` +
-          `rerender ${combo.rerender.median.toFixed(2)}ms — over budget for tier ${combo.tier ?? "?"}`,
+          `rerender ${combo.rerender.median.toFixed(2)}ms: over budget for tier ${combo.tier ?? "?"}`,
         );
       }
       break;

@@ -143,11 +143,6 @@ describe("H5: edge cases for nextJsShims in report", () => {
     expect(report.nextJsShims).toBeUndefined();
   });
 
-  it("single shim is propagated", () => {
-    const report = buildReport(makeInput({ nextJsShims: ["next/link"] }));
-    expect(report.nextJsShims).toEqual(["next/link"]);
-  });
-
   it("multiple shims are propagated in order", () => {
     const shims = ["next/image", "next/dynamic", "next/navigation"];
     const report = buildReport(makeInput({ nextJsShims: shims }));
@@ -221,17 +216,6 @@ describe("H9: minimal package.json", () => {
   it("returns false for package.json with null dependencies", () => {
     writePkg(JSON.stringify({ dependencies: null }));
     expect(detectNextJs(tmpDir)).toBe(false);
-  });
-});
-
-// H10: buildShimAliases replacement paths resolve to existing directory
-describe("H10: shim alias paths resolve", () => {
-  it("all replacement paths point to files in the shim directory", () => {
-    const aliases = buildShimAliases(true);
-    for (const alias of aliases) {
-      expect(alias.replacement).toMatch(/shims[/\\]/);
-      expect(alias.replacement).toMatch(/\.js$/);
-    }
   });
 });
 

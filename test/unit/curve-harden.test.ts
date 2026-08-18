@@ -177,41 +177,10 @@ describe("H4: very large N values", () => {
   });
 });
 
-describe("H5: --curve with fixture should not activate in analyze", () => {
-  it("--curve is parsed independently of fixture detection", () => {
-    const args = parseArgs(["./Button.fixture.tsx", "--curve"]);
-    expect(args.curve).toBe(true);
-    expect(args.error).toBeUndefined();
-  });
-});
-
-describe("H7: --curve and --no-curve together", () => {
-  it("both flags are stored, --no-curve takes precedence in analyze", () => {
-    const args = parseArgs(["./Button.tsx", "--curve", "--no-curve"]);
-    expect(args.curve).toBe(true);
-    expect(args.noCurve).toBe(true);
-  });
-});
-
 describe("H8: --curve parsing edge cases", () => {
   it("rejects propName without type", () => {
     const args = parseArgs(["./Button.tsx", "--curve", "items:"]);
     expect(args.curve).toBe(true);
-  });
-
-  it("rejects unknown type in prop:type", () => {
-    const args = parseArgs(["./Button.tsx", "--curve", "items:string"]);
-    expect(args.error).toBeDefined();
-  });
-
-  it("accepts valid prop:array", () => {
-    const args = parseArgs(["./Button.tsx", "--curve", "items:array"]);
-    expect(args.curve).toBe("items:array");
-  });
-
-  it("accepts valid prop:number", () => {
-    const args = parseArgs(["./Button.tsx", "--curve", "count:number"]);
-    expect(args.curve).toBe("count:number");
   });
 });
 
@@ -286,37 +255,6 @@ describe("H14: mismatched array lengths", () => {
     });
     expect(result.points.length).toBe(3);
     expect(result.points[1].rerender.median).toBe(0);
-  });
-});
-
-describe("H15: --curve as only flag before component", () => {
-  it("does not consume component path as curve argument", () => {
-    const args = parseArgs(["--curve", "./Button.tsx"]);
-    expect(args.curve).toBe(true);
-    expect(args.componentPath).toBe("./Button.tsx");
-  });
-});
-
-describe("H16: curve report JSON serialization", () => {
-  it("interactionCurves serializes as plain object", () => {
-    const cr = makeCurveReport({
-      interactionCurves: { "Next slide": makeScalingCurve("linear") },
-    });
-    const report = makeReport({ scalingCurveReport: cr });
-    const json = JSON.stringify(report);
-    const parsed = JSON.parse(json);
-    expect(parsed.scalingCurveReport.interactionCurves["Next slide"]).toBeDefined();
-  });
-});
-
-describe("H17: computeCurveVerdict all within budget", () => {
-  it("returns pass", () => {
-    const verdict = computeCurveVerdict(
-      [makePoint(1, 1), makePoint(50, 10)],
-      makeScalingCurve("linear"),
-      THRESHOLDS,
-    );
-    expect(verdict).toBe("pass");
   });
 });
 

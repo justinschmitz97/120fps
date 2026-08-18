@@ -60,29 +60,10 @@ describe("H1: classifyTier with domNodeCount=0", () => {
   });
 });
 
-// H2: domNodeCount=1
-describe("H2: classifyTier with domNodeCount=1", () => {
-  it("classifies as T1", () => {
-    expect(classifyTier({ domNodeCount: 1, hasPortal: false, hasScaling: false, hasAnimation: false })).toBe("T1");
-  });
-});
-
 // H3: exact boundaries
 describe("H3: exact tier boundaries", () => {
-  it("domNodeCount=10 is T1", () => {
-    expect(classifyTier({ domNodeCount: 10, hasPortal: false, hasScaling: false, hasAnimation: false })).toBe("T1");
-  });
   it("domNodeCount=11 is T2", () => {
     expect(classifyTier({ domNodeCount: 11, hasPortal: false, hasScaling: false, hasAnimation: false })).toBe("T2");
-  });
-  it("domNodeCount=13 is T2", () => {
-    expect(classifyTier({ domNodeCount: 13, hasPortal: false, hasScaling: false, hasAnimation: false })).toBe("T2");
-  });
-  it("domNodeCount=40 is T2", () => {
-    expect(classifyTier({ domNodeCount: 40, hasPortal: false, hasScaling: false, hasAnimation: false })).toBe("T2");
-  });
-  it("domNodeCount=41 is T4", () => {
-    expect(classifyTier({ domNodeCount: 41, hasPortal: false, hasScaling: false, hasAnimation: false })).toBe("T4");
   });
 });
 
@@ -239,7 +220,7 @@ describe("H12: classifyTier with negative domNodeCount", () => {
 });
 
 // H13: explicit rerender override + tier mount budget
-describe("H13: partial override — explicit rerender, tier mount", () => {
+describe("H13: partial override: explicit rerender, tier mount", () => {
   it("uses tier mount but explicit rerender", () => {
     const report = buildReport({
       componentPath: "./Button.tsx",

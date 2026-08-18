@@ -289,7 +289,7 @@ export async function compareAgainstRef(
 
 export function formatCompare(report: CompareReport): string {
   const lines: string[] = [
-    `Compare: working tree vs ${report.ref} — ${report.componentPath}`,
+    `Compare: working tree vs ${report.ref}: ${report.componentPath}`,
     "",
   ];
   for (const combo of report.combos) {

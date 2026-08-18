@@ -38,18 +38,6 @@ describe("--no-matrix flag", () => {
   });
 });
 
-describe("--matrix is a known flag", () => {
-  it("--matrix does not produce unknown flag error", () => {
-    const args = parseArgs(["./Button.tsx", "--matrix"]);
-    expect(args.error).toBeUndefined();
-  });
-
-  it("--no-matrix does not produce unknown flag error", () => {
-    const args = parseArgs(["./Button.tsx", "--no-matrix"]);
-    expect(args.error).toBeUndefined();
-  });
-});
-
 describe("--matrix with --curve", () => {
   it("is a usage error naming the conflict", () => {
     const args = parseArgs(["./Button.tsx", "--matrix", "--curve"]);

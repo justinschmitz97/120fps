@@ -91,13 +91,13 @@ export function parseIsolationPhases(raw: string): IsolationPhase[] {
   }
 
   // Canonical order, so the same set of phases parses to the same list however
-  // the user spelled it — `all,mount` and `memory,all` included.
+  // the user spelled it: `all,mount` and `memory,all` included.
   return ALL_PHASES.filter((p) => seen.has(p));
 }
 
 // M57. StrictMode is a React development-mode double-invoke; Vue has no
 // equivalent, so a Vue "strict" pass would re-measure the identical page and
-// report 0% overhead and a clean double-invoke — a false clean bill of health,
+// report 0% overhead and a clean double-invoke: a false clean bill of health,
 // which is worse than refusing the phase.
 export const VUE_STRICTMODE_ERROR =
   "--isolate strictmode is React-only: StrictMode is a React development-mode double-invoke " +
@@ -140,7 +140,7 @@ export function computeChurnDegradation(samples: number[]): number {
 }
 
 // Median and P95 describe the whole alternation (that is what a churn cycle
-// costs), but dispersion is read inside a parity — across the mix it would
+// costs), but dispersion is read inside a parity: across the mix it would
 // report the A/B gap as instability.
 export function buildChurnTiming(samples: number[]): TimingWithCV {
   const overall = buildTimingWithCV(samples);
@@ -236,7 +236,7 @@ export interface PhaseOptions {
   samples?: number;
   cpuThrottle?: number;
   warmupRuns?: number;
-  // M35: "vsync" when the measured combo animates — driven frames would
+  // M35: "vsync" when the measured combo animates: driven frames would
   // change how much animation work lands in the traced windows.
   pacing?: MeasurementPacing;
   // M37: reuse pooled browsers (fresh context per phase session).

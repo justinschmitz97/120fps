@@ -3,7 +3,7 @@ import type { Page } from "playwright";
 // M52. Opt-in acquisition of what a browser can observe about an interaction
 // from inside the page: Event Timing, Long Animation Frames, layout
 // instability. It reports latency the trace path cannot see, and cannot report
-// the per-step work the trace path exists to measure — Event Timing's floor is
+// the per-step work the trace path exists to measure: Event Timing's floor is
 // 16ms per event, an order of magnitude above the 0.5-1ms/step real components
 // measure, so explore keeps timing with traces (`ExploreOptions.observerTiming`
 // selects this path).
@@ -12,7 +12,7 @@ export interface ObservedEvent {
   name: string;
   // Chromium groups the entries of one user interaction (pointerdown,
   // pointerup, click) under a shared id. 0 means the entry belongs to no
-  // interaction — a hover, say.
+  // interaction: a hover, say.
   interactionId: number;
   // Time from the input event to the first frame that showed its result.
   durationMs: number;
@@ -173,7 +173,7 @@ export async function readObservedWindow(page: Page): Promise<ObservedWindow> {
   }, OBSERVER_STATE_KEY);
 }
 
-// The slowest interaction in a measured window, presentation-inclusive —
+// The slowest interaction in a measured window, presentation-inclusive:
 // deliberately a maximum, not a total. Chromium emits one entry per dispatch
 // target, so a window of 11 clicks arrives as 62 entries: the
 // pointerdown/pointerup/click trio of each click plus one pointerenter per

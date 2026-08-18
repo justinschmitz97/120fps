@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-// Content that keeps arriving after mount — a streaming response, a progress
+// Content that keeps arriving after mount: a streaming response, a progress
 // readout, a poll.
 //
 // An interval rather than a one-shot timer: the observation window opens only

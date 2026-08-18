@@ -94,7 +94,7 @@ export function detectDurationsUnavailable(snapshot: {
 
 // React wins a tie: a project with both installed is a React project that also
 // ships some Vue, and the React optimization pass is the one with findings.
-// A `.vue` file overrides this entirely — see analyze's resolveFramework.
+// A `.vue` file overrides this entirely: see analyze's resolveFramework.
 export function detectFramework(projectRoot: string): "react" | "vue" | "vanilla" {
   try {
     const raw = fs.readFileSync(path.join(projectRoot, "package.json"), "utf-8");
@@ -148,7 +148,7 @@ function isReportableComponent(name: string): boolean {
   return !isProbeInternal(name) && !isCompilerCacheSlot(name);
 }
 
-// A component without React.memo re-renders whenever its parent does — that is
+// A component without React.memo re-renders whenever its parent does: that is
 // React working as designed, not a defect. Only a memoized component that
 // re-rendered on identical props has had its memoization defeated.
 export function detectMemoBailouts(diff: ProfilerDiff): string[] {
@@ -204,7 +204,7 @@ export function hasReactWarning(opts: ReactOptimizations): boolean {
 // ====================================================================
 
 // M64: `React.memo(X)` reaches the fiber as `{$$typeof, type: X}` and
-// `forwardRef(X)` as `{$$typeof, render: X}` — neither wrapper carries a name,
+// `forwardRef(X)` as `{$$typeof, render: X}`: neither wrapper carries a name,
 // so reading displayName/name off the fiber type attributed every memoized
 // export to "Anonymous". Unwrap first, in either nesting order.
 //

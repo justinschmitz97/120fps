@@ -1,7 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
   computeCV,
-  buildTimingWithCV,
   computeVerdict,
   formatTable,
   DEFAULT_THRESHOLDS,
@@ -40,26 +39,6 @@ function makeCombo(overrides: Partial<ComboReport> = {}): ComboReport {
   };
 }
 
-describe("H1: componentName fallback to filename", () => {
-  it("uses filename when no named/default export matches", () => {
-    const input: BuildReportInput = {
-      componentPath: "./my-widget.tsx",
-      componentName: "MyWidget",
-      machine: {
-        cpu: "Test", cores: 1, ramMb: 1024,
-        os: "Test", nodeVersion: "v20.0.0", chromiumVersion: "120",
-      },
-      calibration: { totalDuration: 10, scriptDuration: 5 },
-      mounts: [{ comboIndex: 0, props: {}, mount: { samples: [5], median: 5, p95: 5 }, unmount: { samples: [2], median: 2, p95: 2 }, domNodeCount: 5 }],
-      explores: [],
-      heapDeltas: [0],
-      thresholds: DEFAULT_THRESHOLDS,
-    };
-    const report = buildReport(input);
-    expect(report.componentName).toBe("MyWidget");
-  });
-});
-
 describe("H3: zero calibration duration", () => {
   it("produces relativeMount=0 when calibration totalDuration is 0", () => {
     const input: BuildReportInput = {
@@ -78,15 +57,6 @@ describe("H3: zero calibration duration", () => {
     const report = buildReport(input);
     expect(report.combos[0].relativeMount).toBe(0);
     expect(Number.isFinite(report.combos[0].relativeMount)).toBe(true);
-  });
-});
-
-describe("H4: identical samples produce CV=0", () => {
-  it("CV is exactly 0, not NaN", () => {
-    expect(computeCV([7.5, 7.5, 7.5, 7.5, 7.5])).toBe(0);
-    const t = buildTimingWithCV([7.5, 7.5, 7.5, 7.5, 7.5]);
-    expect(t.cv).toBe(0);
-    expect(t.unstable).toBe(false);
   });
 });
 

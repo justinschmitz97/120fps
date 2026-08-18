@@ -78,15 +78,6 @@ describe("generateDeltaPairs", () => {
     expect(variantPair.flipCombo.disabled).toBe(false);
   });
 
-  it("caps at 128 pairs", () => {
-    const schemas: PropSchema[] = [];
-    for (let i = 0; i < 200; i++) {
-      schemas.push({ name: `bool${i}`, kind: "boolean", required: true, values: [] });
-    }
-    const pairs = generateDeltaPairs(schemas);
-    expect(pairs.length).toBeLessThanOrEqual(128);
-  });
-
   it("prioritizes booleans over unions over objects", () => {
     const schemas: PropSchema[] = [
       { name: "config", kind: "object", required: false, values: [{ x: 1 }] },

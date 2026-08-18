@@ -52,7 +52,7 @@ describe("loadBudgetConfig", () => {
 
   it("throws on invalid JSON", () => {
     fs.writeFileSync(path.join(tmpDir, "120fps.config.json"), "not json{{{");
-    expect(() => loadBudgetConfig(tmpDir)).toThrow();
+    expect(() => loadBudgetConfig(tmpDir)).toThrow(/Failed to load/);
   });
 
   describe("schema validation", () => {

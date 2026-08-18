@@ -5,7 +5,7 @@ import { pathToFileURL } from "node:url";
 // The compiler is never a 120fps dependency: the project's own Vue version is
 // the one that must compile its own components (M27's React Compiler
 // precedent). Under pnpm only `vue/compiler-sfc` resolves from a project that
-// declares `vue` — `@vue/compiler-sfc` is a transitive dependency and is not
+// declares `vue`: `@vue/compiler-sfc` is a transitive dependency and is not
 // linked at the top level. The bare package name is the npm/yarn fallback.
 export const VUE_SFC_SPECIFIERS = ["vue/compiler-sfc", "@vue/compiler-sfc"];
 
@@ -69,14 +69,14 @@ export async function loadVueCompiler(fromDir: string): Promise<VueSfcCompiler |
 export function VUE_COMPILER_MISSING(projectRoot: string): string {
   return (
     `Cannot read .vue components: neither ${VUE_SFC_SPECIFIERS.join(" nor ")} resolves from ` +
-    `${projectRoot}. Install vue in the project — 120fps deliberately does not ship a Vue ` +
+    `${projectRoot}. Install vue in the project: 120fps deliberately does not ship a Vue ` +
     "version of its own, so your components compile against the one they ship with."
   );
 }
 
 // `<script setup>` only. The Options API and plain-`<script>` SFCs mount fine
 // (the plugin compiles them) but carry no `defineProps` type argument, so they
-// extract no props — the same outcome as an untyped React component.
+// extract no props: the same outcome as an untyped React component.
 export function parseSfcScript(
   source: string,
   filename: string,

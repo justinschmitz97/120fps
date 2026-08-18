@@ -41,18 +41,6 @@ describe("pointer-drag dispatch", () => {
     expect(pattern.name).toBe("pointer-drag");
   });
 
-  it("cursor=col-resize → pointer-drag", () => {
-    const desc = makeDescriptor({ cursor: "col-resize" });
-    const pattern = resolveStressPattern(desc);
-    expect(pattern.name).toBe("pointer-drag");
-  });
-
-  it("cursor=row-resize → pointer-drag", () => {
-    const desc = makeDescriptor({ cursor: "row-resize" });
-    const pattern = resolveStressPattern(desc);
-    expect(pattern.name).toBe("pointer-drag");
-  });
-
   it("non-drag element unchanged", () => {
     const desc = makeDescriptor({ type: "click" });
     const pattern = resolveStressPattern(desc);

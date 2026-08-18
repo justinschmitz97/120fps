@@ -163,7 +163,7 @@ interface NavigablePage {
 }
 
 // The navigation itself, not only the readiness gate that follows it, can be
-// what times out — and it is the half that carries no diagnostics of its own.
+// what times out: and it is the half that carries no diagnostics of its own.
 export async function gotoWithErrorContext(
   page: NavigablePage,
   url: string,

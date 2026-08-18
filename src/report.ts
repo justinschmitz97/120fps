@@ -164,13 +164,13 @@ export interface ComboReport {
   // pass. "empty" = nothing rendered and nothing threw, which is legal.
   // Absent whenever the combo rendered at least one node.
   renderHealth?: "error" | "empty";
-  // Interaction to Next Paint, in ms — the worst input-to-paint gap across
+  // Interaction to Next Paint, in ms: the worst input-to-paint gap across
   // this combo's explored interactions. Absent when exploration produced no
   // interaction traces for the combo.
   inp?: number;
   // M61: set when this combo is the auto-scale sibling-copies probe (N whole
   // extra trees mounted side by side), never a real prop variation. `props`
-  // never carries the `__120fps_scaleN` marker that produced it — this field
+  // never carries the `__120fps_scaleN` marker that produced it: this field
   // is where that identity now lives.
   scaleProbe?: number;
 }
@@ -223,7 +223,7 @@ export interface CurveViolation {
   // First measured N at or above the budget.
   crossingN?: number;
   // Largest measured N still under it. Absent when the smallest N already
-  // exceeded — the crossing then lies at or below the sweep's floor.
+  // exceeded: the crossing then lies at or below the sweep's floor.
   lastPassingN?: number;
   medianMs?: number;
 }
@@ -366,17 +366,17 @@ export interface Report {
   // M48: recognizer codes of the project's own Vite transforms that compiled
   // this run.
   projectTransforms?: string[];
-  // M51: finding classes this run triggered. Ids, never prose — hints can be
+  // M51: finding classes this run triggered. Ids, never prose: hints can be
   // reworded without a schema change.
   hints?: HintId[];
   // M65: provider-dependent imports the preflight walk found, attached only
-  // when a combo actually failed to render — evidence for the render-error
+  // when a combo actually failed to render: evidence for the render-error
   // hint, never a finding on a healthy run.
   providerCandidates?: string[];
   css?: CssReport;
   reactCompiler?: ReactCompilerReport;
   warnings?: string[];
-  // M39: verdict reused from a fingerprinted baseline entry — source
+  // M39: verdict reused from a fingerprinted baseline entry: source
   // unchanged, environment identical, nothing was measured.
   cached?: boolean;
 }
@@ -432,7 +432,7 @@ export function computeCV(samples: number[]): number {
 }
 
 // M35: driven pacing shrinks medians to their busy cost, so relative CV on a
-// sub-millisecond metric explodes while absolute noise stays trivial — and an
+// sub-millisecond metric explodes while absolute noise stays trivial: and an
 // unstable flag would silently skip its baseline comparison (M22). Unstable
 // requires both: high relative CV and noise above the 0.5ms absolute floor
 // (the same floor M29 uses for normalized comparison).
@@ -506,7 +506,7 @@ export function computeVerdict(
 export function formatTable(report: Report): string {
   const lines: string[] = [];
 
-  lines.push(`120fps — ${report.componentName}`);
+  lines.push(`120fps: ${report.componentName}`);
   lines.push(`Machine: ${report.machine.cpu} (${report.machine.cores} cores), ${Math.round(report.machine.ramMb / 1024)}GB RAM, ${report.machine.os}`);
   lines.push(`Node ${report.machine.nodeVersion}, Chromium ${report.machine.chromiumVersion}`);
   lines.push(describeMode(report));
@@ -558,7 +558,7 @@ export function formatTable(report: Report): string {
 
   for (const combo of report.combos) {
     // M61: a scale-probe combo's curve describes N sibling copies of the
-    // whole component, not a real prop — it must never read as "auto:
+    // whole component, not a real prop: it must never read as "auto:
     // <prop>", which is the real detected-prop mechanism's label.
     let scaling = "-";
     if (combo.scalingCurve) {
@@ -645,7 +645,7 @@ export function formatTable(report: Report): string {
         lines.push(`  Combo #${combo.comboIndex}:`);
       }
       if (opts.durationsUnavailable) {
-        lines.push("  Note: profiler durations unavailable — memo/context findings may be unreliable");
+        lines.push("  Note: profiler durations unavailable: memo/context findings may be unreliable");
       }
       if (opts.memoBailout && opts.memoBailoutComponents?.length) {
         const label = opts.compilerActive
@@ -700,7 +700,7 @@ export function formatTable(report: Report): string {
   appendWarnRollup(lines, report, report.combos.map((c) => c.verdict), "combos");
 
   if (hasUnstable) {
-    lines.push("⚠ Unstable results (CV>15%) — consider increasing sample count");
+    lines.push("⚠ Unstable results (CV>15%): consider increasing sample count");
   }
 
   appendWarnings(lines, report);
@@ -753,7 +753,7 @@ function appendPageErrors(lines: string[], report: Report): void {
     for (const message of combo.pageErrors!) lines.push(`    - ${message}`);
     if (combo.renderHealth === "error") {
       lines.push(
-        `    combo ${combo.comboIndex} rendered 0 DOM nodes while the page threw — ` +
+        `    combo ${combo.comboIndex} rendered 0 DOM nodes while the page threw: ` +
         "counted as a failure, not a pass.",
       );
     }
@@ -767,7 +767,7 @@ function appendEmptyRenderNote(lines: string[], report: Report): void {
   if (empty.length === 0) return;
   const list = empty.map((c) => `#${c.comboIndex}`).join(", ");
   lines.push(
-    `Combo ${list} rendered no DOM nodes and the page stayed quiet — ` +
+    `Combo ${list} rendered no DOM nodes and the page stayed quiet: ` +
     "the component renders nothing for these props.",
   );
 }
@@ -872,10 +872,10 @@ function formatIsolationOutput(lines: string[], report: Report): string {
 }
 
 const ENV_MATCH_LINES: Record<EnvMatch, string> = {
-  identical: "Environment: identical — comparing raw timings",
-  normalizable: "Environment: normalizable — comparing calibration-normalized values",
-  incompatible: "Environment: incompatible — comparison skipped",
-  unknown: "Environment: unknown — comparing raw timings",
+  identical: "Environment: identical: comparing raw timings",
+  normalizable: "Environment: normalizable: comparing calibration-normalized values",
+  incompatible: "Environment: incompatible: comparison skipped",
+  unknown: "Environment: unknown: comparing raw timings",
 };
 
 function formatEnvMismatches(lines: string[], mismatches: string[] | undefined): void {
@@ -914,7 +914,7 @@ function formatBaselineSection(lines: string[], comparison: BaselineComparison):
   }
 
   if (allMetrics.size === 0) {
-    lines.push("  All metrics within tolerance — OK");
+    lines.push("  All metrics within tolerance: OK");
   } else {
     const header = padRow(["Metric", "Baseline", "Current", "Delta", "Status"], [14, 12, 12, 10, 30]);
     lines.push(header);
@@ -1001,7 +1001,7 @@ function formatCurveOutput(lines: string[], report: Report): string {
     (p) => p.mount.unstable || p.rerender.unstable || p.unmount.unstable,
   );
   if (hasUnstable) {
-    lines.push("⚠ Unstable results (CV>15%) — consider increasing sample count");
+    lines.push("⚠ Unstable results (CV>15%): consider increasing sample count");
   }
 
   appendWarnings(lines, report);
@@ -1211,7 +1211,7 @@ const VIOLATION_METRIC_LABEL: Record<CurveViolation["metric"], string> = {
 export function formatCurveViolation(violation: CurveViolation): string {
   const metric = VIOLATION_METRIC_LABEL[violation.metric];
   if (violation.kind === "growth") {
-    return `${metric} cost grows ${violation.growthClass} with N — superlinear growth fails on its own, whatever the per-N budgets say.`;
+    return `${metric} cost grows ${violation.growthClass} with N: superlinear growth fails on its own, whatever the per-N budgets say.`;
   }
   const budget = `${(violation.budgetMs ?? 0).toFixed(2)}ms budget`;
   const median = `${(violation.medianMs ?? 0).toFixed(2)}ms`;
@@ -1226,7 +1226,7 @@ export interface BuildMatrixReportInput {
   axes: MatrixAxis[];
   // The matrix cells ARE the combos (M21). Projecting them keeps cell verdicts
   // and the run-level pass/fail derived from one computation instead of two
-  // that drift — the combo verdict already accounts for interactions.
+  // that drift: the combo verdict already accounts for interactions.
   combos: ComboReport[];
   propDeltas?: PropDelta[];
 }
@@ -1377,7 +1377,7 @@ export function deriveReportMode(report: Report): ReportMode {
   return "combo";
 }
 
-// M32 D3 — curve mode auto-activates, empties `combos`, and prints a different
+// M32 D3: curve mode auto-activates, empties `combos`, and prints a different
 // table. Without this line the reader cannot tell which measurement they got.
 export function describeMode(report: Report): string {
   switch (deriveReportMode(report)) {
@@ -1391,7 +1391,7 @@ export function describeMode(report: Report): string {
       return "Mode: prop matrix";
   }
 
-  // M61: the sibling-copies scale probe is not a prop combo — counting it in
+  // M61: the sibling-copies scale probe is not a prop combo: counting it in
   // "measured" without a matching "generated" is exactly the contradiction
   // dogfooding found ("12 measured of 8 generated").
   const propCombos = report.combos.filter((c) => c.scaleProbe === undefined);
