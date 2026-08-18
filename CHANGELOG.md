@@ -1,10 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.4.0
 
-Fixes from a six-project dogfood (M58–M66):
-
-- Prop extraction binds to the exported/target component — internal helpers can no longer hijack the schema. `#ExportName` targets a specific export.
+- Prop extraction binds to the exported/target component: internal helpers can no longer hijack the schema. `#ExportName` targets a specific export.
 - Render crashes surface: page errors attach per combo, zero DOM + a throw = `FAIL [render error]` instead of a silent pass. Crash messages name phase, combo, and a fix hint.
 - Prop synthesis: cva `VariantProps` unions enumerate, tuples and domain objects get real values, Maps/Sets degrade loudly, duplicate combos de-duped.
 - Scale-probe combos labeled `×N copies` (`scaleProbe` in JSON); `--max-combos` bounds matrix mode; combo counts reconcile; expensive probes capped with a notice.
@@ -16,12 +14,12 @@ Fixes from a six-project dogfood (M58–M66):
 
 ## 0.3.0
 
-**Upgrading:** metrics revisions bumped — every 0.2.x baseline classifies `incompatible`. Nothing fails; re-record with `--save-baseline`.
+**Upgrading:** metrics revisions bumped: every 0.2.x baseline classifies `incompatible`. Nothing fails; re-record with `--save-baseline`.
 
 New modes:
 
-- `--compare <gitref>` — interleaved A/B against a git ref, informational
-- `--report-md` / `--report-junit` — PR-comment markdown and JUnit XML
+- `--compare <gitref>`: interleaved A/B against a git ref, informational
+- `--report-md` / `--report-junit`: PR-comment markdown and JUnit XML
 
 New inputs:
 
@@ -54,6 +52,6 @@ Also: `--max-combos` / `--explore-budget` disclose caps, `--init-fixture`, `--no
 
 - Global stylesheet injection with a font/style settle gate.
 - Provider wrapper (`--wrap`, auto-detected `120fps.setup.tsx`).
-- React Compiler awareness — compiled projects are measured compiled.
+- React Compiler awareness: compiled projects are measured compiled.
 - Baseline environment fingerprints, `--baseline-env strict|normalize|ignore`.
 - `--isolate` pipeline (mount, rerender, unmount, memory, strictmode).
