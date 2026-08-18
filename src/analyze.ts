@@ -1401,31 +1401,10 @@ async function runComboMode(ctx: ModeContext, fixtureHasScale: boolean): Promise
   return report;
 }
 
-function detectComponentName(componentPath: string): string {
-  const source = fs.readFileSync(componentPath, "utf-8");
-
-  const defaultFn = source.match(
-    /export\s+default\s+function\s+([A-Z]\w*)/,
-  );
-  if (defaultFn) return defaultFn[1];
-
-  const defaultConst = source.match(
-    /export\s+default\s+([A-Z]\w*)/,
-  );
-  if (defaultConst) return defaultConst[1];
-
-  const namedExport = source.match(
-    /export\s+(?:const|function)\s+([A-Z]\w*)/,
-  );
-  if (namedExport) return namedExport[1];
-
-  const reExport = source.match(
-    /export\s+\{\s*([A-Z]\w*)\s*\}/,
-  );
-  if (reExport) return reExport[1];
-
-  const basename = path.basename(componentPath, path.extname(componentPath));
-  return basename.charAt(0).toUpperCase() + basename.slice(1);
+// M58: the report names the component the harness imports and renders, so both
+// read the same resolver. The filename fallback lives inside it.
+export function detectComponentName(componentPath: string): string {
+  return detectComponentExport(componentPath).name;
 }
 
 // Opt-in only: writing into a project unasked is a side effect the NFRs rule

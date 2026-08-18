@@ -18,7 +18,7 @@ tests:
 Non-obvious:
 - Bundler moduleResolution ALWAYS — overrides user tsconfig.
 - Same React as user project via node_modules junction symlink; `resolve.dedupe` react/react-dom.
-- HOC chains `memo(forwardRef(...))` unwrapped recursively; class components via heritage-clause type arg; `React.FC<P>` reads declared interface, not implicit children.
+- HOC chains `memo(forwardRef(...))` unwrapped recursively; class components via heritage-clause type arg; `React.FC<P>` reads declared interface, not implicit children. Which declaration in the file those read from is M58's target resolution.
 - Large unions: stratified sampling caps combos at 64.
 - No user Vite config, no auto-mount (caller drives Control API), concurrent servers ok (temp dirs, port 0).
 

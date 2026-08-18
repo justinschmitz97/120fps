@@ -33,6 +33,7 @@ let extractionCache = emptyExtractionCache();
 
 export function resetExtractionCache(): void {
   extractionCache = emptyExtractionCache();
+  warnedPropTargets.clear();
 }
 
 export function extractionCacheStats(): { programsCreated: number; sourceFilesParsed: number } {
@@ -368,58 +369,339 @@ function vueEntryScript(vuePath: string, virtual: VirtualScripts): string | unde
   return undefined;
 }
 
-function findComponentPropsType(
-  sourceFile: ts.SourceFile,
-  checker: ts.TypeChecker,
-): ts.Type | undefined {
-  let propsType: ts.Type | undefined;
+// M58: one component declaration per entry, in source order, with the export
+// facts that decide which of them the harness will actually render.
+interface ComponentCandidate {
+  name: string;
+  declaration:
+    | ts.FunctionDeclaration
+    | ts.ClassDeclaration
+    | ts.VariableDeclaration
+    | ts.ArrowFunction
+    | ts.FunctionExpression
+    // `export default memo(Imported)` — the component is not declared here.
+    | ts.ExportAssignment;
+  exported: boolean;
+  isDefault: boolean;
+  // Names the module exports this declaration under, when they differ from the
+  // local one (`export { Core as AliasWidget }`).
+  aliases: string[];
+}
+
+interface BoundProps {
+  type: ts.Type;
+  // The function the type came from, when one was reachable — the source of
+  // the destructured parameter names the self-consistency guard compares.
+  fn?: ts.SignatureDeclaration;
+}
+
+const IDENTIFIER_HOPS = 8;
+
+function normalizeComponentName(name: string): string {
+  return name.replace(/[^a-z0-9]/gi, "").toLowerCase();
+}
+
+function collectComponentCandidates(sourceFile: ts.SourceFile): ComponentCandidate[] {
+  const candidates: ComponentCandidate[] = [];
+  const exportedNames = new Set<string>();
+  const defaultNames = new Set<string>();
+  const aliasesByLocal = new Map<string, string[]>();
 
   ts.forEachChild(sourceFile, (node) => {
-    if (propsType) return;
+    const exported = hasExportModifier(node);
+    const isDefault = exported && hasDefaultModifier(node);
 
-    // function Component(props: Props) — PascalCase name required (React convention)
-    if (ts.isFunctionDeclaration(node) && node.name && /^[A-Z]/.test(node.name.text) && node.parameters.length > 0) {
-      const param = node.parameters[0];
-      const type = checker.getTypeAtLocation(param);
-      if (looksLikePropsType(type, checker)) {
-        propsType = type;
+    if (ts.isFunctionDeclaration(node)) {
+      if (node.name && isComponentName(node.name.text)) {
+        candidates.push({
+          name: node.name.text,
+          declaration: node,
+          exported,
+          isDefault,
+          aliases: [],
+        });
+      } else if (isDefault) {
+        // export default function (props: Props) — nameless but still the target.
+        candidates.push({ name: "default", declaration: node, exported, isDefault, aliases: [] });
       }
+      return;
     }
 
-    // class Counter extends React.Component<Props>
-    if (ts.isClassDeclaration(node) && node.name && node.heritageClauses) {
-      for (const clause of node.heritageClauses) {
-        for (const typeExpr of clause.types) {
-          const typeArgs = typeExpr.typeArguments;
-          if (typeArgs && typeArgs.length > 0) {
-            const type = checker.getTypeFromTypeNode(typeArgs[0]);
-            if (looksLikePropsType(type, checker)) {
-              propsType = type;
-            }
-          }
-        }
-      }
+    if (ts.isClassDeclaration(node) && node.name && isComponentName(node.name.text)) {
+      candidates.push({
+        name: node.name.text,
+        declaration: node,
+        exported,
+        isDefault,
+        aliases: [],
+      });
+      return;
     }
 
-    // export const Component = (props: Props) => ...
-    // export const Component = React.forwardRef<Ref, Props>((props, ref) => ...)
-    // export const Component = React.memo(InnerComponent)
     if (ts.isVariableStatement(node)) {
       for (const decl of node.declarationList.declarations) {
-        if (!decl.initializer) continue;
+        if (!ts.isIdentifier(decl.name) || !isComponentName(decl.name.text)) continue;
+        candidates.push({
+          name: decl.name.text,
+          declaration: decl,
+          exported,
+          isDefault: false,
+          aliases: [],
+        });
+      }
+      return;
+    }
 
-        const fn = extractFunctionFromInitializer(decl.initializer);
-        if (fn && fn.parameters.length > 0) {
-          const type = checker.getTypeAtLocation(fn.parameters[0]);
-          if (looksLikePropsType(type, checker)) {
-            propsType = type;
-          }
+    // export default Component;  /  export default memo(Component);
+    if (ts.isExportAssignment(node) && !node.isExportEquals) {
+      const identifier = identifierBehind(node.expression);
+      if (identifier) {
+        exportedNames.add(identifier.text);
+        defaultNames.add(identifier.text);
+      }
+      const fn = extractFunctionFromInitializer(node.expression);
+      candidates.push({
+        // A local declaration named by the assignment is pushed earlier and
+        // wins selection; this entry carries files whose default export names
+        // something declared elsewhere.
+        name: identifier?.text ?? "default",
+        declaration: fn ?? node,
+        exported: true,
+        isDefault: true,
+        aliases: [],
+      });
+      return;
+    }
+
+    // export { A, B as default }
+    if (ts.isExportDeclaration(node)) {
+      if (node.isTypeOnly || !node.exportClause || !ts.isNamedExports(node.exportClause)) return;
+      for (const spec of node.exportClause.elements) {
+        if (spec.isTypeOnly) continue;
+        const local = spec.propertyName?.text ?? spec.name.text;
+        exportedNames.add(local);
+        if (spec.name.text === "default") defaultNames.add(local);
+        else if (spec.name.text !== local) {
+          aliasesByLocal.set(local, [...(aliasesByLocal.get(local) ?? []), spec.name.text]);
         }
       }
     }
   });
 
-  return propsType;
+  for (const candidate of candidates) {
+    if (exportedNames.has(candidate.name)) candidate.exported = true;
+    if (defaultNames.has(candidate.name)) candidate.isDefault = true;
+    const aliases = aliasesByLocal.get(candidate.name);
+    if (aliases) candidate.aliases = aliases;
+  }
+
+  return candidates;
+}
+
+// Selection order (M58): default export > file-stem match after dropping
+// non-alphanumerics > first exported component > first declaration. The last
+// step only applies to files that export nothing at all.
+function selectTargetCandidate(
+  candidates: ComponentCandidate[],
+  fileName: string,
+): ComponentCandidate | undefined {
+  const defaultExport = candidates.find((c) => c.isDefault);
+  if (defaultExport) return defaultExport;
+
+  const exported = candidates.filter((c) => c.exported);
+  if (exported.length > 0) {
+    const stem = normalizeComponentName(path.basename(fileName, path.extname(fileName)));
+    const stemMatch = exported.find((c) =>
+      [c.name, ...c.aliases].some((name) => normalizeComponentName(name) === stem),
+    );
+    return stemMatch ?? exported[0];
+  }
+
+  return candidates[0];
+}
+
+// `memo(Inner)` / `forwardRef(Inner)` / `Inner` — the identifier a wrapper chain
+// ultimately names, when it names one.
+function identifierBehind(expression: ts.Expression): ts.Identifier | undefined {
+  if (ts.isIdentifier(expression)) return expression;
+  if (ts.isCallExpression(expression) && expression.arguments.length > 0) {
+    return identifierBehind(expression.arguments[0]);
+  }
+  return undefined;
+}
+
+function propsFromParameter(
+  fn: ts.SignatureDeclaration,
+  checker: ts.TypeChecker,
+): BoundProps | undefined {
+  const param = fn.parameters[0];
+  if (!param) return undefined;
+  const type = checker.getTypeAtLocation(param);
+  return looksLikePropsType(type, checker) ? { type, fn } : undefined;
+}
+
+function bindProps(
+  candidate: ComponentCandidate,
+  checker: ts.TypeChecker,
+  byName: Map<string, ComponentCandidate>,
+  hops = 0,
+): BoundProps | undefined {
+  const declaration = candidate.declaration;
+
+  if (
+    ts.isFunctionDeclaration(declaration) ||
+    ts.isArrowFunction(declaration) ||
+    ts.isFunctionExpression(declaration)
+  ) {
+    return propsFromParameter(declaration, checker);
+  }
+
+  // class Counter extends React.Component<Props>
+  if (ts.isClassDeclaration(declaration)) {
+    for (const clause of declaration.heritageClauses ?? []) {
+      for (const typeExpr of clause.types) {
+        const typeArgs = typeExpr.typeArguments;
+        if (!typeArgs || typeArgs.length === 0) continue;
+        const type = checker.getTypeFromTypeNode(typeArgs[0]);
+        if (looksLikePropsType(type, checker)) return { type };
+      }
+    }
+    return undefined;
+  }
+
+  const expression = ts.isExportAssignment(declaration)
+    ? declaration.expression
+    : declaration.initializer;
+  if (!expression) return undefined;
+
+  // const Component = (props: Props) => ... / memo(forwardRef((props, ref) => ...))
+  const fn = extractFunctionFromInitializer(expression);
+  if (fn) {
+    const bound = propsFromParameter(fn, checker);
+    if (bound) return bound;
+  }
+
+  // const Component = memo(Inner) — follow the identifier to its declaration.
+  if (!fn && hops < IDENTIFIER_HOPS) {
+    const identifier = identifierBehind(expression);
+    const referenced = identifier ? byName.get(identifier.text) : undefined;
+    if (referenced && referenced !== candidate) {
+      const bound = bindProps(referenced, checker, byName, hops + 1);
+      if (bound) return bound;
+    }
+  }
+
+  // const Component: FC<Props> = <anything callable>, or a default export whose
+  // component was declared in another module.
+  const type = checker.getTypeAtLocation(
+    ts.isExportAssignment(declaration) ? expression : declaration.name,
+  );
+  for (const signature of type.getCallSignatures()) {
+    const param = signature.getParameters()[0];
+    if (!param) continue;
+    const paramType = checker.getTypeOfSymbolAtLocation(param, declaration);
+    if (looksLikePropsType(paramType, checker)) return { type: paramType };
+  }
+
+  return undefined;
+}
+
+// Names bound out of a destructured first parameter, renames resolved to the
+// source property and rest elements ignored.
+function destructuredParameterNames(fn: ts.SignatureDeclaration | undefined): string[] {
+  const param = fn?.parameters[0];
+  if (!param || !ts.isObjectBindingPattern(param.name)) return [];
+  const names: string[] = [];
+  for (const element of param.name.elements) {
+    if (element.dotDotDotToken) continue;
+    const source = element.propertyName ?? element.name;
+    if (ts.isIdentifier(source) || ts.isStringLiteral(source)) names.push(source.text);
+  }
+  return names;
+}
+
+function overlapsDestructuring(bound: BoundProps, names: string[]): boolean {
+  const keys = new Set(bound.type.getProperties().map((p) => p.getName()));
+  return names.some((name) => keys.has(name));
+}
+
+// Whether the target declares a parameter at all. A component that takes none
+// has no props to miss, so its empty schema is an answer rather than a failure.
+function expectsProps(candidate: ComponentCandidate): boolean {
+  const declaration = candidate.declaration;
+  if (
+    ts.isFunctionDeclaration(declaration) ||
+    ts.isArrowFunction(declaration) ||
+    ts.isFunctionExpression(declaration)
+  ) {
+    return declaration.parameters.length > 0;
+  }
+  if (ts.isClassDeclaration(declaration)) return true;
+  const expression = ts.isExportAssignment(declaration)
+    ? declaration.expression
+    : declaration.initializer;
+  if (!expression) return false;
+  const fn = extractFunctionFromInitializer(expression);
+  // An initializer that is not a function literal (an alias, a factory call)
+  // may still be a component; its parameter list is not visible here.
+  return fn ? fn.parameters.length > 0 : true;
+}
+
+// One warning per target per process (mirrors the tsconfig warning policy).
+const warnedPropTargets = new Set<string>();
+
+function warnUnboundTarget(fileName: string, targetName: string): void {
+  const key = `${path.resolve(fileName)}::${targetName}`;
+  if (warnedPropTargets.has(key)) return;
+  warnedPropTargets.add(key);
+  process.stderr.write(
+    `Warning: could not resolve props for ${targetName} in ${fileName} — measuring with no props. ` +
+      `Another declaration in this file has props, but it is not the component being measured.\n`,
+  );
+}
+
+function findComponentPropsType(
+  sourceFile: ts.SourceFile,
+  checker: ts.TypeChecker,
+): ts.Type | undefined {
+  const candidates = collectComponentCandidates(sourceFile);
+  const target = selectTargetCandidate(candidates, sourceFile.fileName);
+  if (!target) return undefined;
+
+  const byName = new Map<string, ComponentCandidate>();
+  for (const candidate of candidates) {
+    if (!byName.has(candidate.name)) byName.set(candidate.name, candidate);
+  }
+
+  let bound = bindProps(target, checker, byName);
+
+  // Self-consistency: a props type that shares no key with what the target
+  // destructures did not come from the target. Prefer one that does.
+  const destructured = destructuredParameterNames(
+    bound?.fn ??
+      (ts.isFunctionDeclaration(target.declaration) ? target.declaration : undefined),
+  );
+  if (bound && destructured.length > 0 && !overlapsDestructuring(bound, destructured)) {
+    for (const candidate of candidates) {
+      if (candidate === target) continue;
+      const other = bindProps(candidate, checker, byName);
+      if (other && overlapsDestructuring(other, destructured)) {
+        bound = other;
+        break;
+      }
+    }
+  }
+
+  if (bound) return bound.type;
+
+  if (expectsProps(target)) {
+    const hijacker = candidates.some(
+      (candidate) => candidate !== target && bindProps(candidate, checker, byName),
+    );
+    if (hijacker) warnUnboundTarget(sourceFile.fileName, target.name);
+  }
+
+  return undefined;
 }
 
 function extractFunctionFromInitializer(
