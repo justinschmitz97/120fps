@@ -5,40 +5,36 @@ import { extractProps } from "./prop-gen.js";
 import { generateCombinations } from "./prop-gen-values.js";
 import { attachPageErrorCapture, enrichTimeoutError, type PageErrorCapture } from "./page-errors.js";
 
-const LAYOUT_TRANSITION_PROPS = new Set([
-  "transform", "opacity", "height", "width",
-  "max-height", "max-width", "all",
-]);
+// M64: animation is what the page is *doing*, never what its stylesheet
+// declares. A Tailwind `transition-all` on an idle button declares a transition
+// and animates nothing, and reading it as animation forced static toolbars into
+// T3. Every real case — a CSS animation, a running transition, a WAAPI
+// animation — produces an `Animation` object here; a declared-but-untriggered
+// transition produces none.
+//
+// Exported as source rather than a closure so the rule is one definition and
+// can be exercised against stub objects without a browser.
+export const OBSERVED_ANIMATION_EXPRESSION = `(function () {
+  var root = document.getElementById("root");
+  if (!root) return false;
+  var animations = document.getAnimations();
+  for (var i = 0; i < animations.length; i++) {
+    var animation = animations[i];
+    var effect = animation.effect;
+    var target = effect ? effect.target : null;
+    // Pseudo-element targets are not nodes and cannot be located in the tree.
+    if (!target || typeof target.nodeType !== "number") continue;
+    if (!root.contains(target)) continue;
+    // "idle" is a cancelled or never-started animation; "finished" still ran
+    // during the mount that was measured.
+    if (animation.playState === "idle") continue;
+    return true;
+  }
+  return false;
+})()`;
 
 export async function detectAnimations(page: Page): Promise<boolean> {
-  return page.evaluate((layoutProps: string[]) => {
-    const root = document.getElementById("root");
-    if (!root) return false;
-
-    const animations = document.getAnimations();
-    if (animations.some((a) => {
-      const target = (a as any).effect?.target;
-      return target instanceof Element && root.contains(target);
-    })) return true;
-
-    const layoutSet = new Set(layoutProps);
-    const elements = root.querySelectorAll("*");
-    for (const el of elements) {
-      const style = getComputedStyle(el);
-      if (style.animationName !== "none") return true;
-
-      const transitionProp = style.transitionProperty;
-      if (transitionProp && transitionProp !== "none") {
-        const props = transitionProp.split(",").map((p) => p.trim());
-        const durs = style.transitionDuration.split(",").map((d) => d.trim());
-        for (let i = 0; i < props.length; i++) {
-          const dur = durs[i % durs.length];
-          if (layoutSet.has(props[i]) && dur !== "0s") return true;
-        }
-      }
-    }
-    return false;
-  }, [...LAYOUT_TRANSITION_PROPS]);
+  return page.evaluate<boolean>(OBSERVED_ANIMATION_EXPRESSION);
 }
 
 // `document.querySelectorAll("*")` counts html/head/body/#root and Vite's

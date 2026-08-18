@@ -696,6 +696,21 @@ Options:
   --help                         Show this help
   --version                      Print version
 
+Exit codes:
+  0   every measured component passed
+  1   a verdict failed: over budget, or a regression under --check/--budget
+  2   setup error: bad flag, missing file, harness or browser failure
+
+Multiple components:
+  Passing several paths, a directory, or a glob measures each in turn. With more
+  than one component, --json becomes a filename template: <path>.<stem>.json per
+  component, and the path you named is never written. The run prints the files it
+  wrote. Components are measured in sorted path order, not argument order.
+
+Combo caps:
+  --max-combos bounds the default prop-combo mode. Matrix mode measures every
+  cell of its axes and is not bounded by it — use --no-matrix for a capped run.
+
 Which mode answers which question:
   is it fast?                    (default)
   does it scale with its data?   --curve
@@ -736,6 +751,18 @@ export function resolveReportPaths(
     seen.set(base, count + 1);
     return count === 0 ? base : base.replace(/\.json$/, `-${count + 1}.json`);
   });
+}
+
+const JSON_NOTICE_LIST_CAP = 8;
+
+// M64: a CI step that passed `--json out.json` and got `out.badge.json` had no
+// way to learn that from the run. One line naming what was actually written.
+export function formatJsonSplitNotice(reportPaths: string[]): string {
+  if (reportPaths.length < 2) return "";
+  const shown = reportPaths.slice(0, JSON_NOTICE_LIST_CAP);
+  const rest = reportPaths.length - shown.length;
+  const suffix = rest > 0 ? `, +${rest} more` : "";
+  return `JSON: ${reportPaths.length} per-component reports — ${shown.join(", ")}${suffix}`;
 }
 
 function componentStem(componentPath: string): string {
@@ -863,6 +890,9 @@ async function main(): Promise<void> {
     await pool.closeAll();
     await serverPool.closeAll();
   }
+
+  const jsonNotice = formatJsonSplitNotice(reportPaths);
+  if (jsonNotice) process.stdout.write(jsonNotice + "\n");
 
   // Written even when components failed: a CI summary that only appears on
   // success is the one nobody needed.

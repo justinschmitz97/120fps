@@ -93,7 +93,8 @@ describe("buildReport animation detection integration", () => {
     expect(report.combos[0].tier).toBe("T3");
   });
 
-  it("large DOM (>40) with hasAnimation=true, no portal/scaling produces T3", () => {
+  // M64: the animation floor is T3; a 50-node component is already above it.
+  it("large DOM (>40) with hasAnimation=true, no portal/scaling produces T4", () => {
     const report = buildReport(makeInput({
       mounts: [{
         comboIndex: 0, props: {},
@@ -103,10 +104,10 @@ describe("buildReport animation detection integration", () => {
         hasAnimation: true,
       }],
     }));
-    expect(report.combos[0].tier).toBe("T3");
+    expect(report.combos[0].tier).toBe("T4");
   });
 
-  it("medium DOM (13-40) with hasAnimation=true produces T3 (animation triggers T3)", () => {
+  it("medium DOM (13-40) with hasAnimation=true produces T3 (animation floors at T3)", () => {
     const report = buildReport(makeInput({
       mounts: [{
         comboIndex: 0, props: {},

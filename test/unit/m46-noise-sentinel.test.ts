@@ -10,6 +10,8 @@ import {
   NOISE_PROBE_SAMPLES,
   NOISY_RUN_WARNING,
   HOSTILE_RUN_WARNING,
+  NOISY_BASELINE_NOTE,
+  HOSTILE_BASELINE_NOTE,
   type NoiseSignals,
 } from "../../src/noise.js";
 
@@ -113,9 +115,12 @@ describe("m46 C3 — report assembly", () => {
     expect(report.signals.probeMedianMs).toBe(10);
   });
 
+  // M64: the baseline clauses moved out of the fixed sentences — a run that
+  // never asked for a baseline was being told its comparison had been skipped.
   it("says what to do about it", () => {
     expect(NOISY_RUN_WARNING).toContain("rerun");
-    expect(NOISY_RUN_WARNING).toContain("do not fail");
-    expect(HOSTILE_RUN_WARNING).toContain("skipped");
+    expect(NOISY_BASELINE_NOTE).toContain("do not fail");
+    expect(HOSTILE_BASELINE_NOTE).toContain("skipped");
+    expect(HOSTILE_RUN_WARNING).toContain("provisional");
   });
 });

@@ -1,5 +1,5 @@
 import type { Report, ScalingCurveReport, Thresholds } from "./report.js";
-import { computeCurveVerdict } from "./report.js";
+import { computeCurveVerdict, deriveReportMode } from "./report.js";
 import type { IsolationReport } from "./isolation.js";
 import { CHURN_DEGRADATION_LIMIT, LEAK_BYTES_PER_CYCLE } from "./isolation.js";
 
@@ -11,11 +11,15 @@ import { CHURN_DEGRADATION_LIMIT, LEAK_BYTES_PER_CYCLE } from "./isolation.js";
 // (per M55's design) keeps a future mode from silently rendering as "empty".
 type ReportMode = "combo" | "cached" | "curve" | "isolation" | "empty";
 
+// Serializer dispatch is about which field carries the numbers, so the combo
+// and cached shapes are still checked here. The curve/isolation split comes
+// from the report's own mode discriminator (M64) rather than a second guess.
 function reportMode(report: Report): ReportMode {
   if (report.combos.length > 0) return "combo";
   if (report.cached) return "cached";
-  if (report.scalingCurveReport) return "curve";
-  if (report.isolation) return "isolation";
+  const mode = deriveReportMode(report);
+  if (mode === "curve" && report.scalingCurveReport) return "curve";
+  if (mode === "isolation" && report.isolation) return "isolation";
   return "empty";
 }
 

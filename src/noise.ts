@@ -95,10 +95,36 @@ export function buildNoiseReport(input: {
   return { level: classifyNoise(signals), signals };
 }
 
+// M64: the fixed sentences claim nothing about a baseline. A run that never
+// asked for one was still told its baseline comparison had been skipped.
 export const NOISY_RUN_WARNING =
-  "The machine was noisy while this ran; treat regressions as suspect and rerun to confirm. " +
-  "Regressions against a baseline are reported but do not fail the run.";
+  "The machine was noisy while this ran; treat these numbers as suspect and rerun to confirm.";
 
 export const HOSTILE_RUN_WARNING =
-  "The machine was too busy to measure against. Baseline comparison was skipped; " +
-  "budget verdicts still print, but treat every number as provisional.";
+  "The machine was too busy to measure against. Budget verdicts still print, " +
+  "but treat every number as provisional.";
+
+// Appended only when a baseline comparison was actually applicable to the run.
+export const NOISY_BASELINE_NOTE =
+  "Regressions against the baseline are reported but do not fail the run.";
+
+export const HOSTILE_BASELINE_NOTE = "Baseline comparison was skipped.";
+
+// One vocabulary for the terminal and the JSON: the classification and the
+// signals behind it are what `report.noise` carries, so the sentence names them
+// instead of paraphrasing ("too busy").
+export function formatNoiseWarning(noise: NoiseReport, baselineCompared: boolean): string {
+  if (noise.level === "quiet") return "";
+  const { probeCv, unstableFraction, contextRetries } = noise.signals;
+  const signals = [
+    `probe CV ${Math.round(probeCv)}%`,
+    `${Math.round(unstableFraction * 100)}% of metrics unstable`,
+  ];
+  if (contextRetries > 0) {
+    signals.push(`${contextRetries} context ${contextRetries === 1 ? "retry" : "retries"}`);
+  }
+  const sentence = noise.level === "hostile" ? HOSTILE_RUN_WARNING : NOISY_RUN_WARNING;
+  const note = noise.level === "hostile" ? HOSTILE_BASELINE_NOTE : NOISY_BASELINE_NOTE;
+  const baselineClause = baselineCompared ? ` ${note}` : "";
+  return `machine: ${noise.level} (${signals.join(", ")}). ${sentence}${baselineClause}`;
+}

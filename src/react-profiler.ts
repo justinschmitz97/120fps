@@ -170,8 +170,28 @@ export function hasReactWarning(opts: ReactOptimizations): boolean {
 // Profiler hook injection script
 // ====================================================================
 
+// M64: `React.memo(X)` reaches the fiber as `{$$typeof, type: X}` and
+// `forwardRef(X)` as `{$$typeof, render: X}` — neither wrapper carries a name,
+// so reading displayName/name off the fiber type attributed every memoized
+// export to "Anonymous". Unwrap first, in either nesting order.
+//
+// Source rather than a closure: the profiler hook is injected as text, and this
+// keeps one definition that unit tests can evaluate directly.
+export const FIBER_TYPE_NAME_SOURCE = `function resolveTypeName(type, depth) {
+  if (!type || depth > 4) return null;
+  if (typeof type === "string") return type;
+  var direct = type.displayName || type.name;
+  if (direct) return direct;
+  // memo -> .type, forwardRef -> .render. lazy/context carry neither and stop.
+  var inner = type.type || type.render;
+  if (!inner) return null;
+  return resolveTypeName(inner, depth + 1);
+}`;
+
 export const PROFILER_HOOK_SCRIPT = `
 (function() {
+  ${FIBER_TYPE_NAME_SOURCE}
+
   var fibers = {};
   var lastSeen = {};
   var lastChild = {};
@@ -184,7 +204,7 @@ export const PROFILER_HOOK_SCRIPT = `
   function walkFiber(fiber, depth, path) {
     if (!fiber) return;
     var name = fiber.type
-      ? (fiber.type.displayName || fiber.type.name || "Anonymous")
+      ? (resolveTypeName(fiber.type, 0) || "Anonymous")
       : (fiber.tag === 3 ? "Root" : "Unknown");
     var id = path + "_" + name;
 

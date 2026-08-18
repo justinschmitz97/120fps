@@ -3,7 +3,12 @@ import type { InteractionType } from "./discovery.js";
 import { computeScalingCurve, attributeCost, type ScalingCurve, type CostAttribution } from "./metrics.js";
 import type { ReactOptimizations } from "./react-profiler.js";
 import { computeMedian, computeP95, type MeasuredState } from "./measure.js";
-import type { NoiseReport } from "./noise.js";
+import {
+  formatNoiseWarning,
+  HOSTILE_RUN_WARNING,
+  NOISY_RUN_WARNING,
+  type NoiseReport,
+} from "./noise.js";
 import { hintsForReport, formatHints, MEASUREMENT_BASIS_LINE, type HintId } from "./hints.js";
 
 export type { MeasuredState };
@@ -43,16 +48,22 @@ export const TIER_BUDGETS: Record<ComponentTier, TierBudget> = {
   T4: { mountMs: 80, rerenderMs: 48, interactionMs: 400, interactionStepMs: 100 },
 };
 
+// Budgets rise monotonically T1 → T4, so "at least T3" is a floor expressed as
+// a position in this order.
+const TIER_ORDER: ComponentTier[] = ["T1", "T2", "T3", "T4"];
+
 export function classifyTier(info: {
   domNodeCount: number;
   hasPortal: boolean;
   hasScaling?: boolean;
   hasAnimation: boolean;
 }): ComponentTier {
-  if (info.hasPortal || info.hasAnimation) return "T3";
-  if (info.domNodeCount <= 10) return "T1";
-  if (info.domNodeCount <= 40) return "T2";
-  return "T4";
+  const bySize: ComponentTier =
+    info.domNodeCount <= 10 ? "T1" : info.domNodeCount <= 40 ? "T2" : "T4";
+  // A portal or an animation buys the component T3's headroom; it never takes
+  // headroom away. A 2000-node animated table is still a 2000-node table.
+  if (!info.hasPortal && !info.hasAnimation) return bySize;
+  return TIER_ORDER.indexOf(bySize) >= TIER_ORDER.indexOf("T3") ? bySize : "T3";
 }
 
 export interface MachineInfo {
@@ -279,9 +290,17 @@ export interface ReactCompilerReport {
   version?: string;
 }
 
+// Which measurement this report describes. Same vocabulary as
+// `EnvFingerprint.mode`, so a report and the baseline slot it compares against
+// name their mode the same way.
+export type ReportMode = "combo" | "curve" | "matrix" | "isolation";
+
 export interface Report {
   version: 1;
   timestamp: string;
+  // Optional: every report written before this field existed, and every
+  // baseline entry, resolves through `deriveReportMode` instead.
+  mode?: ReportMode;
   machine: MachineInfo;
   componentPath: string;
   componentName: string;
@@ -319,6 +338,17 @@ export interface Report {
   // M39: verdict reused from a fingerprinted baseline entry — source
   // unchanged, environment identical, nothing was measured.
   cached?: boolean;
+}
+
+// Exactly the conditions the React Optimizations section prints a line for.
+function hasReactFinding(opts: ReactOptimizations | undefined): boolean {
+  if (!opts) return false;
+  if (opts.durationsUnavailable) return true;
+  if (opts.memoBailout && (opts.memoBailoutComponents?.length ?? 0) > 0) return true;
+  if (opts.contextFanOut && (opts.contextFanOutComponents?.length ?? 0) > 0) return true;
+  if ((opts.callbackIdentityDeltas?.length ?? 0) > 0) return true;
+  if ((opts.portalOrphans ?? 0) > 0) return true;
+  return (opts.renderAttribution?.length ?? 0) > 0;
 }
 
 const WRAPPER_OVERHEAD_WARN_MS = 1;
@@ -543,11 +573,13 @@ export function formatTable(report: Report): string {
     }
   }
 
-  const hasReactOpts = report.combos.some((c) => c.reactOptimizations != null);
-  if (hasReactOpts) {
+  // M64: a combo whose analysis found nothing contributes a header and a blank
+  // "Combo #N:" line and no information. Only combos with a finding are shown,
+  // and a run where none has one prints no section at all.
+  const reactCombos = report.combos.filter((c) => hasReactFinding(c.reactOptimizations));
+  if (reactCombos.length > 0) {
     lines.push("");
     lines.push("React Optimizations");
-    const reactCombos = report.combos.filter((c) => c.reactOptimizations != null);
     for (const combo of reactCombos) {
       const opts = combo.reactOptimizations!;
       if (reactCombos.length > 1) {
@@ -606,6 +638,7 @@ export function formatTable(report: Report): string {
   lines.push(
     report.pass ? "Result: PASS" : "Result: FAIL",
   );
+  appendWarnRollup(lines, report, report.combos.map((c) => c.verdict), "combos");
 
   if (hasUnstable) {
     lines.push("⚠ Unstable results (CV>15%) — consider increasing sample count");
@@ -634,8 +667,37 @@ export function formatTable(report: Report): string {
 // would hide the reason its own numbers are what they are.
 function appendWarnings(lines: string[], report: Report): void {
   for (const warning of report.warnings ?? []) {
-    lines.push(`⚠ ${warning}`);
+    lines.push(`⚠ ${enrichNoiseWarning(warning, report)}`);
   }
+}
+
+// The noise warning reaches `report.warnings` as a fixed sentence, because the
+// signals behind it live on `report.noise` and the baseline clause depends on
+// whether a comparison happened at all. Both are known here, so the terminal
+// prints the specific version of the sentence the JSON's numbers describe.
+function enrichNoiseWarning(warning: string, report: Report): string {
+  if (warning !== NOISY_RUN_WARNING && warning !== HOSTILE_RUN_WARNING) return warning;
+  if (!report.noise) return warning;
+  // `analyze.ts` sets `report.baseline` only when --check found an entry to
+  // compare against, which is exactly when a comparison was skippable.
+  return formatNoiseWarning(report.noise, report.baseline !== undefined) || warning;
+}
+
+// M64: WARN rows under "Result: PASS" read as a contradiction without the
+// rollup rule stated. Only a fail flips `report.pass`, and that is worth one
+// line whenever the table shows warnings and the result does not.
+function appendWarnRollup(
+  lines: string[],
+  report: Report,
+  verdicts: ("pass" | "warn" | "fail")[],
+  noun: string,
+): void {
+  if (!report.pass) return;
+  const warned = verdicts.filter((v) => v === "warn").length;
+  if (warned === 0) return;
+  lines.push(
+    `${warned} of ${verdicts.length} ${noun} warned; warnings do not fail the run.`,
+  );
 }
 
 // M51: every mode ends with what to do about what it found. Once per run, after
@@ -1095,31 +1157,50 @@ function formatMatrixOutput(lines: string[], report: Report): string {
       const propParts = Object.entries(effect.props)
         .filter(([name]) => axisNames.includes(name))
         .map(([name, val]) => `${name}=${String(val)}`);
+      // A cell can cost *less* than its parts predict; "above" was printed for
+      // both signs, which contradicted the number next to it.
       const deltaStr = effect.compoundDelta >= 0
         ? `+${effect.compoundDelta.toFixed(1)}ms`
         : `${effect.compoundDelta.toFixed(1)}ms`;
-      lines.push(`  ${propParts.join(" + ")}: ${deltaStr} above additive expectation (${effect.significance})`);
+      const direction = effect.compoundDelta >= 0 ? "above" : "below";
+      lines.push(`  ${propParts.join(" + ")}: ${deltaStr} ${direction} additive expectation (${effect.significance})`);
     }
   }
 
   lines.push("");
   const pass = report.pass ? "PASS" : "FAIL";
   lines.push(`Result: ${pass}`);
+  appendWarnRollup(lines, report, mr.cells.map((c) => c.verdict), "cells");
   appendWarnings(lines, report);
   appendHints(lines, report);
 
   return lines.join("\n");
 }
 
+// The one place a report's mode is decided. `report.mode` wins when present;
+// otherwise the populated fields answer it, which keeps reports written before
+// the field readable.
+export function deriveReportMode(report: Report): ReportMode {
+  if (report.mode) return report.mode;
+  if (report.isolation) return "isolation";
+  if (report.scalingCurveReport) return "curve";
+  if (report.matrixReport) return "matrix";
+  return "combo";
+}
+
 // M32 D3 — curve mode auto-activates, empties `combos`, and prints a different
 // table. Without this line the reader cannot tell which measurement they got.
 export function describeMode(report: Report): string {
-  if (report.isolation) return "Mode: isolation";
-  if (report.scalingCurveReport) {
-    const c = report.scalingCurveReport;
-    return `Mode: curve over "${c.propName}" (${c.reason})`;
+  switch (deriveReportMode(report)) {
+    case "isolation":
+      return "Mode: isolation";
+    case "curve": {
+      const c = report.scalingCurveReport;
+      return c ? `Mode: curve over "${c.propName}" (${c.reason})` : "Mode: curve";
+    }
+    case "matrix":
+      return "Mode: prop matrix";
   }
-  if (report.matrixReport) return "Mode: prop matrix";
 
   const measured = report.combos.length;
   const capNote = report.warnings?.find((w) => w.includes("prop combos"));

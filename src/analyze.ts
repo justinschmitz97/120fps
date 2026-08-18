@@ -101,6 +101,7 @@ import {
   computeCurveVerdict,
   classifyTier,
   computeVerdict,
+  deriveReportMode,
   DEFAULT_THRESHOLDS,
   TIER_BUDGETS,
   type CalibrationResult,
@@ -764,6 +765,7 @@ async function runIsolationMode(
 }
 
 function writeReportJson(report: Report, jsonPath: string | undefined): void {
+  report.mode = deriveReportMode(report);
   const target = path.resolve(jsonPath ?? "120fps-report.json");
   fs.mkdirSync(path.dirname(target), { recursive: true });
   fs.writeFileSync(target, JSON.stringify(report, mapReplacer, 2), "utf-8");

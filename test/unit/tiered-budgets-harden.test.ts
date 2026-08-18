@@ -88,8 +88,9 @@ describe("H3: exact tier boundaries", () => {
 
 // H4: all flags true
 describe("H4: portal + animation + scaling all true", () => {
-  it("portal takes T3 priority over scaling T4", () => {
-    expect(classifyTier({ domNodeCount: 200, hasPortal: true, hasScaling: true, hasAnimation: true })).toBe("T3");
+  // M64: T3 is a floor. 200 nodes already exceed it, so the size tier stands.
+  it("keeps T4 when the size tier is above the portal/animation floor", () => {
+    expect(classifyTier({ domNodeCount: 200, hasPortal: true, hasScaling: true, hasAnimation: true })).toBe("T4");
   });
 });
 

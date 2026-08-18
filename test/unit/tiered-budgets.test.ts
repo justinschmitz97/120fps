@@ -87,8 +87,10 @@ describe("classifyTier", () => {
     expect(classifyTier({ domNodeCount: 5, hasPortal: true, hasScaling: false, hasAnimation: false })).toBe("T3");
   });
 
-  it("returns T3 when hasAnimation=true and domNodeCount > 40", () => {
-    expect(classifyTier({ domNodeCount: 50, hasPortal: false, hasScaling: false, hasAnimation: true })).toBe("T3");
+  // M64: animation is a floor of T3, not an override — a 50-node animated
+  // component is still a 50-node component and keeps T4's headroom.
+  it("returns T4 when hasAnimation=true and domNodeCount > 40", () => {
+    expect(classifyTier({ domNodeCount: 50, hasPortal: false, hasScaling: false, hasAnimation: true })).toBe("T4");
   });
 
   it("returns T3 for small animated component (animation always T3)", () => {
@@ -107,8 +109,8 @@ describe("classifyTier", () => {
     expect(classifyTier({ domNodeCount: 200, hasPortal: false, hasScaling: true, hasAnimation: false })).toBe("T4");
   });
 
-  it("T3 for portal even with scaling and large DOM", () => {
-    expect(classifyTier({ domNodeCount: 200, hasPortal: true, hasScaling: true, hasAnimation: false })).toBe("T3");
+  it("T4 for portal with a large DOM — the portal floor is already cleared", () => {
+    expect(classifyTier({ domNodeCount: 200, hasPortal: true, hasScaling: true, hasAnimation: false })).toBe("T4");
   });
 
   it("is pure: same inputs produce same tier", () => {

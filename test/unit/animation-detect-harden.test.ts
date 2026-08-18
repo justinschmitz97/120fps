@@ -132,9 +132,9 @@ describe("H4: color-only transition", () => {
   });
 });
 
-// --- H5: transition-property "all" with duration → true ---
-describe("H5: transition all with duration", () => {
-  it("hasAnimation=true → T3 for small, T3 for large", () => {
+// --- H5: an observed animation floors the tier at T3 ---
+describe("H5: observed animation", () => {
+  it("hasAnimation=true → T3 for small, T4 for large", () => {
     const reportSmall = buildReport(makeInput({
       mounts: [{
         comboIndex: 0, props: {},
@@ -155,7 +155,7 @@ describe("H5: transition all with duration", () => {
         hasAnimation: true,
       }],
     }));
-    expect(reportLarge.combos[0].tier).toBe("T3");
+    expect(reportLarge.combos[0].tier).toBe("T4");
   });
 });
 
@@ -279,9 +279,9 @@ describe("H12: width transition", () => {
   });
 });
 
-// --- H13: hasAnimation + hasPortal → T3 ---
-describe("H13: animation + portal → T3", () => {
-  it("portal takes precedence for T3 classification", () => {
+// --- H13: hasAnimation + hasPortal on a large DOM ---
+describe("H13: animation + portal floor", () => {
+  it("keeps the size tier when it is already above the T3 floor", () => {
     const graph = {
       nodes: new Map([["n1", { id: "n1", depth: 0, interactions: [], pathFromRoot: [] }]]),
       edges: [{
@@ -301,14 +301,14 @@ describe("H13: animation + portal → T3", () => {
       }],
       explores: [{ graph, comboIndex: 0, props: {} }],
     }));
-    expect(report.combos[0].tier).toBe("T3");
+    expect(report.combos[0].tier).toBe("T4");
     expect(report.combos[0].hasAnimation).toBe(true);
   });
 });
 
 // --- H14: hasAnimation + hasScaling interaction ---
 describe("H14: animation + scaling tier interaction", () => {
-  it("animation=true + scaling=true → T3 (animation rule fires before T4)", () => {
+  it("animation=true + scaling=true, 30 DOM → T3 (floor lifts T2 to T3)", () => {
     expect(classifyTier({ domNodeCount: 30, hasPortal: false, hasScaling: true, hasAnimation: true })).toBe("T3");
   });
 
@@ -316,8 +316,8 @@ describe("H14: animation + scaling tier interaction", () => {
     expect(classifyTier({ domNodeCount: 30, hasPortal: false, hasScaling: true, hasAnimation: false })).toBe("T2");
   });
 
-  it("animation=true + scaling=false on large DOM → T3", () => {
-    expect(classifyTier({ domNodeCount: 50, hasPortal: false, hasScaling: false, hasAnimation: true })).toBe("T3");
+  it("animation=true + scaling=false on large DOM → T4 (floor already cleared)", () => {
+    expect(classifyTier({ domNodeCount: 50, hasPortal: false, hasScaling: false, hasAnimation: true })).toBe("T4");
   });
 });
 
