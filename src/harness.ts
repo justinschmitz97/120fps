@@ -60,7 +60,7 @@ export function detectNextJs(projectRoot: string): boolean {
 
 export function buildShimAliases(
   hasNextJs: boolean,
-): Array<{ find: RegExp; replacement: string }> {
+): Array<{ find: RegExp; replacement: string; isShim: boolean }> {
   if (!hasNextJs) return [];
   const shimDir = path.resolve(import.meta.dirname ?? __dirname, "shims");
   return SHIM_MODULES.map((entry) => {
@@ -68,6 +68,7 @@ export function buildShimAliases(
     return {
       find: new RegExp(`^${escaped}$`),
       replacement: path.join(shimDir, entry.shimFile),
+      isShim: true,
     };
   });
 }
@@ -799,7 +800,10 @@ export async function buildAndServe(
   const tsconfigAliases = loadTsconfigAliases(projectRoot);
   const hasNextJs = !options?.noShims && detectNextJs(projectRoot);
   const shimAliases = buildShimAliases(hasNextJs);
-  const alias = [...tsconfigAliases, ...shimAliases];
+  const alias: Array<{ find: RegExp; replacement: string; isShim?: boolean }> = [
+    ...tsconfigAliases,
+    ...shimAliases,
+  ];
 
   // The wrapper is imported by the entry, so its packages must be pre-bundled
   // too — otherwise the first mount pays Vite's on-demand optimize cost.
@@ -1068,37 +1072,45 @@ export function sweepStaleTmpDirs(baseDir: string = os.tmpdir()): void {
 
 const EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".mts", ".vue"];
 
+// M62: the alias that resolved a bare specifier matters for shim-usage
+// reporting, not just where it points — a shim alias redirects a real
+// package specifier to a local file, and that specifier is still "imported"
+// even though this function treats the result as local. Returning
+// viaShimAlias lets the caller record it without this function knowing
+// anything about SHIM_MODULES.
 function resolveLocalImport(
   fromFile: string,
   spec: string,
   projectRoot: string,
-  aliases: Array<{ find: RegExp; replacement: string }>,
-): string | null {
-  let resolved: string;
+  aliases: Array<{ find: RegExp; replacement: string; isShim?: boolean }>,
+): { path: string; viaShimAlias: boolean } | null {
+  let target: string;
+  let viaShimAlias = false;
   if (spec.startsWith(".") || spec.startsWith("/")) {
-    resolved = path.resolve(path.dirname(fromFile), spec);
+    target = path.resolve(path.dirname(fromFile), spec);
   } else {
     let matched = false;
     let aliasedPath = spec;
-    for (const { find, replacement } of aliases) {
+    for (const { find, replacement, isShim } of aliases) {
       if (find.test(spec)) {
         aliasedPath = spec.replace(find, replacement);
         matched = true;
+        viaShimAlias = isShim === true;
         break;
       }
     }
     if (!matched) return null;
-    resolved = path.isAbsolute(aliasedPath) ? aliasedPath : path.resolve(projectRoot, aliasedPath);
+    target = path.isAbsolute(aliasedPath) ? aliasedPath : path.resolve(projectRoot, aliasedPath);
   }
 
-  if (fs.existsSync(resolved) && fs.statSync(resolved).isFile()) return resolved;
+  if (fs.existsSync(target) && fs.statSync(target).isFile()) return { path: target, viaShimAlias };
   for (const ext of EXTENSIONS) {
-    const withExt = resolved + ext;
-    if (fs.existsSync(withExt)) return withExt;
+    const withExt = target + ext;
+    if (fs.existsSync(withExt)) return { path: withExt, viaShimAlias };
   }
   for (const ext of EXTENSIONS) {
-    const indexFile = path.join(resolved, "index" + ext);
-    if (fs.existsSync(indexFile)) return indexFile;
+    const indexFile = path.join(target, "index" + ext);
+    if (fs.existsSync(indexFile)) return { path: indexFile, viaShimAlias };
   }
   return null;
 }
@@ -1106,7 +1118,7 @@ function resolveLocalImport(
 export function scanExternalDeps(
   componentPath: string,
   projectRoot: string,
-  aliases: Array<{ find: RegExp; replacement: string }>,
+  aliases: Array<{ find: RegExp; replacement: string; isShim?: boolean }>,
   specifiersOut?: Set<string>,
 ): string[] {
   const externalPkgs = new Set<string>();
@@ -1132,10 +1144,15 @@ export function scanExternalDeps(
       const spec = match[1] ?? match[2];
       if (!spec) continue;
 
+      const isBareSpecifier = !spec.startsWith(".") && !spec.startsWith("/");
       const localResolved = resolveLocalImport(normalizedFile, spec, projectRoot, aliases);
       if (localResolved) {
-        queue.push(localResolved);
-      } else if (!spec.startsWith(".") && !spec.startsWith("/")) {
+        queue.push(localResolved.path);
+        // M62: a shim alias redirects the specifier to a local file, but the
+        // specifier itself was still imported and must be reported — the
+        // resolution stays local (queued above), only the bookkeeping changes.
+        if (isBareSpecifier && localResolved.viaShimAlias) specifiersOut?.add(spec);
+      } else if (isBareSpecifier) {
         specifiersOut?.add(spec);
         const pkg = spec.startsWith("@")
           ? spec.split("/").slice(0, 2).join("/")
