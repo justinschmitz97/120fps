@@ -10,7 +10,7 @@ import {
   mergeDrains,
   renderDrain,
 } from "./page-errors.js";
-import { extractProps, extractExports, extractAllProps, detectScalingProps, projectSourceFiles, type PropSchema, type ScalingPropMatch } from "./prop-gen.js";
+import { extractProps, extractPropsDetailed, extractExports, extractAllProps, detectScalingProps, projectSourceFiles, type PropSchema, type ScalingPropMatch } from "./prop-gen.js";
 import { hintsForReport } from "./hints.js";
 import {
   probeMachineNoise,
@@ -28,6 +28,7 @@ import {
   runPreflight,
   preflightFailureMessage,
   transformFailureNote,
+  providerCandidateLabels,
   NODE_BUILTIN_WARNING,
   PROJECT_TRANSFORM_WARNING,
   PREFLIGHT_BYPASSED_WARNING,
@@ -334,6 +335,23 @@ export interface AnalyzeOptions {
   noPreflight?: boolean;
   // M48: skip the project's own Vite transforms.
   noTransforms?: boolean;
+  // M65: the export to import and bind props to (`<file>#Export`). Absent, the
+  // M58/M65 selection order picks one.
+  target?: string;
+  // M65: one line per pipeline phase boundary. Defaulted by the CLI to stdout,
+  // silenced entirely in CI mode.
+  onProgress?: (line: string) => void;
+}
+
+// M65: `--ci` owns stdout for JSON (M22), so it wins over an explicit sink.
+export function resolveProgressReporter(
+  options: Pick<AnalyzeOptions, "ci" | "onProgress">,
+  write: (chunk: string) => void = (chunk) => process.stdout.write(chunk),
+): (line: string) => void {
+  if (options.ci) return () => {};
+  const sink = options.onProgress;
+  if (sink) return (line) => sink(line);
+  return (line) => write(line + "\n");
 }
 
 export interface BuildReportInput {
@@ -722,6 +740,8 @@ interface ModeContext {
   cssReport?: CssReport;
   runWarnings: string[];
   onWarning: (warning: string) => void;
+  // M65: one line per phase boundary, already silenced in CI mode.
+  progress: (line: string) => void;
   getSchemas: () => Promise<PropSchema[]>;
   getSourceFingerprint: () => Promise<string>;
   attachHarnessContext: (report: Report) => void;
@@ -749,6 +769,7 @@ async function runIsolationMode(
     ctx.useFixture || ctx.composed ? [{}] : generateCombinations(await ctx.getSchemas());
   const selection = selectIsolationCombos(isolationCombos);
 
+  ctx.progress(`isolation: ${phases.join(", ")}`);
   const run = await runIsolationPhases(harness, {
     phases,
     comboA: selection.comboA,
@@ -772,7 +793,7 @@ async function runIsolationMode(
     ? thresholds.mountMs
     : resolveComponentBudget(loadBudgetConfig(ctx.projectRoot), ctx.relativeComponent, tier).mountMs;
 
-  const componentName = detectComponentName(ctx.metadataPath);
+  const componentName = detectComponentName(ctx.metadataPath, ctx.options.target);
   const report: Report = {
     version: 1,
     timestamp: new Date().toISOString(),
@@ -888,6 +909,7 @@ async function runCurveMode(ctx: ModeContext, match: ScalingPropMatch): Promise<
   const curveScalePoints = options.scalePoints ?? [1, 3, 5, 10, 20, 50];
   const scaleCombos = generateScalingCombos(await ctx.getSchemas(), match, curveScalePoints);
 
+  ctx.progress(`mount: ${scaleCombos.length} scale points`);
   const curveMounts = await measureMount(harness, {
     samples,
     cpuThrottle,
@@ -896,6 +918,7 @@ async function runCurveMode(ctx: ModeContext, match: ScalingPropMatch): Promise<
     pool,
     onWarning,
   });
+  ctx.progress(`rerender: ${scaleCombos.length} scale points`);
   const curveRerenders = await measureRerender(harness, {
     samples,
     cpuThrottle,
@@ -905,6 +928,7 @@ async function runCurveMode(ctx: ModeContext, match: ScalingPropMatch): Promise<
     pool,
     onWarning,
   });
+  ctx.progress(`explore: ${scaleCombos.length} scale points`);
   const curveExplores = await explore(harness, {
     samples: Math.min(samples, 5),
     cpuThrottle,
@@ -917,7 +941,7 @@ async function runCurveMode(ctx: ModeContext, match: ScalingPropMatch): Promise<
   });
 
   const curveHeapDeltas = curveMounts.map((m) => m.heapDelta ?? 0);
-  const componentName = detectComponentName(ctx.metadataPath);
+  const componentName = detectComponentName(ctx.metadataPath, ctx.options.target);
 
   const curveReport = buildCurveReport({
     propName: match.schema.name,
@@ -1032,6 +1056,7 @@ async function runMatrixMode(ctx: ModeContext, matrixAutoActivated: boolean): Pr
     );
   }
 
+  ctx.progress(`mount: ${matrixCombos.length} matrix cells`);
   const matrixMounts = await measureMount(harness, {
     samples: matrixEffectiveSamples,
     cpuThrottle,
@@ -1040,6 +1065,7 @@ async function runMatrixMode(ctx: ModeContext, matrixAutoActivated: boolean): Pr
     pool,
     onWarning,
   });
+  ctx.progress(`rerender: ${matrixCombos.length} matrix cells`);
   const matrixRerenders = await measureRerender(harness, {
     samples: matrixEffectiveSamples,
     cpuThrottle,
@@ -1054,6 +1080,7 @@ async function runMatrixMode(ctx: ModeContext, matrixAutoActivated: boolean): Pr
   const sortedMounts = [...matrixMounts].sort((a, b) => b.mount.median - a.mount.median);
   const hotIndices = sortedMounts.slice(0, 5).map((m) => m.comboIndex);
   const hotCombos = hotIndices.map((i) => matrixCombos[i]);
+  if (hotCombos.length > 0) ctx.progress(`explore: ${hotCombos.length} hottest cells`);
   const rawExplores = hotCombos.length > 0
     ? await explore(harness, {
         samples: Math.min(samples, 5),
@@ -1108,7 +1135,7 @@ async function runMatrixMode(ctx: ModeContext, matrixAutoActivated: boolean): Pr
   }
 
   const heapDeltas = matrixMounts.map((m) => m.heapDelta ?? 0);
-  const componentName = detectComponentName(ctx.metadataPath);
+  const componentName = detectComponentName(ctx.metadataPath, ctx.options.target);
   const report = buildReport({
     componentPath: ctx.componentPath,
     componentName,
@@ -1370,6 +1397,7 @@ async function runComboMode(ctx: ModeContext, fixtureHasScale: boolean): Promise
     runWarnings.push(EFFECTIVE_SAMPLES_WARNING(effectiveSamples, samples, combos.length));
   }
 
+  ctx.progress(`mount: ${combos.length} combos x ${effectiveSamples} samples`);
   const mounts = await measureMount(harness, {
     samples: effectiveSamples,
     cpuThrottle,
@@ -1381,6 +1409,7 @@ async function runComboMode(ctx: ModeContext, fixtureHasScale: boolean): Promise
 
   const heapDeltas: number[] = mounts.map((m) => m.heapDelta ?? 0);
 
+  ctx.progress(`rerender: ${combos.length} combos`);
   const rerenders = await measureRerender(harness, {
     samples: effectiveSamples,
     cpuThrottle,
@@ -1395,6 +1424,9 @@ async function runComboMode(ctx: ModeContext, fixtureHasScale: boolean): Promise
   const exploreWallClockPerCombo = exploreCombos.length > 1
     ? Math.max(10000, Math.floor(60000 / exploreCombos.length))
     : 60000;
+  ctx.progress(
+    `explore: ${exploreCombos.length} combos, budget ${Math.round(exploreWallClockPerCombo / 1000)}s each`,
+  );
   const explores = await explore(harness, {
     samples: Math.min(samples, 5),
     cpuThrottle,
@@ -1420,10 +1452,11 @@ async function runComboMode(ctx: ModeContext, fixtureHasScale: boolean): Promise
 
   let propDeltas: PropDelta[] | undefined;
   if (!useFixture && !composed && !options.skipDeltas && schemas && schemas.length > 0) {
+    ctx.progress("prop deltas");
     propDeltas = await measureStandardPropDeltas(ctx, schemas, mounts, rerenders, effectiveSamples);
   }
 
-  const componentName = detectComponentName(ctx.metadataPath);
+  const componentName = detectComponentName(ctx.metadataPath, ctx.options.target);
 
   const report = buildReport({
     componentPath: ctx.componentPath,
@@ -1465,6 +1498,7 @@ async function runComboMode(ctx: ModeContext, fixtureHasScale: boolean): Promise
   }
 
   if (!fixtureHasScale && !useFixture && !composed && !options.skipAutoScale && schemas && schemas.length > 0) {
+    ctx.progress("scaling curves");
     await applyAutoScalingCurves(ctx, report, schemas);
   }
 
@@ -1475,6 +1509,7 @@ async function runComboMode(ctx: ModeContext, fixtureHasScale: boolean): Promise
   const shouldRunReact = !options.skipReactAnalysis && ctx.framework === "react";
 
   if (shouldRunReact) {
+    ctx.progress("react analysis");
     const fnPropNames = schemas
       ? schemas.filter((s) => s.kind === "function").map((s) => s.name)
       : [];
@@ -1554,6 +1589,7 @@ async function runComboMode(ctx: ModeContext, fixtureHasScale: boolean): Promise
   const hintIds = hintsForReport(report);
   if (hintIds.length > 0) report.hints = hintIds;
 
+  ctx.progress("report");
   writeReportJson(report, options.jsonPath);
 
   return report;
@@ -1561,8 +1597,177 @@ async function runComboMode(ctx: ModeContext, fixtureHasScale: boolean): Promise
 
 // M58: the report names the component the harness imports and renders, so both
 // read the same resolver. The filename fallback lives inside it.
-export function detectComponentName(componentPath: string): string {
-  return detectComponentExport(componentPath).name;
+export function detectComponentName(componentPath: string, target?: string): string {
+  return detectComponentExport(componentPath, target).name;
+}
+
+// --- M65 C1: --explain-props ---------------------------------------------
+
+export interface ExplainedProp {
+  name: string;
+  kind: PropSchema["kind"];
+  required: boolean;
+  values: unknown[];
+  degenerate?: string;
+}
+
+export interface PropsExplanation {
+  componentPath: string;
+  componentName: string;
+  target?: string;
+  // projectRoot-relative posix path, and the 1-based line of the declaration
+  // the schema bound to. Absent for a Vue SFC and for a file with no component.
+  bindingFile?: string;
+  bindingLine?: number;
+  exports: string[];
+  props: ExplainedProp[];
+  curve?: { propName: string; reason: string };
+  matrixWouldActivate: boolean;
+  presetPath?: string;
+  warnings: string[];
+}
+
+// The same resolution the pipeline performs, stopped before its first side
+// effect: no harness directory, no dev server, no browser, no report file.
+export async function explainProps(
+  componentPath: string,
+  options: { target?: string } = {},
+): Promise<PropsExplanation> {
+  const resolvedPath = path.resolve(componentPath);
+  if (!fs.existsSync(resolvedPath)) {
+    throw new Error(`Component file not found: ${componentPath}`);
+  }
+
+  const { projectRoot } = resolveProjectPaths(resolvedPath);
+  const componentName = detectComponentExport(resolvedPath, options.target).name;
+
+  const warnings: string[] = [];
+  const detail = await extractPropsDetailed(resolvedPath, {
+    ...(options.target ? { target: options.target } : {}),
+    // A sink, not stderr: a dry run prints its diagnostics in its own output.
+    onWarning: () => {},
+  });
+  warnings.push(...detail.warnings);
+
+  let schemas = detail.schemas;
+  const presetPath = detectPropPresets(resolvedPath);
+  const presets = presetPath ? loadPropPresets(presetPath, projectRoot) : undefined;
+  if (presets) {
+    const applied = applyPropPresets(schemas, presets);
+    schemas = applied.schemas;
+    if (applied.unknown.length > 0) {
+      warnings.push(UNKNOWN_PRESET_PROPS_WARNING(presets.path, applied.unknown));
+    }
+  }
+  if (schemas.length === 0) warnings.push(ZERO_PROPS_WARNING);
+
+  const exports = isVueFile(resolvedPath)
+    ? [componentName]
+    : (await extractExports(resolvedPath)).map((e) => e.name);
+  const curveMatch = detectScalingProps(schemas)[0];
+
+  return {
+    componentPath,
+    componentName,
+    ...(options.target ? { target: options.target } : {}),
+    ...(detail.targetLine !== undefined
+      ? {
+          bindingFile: path.relative(projectRoot, resolvedPath).replace(/\\/g, "/"),
+          bindingLine: detail.targetLine,
+        }
+      : {}),
+    exports,
+    props: schemas.map((s) => ({
+      name: s.name,
+      kind: s.kind,
+      required: s.required,
+      values: s.values,
+      ...(s.degenerate ? { degenerate: s.degenerate } : {}),
+    })),
+    ...(curveMatch
+      ? { curve: { propName: curveMatch.schema.name, reason: curveMatch.reason } }
+      : {}),
+    matrixWouldActivate: shouldAutoActivateMatrix(schemas),
+    ...(presets ? { presetPath: presets.path } : {}),
+    warnings,
+  };
+}
+
+const EXPLAIN_VALUE_CAP = 4;
+const EXPLAIN_VALUE_WIDTH = 40;
+
+function explainValue(value: unknown): string {
+  if (value === undefined) return "undefined";
+  if (typeof value === "function") return "[Function]";
+  let text: string;
+  try {
+    text = JSON.stringify(value) ?? String(value);
+  } catch {
+    text = String(value);
+  }
+  return text.length > EXPLAIN_VALUE_WIDTH
+    ? text.slice(0, EXPLAIN_VALUE_WIDTH - 1) + "…"
+    : text;
+}
+
+function explainValues(values: unknown[]): string {
+  if (values.length === 0) return "(no values)";
+  const shown = values.slice(0, EXPLAIN_VALUE_CAP).map(explainValue).join(", ");
+  const rest = values.length - Math.min(values.length, EXPLAIN_VALUE_CAP);
+  return rest > 0 ? `${shown}, +${rest} more` : shown;
+}
+
+export function formatExplainProps(explained: PropsExplanation): string {
+  const lines: string[] = [];
+  lines.push(`Component: ${explained.componentName}`);
+  lines.push(`  file:     ${explained.componentPath}`);
+  if (explained.target) lines.push(`  target:   ${explained.target} (explicit #Export)`);
+  lines.push(
+    explained.bindingLine !== undefined
+      ? `  binding:  ${explained.bindingFile}:${explained.bindingLine}`
+      : "  binding:  no component declaration (props read from the file itself)",
+  );
+  lines.push(
+    `  exports:  ${explained.exports.length > 0 ? explained.exports.join(", ") : "(none)"}`,
+  );
+  if (explained.presetPath) lines.push(`  presets:  ${explained.presetPath}`);
+
+  lines.push("");
+  lines.push(`Props (${explained.props.length}):`);
+  if (explained.props.length === 0) {
+    lines.push("  (none extracted)");
+  } else {
+    const nameWidth = Math.max(...explained.props.map((p) => p.name.length));
+    const kindWidth = Math.max(...explained.props.map((p) => p.kind.length));
+    for (const prop of explained.props) {
+      const required = prop.required ? "required" : "optional";
+      let line = `  ${prop.name.padEnd(nameWidth)}  ${prop.kind.padEnd(kindWidth)}  ${required}  ${explainValues(prop.values)}`;
+      if (prop.degenerate) line += `  [degenerate: ${prop.degenerate}]`;
+      lines.push(line);
+    }
+  }
+
+  lines.push("");
+  lines.push(
+    explained.curve
+      ? `Curve mode:   would activate on ${explained.curve.propName} (${explained.curve.reason})`
+      : "Curve mode:   would not activate — no array or numeric scaling prop",
+  );
+  lines.push(
+    explained.matrixWouldActivate
+      ? "Matrix mode:  would auto-activate"
+      : "Matrix mode:  would not auto-activate",
+  );
+
+  if (explained.warnings.length > 0) {
+    lines.push("");
+    lines.push("Warnings:");
+    for (const warning of explained.warnings) lines.push(`  ${warning}`);
+  }
+
+  lines.push("");
+  lines.push("Dry run: nothing was measured, no report was written.");
+  return lines.join("\n");
 }
 
 // Opt-in only: writing into a project unasked is a side effect the NFRs rule
@@ -1682,7 +1887,7 @@ async function tryReuseStoredVerdict(args: {
     timestamp: new Date().toISOString(),
     machine,
     componentPath: args.componentPath,
-    componentName: detectComponentName(args.metadataPath),
+    componentName: detectComponentName(args.metadataPath, args.options.target),
     // The calibration of the run whose verdict is being reused.
     calibration: {
       totalDuration: entry.env.calibrationTotalDuration,
@@ -1740,13 +1945,23 @@ export async function analyze(
   const pool = options.browserPool ?? createBrowserPool();
   const ownsPool = options.browserPool === undefined;
 
+  const progress = resolveProgressReporter(options);
+
   let fixturePath: string | undefined = options.fixturePath;
   let fixtureAutoDetected = false;
   const inputIsFixture = isFixturePath(componentPath);
 
+  // M65: `<file>#Export` names one export to render, so a fixture — which owns
+  // its whole scene — cannot also apply. Validated here, before any harness
+  // directory exists, so a typo costs a source read rather than a boot.
+  if (options.target) {
+    if (options.fixturePath || inputIsFixture) throw new Error(TARGET_WITH_FIXTURE_ERROR);
+    detectComponentExport(resolvedPath, options.target);
+  }
+
   if (inputIsFixture) {
     fixturePath = componentPath;
-  } else if (!fixturePath) {
+  } else if (!fixturePath && !options.target) {
     const detected = detectFixture(resolvedPath);
     if (detected) {
       fixturePath = detected;
@@ -1768,7 +1983,9 @@ export async function analyze(
 
   let compositionTree: CompositionTree | undefined;
   let componentExports: import("./composition.js").ExportInfo[] | undefined;
-  if (!fixturePath && !inputIsFixture && !options.skipAutoCompose && !rendererIsVue) {
+  // M65: an explicit target names the one export to render, which is the
+  // opposite of inferring a scene from several.
+  if (!fixturePath && !inputIsFixture && !options.skipAutoCompose && !rendererIsVue && !options.target) {
     componentExports = await extractExports(resolvedPath);
     if (componentExports.length > 1) {
       const allSchemas = await extractAllProps(resolvedPath);
@@ -1800,6 +2017,8 @@ export async function analyze(
   const presets = presetPath ? loadPropPresets(presetPath, projectRoot) : undefined;
 
   let fontsSettled = true;
+  // M65: provider-dependent imports found by the preflight walk.
+  let providerCandidates: string[] = [];
   // M48: kept outside the try so a failure on the way out can still name them.
   let transformHits: import("./preflight.js").PreflightHit[] = [];
   let activeTransforms: string[] | undefined;
@@ -1818,7 +2037,7 @@ export async function analyze(
   // deltas, matrix cells and curve anchors all measure the same data.
   const presetApplied = new Set<string>();
   const extractSchemas = async (file: string): Promise<PropSchema[]> => {
-    const raw = await extractProps(file);
+    const raw = await extractProps(file, options.target ? { target: options.target } : undefined);
     if (!presets) return raw;
     const result = applyPropPresets(raw, presets);
     for (const name of result.applied) presetApplied.add(name);
@@ -1838,6 +2057,9 @@ export async function analyze(
     css: cssReport?.files ?? [],
     wrap: wrapPath ? path.relative(projectRoot, wrapPath).replace(/\\/g, "/") : null,
     reactCompiler: options.reactCompiler ?? "auto",
+    // Only present when targeted, so an untargeted run's fingerprint — and
+    // every baseline already stored against it — is byte-identical.
+    ...(options.target ? { target: options.target } : {}),
     samples,
     cpuThrottle,
   });
@@ -1881,6 +2103,12 @@ export async function analyze(
       report.warnings = [...(report.warnings ?? []), ...runWarnings];
     }
     if (cssReport) report.css = cssReport;
+
+    // M65: a static import is not a finding. It becomes one only once a render
+    // actually failed, which is what keeps a healthy run's report unchanged.
+    if (providerCandidates.length > 0 && renderFailed(report)) {
+      report.providerCandidates = providerCandidates;
+    }
 
     // M46: assembled from signals the run already produced, plus the one probe.
     // A run whose machine was busy must say so before anyone reads its numbers.
@@ -1963,13 +2191,16 @@ export async function analyze(
     // M42: before any harness directory or dev server exists. A component whose
     // graph reaches server-only code cannot mount in a browser at all, and the
     // check costs a source walk, not a boot.
+    progress("preflight: walking the import graph");
     const preflight = runPreflight({
       projectRoot,
       entries: [harnessPath, ...(wrapPath ? [wrapPath] : [])],
       // The export the entry actually mounts, not the display name.
-      componentName: detectComponentExport(harnessPath).name,
+      componentName: detectComponentExport(harnessPath, options.target).name,
       ...(vueCompiler ? { vueCompiler } : {}),
     });
+    // M65: recorded now, published only if a combo actually fails to render.
+    providerCandidates = providerCandidateLabels(preflight.providers);
     for (const hit of preflight.soft) runWarnings.push(NODE_BUILTIN_WARNING(hit));
 
     // M48: only warn about transforms the harness will not apply. A project
@@ -2003,11 +2234,13 @@ export async function analyze(
       ...(options.serverPool ? { serverPool: options.serverPool } : {}),
       ...(presets ? { presetPath: presets.absolutePath } : {}),
       ...(options.noTransforms ? { noTransforms: true } : {}),
+      ...(options.target ? { target: options.target } : {}),
     };
     const composedHarnessOpts: import("./harness.js").BuildHarnessOptions = {
       ...baseHarnessOpts,
       ...(useComposition ? { composition: compositionTree!, exports: componentExports } : {}),
     };
+    progress("harness: building");
     harness = await buildAndServe(harnessPath, composedHarnessOpts);
     if (harness.warnings) runWarnings.push(...harness.warnings);
 
@@ -2069,6 +2302,7 @@ export async function analyze(
 
     await cdp.send("Emulation.setCPUThrottlingRate", { rate: cpuThrottle });
 
+    progress("calibration");
     const calibrationMetrics = await createCalibrationTrace(page, cdp);
     const calibration: CalibrationResult = {
       totalDuration: calibrationMetrics.totalDuration,
@@ -2125,6 +2359,7 @@ export async function analyze(
       ...(cssReport !== undefined ? { cssReport } : {}),
       runWarnings,
       onWarning,
+      progress,
       getSchemas: async () => (schemas ??= await extractSchemas(harness!.componentPath)),
       getSourceFingerprint,
       attachHarnessContext,
@@ -2132,12 +2367,14 @@ export async function analyze(
 
     // --- Isolation mode ---
     if (options.isolation) {
+      progress(`mode: isolation (${options.isolation.phases.join(",")})`);
       return await runIsolationMode(ctx, options.isolation);
     }
 
     // --- Curve mode check ---
     const curveMatch = await resolveCurveMatch(ctx);
     if (curveMatch) {
+      progress(`mode: curve on ${curveMatch.schema.name}`);
       return await runCurveMode(ctx, curveMatch);
     }
 
@@ -2158,9 +2395,11 @@ export async function analyze(
     }
 
     if (activateMatrix) {
+      progress("mode: prop matrix");
       return await runMatrixMode(ctx, matrixAutoActivated);
     }
 
+    progress("mode: prop combos");
     return await runComboMode(ctx, fixtureHasScale);
   } catch (err) {
     // M48: whatever killed the run, an unloadable project transform in the
@@ -2185,6 +2424,17 @@ function animatedIndices(mounts: MountResult[]): number[] {
 
 export const ZERO_PROPS_WARNING =
   "No props extracted — component measured with empty props only; if the component has typed props, extraction may have failed";
+
+// M65: `<file>#Export` and `--fixture` both decide what gets rendered.
+export const TARGET_WITH_FIXTURE_ERROR =
+  "A named export target (<file>#Export) cannot be combined with --fixture — a fixture already decides what renders";
+
+// M65: whether M59's gate (per combo) or its curve-mode equivalent (a run
+// warning) declared this run's render broken.
+export function renderFailed(report: Report): boolean {
+  if (report.combos.some((combo) => combo.renderHealth === "error")) return true;
+  return (report.warnings ?? []).some((warning) => /^scale point N=/.test(warning));
+}
 
 // M59: curve mode's equivalent of the per-combo render-health gate.
 export const CURVE_RENDER_ERROR_WARNING = (n: number, messages: string[]): string =>

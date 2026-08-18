@@ -163,6 +163,25 @@ export interface ScalingPropMatch {
   reason: string;
 }
 
+// M65: `target` overrides M58's selection order with the export the user named
+// (`<file>#Export`); `onWarning` collects what extraction would have written to
+// stderr, so a dry run can print the same diagnostics as data.
+export interface ExtractPropsOptions {
+  target?: string;
+  onWarning?: (message: string) => void;
+}
+
+export interface PropsExtraction {
+  schemas: PropSchema[];
+  // The declaration the schema was bound to, and where it sits. Absent for a
+  // Vue SFC, whose props come from a `defineProps` call rather than a component
+  // declaration, and for a file with no component at all.
+  targetName?: string;
+  targetLine?: number;
+  computedAnnotation?: string;
+  warnings: string[];
+}
+
 const ITEMS_PATTERN = /items|options|data|children|entries|records|elements|list/i;
 const SCALING_NAME_PATTERN = /count|size|length|limit|max|total|depth|level|columns|rows|pages/i;
 const NUMERIC_SHORTHAND = /^n$|^num/i;
@@ -195,9 +214,31 @@ export function detectScalingProps(schemas: PropSchema[]): ScalingPropMatch[] {
   return matches;
 }
 
-export async function extractProps(filePath: string): Promise<PropSchema[]> {
+export async function extractProps(
+  filePath: string,
+  options?: ExtractPropsOptions,
+): Promise<PropSchema[]> {
+  return (await extractPropsDetailed(filePath, options)).schemas;
+}
+
+// M65: the same resolution `extractProps` performs, plus the binding facts a
+// dry run has to show. `extractProps` is the schema-only view of it.
+export async function extractPropsDetailed(
+  filePath: string,
+  options?: ExtractPropsOptions,
+): Promise<PropsExtraction> {
   const absolutePath = path.resolve(filePath);
-  if (isVueFile(absolutePath)) return extractVueProps(absolutePath);
+  const warnings: string[] = [];
+  const sink = (message: string): void => {
+    warnings.push(message.trimEnd());
+    options?.onWarning?.(message);
+  };
+  const collecting = options?.onWarning !== undefined;
+
+  if (isVueFile(absolutePath)) {
+    const schemas = await extractVueProps(absolutePath, collecting ? sink : undefined);
+    return { schemas, warnings };
+  }
 
   const program = createCachedProgram(absolutePath, createCompilerOptions(absolutePath));
   const checker = program.getTypeChecker();
@@ -207,15 +248,33 @@ export async function extractProps(filePath: string): Promise<PropSchema[]> {
     throw new Error(`Could not parse ${filePath}`);
   }
 
-  const binding = findComponentPropsType(sourceFile, checker);
+  const binding = findComponentPropsType(
+    sourceFile,
+    checker,
+    options?.target,
+    collecting ? sink : undefined,
+  );
   const schemas = binding.type ? typeToSchema(binding.type, checker, absolutePath) : [];
 
   if (schemas.length === 0 && binding.computedAnnotation && binding.targetName) {
-    warnUnenumerableProps(absolutePath, binding.targetName, binding.computedAnnotation);
+    warnUnenumerableProps(
+      absolutePath,
+      binding.targetName,
+      binding.computedAnnotation,
+      collecting ? sink : undefined,
+    );
   }
-  warnDegenerateProps(absolutePath, schemas);
+  warnDegenerateProps(absolutePath, schemas, collecting ? sink : undefined);
 
-  return schemas;
+  return {
+    schemas,
+    ...(binding.targetName !== undefined ? { targetName: binding.targetName } : {}),
+    ...(binding.targetLine !== undefined ? { targetLine: binding.targetLine } : {}),
+    ...(binding.computedAnnotation !== undefined
+      ? { computedAnnotation: binding.computedAnnotation }
+      : {}),
+    warnings,
+  };
 }
 
 // --- M57: Vue single-file components -----------------------------------------
@@ -343,7 +402,10 @@ function createVueScripts(compiler: VueSfcCompiler): VirtualScripts {
 // Per ADR 0002 this stays TypeScript-only: the runtime object form
 // (`defineProps({ label: String })`) carries no types and yields no schemas,
 // exactly as an untyped React component does.
-async function extractVueProps(absolutePath: string): Promise<PropSchema[]> {
+async function extractVueProps(
+  absolutePath: string,
+  sink?: (message: string) => void,
+): Promise<PropSchema[]> {
   const compiler = await loadVueCompiler(path.dirname(absolutePath));
   if (!compiler) return [];
 
@@ -366,7 +428,7 @@ async function extractVueProps(absolutePath: string): Promise<PropSchema[]> {
     typeToSchema(propsType, checker, absolutePath),
     call.defaults,
   );
-  warnDegenerateProps(absolutePath, schemas);
+  warnDegenerateProps(absolutePath, schemas, sink);
   return schemas;
 }
 
@@ -408,7 +470,9 @@ interface BoundProps {
 
 const IDENTIFIER_HOPS = 8;
 
-function normalizeComponentName(name: string): string {
+// M65: the one stem rule. Shared with `detectComponentExport` so the harness
+// renders the component whose props were extracted.
+export function normalizeComponentName(name: string): string {
   return name.replace(/[^a-z0-9]/gi, "").toLowerCase();
 }
 
@@ -515,7 +579,18 @@ function collectComponentCandidates(sourceFile: ts.SourceFile): ComponentCandida
 function selectTargetCandidate(
   candidates: ComponentCandidate[],
   fileName: string,
+  explicitTarget?: string,
 ): ComponentCandidate | undefined {
+  // M65: `<file>#Export` names the component the harness will import, so the
+  // schema follows it rather than the selection order. Aliases count: the name
+  // the module exports under is the name the user can type.
+  if (explicitTarget) {
+    const named = candidates.find((c) =>
+      [c.name, ...c.aliases].some((name) => name === explicitTarget),
+    );
+    if (named) return named;
+  }
+
   const defaultExport = candidates.find((c) => c.isDefault);
   if (defaultExport) return defaultExport;
 
@@ -667,11 +742,27 @@ function warnOnce(key: string, message: string): void {
   process.stderr.write(message);
 }
 
-function warnUnboundTarget(fileName: string, targetName: string): void {
-  warnOnce(
+// A sink replaces the stderr write entirely: a dry run collects the same text
+// as data, and the once-per-process dedupe must not hide it from the second
+// caller that asks.
+function emit(key: string, message: string, sink?: (message: string) => void): void {
+  if (sink) {
+    sink(message);
+    return;
+  }
+  warnOnce(key, message);
+}
+
+function warnUnboundTarget(
+  fileName: string,
+  targetName: string,
+  sink?: (message: string) => void,
+): void {
+  emit(
     `${path.resolve(fileName)}::${targetName}`,
     `Warning: could not resolve props for ${targetName} in ${fileName} — measuring with no props. ` +
       `Another declaration in this file has props, but it is not the component being measured.\n`,
+    sink,
   );
 }
 
@@ -693,17 +784,22 @@ function warnPropCap(fileName: string, total: number): void {
 // M60: the props the component is measured with are not the props it declares.
 // Silence here is what let four dogfooded projects report timings for renders
 // that never received usable data.
-function warnDegenerateProps(fileName: string, schemas: PropSchema[]): void {
+function warnDegenerateProps(
+  fileName: string,
+  schemas: PropSchema[],
+  sink?: (message: string) => void,
+): void {
   const degenerate = schemas.filter((s) => s.degenerate);
   if (degenerate.length === 0) return;
   // The warning's whole content is "supply values yourself". A user who already
   // has is not told again.
   if (detectPropPresets(fileName)) return;
   const named = degenerate.map((s) => `${s.name} (${s.degenerate})`).join(", ");
-  warnOnce(
+  emit(
     `${path.resolve(fileName)}::degenerate::${degenerate.map((s) => s.name).join(",")}`,
     `Warning: no representative value could be synthesized for ${named} in ${fileName}. ` +
       `Add ${presetFileName(fileName)} next to it to supply real values.\n`,
+    sink,
   );
 }
 
@@ -711,17 +807,21 @@ function warnUnenumerableProps(
   fileName: string,
   targetName: string,
   annotation: string,
+  sink?: (message: string) => void,
 ): void {
-  warnOnce(
+  emit(
     `${path.resolve(fileName)}::computed::${targetName}`,
     `Warning: props type ${annotation} for ${targetName} in ${fileName} could not be enumerated — ` +
       `measuring with no props. Add ${presetFileName(fileName)} to supply values.\n`,
+    sink,
   );
 }
 
 interface PropsBinding {
   type?: ts.Type;
   targetName?: string;
+  // 1-based source line of the target's declaration.
+  targetLine?: number;
   // The target's first-parameter annotation, when it is a computed type — the
   // only case where an empty schema is a resolution failure rather than a fact.
   computedAnnotation?: string;
@@ -740,6 +840,18 @@ function computedAnnotationText(node: ts.TypeNode | undefined): string | undefin
     return false;
   };
   return isComputed(node) ? node.getText() : undefined;
+}
+
+// The `export`-inclusive start of the declaration, 1-based, so a dry run can
+// point at the line a reader would open.
+function declarationLine(sourceFile: ts.SourceFile, node: ts.Node): number | undefined {
+  const statement =
+    ts.isVariableDeclaration(node) && node.parent?.parent ? node.parent.parent : node;
+  try {
+    return sourceFile.getLineAndCharacterOfPosition(statement.getStart(sourceFile)).line + 1;
+  } catch {
+    return undefined;
+  }
 }
 
 function firstParameterTypeNode(
@@ -764,9 +876,11 @@ function firstParameterTypeNode(
 function findComponentPropsType(
   sourceFile: ts.SourceFile,
   checker: ts.TypeChecker,
+  explicitTarget?: string,
+  sink?: (message: string) => void,
 ): PropsBinding {
   const candidates = collectComponentCandidates(sourceFile);
-  const target = selectTargetCandidate(candidates, sourceFile.fileName);
+  const target = selectTargetCandidate(candidates, sourceFile.fileName, explicitTarget);
   if (!target) return {};
 
   const byName = new Map<string, ComponentCandidate>();
@@ -796,6 +910,7 @@ function findComponentPropsType(
   const computedAnnotation = computedAnnotationText(firstParameterTypeNode(target));
   const context = {
     targetName: target.name,
+    targetLine: declarationLine(sourceFile, target.declaration),
     ...(computedAnnotation ? { computedAnnotation } : {}),
   };
 
@@ -805,7 +920,7 @@ function findComponentPropsType(
     const hijacker = candidates.some(
       (candidate) => candidate !== target && bindProps(candidate, checker, byName),
     );
-    if (hijacker) warnUnboundTarget(sourceFile.fileName, target.name);
+    if (hijacker) warnUnboundTarget(sourceFile.fileName, target.name, sink);
   }
 
   return context;

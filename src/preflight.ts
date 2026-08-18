@@ -104,6 +104,65 @@ export interface PreflightResult {
   // M48: imports the harness cannot compile because it does not load the
   // project's Vite plugins. Reported, never fatal — some of these still build.
   transforms: PreflightHit[];
+  // M65: libraries and local modules whose hooks throw outside their provider.
+  // Evidence for a render error, never a finding on its own.
+  providers: ProviderHit[];
+}
+
+// M65. A hook from one of these throws when its provider is missing, which is
+// the single most common reason a component that compiles renders nothing.
+export const PROVIDER_LIBRARIES: Record<string, string> = {
+  "next-intl": "useTranslations",
+  "react-i18next": "useTranslation",
+  "react-redux": "useSelector",
+  "@tanstack/react-query": "useQuery",
+};
+
+export interface ProviderHit {
+  // Package name, or the projectRoot-relative path of a local module.
+  source: string;
+  hook?: string;
+  local: boolean;
+  chain: string[];
+}
+
+// `next-intl/client` is still next-intl; `@scope/pkg/sub` is still `@scope/pkg`.
+function packageOf(specifier: string): string {
+  const parts = specifier.split("/");
+  return specifier.startsWith("@") ? parts.slice(0, 2).join("/") : parts[0];
+}
+
+export function detectProviderImport(
+  specifier: string,
+): { source: string; hook: string } | undefined {
+  if (specifier.startsWith(".") || specifier.startsWith("/")) return undefined;
+  const pkg = packageOf(specifier);
+  const hook = PROVIDER_LIBRARIES[pkg];
+  return hook ? { source: pkg, hook } : undefined;
+}
+
+// The shape of a context hook that refuses to run outside its provider: a
+// context is created here, and something in the file throws. Text only — the
+// point is to name a suspect, not to prove it.
+export function detectLocalProviderModule(
+  sourceText: string,
+): { hook?: string } | undefined {
+  if (!/createContext\s*[(<]/.test(sourceText)) return undefined;
+  if (!/throw\s+new\s+[\w$]*Error\b/.test(sourceText)) return undefined;
+  const hook = /\b(?:function|const|let|var)\s+(use[A-Z][\w$]*)/.exec(sourceText)?.[1];
+  return hook ? { hook } : {};
+}
+
+export function providerCandidateLabels(hits: ProviderHit[]): string[] {
+  const seen = new Set<string>();
+  const labels: string[] = [];
+  for (const hit of hits) {
+    const label = hit.hook ? `${hit.source} (${hit.hook})` : hit.source;
+    if (seen.has(label)) continue;
+    seen.add(label);
+    labels.push(label);
+  }
+  return labels;
 }
 
 function scriptKind(fileName: string): ts.ScriptKind {
@@ -264,12 +323,16 @@ export function runPreflight(options: PreflightOptions): PreflightResult {
   const hard: PreflightHit[] = [];
   const soft: PreflightHit[] = [];
   const transforms: PreflightHit[] = [];
+  const providers: ProviderHit[] = [];
+  const providerSources = new Set<string>();
   const parents = new Map<string, string>();
   const seen = new Set<string>();
   const queue: string[] = [];
+  const entryFiles = new Set<string>();
 
   for (const entry of entries) {
     const abs = path.resolve(entry);
+    entryFiles.add(abs);
     if (seen.has(abs)) continue;
     seen.add(abs);
     queue.push(abs);
@@ -294,8 +357,30 @@ export function runPreflight(options: PreflightOptions): PreflightResult {
       hard.push({ kind: "use-server", chain: chainTo(file) });
     }
 
+    // M65: only *imported* modules are provider candidates — a component that
+    // creates its own context supplies it too.
+    if (!entryFiles.has(file)) {
+      const local = detectLocalProviderModule(sf.text);
+      const source = relative(projectRoot, file);
+      if (local && !providerSources.has(source)) {
+        providerSources.add(source);
+        providers.push({
+          source,
+          ...(local.hook ? { hook: local.hook } : {}),
+          local: true,
+          chain: chainTo(file),
+        });
+      }
+    }
+
     for (const edge of importEdges(sf)) {
       if (edge.typeOnly) continue;
+
+      const provider = detectProviderImport(edge.specifier);
+      if (provider && !providerSources.has(provider.source)) {
+        providerSources.add(provider.source);
+        providers.push({ ...provider, local: false, chain: chainTo(file) });
+      }
 
       if (SERVER_ONLY_PACKAGES.has(edge.specifier)) {
         hard.push({ kind: "server-only", chain: chainTo(file), specifier: edge.specifier });
@@ -362,7 +447,7 @@ export function runPreflight(options: PreflightOptions): PreflightResult {
     hard.push({ kind: "async-component", chain: [relative(projectRoot, path.resolve(entries[0]))] });
   }
 
-  return { hard, soft, transforms };
+  return { hard, soft, transforms, providers };
 }
 
 function chainText(hit: PreflightHit): string {

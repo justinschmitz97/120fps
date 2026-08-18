@@ -96,10 +96,8 @@ export forms with regexes and fell back to a title-cased filename, so
 
 - `extractAllProps` keeps its own per-export walk: it answers "props of every
   exported component" for composition, where there is no single target.
-- The harness's stem rule (`detectComponentExport`, harness.ts) compares the
-  raw lowercased stem, so it does not normalize `hotspot-image` to
-  `hotspotimage`. Both resolvers agree except for a file that has no default
-  export, two or more exported components, and a stem that only matches after
-  normalization; there the harness renders its first export while the schema
-  describes the stem match. Sharing this milestone's resolver with
-  `detectComponentExport` closes that window.
+- `detectComponentExport` (harness.ts) normalizes the stem the same way, through
+  the shared `normalizeComponentName` (M65). One rule, so the component the
+  harness renders and the component the schema describes are the same one.
+- `<file>#Export` (M65) overrides the whole selection order: the named export
+  wins in both resolvers, or the run fails naming the file's exports.

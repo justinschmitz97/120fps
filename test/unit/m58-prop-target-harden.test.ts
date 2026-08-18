@@ -151,13 +151,12 @@ describe("M58 hardening", () => {
     expect(detectComponentName(fixture("class-target.tsx"))).toBe("Gauge");
   });
 
-  // H19 — known gap, asserted so it surfaces the day it is closed: the harness
-  // resolver (`detectComponentExport`) compares the raw lowercased stem, so for
-  // a file with several exports and a separator in its name it renders its
-  // first export while this milestone's resolver binds props to the stem match.
-  it("H19: harness naming still uses the un-normalized stem rule", () => {
-    expect(detectComponentName(fixture("hotspot-image.tsx"))).toBe("Marker");
-    expect(detectComponentName(fixture("alias-widget.tsx"))).toBe("Helper");
+  // H19 — closed by M65: `detectComponentExport` normalizes the stem the same
+  // way this milestone's resolver does, so the component the harness renders
+  // and the component the schema describes are the same one.
+  it("H19: harness naming uses the normalized stem rule", () => {
+    expect(detectComponentName(fixture("hotspot-image.tsx"))).toBe("HotspotImage");
+    expect(detectComponentName(fixture("alias-widget.tsx"))).toBe("AliasWidget");
   });
 
   // H20 — the default export wraps a component declared in another module.

@@ -184,13 +184,25 @@ export const MEASUREMENT_BASIS_LINE =
   "Measured under 4x CPU throttle; budgets are calibrated for these conditions. " +
   "Numbers are comparative, not production wall-clock.";
 
-export function formatHints(ids: HintId[]): string {
+// M65: the preflight import graph already knows which provider-dependent
+// libraries the component pulls in. Named only once a render actually failed —
+// a healthy run is never told about an import that behaved.
+export const PROVIDER_HINT_LINE = (candidate: string): string =>
+  `component imports ${candidate} — likely needs a provider wrapper; see --wrap / 120fps.setup.tsx`;
+
+function extraHintLines(id: HintId, report: Report | undefined): string[] {
+  if (id !== "renderError") return [];
+  return (report?.providerCandidates ?? []).map(PROVIDER_HINT_LINE);
+}
+
+export function formatHints(ids: HintId[], report?: Report): string {
   if (ids.length === 0) return "";
   const lines: string[] = ["", "What to do about it:"];
   for (const id of ids) {
     const hint = HINTS[id];
     lines.push("", `  ${hint.title}`);
     for (const line of hint.lines) lines.push(`    ${line}`);
+    for (const line of extraHintLines(id, report)) lines.push(`    ${line}`);
     lines.push(`    README ${hint.anchor}`);
   }
   return lines.join("\n");

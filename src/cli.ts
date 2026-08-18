@@ -2,7 +2,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { analyze } from "./analyze.js";
+import { analyze, explainProps, formatExplainProps } from "./analyze.js";
 import { compareAgainstRef, formatCompare, validateCompareOptions } from "./compare.js";
 import { formatMarkdown, formatJUnit } from "./ci-report.js";
 import { createBrowserPool } from "./measure.js";
@@ -19,6 +19,9 @@ const SKIP_SUFFIX = [".test.", ".spec.", ".stories.", ".fixture."];
 
 export interface CliArgs {
   componentPath?: string;
+  // M65: export names from `<file>#Export`, keyed by the path as typed.
+  targets?: Record<string, string>;
+  explainProps?: boolean;
   fixturePath?: string;
   jsonPath: string;
   ci: boolean;
@@ -110,12 +113,39 @@ export const KNOWN_FLAGS = new Set([
   "--no-react-compiler",
   "--no-preflight",
   "--no-transforms",
+  "--explain-props",
   "--compare",
   "--report-md",
   "--report-junit",
   "--help",
   "--version",
 ]);
+
+const IDENTIFIER = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
+
+// M65: `<file>#Export`. Decided from the text alone, so a path containing `#`
+// never depends on whether the file happens to exist yet. An export name is an
+// identifier — it can hold neither `.` nor a separator — and the left side must
+// already look like a component file, so `C:\p\c#1\B.tsx` and `C:\p\B#2.tsx`
+// stay whole paths.
+export function splitTargetSpec(arg: string): { path: string; target?: string } {
+  const hash = arg.lastIndexOf("#");
+  if (hash <= 0) return { path: arg };
+  const left = arg.slice(0, hash);
+  const right = arg.slice(hash + 1);
+  if (!IDENTIFIER.test(right)) return { path: arg };
+  if (!hasAcceptedComponentExtension(left)) return { path: arg };
+  return { path: left, target: right };
+}
+
+// M65: one line at the end of every terminal report, so a long run is a number
+// rather than a memory.
+export function formatWallClock(elapsedMs: number): string {
+  const seconds = elapsedMs / 1000;
+  if (seconds < 60) return `Total: ${seconds.toFixed(1)}s`;
+  const minutes = Math.floor(seconds / 60);
+  return `Total: ${minutes}m ${Math.round(seconds - minutes * 60)}s`;
+}
 
 export function parseArgs(argv: string[]): CliArgs {
   const result: CliArgs = {
@@ -353,6 +383,11 @@ export function parseArgs(argv: string[]): CliArgs {
       i++;
       continue;
     }
+    if (arg === "--explain-props") {
+      result.explainProps = true;
+      i++;
+      continue;
+    }
     if (arg === "--report-md") {
       if (i + 1 >= argv.length) {
         result.error = "--report-md requires a path argument";
@@ -522,12 +557,16 @@ export function parseArgs(argv: string[]): CliArgs {
       return result;
     }
 
+    const spec = splitTargetSpec(arg);
+    if (spec.target) {
+      result.targets = { ...(result.targets ?? {}), [spec.path]: spec.target };
+    }
     if (!result.componentPath) {
-      result.componentPath = arg;
-      result.componentPaths = [arg];
+      result.componentPath = spec.path;
+      result.componentPaths = [spec.path];
     } else {
       if (!result.componentPaths) result.componentPaths = [result.componentPath];
-      result.componentPaths.push(arg);
+      result.componentPaths.push(spec.path);
     }
     i++;
   }
@@ -538,6 +577,11 @@ export function parseArgs(argv: string[]): CliArgs {
 
   if (result.fixturePath && !result.componentPath) {
     result.error = "--fixture requires a component path";
+  }
+
+  if (!result.error && result.fixturePath && result.targets) {
+    result.error =
+      "--fixture cannot be combined with a named export target (<file>#Export) — a fixture already decides what renders";
   }
 
   if (!result.error && result.componentPaths && result.componentPaths.length > 1) {
@@ -647,9 +691,10 @@ export function stylesheetNotFoundMessage(cssPath: string): string {
 }
 
 export function helpText(): string {
-  return `Usage: 120fps <component.tsx> [more.tsx ...] [options]
+  return `Usage: 120fps <component.tsx>[#ExportName] [more.tsx ...] [options]
 
 Options:
+  --explain-props                Dry run: print the resolved component and prop schema, measure nothing
   --fixture <path>               Fixture file for composed component measurement
   --json <path>                  JSON output path (default: 120fps-report.json)
   --ci                           CI mode: JSON-only output, exit 1 on fail
@@ -706,6 +751,13 @@ Multiple components:
   than one component, --json becomes a filename template: <path>.<stem>.json per
   component, and the path you named is never written. The run prints the files it
   wrote. Components are measured in sorted path order, not argument order.
+
+Named exports:
+  Append #ExportName to a component path to measure that export instead of the
+  one the resolver picks: 120fps ./kbd.tsx#KbdCombo. The name must be exported by
+  the file; the error lists the file's component exports when it is not. A path
+  whose own name contains # is left alone — only a trailing #Identifier after a
+  .tsx/.jsx/.vue path is read as a target.
 
 Combo caps:
   --max-combos bounds both prop-combo mode and matrix mode (default: 8 cells
@@ -807,6 +859,26 @@ async function main(): Promise<void> {
     process.stdout.write(`Measuring ${componentPaths.length} components\n`);
   }
 
+  // M65: a dry run — resolution only. Before every check that exists to protect
+  // a measurement, because it never starts one.
+  if (args.explainProps) {
+    let failed = false;
+    for (let idx = 0; idx < componentPaths.length; idx++) {
+      const componentPath = componentPaths[idx];
+      if (componentPaths.length > 1) process.stdout.write(`\n=== ${componentPath} ===\n`);
+      try {
+        const explained = await explainProps(componentPath, {
+          ...(args.targets?.[componentPath] ? { target: args.targets[componentPath] } : {}),
+        });
+        process.stdout.write(formatExplainProps(explained) + "\n");
+      } catch (err: unknown) {
+        failed = true;
+        process.stderr.write(formatCliError(err, process.env.DEBUG));
+      }
+    }
+    process.exit(failed ? 2 : 0);
+  }
+
   if (args.fixturePath && !fs.existsSync(path.resolve(args.fixturePath))) {
     process.stderr.write(`Error: Fixture file not found: ${args.fixturePath}\n`);
     process.exit(2);
@@ -872,10 +944,12 @@ async function main(): Promise<void> {
       if (multi && !args.ci) {
         process.stdout.write(`\n=== ${componentPath} ===\n`);
       }
+      const started = Date.now();
       try {
         const report = await runOne(componentPath, reportPaths[idx], args, pool, serverPool);
         if (!args.ci) {
           process.stdout.write(formatTable(report) + "\n");
+          process.stdout.write(formatWallClock(Date.now() - started) + "\n");
         }
         if (!report.pass) anyFail = true;
       } catch (err: unknown) {
@@ -919,6 +993,7 @@ async function runOne(
   return analyze(componentPath, {
       browserPool,
       serverPool,
+      ...(args.targets?.[componentPath] ? { target: args.targets[componentPath] } : {}),
       samples: args.samples,
       maxCombos: args.maxCombos,
       initFixture: args.initFixture,

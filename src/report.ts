@@ -369,6 +369,10 @@ export interface Report {
   // M51: finding classes this run triggered. Ids, never prose — hints can be
   // reworded without a schema change.
   hints?: HintId[];
+  // M65: provider-dependent imports the preflight walk found, attached only
+  // when a combo actually failed to render — evidence for the render-error
+  // hint, never a finding on a healthy run.
+  providerCandidates?: string[];
   css?: CssReport;
   reactCompiler?: ReactCompilerReport;
   warnings?: string[];
@@ -808,7 +812,7 @@ function appendWarnRollup(
 // M51: every mode ends with what to do about what it found. Once per run, after
 // the findings, never as a substitute for them.
 function appendHints(lines: string[], report: Report): void {
-  const hints = formatHints(report.hints ?? hintsForReport(report));
+  const hints = formatHints(report.hints ?? hintsForReport(report), report);
   if (hints) lines.push(hints);
 }
 

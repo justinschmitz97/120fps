@@ -157,6 +157,31 @@ export {
   type ReactCompilerReport,
 } from "./report.js";
 export { analyze, buildReport, isFixturePath, detectFixture, hasScaleExport, resolveWrapPath, resolveCssFiles, type AnalyzeOptions, type BuildReportInput } from "./analyze.js";
+// M65
+export {
+  explainProps,
+  formatExplainProps,
+  resolveProgressReporter,
+  renderFailed,
+  TARGET_WITH_FIXTURE_ERROR,
+  type PropsExplanation,
+  type ExplainedProp,
+} from "./analyze.js";
+export {
+  extractPropsDetailed,
+  normalizeComponentName,
+  type ExtractPropsOptions,
+  type PropsExtraction,
+} from "./prop-gen.js";
+export {
+  detectProviderImport,
+  detectLocalProviderModule,
+  providerCandidateLabels,
+  PROVIDER_LIBRARIES,
+  type ProviderHit,
+} from "./preflight.js";
+export { targetNotFoundMessage } from "./harness.js";
+export { PROVIDER_HINT_LINE } from "./hints.js";
 export { detectScaleExport, loadTsconfigAliases, findProjectRoot, sweepStaleHarnessDirs, detectComponentExport, createServerPool, SWEEP_DEP_WARNING, type ServerPool } from "./harness.js";
 export { scanExports } from "./prop-gen.js";
 export {

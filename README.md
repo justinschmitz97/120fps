@@ -37,9 +37,10 @@ npx 120fps ./src/components/Button.tsx
 ## CLI
 
 ```
-npx 120fps <component.tsx|.jsx|.vue> [options]
+npx 120fps <component.tsx|.jsx|.vue>[#ExportName] [options]
 
 Options:
+  --explain-props                Dry run: print the resolved component and prop schema, measure nothing
   --fixture <path>               Fixture file for composed components
   --json <path>                  JSON output path (default: 120fps-report.json)
   --ci                           CI mode: JSON only, exit 1 on fail
@@ -92,6 +93,14 @@ Options:
 **Matrix runs do not participate in baselines.** A matrix report is a set of cells, not the single measurement a baseline entry holds, so `--save-baseline` stores nothing and `--check`/`--budget` compare nothing on a matrix run. Because matrix mode auto-activates, this can happen without anyone typing `--matrix` — so the run says so in its warnings. Pass `--no-matrix` to save or check a baseline for such a component.
 
 `--curve` and `--matrix` are alternative whole-run modes and cannot be combined; passing both is a usage error. `--isolate` combines with neither.
+
+### Which component gets measured
+
+A file's component is resolved in this order: the default export, then the export whose name matches the filename after dropping non-alphanumerics (`hotspot-image.tsx` → `HotspotImage`), then the first exported component. Append `#ExportName` to the path to override it — `npx 120fps ./kbd.tsx#KbdCombo` imports, renders and extracts props from that export. A name the file does not export is a usage error listing the ones it does. Only a trailing `#Identifier` after a `.tsx`/`.jsx`/`.vue` path is read as a target, so a path whose own name contains `#` is left alone.
+
+`--explain-props` answers "what would you measure?" without measuring: it prints the resolved component, the `file:line` of the declaration its schema bound to, every prop with its kind, required flag and value pool, which props could not be synthesized faithfully, whether curve or matrix mode would activate, and the extraction warnings. No browser starts, no harness is built, nothing is written.
+
+A run prints one line per phase boundary (`harness: building`, `mount: 8 combos x 10 samples`, `explore: 6 combos, budget 10s each`) and closes with `Total: 4m 12s`. `--ci` suppresses both — its output contract is JSON only.
 
 ## Report output
 

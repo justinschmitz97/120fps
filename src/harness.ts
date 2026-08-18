@@ -6,7 +6,7 @@ import path from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import type { CompositionTree, CompositionNode, ExportInfo } from "./composition.js";
-import { scanExports } from "./prop-gen.js";
+import { scanExports, normalizeComponentName } from "./prop-gen.js";
 import { isVueFile, loadVueCompiler, type VueSfcCompiler } from "./vue-sfc.js";
 
 // M57. The measured file's own extension decides how it is mounted: a `.vue`
@@ -177,6 +177,9 @@ export interface BuildHarnessOptions {
   // M48: skip the project's own Vite transforms (measure what the harness can
   // compile on its own).
   noTransforms?: boolean;
+  // M65: the export named by `<file>#Export`, imported instead of the one the
+  // selection order would pick.
+  target?: string;
 }
 
 // Probe order is significant: first hit wins, and detection returns at most one.
@@ -767,7 +770,10 @@ export async function buildAndServe(
       isDefaultExport: options.exports?.some((e) => e.name === root && e.isDefault) ?? false,
     };
   } else {
-    const { name: componentName, isDefaultOnly } = detectComponentExport(absoluteComponentPath);
+    const { name: componentName, isDefaultOnly } = detectComponentExport(
+      absoluteComponentPath,
+      options?.target,
+    );
     component = {
       relative: componentRelative,
       name: componentName,
@@ -1250,28 +1256,55 @@ export function detectScaleExport(filePath: string): boolean {
   return /export\s+(?:function|const)\s+scale\b/.test(content);
 }
 
-// Selection order (M24 D2): default export > file-stem case-insensitive
-// match among named exports > first PascalCase export in source order >
-// filename fallback. isDefaultOnly is true iff the chosen component is
-// importable as a default import.
-export function detectComponentExport(filePath: string): {
+// M65: named after the file, listed so the message is a menu rather than a
+// rejection.
+export function targetNotFoundMessage(
+  filePath: string,
+  target: string,
+  available: string[],
+): string {
+  const where = path.basename(filePath);
+  return available.length > 0
+    ? `Export "${target}" not found in ${where}. Available component exports: ${available.join(", ")}`
+    : `Export "${target}" not found in ${where}, which exports no components.`;
+}
+
+// Selection order (M24 D2, M58/M65 normalization): explicit `#Export` target >
+// default export > file-stem match among named exports after dropping
+// non-alphanumerics > first PascalCase export in source order > filename
+// fallback. isDefaultOnly is true iff the chosen component is importable as a
+// default import.
+export function detectComponentExport(
+  filePath: string,
+  target?: string,
+): {
   name: string;
   isDefaultOnly: boolean;
 } {
   // One SFC, one component, always the default export — there is nothing to
   // select and the file is not TypeScript, so the AST walker never runs on it.
   if (isVueFile(filePath)) {
-    return { name: vueComponentName(filePath), isDefaultOnly: true };
+    const name = vueComponentName(filePath);
+    if (target && target !== name) throw new Error(targetNotFoundMessage(filePath, target, [name]));
+    return { name, isDefaultOnly: true };
   }
 
   const content = fs.readFileSync(filePath, "utf-8");
   const exports = scanExports(content, filePath);
 
+  if (target) {
+    const named = exports.find((e) => e.name === target);
+    if (!named) {
+      throw new Error(targetNotFoundMessage(filePath, target, exports.map((e) => e.name)));
+    }
+    return { name: named.name, isDefaultOnly: named.isDefault };
+  }
+
   const defaultExport = exports.find((e) => e.isDefault);
   if (defaultExport) return { name: defaultExport.name, isDefaultOnly: true };
 
-  const stem = path.basename(filePath, path.extname(filePath)).toLowerCase();
-  const stemMatch = exports.find((e) => e.name.toLowerCase() === stem);
+  const stem = normalizeComponentName(path.basename(filePath, path.extname(filePath)));
+  const stemMatch = exports.find((e) => normalizeComponentName(e.name) === stem);
   if (stemMatch) return { name: stemMatch.name, isDefaultOnly: false };
 
   if (exports.length > 0) return { name: exports[0].name, isDefaultOnly: false };
