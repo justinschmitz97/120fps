@@ -20,6 +20,7 @@ Non-obvious:
 - Same React as user project via node_modules junction symlink; `resolve.dedupe` react/react-dom.
 - HOC chains `memo(forwardRef(...))` unwrapped recursively; class components via heritage-clause type arg; `React.FC<P>` reads declared interface, not implicit children. Which declaration in the file those read from is M58's target resolution.
 - Large unions: stratified sampling caps combos at 64.
+- What each prop is *measured with* — literal unions, tuples, shaped objects, collections, and the warnings when none of them fit — is M60.
 - No user Vite config, no auto-mount (caller drives Control API), concurrent servers ok (temp dirs, port 0).
 
 Open: re-export `export { X } from './internal'` unhandled; pnpm monorepo symlink stacking untested.

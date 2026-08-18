@@ -109,6 +109,10 @@ export function fillArray(schema: PropSchema, n: number): unknown[] {
 
 function cloneTemplate(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(cloneTemplate);
+  // Instants and patterns are values, not field bags: walking their entries
+  // would hand the component `{}` where the element type says `Date`.
+  if (value instanceof Date) return new Date(value.getTime());
+  if (value instanceof RegExp) return new RegExp(value.source, value.flags);
   if (value && typeof value === "object") {
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
@@ -148,16 +152,51 @@ const NOOP = () => {};
 
 const REACT_PLACEHOLDER = "120fps-placeholder";
 
+// Identity for measurement purposes: two combos with this key would time the
+// same render twice and be reported as distinct rows. Covers the values the
+// pipeline can carry — JSON data plus Date/RegExp — and never conflates a key
+// that is present-but-undefined with one that is absent.
+export function comboKey(value: unknown): string {
+  if (value === undefined) return "~undef";
+  if (value === null) return "~null";
+  if (typeof value === "function") return `~fn:${value.name}`;
+  if (value instanceof Date) return `~date:${value.getTime()}`;
+  if (value instanceof RegExp) return `~re:${String(value)}`;
+  if (Array.isArray(value)) return `[${value.map(comboKey).join(",")}]`;
+  if (typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record)
+      .sort()
+      .map((k) => `${JSON.stringify(k)}:${comboKey(record[k])}`)
+      .join(",")}}`;
+  }
+  return `${typeof value}:${String(value)}`;
+}
+
+function dedupeCombos(combos: PropCombination[]): PropCombination[] {
+  const seen = new Set<string>();
+  const unique: PropCombination[] = [];
+  for (const combo of combos) {
+    const key = comboKey(combo);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(combo);
+  }
+  return unique;
+}
+
 export function generateCombinations(schemas: PropSchema[]): PropCombination[] {
   const valuesByProp = schemas.map((s) => resolveValues(s));
 
   const total = valuesByProp.reduce((acc, v) => acc * v.length, 1);
 
+  // Belt and braces: the pools are already de-duplicated, so this only catches
+  // a future source of duplicates — cheaply, and before any cap is applied.
   if (total <= MAX_COMBINATIONS) {
-    return cartesian(schemas, valuesByProp);
+    return dedupeCombos(cartesian(schemas, valuesByProp));
   }
 
-  return stratifiedSample(schemas, valuesByProp, MAX_COMBINATIONS);
+  return dedupeCombos(stratifiedSample(schemas, valuesByProp, MAX_COMBINATIONS));
 }
 
 // Size of the full cartesian prop space before MAX_COMBINATIONS forces a
@@ -169,12 +208,20 @@ export function countCombinationSpace(schemas: PropSchema[]): number {
   return valuesByProp.reduce((acc, v) => acc * v.length, 1);
 }
 
+// An optional prop is worth measuring absent, but only once: a pool that is
+// already `[undefined]` — an unknown type, or a preset that says so — must not
+// gain a second one and cartesian-double every combination.
 function resolveValues(schema: PropSchema): unknown[] {
   const base = resolveBaseValues(schema);
-  if (!schema.required) {
-    return [...base, undefined];
-  }
-  return base;
+  const pool = schema.required ? base : [...base, undefined];
+
+  const seen = new Set<string>();
+  return pool.filter((value) => {
+    const key = comboKey(value);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 function resolveBaseValues(schema: PropSchema): unknown[] {

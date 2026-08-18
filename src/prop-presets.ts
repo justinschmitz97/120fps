@@ -179,7 +179,10 @@ export function applyPropPresets(
     const values = presets.entries.get(schema.name);
     if (values === undefined || values.length === 0) return schema;
     applied.push(schema.name);
-    return { ...schema, values: [...values] };
+    // Whatever synthesis could not build, the preset now supplies: the prop is
+    // no longer measured with a stand-in (M60).
+    const { degenerate: _replaced, ...rest } = schema;
+    return { ...rest, values: [...values] };
   });
 
   const known = new Set(schemas.map((s) => s.name));

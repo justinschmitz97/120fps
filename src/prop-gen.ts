@@ -10,7 +10,7 @@ import {
   type SfcScript,
   type VueSfcCompiler,
 } from "./vue-sfc.js";
-import { literalValue } from "./prop-presets.js";
+import { detectPropPresets, literalValue } from "./prop-presets.js";
 
 // M36: a fresh ts.Program per extraction re-parses lib.d.ts and the project's
 // node_modules type graph every time. Between calls only the component file
@@ -152,6 +152,9 @@ export interface PropSchema {
   // Array props only: a value shaped like one element, synthesized from the
   // element type. Absent when the element type has no synthesizable shape.
   elementTemplate?: unknown;
+  // M60: why the generated value is not a faithful stand-in for the declared
+  // type. Set means the component is measured with something it cannot use.
+  degenerate?: string;
 }
 
 export interface ScalingPropMatch {
@@ -204,12 +207,15 @@ export async function extractProps(filePath: string): Promise<PropSchema[]> {
     throw new Error(`Could not parse ${filePath}`);
   }
 
-  const propsType = findComponentPropsType(sourceFile, checker);
-  if (!propsType) {
-    return [];
-  }
+  const binding = findComponentPropsType(sourceFile, checker);
+  const schemas = binding.type ? typeToSchema(binding.type, checker, absolutePath) : [];
 
-  return typeToSchema(propsType, checker);
+  if (schemas.length === 0 && binding.computedAnnotation && binding.targetName) {
+    warnUnenumerableProps(absolutePath, binding.targetName, binding.computedAnnotation);
+  }
+  warnDegenerateProps(absolutePath, schemas);
+
+  return schemas;
 }
 
 // --- M57: Vue single-file components -----------------------------------------
@@ -356,7 +362,12 @@ async function extractVueProps(absolutePath: string): Promise<PropSchema[]> {
   const propsType = checker.getTypeFromTypeNode(call.typeNode);
   if (!looksLikePropsType(propsType, checker)) return [];
 
-  return applyWithDefaults(typeToSchema(propsType, checker), call.defaults);
+  const schemas = applyWithDefaults(
+    typeToSchema(propsType, checker, absolutePath),
+    call.defaults,
+  );
+  warnDegenerateProps(absolutePath, schemas);
+  return schemas;
 }
 
 // The virtual name the resolver actually serves for this SFC, or undefined when
@@ -650,23 +661,113 @@ function expectsProps(candidate: ComponentCandidate): boolean {
 // One warning per target per process (mirrors the tsconfig warning policy).
 const warnedPropTargets = new Set<string>();
 
-function warnUnboundTarget(fileName: string, targetName: string): void {
-  const key = `${path.resolve(fileName)}::${targetName}`;
+function warnOnce(key: string, message: string): void {
   if (warnedPropTargets.has(key)) return;
   warnedPropTargets.add(key);
-  process.stderr.write(
+  process.stderr.write(message);
+}
+
+function warnUnboundTarget(fileName: string, targetName: string): void {
+  warnOnce(
+    `${path.resolve(fileName)}::${targetName}`,
     `Warning: could not resolve props for ${targetName} in ${fileName} — measuring with no props. ` +
       `Another declaration in this file has props, but it is not the component being measured.\n`,
   );
 }
 
+// The M44 escape hatch, named for the file at hand so the message is a command.
+function presetFileName(fileName: string): string {
+  const base = path.basename(fileName);
+  const ext = path.extname(base);
+  return `${ext ? base.slice(0, -ext.length) : base}.props.tsx`;
+}
+
+function warnPropCap(fileName: string, total: number): void {
+  warnOnce(
+    `${path.resolve(fileName)}::cap`,
+    `Warning: ${total} props were extracted from ${fileName}; measuring the first ${MAX_PROPS}. ` +
+      `Add ${presetFileName(fileName)} to choose the props that matter.\n`,
+  );
+}
+
+// M60: the props the component is measured with are not the props it declares.
+// Silence here is what let four dogfooded projects report timings for renders
+// that never received usable data.
+function warnDegenerateProps(fileName: string, schemas: PropSchema[]): void {
+  const degenerate = schemas.filter((s) => s.degenerate);
+  if (degenerate.length === 0) return;
+  // The warning's whole content is "supply values yourself". A user who already
+  // has is not told again.
+  if (detectPropPresets(fileName)) return;
+  const named = degenerate.map((s) => `${s.name} (${s.degenerate})`).join(", ");
+  warnOnce(
+    `${path.resolve(fileName)}::degenerate::${degenerate.map((s) => s.name).join(",")}`,
+    `Warning: no representative value could be synthesized for ${named} in ${fileName}. ` +
+      `Add ${presetFileName(fileName)} next to it to supply real values.\n`,
+  );
+}
+
+function warnUnenumerableProps(
+  fileName: string,
+  targetName: string,
+  annotation: string,
+): void {
+  warnOnce(
+    `${path.resolve(fileName)}::computed::${targetName}`,
+    `Warning: props type ${annotation} for ${targetName} in ${fileName} could not be enumerated — ` +
+      `measuring with no props. Add ${presetFileName(fileName)} to supply values.\n`,
+  );
+}
+
+interface PropsBinding {
+  type?: ts.Type;
+  targetName?: string;
+  // The target's first-parameter annotation, when it is a computed type — the
+  // only case where an empty schema is a resolution failure rather than a fact.
+  computedAnnotation?: string;
+}
+
+// A type reference with arguments (`ComponentProps<typeof X>`,
+// `VariantProps<typeof x>`), a `typeof`/indexed access, or a composition of
+// them. A plain `interface Props` that yields nothing yields nothing honestly.
+function computedAnnotationText(node: ts.TypeNode | undefined): string | undefined {
+  if (!node) return undefined;
+  const isComputed = (n: ts.TypeNode): boolean => {
+    if (ts.isTypeReferenceNode(n)) return (n.typeArguments?.length ?? 0) > 0;
+    if (ts.isTypeQueryNode(n) || ts.isIndexedAccessTypeNode(n)) return true;
+    if (ts.isIntersectionTypeNode(n) || ts.isUnionTypeNode(n)) return n.types.some(isComputed);
+    if (ts.isParenthesizedTypeNode(n)) return isComputed(n.type);
+    return false;
+  };
+  return isComputed(node) ? node.getText() : undefined;
+}
+
+function firstParameterTypeNode(
+  candidate: ComponentCandidate,
+): ts.TypeNode | undefined {
+  const declaration = candidate.declaration;
+  if (
+    ts.isFunctionDeclaration(declaration) ||
+    ts.isArrowFunction(declaration) ||
+    ts.isFunctionExpression(declaration)
+  ) {
+    return declaration.parameters[0]?.type;
+  }
+  if (ts.isClassDeclaration(declaration)) return undefined;
+  const expression = ts.isExportAssignment(declaration)
+    ? declaration.expression
+    : declaration.initializer;
+  if (!expression) return undefined;
+  return extractFunctionFromInitializer(expression)?.parameters[0]?.type;
+}
+
 function findComponentPropsType(
   sourceFile: ts.SourceFile,
   checker: ts.TypeChecker,
-): ts.Type | undefined {
+): PropsBinding {
   const candidates = collectComponentCandidates(sourceFile);
   const target = selectTargetCandidate(candidates, sourceFile.fileName);
-  if (!target) return undefined;
+  if (!target) return {};
 
   const byName = new Map<string, ComponentCandidate>();
   for (const candidate of candidates) {
@@ -692,7 +793,13 @@ function findComponentPropsType(
     }
   }
 
-  if (bound) return bound.type;
+  const computedAnnotation = computedAnnotationText(firstParameterTypeNode(target));
+  const context = {
+    targetName: target.name,
+    ...(computedAnnotation ? { computedAnnotation } : {}),
+  };
+
+  if (bound) return { type: bound.type, ...context };
 
   if (expectsProps(target)) {
     const hijacker = candidates.some(
@@ -701,7 +808,7 @@ function findComponentPropsType(
     if (hijacker) warnUnboundTarget(sourceFile.fileName, target.name);
   }
 
-  return undefined;
+  return context;
 }
 
 function extractFunctionFromInitializer(
@@ -740,27 +847,64 @@ function looksLikePropsType(type: ts.Type, checker: ts.TypeChecker): boolean {
   return true;
 }
 
-function isDomLibDeclaration(decl: ts.Declaration): boolean {
-  const fileName = decl.getSourceFile().fileName;
-  return fileName.includes("node_modules") || fileName.includes("/lib.") || fileName.includes("\\lib.");
+// TypeScript's own libs and React's type packages: between them they declare
+// the ~300 DOM/ARIA members every `ComponentProps` drags in. A property
+// declared anywhere else in node_modules is a design-system prop and is kept.
+const DEFAULT_LIB_FILE = /[\\/]lib\.[^\\/]*\.d\.ts$/i;
+const REACT_TYPE_PACKAGE = /[\\/]node_modules[\\/](@types[\\/])?react(-dom)?[\\/]/i;
+const NODE_MODULES = /[\\/]node_modules[\\/]/;
+const NOISE_PROP_NAME = /^(aria-|data-)/;
+
+// M60: past this the props type is a DOM surface that slipped the filter, not a
+// component's own contract.
+const MAX_PROPS = 32;
+
+function isDefaultLibFile(fileName: string): boolean {
+  return DEFAULT_LIB_FILE.test(fileName);
 }
 
-function typeToSchema(type: ts.Type, checker: ts.TypeChecker): PropSchema[] {
+function isAmbientNoiseDeclaration(decl: ts.Declaration): boolean {
+  const fileName = decl.getSourceFile().fileName;
+  return isDefaultLibFile(fileName) || REACT_TYPE_PACKAGE.test(fileName);
+}
+
+function isLocalDeclaration(decl: ts.Declaration): boolean {
+  return !NODE_MODULES.test(decl.getSourceFile().fileName);
+}
+
+function isNoiseProp(prop: ts.Symbol): boolean {
+  if (NOISE_PROP_NAME.test(prop.getName())) return true;
+  const decls = prop.getDeclarations();
+  if (!decls || decls.length === 0) return false;
+  return decls.every(isAmbientNoiseDeclaration);
+}
+
+function typeToSchema(
+  type: ts.Type,
+  checker: ts.TypeChecker,
+  fileName?: string,
+): PropSchema[] {
+  const kept = type.getProperties().filter((prop) => !isNoiseProp(prop));
+
+  // A component's own props answer the question; inherited third-party ones are
+  // context. Ordering by that keeps the cap from spending itself on context.
+  const declaredHere = (prop: ts.Symbol): boolean =>
+    prop.getDeclarations()?.some(isLocalDeclaration) ?? false;
+  const ordered = [...kept.filter(declaredHere), ...kept.filter((p) => !declaredHere(p))];
+
+  if (ordered.length > MAX_PROPS && fileName) {
+    warnPropCap(fileName, ordered.length);
+  }
+
   const schemas: PropSchema[] = [];
-
-  for (const prop of type.getProperties()) {
-    const name = prop.getName();
-    const decls = prop.getDeclarations();
-    if (!decls || decls.length === 0) continue;
-
-    if (decls.every((d) => isDomLibDeclaration(d))) continue;
-
-    const decl = decls[0];
-    const propType = checker.getTypeOfSymbolAtLocation(prop, decl);
+  for (const prop of ordered.slice(0, MAX_PROPS)) {
+    const decl = prop.getDeclarations()?.[0];
+    const propType = decl
+      ? checker.getTypeOfSymbolAtLocation(prop, decl)
+      : checker.getTypeOfSymbol(prop);
     const required = !(prop.flags & ts.SymbolFlags.Optional);
 
-    const schema = classifyType(name, propType, required, checker);
-    schemas.push(schema);
+    schemas.push(classifyType(prop.getName(), propType, required, checker));
   }
 
   return schemas;
@@ -772,9 +916,14 @@ function classifyType(
   required: boolean,
   checker: ts.TypeChecker,
 ): PropSchema {
-  // For union types, strip undefined members and work with what remains
+  // Absent members carry no shape. `null` and `void` are stripped next to
+  // `undefined` because a nullable literal union is still a literal union —
+  // that is what makes cva's `VariantProps<typeof x>` enumerable.
   const nonUndefinedTypes = type.isUnion()
-    ? type.types.filter((t) => !(t.flags & ts.TypeFlags.Undefined))
+    ? type.types.filter(
+        (t) =>
+          !(t.flags & (ts.TypeFlags.Undefined | ts.TypeFlags.Null | ts.TypeFlags.Void)),
+      )
     : [type];
 
   // If only one non-undefined type, classify it directly
@@ -837,6 +986,11 @@ function classifyType(
     return { name, kind: "number", required, values: [1, 5, 20] };
   }
 
+  // Tuple — fixed arity, so it is neither an open array nor a bag of fields.
+  if (checker.isTupleType(classifyTarget)) {
+    return tupleSchema(name, classifyTarget, required, checker);
+  }
+
   // Array
   if (checker.isArrayType(classifyTarget)) {
     const elementTemplate = synthesizeElement(classifyTarget, checker);
@@ -849,15 +1003,219 @@ function classifyType(
     };
   }
 
-  // Object
-  if (classifyTarget.flags & ts.TypeFlags.Object) {
-    return { name, kind: "object", required, values: [{}] };
+  // Object — one shape, an intersection of them, or a union. A union stands in
+  // for its first member, exactly as an array element type does.
+  if (isObjectLike(classifyTarget)) {
+    return objectSchema(name, classifyTarget, required, checker);
+  }
+  if (nonUndefinedTypes.length > 1 && nonUndefinedTypes.every(isObjectLike)) {
+    return objectSchema(name, nonUndefinedTypes[0], required, checker);
   }
 
-  return { name, kind: "unknown", required, values: [] };
+  return {
+    name,
+    kind: "unknown",
+    required,
+    values: [],
+    ...(required
+      ? { degenerate: `no value can be enumerated from ${checker.typeToString(type)}` }
+      : {}),
+  };
+}
+
+// `A & B` carries members exactly as `interface C extends A, B` does, but its
+// type flag is Intersection rather than Object.
+function isObjectLike(type: ts.Type): boolean {
+  return !!(type.flags & (ts.TypeFlags.Object | ts.TypeFlags.Intersection));
+}
+
+// A tuple's arity is part of its type: `[string, string]` filled with three
+// items is as wrong as filling it with none.
+const MAX_TUPLE_ARITY = 8;
+
+function tupleSchema(
+  name: string,
+  type: ts.Type,
+  required: boolean,
+  checker: ts.TypeChecker,
+): PropSchema {
+  const positions = checker
+    .getTypeArguments(type as ts.TypeReference)
+    .slice(0, MAX_TUPLE_ARITY);
+  const value = positions.map((position) => synthesizeValue(position, checker, 0, newSynth()));
+  const missing = positions.length === 0 || value.some((v) => v === undefined);
+  return {
+    name,
+    kind: "object",
+    required,
+    values: [value],
+    ...(missing ? { degenerate: `tuple positions of ${checker.typeToString(type)}` } : {}),
+  };
+}
+
+function objectSchema(
+  name: string,
+  type: ts.Type,
+  required: boolean,
+  checker: ts.TypeChecker,
+): PropSchema {
+  const collection = collectionValue(type, checker);
+  if (collection) {
+    return { name, kind: "object", required, values: [collection.value], degenerate: collection.reason };
+  }
+
+  const instance = instanceValue(type);
+  if (instance !== undefined) {
+    return { name, kind: "object", required, values: [instance] };
+  }
+
+  const opaque = opaqueReason(type, checker);
+  if (opaque) {
+    return { name, kind: "object", required, values: [{}], degenerate: opaque };
+  }
+
+  const synth = newSynth(PROP_SYNTH_MAX_DEPTH);
+  const shaped = synthesizeValue(type, checker, 0, synth);
+  if (isShapedObject(shaped)) {
+    // A member the browser cannot receive makes the whole object a stand-in,
+    // however well the rest of it synthesized.
+    return {
+      name,
+      kind: "object",
+      required,
+      values: [shaped],
+      ...(synth.notes.length > 0 ? { degenerate: [...new Set(synth.notes)].join("; ") } : {}),
+    };
+  }
+
+  return {
+    name,
+    kind: "object",
+    required,
+    values: [{}],
+    degenerate: `no synthesizable members on ${checker.typeToString(type)}`,
+  };
+}
+
+function isShapedObject(value: unknown): boolean {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const entries = Object.entries(value as Record<string, unknown>);
+  return entries.length > 0 && entries.some(([, v]) => v !== undefined);
 }
 
 const SYNTH_MAX_DEPTH = 3;
+// A props-level object starts one level above an array element: `board.cells[]`
+// is three hops from the prop and still ordinary domain data.
+const PROP_SYNTH_MAX_DEPTH = 4;
+const SYNTH_MAX_PROPS = 24;
+
+interface SynthContext {
+  maxDepth: number;
+  // Types on the current path: a recursive type is not re-entered.
+  stack: ts.Type[];
+  // Members that could not be reproduced faithfully, for the caller's warning.
+  notes: string[];
+}
+
+function newSynth(maxDepth = SYNTH_MAX_DEPTH): SynthContext {
+  return { maxDepth, stack: [], notes: [] };
+}
+
+const MAP_TYPES = new Set(["Map", "WeakMap", "ReadonlyMap"]);
+const SET_TYPES = new Set(["Set", "WeakSet", "ReadonlySet"]);
+const COLLECTION_ENTRIES = 2;
+
+// The declared name of a built-in type, or undefined for anything a user wrote.
+// Synthetic symbols (`__type` for the anonymous mapped type behind `Record`)
+// name no type and are left to the ordinary object path.
+function builtinName(type: ts.Type): string | undefined {
+  const symbol = type.getSymbol();
+  const decls = symbol?.getDeclarations();
+  if (!symbol || !decls || decls.length === 0) return undefined;
+  const name = symbol.getName();
+  if (name.startsWith("__")) return undefined;
+  return decls.some((d) => isDefaultLibFile(d.getSourceFile().fileName)) ? name : undefined;
+}
+
+// Playwright's evaluate serializer has no case for Map or Set (verified in
+// playwright-core lib/utils/isomorphic/utilityScriptSerializers.js), so a real
+// instance would reach the page as `{}`. The entries travel instead, and the
+// prop is reported as degenerate rather than pretending to be an empty object.
+function collectionValue(
+  type: ts.Type,
+  checker: ts.TypeChecker,
+): { value: unknown; reason: string } | undefined {
+  const name = builtinName(type);
+  if (!name || (!MAP_TYPES.has(name) && !SET_TYPES.has(name))) return undefined;
+
+  const args = checker.getTypeArguments(type as ts.TypeReference);
+  const reason = `${name} cannot be transported to the browser — passed as entries`;
+
+  if (SET_TYPES.has(name)) {
+    const member = args[0] ? synthesizeValue(args[0], checker, 1, newSynth()) : undefined;
+    return { value: distinctValues(member), reason };
+  }
+
+  const key = args[0] ? synthesizeValue(args[0], checker, 1, newSynth()) : undefined;
+  const value = args[1] ? synthesizeValue(args[1], checker, 1, newSynth()) : undefined;
+  return {
+    value: distinctValues(key).map((k) => [k, cloneSynthesized(value)]),
+    reason,
+  };
+}
+
+// Two entries that a component can tell apart; a shape with no distinguishable
+// key collapses to a single entry rather than inventing collisions.
+function distinctValues(seed: unknown): unknown[] {
+  if (typeof seed === "string") {
+    return Array.from({ length: COLLECTION_ENTRIES }, (_, i) => `${seed}-${i + 1}`);
+  }
+  if (typeof seed === "number") {
+    return Array.from({ length: COLLECTION_ENTRIES }, (_, i) => seed + i);
+  }
+  if (seed === undefined) return [];
+  return [seed];
+}
+
+function cloneSynthesized(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(cloneSynthesized);
+  if (value instanceof Date) return new Date(value.getTime());
+  if (value && typeof value === "object" && value.constructor === Object) {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      out[k] = cloneSynthesized(v);
+    }
+    return out;
+  }
+  return value;
+}
+
+// Fixed instants and patterns, so a component that formats them gets real work
+// to do. Both survive Playwright's serializer.
+const SYNTH_DATE = "2024-01-01T00:00:00.000Z";
+
+function instanceValue(type: ts.Type): unknown {
+  const name = builtinName(type);
+  if (name === "Date") return new Date(SYNTH_DATE);
+  if (name === "RegExp") return /120fps/;
+  return undefined;
+}
+
+// Anything whose behaviour is its shape: a class instance is its methods, a
+// Promise is its resolution, a DOM node is the document it lives in. Inventing
+// a field bag for them produces a value the component crashes on.
+function opaqueReason(type: ts.Type, checker: ts.TypeChecker): string | undefined {
+  const symbol = type.getSymbol();
+  const decls = symbol?.getDeclarations() ?? [];
+  if (decls.some((d) => ts.isClassDeclaration(d) || ts.isClassExpression(d))) {
+    return `${checker.typeToString(type)} is a class instance`;
+  }
+  const name = builtinName(type);
+  if (name && !MAP_TYPES.has(name) && !SET_TYPES.has(name)) {
+    return `${name} has no synthesizable shape`;
+  }
+  return undefined;
+}
 
 // An array whose elements are strings satisfies no object-shaped element type,
 // so a scaling sweep over it renders nothing and reports constant growth.
@@ -865,11 +1223,16 @@ const SYNTH_MAX_DEPTH = 3;
 export function synthesizeElement(arrayType: ts.Type, checker: ts.TypeChecker): unknown {
   const element = checker.getTypeArguments(arrayType as ts.TypeReference)[0];
   if (!element) return undefined;
-  return synthesizeValue(element, checker, 0);
+  return synthesizeValue(element, checker, 0, newSynth());
 }
 
-function synthesizeValue(type: ts.Type, checker: ts.TypeChecker, depth: number): unknown {
-  if (depth >= SYNTH_MAX_DEPTH) return undefined;
+function synthesizeValue(
+  type: ts.Type,
+  checker: ts.TypeChecker,
+  depth: number,
+  synth: SynthContext,
+): unknown {
+  if (depth >= synth.maxDepth) return undefined;
 
   if (type.isStringLiteral()) return type.value;
   if (type.isNumberLiteral()) return type.value;
@@ -886,32 +1249,69 @@ function synthesizeValue(type: ts.Type, checker: ts.TypeChecker, depth: number):
   if (type.isUnion()) {
     for (const member of type.types) {
       if (member.flags & (ts.TypeFlags.Undefined | ts.TypeFlags.Null)) continue;
-      const value = synthesizeValue(member, checker, depth);
+      const value = synthesizeValue(member, checker, depth, synth);
       if (value !== undefined) return value;
     }
     return undefined;
   }
 
+  if (checker.isTupleType(type)) {
+    const positions = checker
+      .getTypeArguments(type as ts.TypeReference)
+      .slice(0, MAX_TUPLE_ARITY);
+    if (positions.length === 0) return undefined;
+    return positions.map((position) => synthesizeValue(position, checker, depth + 1, synth));
+  }
+
   if (checker.isArrayType(type)) {
     const inner = checker.getTypeArguments(type as ts.TypeReference)[0];
     if (!inner) return [];
-    const value = synthesizeValue(inner, checker, depth + 1);
+    const value = synthesizeValue(inner, checker, depth + 1, synth);
     return value === undefined ? [] : [value];
   }
 
-  if (type.flags & ts.TypeFlags.Object) {
+  if (isObjectLike(type)) {
     // Functions and other callables have no data shape worth inventing.
     if (checker.getSignaturesOfType(type, ts.SignatureKind.Call).length > 0) {
       return undefined;
     }
-    const props = checker.getPropertiesOfType(type);
-    if (props.length === 0) return undefined;
-    const record: Record<string, unknown> = {};
-    for (const prop of props) {
-      const propType = checker.getTypeOfSymbol(prop);
-      record[prop.name] = synthesizeValue(propType, checker, depth + 1);
+    const instance = instanceValue(type);
+    if (instance !== undefined) return instance;
+    const collection = collectionValue(type, checker);
+    if (collection) {
+      synth.notes.push(collection.reason);
+      return collection.value;
     }
-    return record;
+    const opaque = opaqueReason(type, checker);
+    if (opaque) {
+      synth.notes.push(opaque);
+      return undefined;
+    }
+    // A type already on the path is a cycle; the depth cap alone would only
+    // bound it, and a bounded cycle is still fabricated nesting.
+    if (synth.stack.includes(type)) return undefined;
+
+    const props = checker
+      .getPropertiesOfType(type)
+      .filter((prop) => !isNoiseProp(prop))
+      .slice(0, SYNTH_MAX_PROPS);
+    if (props.length === 0) return undefined;
+
+    synth.stack.push(type);
+    try {
+      const record: Record<string, unknown> = {};
+      for (const prop of props) {
+        record[prop.name] = synthesizeValue(
+          checker.getTypeOfSymbol(prop),
+          checker,
+          depth + 1,
+          synth,
+        );
+      }
+      return record;
+    } finally {
+      synth.stack.pop();
+    }
   }
 
   return undefined;
