@@ -1,0 +1,320 @@
+{
+  "version": 1,
+  "timestamp": "2026-08-18T10:38:46.266Z",
+  "machine": {
+    "cpu": "AMD Ryzen 9 5900X 12-Core Processor            ",
+    "cores": 24,
+    "ramMb": 32693,
+    "os": "Windows_NT 10.0.26100",
+    "nodeVersion": "v24.15.0",
+    "chromiumVersion": "147.0.7727.15"
+  },
+  "componentPath": "./fixtures/m40-settled.tsx",
+  "componentName": "Settled",
+  "calibration": {
+    "totalDuration": 66.50099999999999,
+    "scriptDuration": 0
+  },
+  "combos": [
+    {
+      "comboIndex": 0,
+      "props": {},
+      "mount": {
+        "samples": [
+          4.003,
+          4.945
+        ],
+        "median": 4.474,
+        "p95": 4.8979,
+        "cv": 14.888122214522303,
+        "unstable": false
+      },
+      "unmount": {
+        "samples": [
+          1.126,
+          1.3329999999999995
+        ],
+        "median": 1.2294999999999998,
+        "p95": 1.3226499999999994,
+        "cv": 11.904929134250922,
+        "unstable": false
+      },
+      "rerender": {
+        "samples": [
+          3.3649999999999993,
+          2.3679999999999994
+        ],
+        "median": 2.8664999999999994,
+        "p95": 3.315149999999999,
+        "cv": 24.593945956497052,
+        "unstable": true
+      },
+      "domNodeCount": 1,
+      "heapDelta": -553624,
+      "interactions": [],
+      "scalingCurve": {
+        "slope": 0.39009538061892934,
+        "intercept": 3.867554833973344,
+        "r2": 0.9987215828949815,
+        "growthClass": "linear"
+      },
+      "relativeMount": 0.06727718380174735,
+      "verdict": "warn",
+      "measuredState": "settled",
+      "rerenderScalingCurve": {
+        "slope": 0.18187852947820196,
+        "intercept": 2.203567822453128,
+        "r2": 0.983240703780955,
+        "growthClass": "linear"
+      },
+      "tier": "T1",
+      "hasAnimation": false
+    },
+    {
+      "comboIndex": 1,
+      "props": {
+        "__120fps_scaleN": 1
+      },
+      "mount": {
+        "samples": [
+          5.207,
+          4.644000000000001
+        ],
+        "median": 4.9255,
+        "p95": 5.17885,
+        "cv": 8.082450874185877,
+        "unstable": false
+      },
+      "unmount": {
+        "samples": [
+          1.2219999999999998,
+          1.2339999999999998
+        ],
+        "median": 1.2279999999999998,
+        "p95": 1.2333999999999998,
+        "cv": 0.6909838252637279,
+        "unstable": false
+      },
+      "rerender": {
+        "samples": [
+          1.9589999999999999,
+          2.8419999999999996
+        ],
+        "median": 2.4004999999999996,
+        "p95": 2.7978499999999995,
+        "cv": 26.01021819569762,
+        "unstable": true
+      },
+      "domNodeCount": 2,
+      "heapDelta": 160240,
+      "interactions": [],
+      "scalingCurve": {
+        "slope": 0.39009538061892934,
+        "intercept": 3.867554833973344,
+        "r2": 0.9987215828949815,
+        "growthClass": "linear"
+      },
+      "relativeMount": 0.07406655539014452,
+      "verdict": "pass",
+      "measuredState": "settled",
+      "rerenderScalingCurve": {
+        "slope": 0.18187852947820196,
+        "intercept": 2.203567822453128,
+        "r2": 0.983240703780955,
+        "growthClass": "linear"
+      },
+      "tier": "T1",
+      "hasAnimation": false
+    },
+    {
+      "comboIndex": 2,
+      "props": {
+        "__120fps_scaleN": 5
+      },
+      "mount": {
+        "samples": [
+          5.335000000000001,
+          6.321
+        ],
+        "median": 5.828,
+        "p95": 6.2717,
+        "cv": 11.96306256434343,
+        "unstable": false
+      },
+      "unmount": {
+        "samples": [
+          1.4039999999999995,
+          1.1739999999999997
+        ],
+        "median": 1.2889999999999997,
+        "p95": 1.3924999999999994,
+        "cv": 12.617110913336372,
+        "unstable": false
+      },
+      "rerender": {
+        "samples": [
+          2.7999999999999994,
+          2.4159999999999995
+        ],
+        "median": 2.6079999999999997,
+        "p95": 2.7807999999999993,
+        "cv": 10.411388189249777,
+        "unstable": false
+      },
+      "domNodeCount": 6,
+      "heapDelta": 36224,
+      "interactions": [],
+      "scalingCurve": {
+        "slope": 0.39009538061892934,
+        "intercept": 3.867554833973344,
+        "r2": 0.9987215828949815,
+        "growthClass": "linear"
+      },
+      "relativeMount": 0.08763777988300929,
+      "verdict": "pass",
+      "measuredState": "settled",
+      "rerenderScalingCurve": {
+        "slope": 0.18187852947820196,
+        "intercept": 2.203567822453128,
+        "r2": 0.983240703780955,
+        "growthClass": "linear"
+      },
+      "tier": "T1",
+      "hasAnimation": false
+    },
+    {
+      "comboIndex": 3,
+      "props": {
+        "__120fps_scaleN": 20
+      },
+      "mount": {
+        "samples": [
+          9.482,
+          14.149000000000001
+        ],
+        "median": 11.8155,
+        "p95": 13.91565,
+        "cv": 27.929984747134007,
+        "unstable": true
+      },
+      "unmount": {
+        "samples": [
+          2.109,
+          1.8119999999999998
+        ],
+        "median": 1.9605,
+        "p95": 2.09415,
+        "cv": 10.712099669084658,
+        "unstable": false
+      },
+      "rerender": {
+        "samples": [
+          7.319000000000001,
+          5.728999999999998
+        ],
+        "median": 6.523999999999999,
+        "p95": 7.2395000000000005,
+        "cv": 17.233289118433667,
+        "unstable": true
+      },
+      "domNodeCount": 21,
+      "heapDelta": -34680,
+      "interactions": [],
+      "scalingCurve": {
+        "slope": 0.39009538061892934,
+        "intercept": 3.867554833973344,
+        "r2": 0.9987215828949815,
+        "growthClass": "linear"
+      },
+      "relativeMount": 0.17767401993954982,
+      "verdict": "pass",
+      "measuredState": "settled",
+      "rerenderScalingCurve": {
+        "slope": 0.18187852947820196,
+        "intercept": 2.203567822453128,
+        "r2": 0.983240703780955,
+        "growthClass": "linear"
+      },
+      "tier": "T2",
+      "hasAnimation": false
+    },
+    {
+      "comboIndex": 4,
+      "props": {
+        "__120fps_scaleN": 50
+      },
+      "mount": {
+        "samples": [
+          24.867999999999995,
+          22.917
+        ],
+        "median": 23.8925,
+        "p95": 24.770449999999997,
+        "cv": 5.774051815820654,
+        "unstable": false
+      },
+      "unmount": {
+        "samples": [
+          1.504,
+          1.3170000000000002
+        ],
+        "median": 1.4105,
+        "p95": 1.49465,
+        "cv": 9.374616666563933,
+        "unstable": false
+      },
+      "rerender": {
+        "samples": [
+          10.870999999999999,
+          11.831
+        ],
+        "median": 11.350999999999999,
+        "p95": 11.783,
+        "cv": 5.9802881679066715,
+        "unstable": false
+      },
+      "domNodeCount": 51,
+      "heapDelta": -101232,
+      "interactions": [],
+      "scalingCurve": {
+        "slope": 0.39009538061892934,
+        "intercept": 3.867554833973344,
+        "r2": 0.9987215828949815,
+        "growthClass": "linear"
+      },
+      "relativeMount": 0.35928031157426205,
+      "verdict": "pass",
+      "measuredState": "settled",
+      "rerenderScalingCurve": {
+        "slope": 0.18187852947820196,
+        "intercept": 2.203567822453128,
+        "r2": 0.983240703780955,
+        "growthClass": "linear"
+      },
+      "tier": "T4",
+      "hasAnimation": false
+    }
+  ],
+  "thresholds": {
+    "mountMs": 50,
+    "interactionMs": 400,
+    "interactionStepMs": 67,
+    "relativeMount": 2,
+    "rerenderMs": 16
+  },
+  "pass": true,
+  "tieredBudgets": true,
+  "warnings": [
+    "No props extracted — component measured with empty props only; if the component has typed props, extraction may have failed",
+    "The machine was too busy to measure against. Budget verdicts still print, but treat every number as provisional."
+  ],
+  "noise": {
+    "level": "hostile",
+    "signals": {
+      "probeCv": 35.65119859466159,
+      "probeMedianMs": 1.9000000953674316,
+      "unstableFraction": 0.26666666666666666,
+      "contextRetries": 0
+    }
+  }
+}

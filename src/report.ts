@@ -1,6 +1,12 @@
 import path from "node:path";
 import type { InteractionType } from "./discovery.js";
-import { computeScalingCurve, attributeCost, type ScalingCurve, type CostAttribution } from "./metrics.js";
+import {
+  computeScalingCurve,
+  attributeCost,
+  isSuperlinearGrowth,
+  type ScalingCurve,
+  type CostAttribution,
+} from "./metrics.js";
 import type { ReactOptimizations } from "./react-profiler.js";
 import { computeMedian, computeP95, type MeasuredState } from "./measure.js";
 import {
@@ -150,6 +156,14 @@ export interface ComboReport {
   measuredState?: MeasuredState;
   costAttribution?: CostAttribution;
   reactOptimizations?: ReactOptimizations;
+  // M59: uncaught exceptions and console.error output captured while this
+  // combo was measured, deduped with a (×N) repeat suffix. Absent when the
+  // page stayed quiet.
+  pageErrors?: string[];
+  // M59: "error" = nothing rendered and the page threw, which can never be a
+  // pass. "empty" = nothing rendered and nothing threw, which is legal.
+  // Absent whenever the combo rendered at least one node.
+  renderHealth?: "error" | "empty";
   // Interaction to Next Paint, in ms — the worst input-to-paint gap across
   // this combo's explored interactions. Absent when exploration produced no
   // interaction traces for the combo.
@@ -189,6 +203,24 @@ export interface ScalingCurveReport {
   // Set when the DOM node count never changed across scale points: the growth
   // class then describes nothing that was measured.
   domFlat?: boolean;
+  // Present exactly when the curve verdict is `fail`: what was violated and
+  // where, so the reader does not diff each N row against the budget by hand.
+  violation?: CurveViolation;
+}
+
+export interface CurveViolation {
+  kind: "growth" | "budget";
+  metric: "mount" | "rerender";
+  // kind: "growth"
+  growthClass?: ScalingCurve["growthClass"];
+  // kind: "budget"
+  budgetMs?: number;
+  // First measured N at or above the budget.
+  crossingN?: number;
+  // Largest measured N still under it. Absent when the smallest N already
+  // exceeded — the crossing then lies at or below the sweep's floor.
+  lastPassingN?: number;
+  medianMs?: number;
 }
 
 export interface MatrixAxis {
@@ -428,6 +460,10 @@ export function computeVerdict(
   thresholds: Thresholds,
   options?: { tierBudget?: TierBudget; explicitInteraction?: boolean },
 ): "pass" | "warn" | "fail" {
+  // M59: nothing rendered and the page threw. The timings are real, but they
+  // describe React mounting and unmounting a broken tree, so no budget
+  // comparison on them means anything.
+  if (combo.renderHealth === "error") return "fail";
   const mountMs = options?.tierBudget?.mountMs ?? thresholds.mountMs;
   const rerenderMs = options?.tierBudget?.rerenderMs ?? thresholds.rerenderMs;
   const interactionMs = options?.tierBudget?.interactionMs ?? thresholds.interactionMs;
@@ -516,7 +552,8 @@ export function formatTable(report: Report): string {
     const scaling = combo.scalingCurve ? combo.scalingCurve.growthClass + autoSuffix : "-";
     const tierSuffix = combo.tier ? ` (${combo.tier})` : "";
     const animSuffix = combo.hasAnimation && combo.tier ? " [anim]" : "";
-    const verdictStr = combo.verdict.toUpperCase() + tierSuffix + animSuffix;
+    const verdictStr =
+      combo.verdict.toUpperCase() + tierSuffix + animSuffix + renderHealthMarks(combo);
     lines.push(
       padRow([
         String(combo.comboIndex),
@@ -554,6 +591,8 @@ export function formatTable(report: Report): string {
       );
     }
   }
+
+  appendPageErrors(lines, report);
 
   const hasAttribution = report.combos.some((c) => c.costAttribution && c.costAttribution.buckets.length > 0);
   if (hasAttribution) {
@@ -646,8 +685,13 @@ export function formatTable(report: Report): string {
 
   appendWarnings(lines, report);
 
+  appendEmptyRenderNote(lines, report);
+
   const totalInteractions = report.combos.reduce((sum, c) => sum + c.interactions.length, 0);
-  if (totalInteractions === 0 && !report.fixturePath) {
+  // A composed fixture cannot fix a component that throws, so the suggestion is
+  // withheld exactly when the silence already has a stated cause.
+  const hasRenderError = report.combos.some((c) => c.renderHealth === "error");
+  if (totalInteractions === 0 && !report.fixturePath && !hasRenderError) {
     const stem = path.basename(report.componentPath, path.extname(report.componentPath));
     const dir = path.dirname(report.componentPath);
     const hint = path.join(dir, `${stem}.fixture.tsx`);
@@ -661,6 +705,51 @@ export function formatTable(report: Report): string {
   appendHints(lines, report);
 
   return lines.join("\n");
+}
+
+// M59: what the row says about the page's health, appended to the verdict cell
+// so the reader never has to correlate a 0 in the DOM column with a section
+// further down.
+function renderHealthMarks(combo: ComboReport): string {
+  const marks: string[] = [];
+  if (combo.renderHealth === "error") marks.push("render error");
+  else if (combo.renderHealth === "empty") marks.push("no DOM");
+  const count = combo.pageErrors?.length ?? 0;
+  if (count > 0 && combo.renderHealth !== "error") {
+    marks.push(`${count} page error${count === 1 ? "" : "s"}`);
+  }
+  return marks.map((mark) => ` [${mark}]`).join("");
+}
+
+// M59: the messages themselves, once per combo that produced any. A gated
+// combo also states why its timings were not allowed to pass.
+function appendPageErrors(lines: string[], report: Report): void {
+  const affected = report.combos.filter((c) => (c.pageErrors?.length ?? 0) > 0);
+  if (affected.length === 0) return;
+  lines.push("");
+  lines.push("Page errors");
+  for (const combo of affected) {
+    lines.push(`  Combo #${combo.comboIndex}:`);
+    for (const message of combo.pageErrors!) lines.push(`    - ${message}`);
+    if (combo.renderHealth === "error") {
+      lines.push(
+        `    combo ${combo.comboIndex} rendered 0 DOM nodes while the page threw — ` +
+        "counted as a failure, not a pass.",
+      );
+    }
+  }
+}
+
+// M59: rendering null is legal, and saying so is cheaper than leaving the
+// reader to infer it from a 0 in the DOM column.
+function appendEmptyRenderNote(lines: string[], report: Report): void {
+  const empty = report.combos.filter((c) => c.renderHealth === "empty");
+  if (empty.length === 0) return;
+  const list = empty.map((c) => `#${c.comboIndex}`).join(", ");
+  lines.push(
+    `Combo ${list} rendered no DOM nodes and the page stayed quiet — ` +
+    "the component renders nothing for these props.",
+  );
 }
 
 // Every output mode ends with the run's warnings; a mode that swallowed them
@@ -878,7 +967,15 @@ function formatCurveOutput(lines: string[], report: Report): string {
   }
 
   lines.push("");
+  // Every curve `hintsForReport` reads for superlinearity, so a hint can never
+  // cite a class this screen does not show.
+  lines.push(`Growth: mount ${cr.mountCurve.growthClass}, rerender ${cr.rerenderCurve.growthClass}`);
+
+  lines.push("");
   lines.push(report.pass ? "Result: PASS" : "Result: FAIL");
+  if (!report.pass && cr.violation) {
+    lines.push(`  ${formatCurveViolation(cr.violation)}`);
+  }
 
   const hasUnstable = cr.points.some(
     (p) => p.mount.unstable || p.rerender.unstable || p.unmount.unstable,
@@ -991,6 +1088,8 @@ export function buildCurveReport(input: BuildCurveReportInput): ScalingCurveRepo
     }
   }
 
+  const { violation } = evaluateCurve(points, mountCurve, input.thresholds);
+
   return {
     propName: input.propName,
     propKind: input.propKind,
@@ -1002,6 +1101,7 @@ export function buildCurveReport(input: BuildCurveReportInput): ScalingCurveRepo
     interactionCurves,
     domGrowth,
     heapGrowth,
+    ...(violation ? { violation } : {}),
   };
 }
 
@@ -1018,22 +1118,88 @@ export function computeCurveVerdict(
   mountCurve: ScalingCurve,
   thresholds: Thresholds,
 ): "pass" | "warn" | "fail" {
-  if (mountCurve.growthClass === "quadratic" || mountCurve.growthClass === "exponential") {
-    return "fail";
+  return evaluateCurve(points, mountCurve, thresholds).verdict;
+}
+
+// The walk that decides the verdict already knows which budget broke and at
+// which N; returning it costs one object and saves the reader a manual diff.
+export function evaluateCurve(
+  points: ScalingPoint[],
+  mountCurve: ScalingCurve,
+  thresholds: Thresholds,
+): { verdict: "pass" | "warn" | "fail"; violation?: CurveViolation } {
+  if (isSuperlinearGrowth(mountCurve)) {
+    return {
+      verdict: "fail",
+      violation: { kind: "growth", metric: "mount", growthClass: mountCurve.growthClass },
+    };
   }
 
-  for (const point of points) {
-    if (point.mount.median > thresholds.mountMs) return "fail";
-    if (point.rerender.median > thresholds.rerenderMs) return "fail";
+  for (let i = 0; i < points.length; i++) {
+    const point = points[i];
+    // Every earlier point cleared both budgets, so points[i-1] is the largest
+    // measured N still under whichever budget breaks here.
+    const lastPassingN = i > 0 ? { lastPassingN: points[i - 1].n } : {};
+    if (point.mount.median > thresholds.mountMs) {
+      return {
+        verdict: "fail",
+        violation: {
+          kind: "budget",
+          metric: "mount",
+          budgetMs: thresholds.mountMs,
+          crossingN: point.n,
+          ...lastPassingN,
+          medianMs: point.mount.median,
+        },
+      };
+    }
+    if (point.rerender.median > thresholds.rerenderMs) {
+      return {
+        verdict: "fail",
+        violation: {
+          kind: "budget",
+          metric: "rerender",
+          budgetMs: thresholds.rerenderMs,
+          crossingN: point.n,
+          ...lastPassingN,
+          medianMs: point.rerender.median,
+        },
+      };
+    }
   }
 
   const lastPoint = points[points.length - 1];
   if (lastPoint) {
-    if (lastPoint.mount.median > thresholds.mountMs * 0.75) return "warn";
-    if (lastPoint.rerender.median > thresholds.rerenderMs * 0.75) return "warn";
+    if (lastPoint.mount.median > thresholds.mountMs * 0.75) return { verdict: "warn" };
+    if (lastPoint.rerender.median > thresholds.rerenderMs * 0.75) return { verdict: "warn" };
   }
 
-  return "pass";
+  return { verdict: "pass" };
+}
+
+// An explicit --curve that falls back to another mode answers a different
+// question than the one asked, and the mode line alone reads like success.
+export const CURVE_NOT_ACTIVATED_WARNING = (reason: string): string =>
+  `--curve did not activate: ${reason}. The numbers below answer a different question ` +
+  `than "does it scale with its data?".`;
+
+const VIOLATION_METRIC_LABEL: Record<CurveViolation["metric"], string> = {
+  mount: "Mount",
+  rerender: "Rerender",
+};
+
+export function formatCurveViolation(violation: CurveViolation): string {
+  const metric = VIOLATION_METRIC_LABEL[violation.metric];
+  if (violation.kind === "growth") {
+    return `${metric} cost grows ${violation.growthClass} with N — superlinear growth fails on its own, whatever the per-N budgets say.`;
+  }
+  const budget = `${(violation.budgetMs ?? 0).toFixed(2)}ms budget`;
+  const median = `${(violation.medianMs ?? 0).toFixed(2)}ms`;
+  const where =
+    violation.lastPassingN !== undefined
+      ? `between N=${violation.lastPassingN} and N=${violation.crossingN}`
+      : `at N=${violation.crossingN}, the smallest measured N`;
+  return `${metric} crosses its ${budget} ${where} (N=${violation.crossingN}: ${median}).`;
 }
 
 export interface BuildMatrixReportInput {
@@ -1171,6 +1337,9 @@ function formatMatrixOutput(lines: string[], report: Report): string {
   const pass = report.pass ? "PASS" : "FAIL";
   lines.push(`Result: ${pass}`);
   appendWarnRollup(lines, report, mr.cells.map((c) => c.verdict), "cells");
+  // Cells project the combos, so a gated cell's reason lives on the combo.
+  appendPageErrors(lines, report);
+  appendEmptyRenderNote(lines, report);
   appendWarnings(lines, report);
   appendHints(lines, report);
 

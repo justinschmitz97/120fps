@@ -25,13 +25,18 @@ import {
   suspendThrottle,
   withContextRetry,
   createRetryBudget,
+  createPhaseTracker,
   refreshCdpSession,
   type CdpHolder,
   type RetryBudget,
   HARNESS_NAV_WAIT,
   type TraceEvent,
 } from "./measure.js";
-import { attachPageErrorCapture, enrichTimeoutError } from "./page-errors.js";
+import {
+  attachPageErrorCapture,
+  enrichTimeoutError,
+  gotoWithErrorContext,
+} from "./page-errors.js";
 import {
   installObservers,
   beginObservedWindow,
@@ -460,7 +465,9 @@ export async function explore(
     const session: CdpHolder = { cdp: initialCdp };
     const enter = async (): Promise<void> => {
       await refreshCdpSession(page, session);
-      await page.goto(harness.url, { waitUntil: HARNESS_NAV_WAIT });
+      await gotoWithErrorContext(page, harness.url, errorCapture, "explorer harness", {
+        waitUntil: HARNESS_NAV_WAIT,
+      });
       try {
         await page.waitForFunction(
           () => typeof (window as any).__120fps === "object",
@@ -479,7 +486,10 @@ export async function explore(
     // One entry path, used for the first entry and for every recovery: the
     // extra CDP session at startup is cheaper than a second copy of the
     // preamble drifting out of sync with this one.
-    await enter();
+    // M59: a harness crash mid-exploration escapes here; the phase and the
+    // combo in flight are what make it diagnosable.
+    const inFlight = createPhaseTracker("explore", harness);
+    await inFlight.run(enter);
     const retryBudget = createRetryBudget();
 
     const results: ExploreResult[] = [];
@@ -491,7 +501,8 @@ export async function explore(
       // partial state graph is never returned.
       if (results.length > 0 && Date.now() - runStart >= totalWallClockMs) break;
       const props = combos[ci];
-      const graph = await exploreCombo(
+      inFlight.combo = ci;
+      const graph = await inFlight.run(() => exploreCombo(
         page,
         session,
         props,
@@ -508,7 +519,7 @@ export async function explore(
         enter,
         options.onWarning,
         retryBudget,
-      );
+      ));
 
       results.push({
         graph,

@@ -2,7 +2,14 @@ import os from "node:os";
 import fs from "node:fs";
 import path from "node:path";
 import { buildAndServe, detectComponentExport, detectProjectTransforms, detectGlobalCss, detectScaleExport, detectWrapper, findProjectRoot, resolveReactCompilerState, type HarnessResult } from "./harness.js";
-import { attachPageErrorCapture, enrichTimeoutError } from "./page-errors.js";
+import {
+  attachPageErrorCapture,
+  enrichTimeoutError,
+  gotoWithErrorContext,
+  hasPageErrors,
+  mergeDrains,
+  renderDrain,
+} from "./page-errors.js";
 import { extractProps, extractExports, extractAllProps, detectScalingProps, projectSourceFiles, type PropSchema, type ScalingPropMatch } from "./prop-gen.js";
 import { hintsForReport } from "./hints.js";
 import {
@@ -99,6 +106,7 @@ import {
   buildTimingWithCV,
   buildCurveReport,
   computeCurveVerdict,
+  CURVE_NOT_ACTIVATED_WARNING,
   classifyTier,
   computeVerdict,
   deriveReportMode,
@@ -399,6 +407,18 @@ export function buildReport(input: BuildReportInput): Report {
       combo.costAttribution = attributeCost(allEvents);
     }
 
+    // M59: mount and rerender each watched the page over their own window; the
+    // combo is what the reader sees, so both windows land on it.
+    const pageErrors = mergeDrains(mount.pageErrors, rerenderResult?.pageErrors);
+    if (hasPageErrors(pageErrors)) {
+      combo.pageErrors = renderDrain(pageErrors!);
+    }
+    if (combo.domNodeCount === 0) {
+      // Fatal means an uncaught exception, never console.error output: React
+      // and Vue log dev warnings there, and a verdict must not turn on those.
+      combo.renderHealth = pageErrors?.fatal ? "error" : "empty";
+    }
+
     combo.verdict = computeVerdict(combo, input.thresholds);
     combos.push(combo);
   }
@@ -429,7 +449,9 @@ export function buildReport(input: BuildReportInput): Report {
       combo.tier = tier;
       combo.hasAnimation = hasAnimation;
       if (isScaleCombo) {
-        combo.verdict = "pass";
+        // M59: the synthetic scale probe is exempt from budgets, never from
+        // rendering. A scale point that threw is still a broken render.
+        combo.verdict = combo.renderHealth === "error" ? "fail" : "pass";
       } else {
         const tierBudget = TIER_BUDGETS[tier];
         const effectiveBudget: TierBudget = {
@@ -775,7 +797,20 @@ function writeReportJson(report: Report, jsonPath: string | undefined): void {
 // detected scaling prop; fixtures and composed scenes never take it.
 async function resolveCurveMatch(ctx: ModeContext): Promise<ScalingPropMatch | undefined> {
   const { curveMode } = ctx.options;
-  if (curveMode === false || ctx.useFixture || ctx.composed) return undefined;
+  if (curveMode === false) return undefined;
+  // M63: a curve the user asked for and did not get must say so; auto-detection
+  // that finds nothing asked for nothing.
+  const explicit = curveMode === true || typeof curveMode === "object";
+  if (ctx.useFixture || ctx.composed) {
+    if (explicit) {
+      ctx.runWarnings.push(
+        CURVE_NOT_ACTIVATED_WARNING(
+          ctx.useFixture ? "the run measures a fixture file" : "the run measures a composed scene",
+        ),
+      );
+    }
+    return undefined;
+  }
   if (typeof curveMode === "object") {
     const schemas = await ctx.getSchemas();
     return {
@@ -790,7 +825,15 @@ async function resolveCurveMatch(ctx: ModeContext): Promise<ScalingPropMatch | u
   // would otherwise re-extract the same file (M34, ~1.4s each on a real
   // Next.js project).
   const matches = detectScalingProps(await ctx.getSchemas());
-  return matches.length > 0 ? matches[0] : undefined;
+  if (matches.length === 0) {
+    if (explicit) {
+      ctx.runWarnings.push(
+        CURVE_NOT_ACTIVATED_WARNING("no array or list prop was found in the extracted schema"),
+      );
+    }
+    return undefined;
+  }
+  return matches[0];
 }
 
 async function runCurveMode(ctx: ModeContext, match: ScalingPropMatch): Promise<Report> {
@@ -850,8 +893,24 @@ async function runCurveMode(ctx: ModeContext, match: ScalingPropMatch): Promise<
     runWarnings.push(SCALING_NO_EFFECT_WARNING(curveReport.propName));
   }
 
+  // M59: a curve report has scale points, not combos, so the per-combo gate
+  // cannot reach it. A point that rendered nothing while the page threw still
+  // has to fail the run — every other point on the curve measured the same
+  // broken render.
+  const brokenPoints = curveMounts.filter(
+    (m) => m.domNodeCount === 0 && m.pageErrors?.fatal,
+  );
+  for (const broken of brokenPoints) {
+    runWarnings.push(
+      CURVE_RENDER_ERROR_WARNING(
+        curveScalePoints[broken.comboIndex] ?? broken.comboIndex,
+        renderDrain(broken.pageErrors!),
+      ),
+    );
+  }
+
   const curveVerdict = computeCurveVerdict(curveReport.points, curveReport.mountCurve, thresholds);
-  const pass = curveVerdict !== "fail";
+  const pass = curveVerdict !== "fail" && brokenPoints.length === 0;
 
   const report: Report = {
     version: 1,
@@ -1866,7 +1925,9 @@ export async function analyze(
     const machine = await collectMachineInfo(chromiumVersion);
 
     const enterHarnessPage = async (): Promise<void> => {
-      await page.goto(harness!.url, { waitUntil: HARNESS_NAV_WAIT });
+      await gotoWithErrorContext(page, harness!.url, pageErrors, "component harness", {
+        waitUntil: HARNESS_NAV_WAIT,
+      });
       try {
         await page.waitForFunction(
           () => typeof (window as any).__120fps === "object",
@@ -2027,6 +2088,11 @@ function animatedIndices(mounts: MountResult[]): number[] {
 
 export const ZERO_PROPS_WARNING =
   "No props extracted — component measured with empty props only; if the component has typed props, extraction may have failed";
+
+// M59: curve mode's equivalent of the per-combo render-health gate.
+export const CURVE_RENDER_ERROR_WARNING = (n: number, messages: string[]): string =>
+  `scale point N=${n} rendered 0 DOM nodes while the page threw, so the curve describes a ` +
+  `broken render: ${messages.join("; ")}`;
 
 // --no-css wins over an explicit --css, matching --no-wrap/--wrap. Explicit
 // paths resolve against process.cwd() and suppress detection; detection returns

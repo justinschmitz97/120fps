@@ -1,9 +1,20 @@
+import path from "node:path";
 import { chromium, type Browser, type CDPSession, type Page } from "playwright";
 import type { HarnessResult } from "./harness.js";
 import type { PropCombination } from "./prop-gen-values.js";
 import { extractProps } from "./prop-gen.js";
 import { generateCombinations } from "./prop-gen-values.js";
-import { attachPageErrorCapture, enrichTimeoutError, type PageErrorCapture } from "./page-errors.js";
+import {
+  attachPageErrorCapture,
+  enrichPhaseError,
+  enrichTimeoutError,
+  gotoWithErrorContext,
+  hasPageErrors,
+  mergeDrains,
+  type MeasurementPhase,
+  type PageErrorCapture,
+  type PageErrorDrain,
+} from "./page-errors.js";
 
 // M64: animation is what the page is *doing*, never what its stylesheet
 // declares. A Tailwind `transition-all` on an idle button declares a transition
@@ -334,7 +345,9 @@ export async function enterHarness(
   options: HarnessSessionOptions,
 ): Promise<void> {
   const url = harness.url + (options.search ?? "");
-  await page.goto(url, { waitUntil: HARNESS_NAV_WAIT });
+  await gotoWithErrorContext(page, url, errorCapture, options.label, {
+    waitUntil: HARNESS_NAV_WAIT,
+  });
   try {
     await page.waitForFunction(
       () => typeof (window as any).__120fps === "object",
@@ -769,6 +782,36 @@ export interface TimingResult {
   p95: number;
 }
 
+// M59: one phase's failure context, mutated as the pass advances. `run` is the
+// only way a phase body reaches the caller, so no escape route is left
+// unenriched.
+export interface PhaseTracker {
+  combo: number | undefined;
+  run<T>(body: () => Promise<T>): Promise<T>;
+}
+
+export function createPhaseTracker(
+  phase: MeasurementPhase,
+  harness: Pick<HarnessResult, "componentPath">,
+): PhaseTracker {
+  const component = path.basename(harness.componentPath);
+  const tracker: PhaseTracker = {
+    combo: undefined,
+    async run(body) {
+      try {
+        return await body();
+      } catch (err) {
+        throw enrichPhaseError(err, {
+          phase,
+          component,
+          ...(tracker.combo !== undefined ? { comboIndex: tracker.combo } : {}),
+        });
+      }
+    },
+  };
+  return tracker;
+}
+
 export interface MountResult {
   comboIndex: number;
   props: PropCombination;
@@ -782,6 +825,9 @@ export interface MountResult {
   mountTraces?: TraceEvent[][];
   // M35: which frame pacing produced this combo's numbers.
   pacing?: MeasurementPacing;
+  // M59: everything the page threw or logged as an error while this combo was
+  // measured. Absent when the page stayed quiet.
+  pageErrors?: PageErrorDrain;
 }
 
 export interface TraceEvent {
@@ -1069,6 +1115,8 @@ export interface RerenderResult {
   changeToProps?: PropCombination;
   // M35: which frame pacing produced this combo's numbers.
   pacing?: MeasurementPacing;
+  // M59: page errors raised while this combo's rerenders were measured.
+  pageErrors?: PageErrorDrain;
 }
 
 export interface MeasureRerenderOptions {
@@ -1145,6 +1193,7 @@ export async function measureRerender(
   combos.forEach((_, i) => (animated.has(i) ? vsyncIndices : drivenIndices).push(i));
 
   const results: RerenderResult[] = new Array(combos.length);
+  const inFlight = createPhaseTracker("rerender", harness);
 
   const runPass = async (ms: MeasurementSession, indices: number[]) => {
     const enter = async () => {
@@ -1158,6 +1207,7 @@ export async function measureRerender(
     const retryBudget = createRetryBudget();
 
     for (const [position, ci] of indices.entries()) {
+      inFlight.combo = ci;
       const props = combos[ci];
 
       // Warmup on this combo's own props (results discarded, never recorded).
@@ -1220,6 +1270,9 @@ export async function measureRerender(
         }
       }
 
+      const drained = ms.errorCapture.drain();
+      if (hasPageErrors(drained)) result.pageErrors = drained;
+
       results[ci] = result;
     }
   };
@@ -1227,7 +1280,7 @@ export async function measureRerender(
   if (drivenIndices.length > 0) {
     const ms = await openMeasurementSession({ driven: true, onWarning: options.onWarning, pool: options.pool });
     try {
-      await runPass(ms, drivenIndices);
+      await inFlight.run(() => runPass(ms, drivenIndices));
     } finally {
       await ms.close();
     }
@@ -1235,7 +1288,7 @@ export async function measureRerender(
   if (vsyncIndices.length > 0) {
     const ms = await openMeasurementSession({ driven: false, onWarning: options.onWarning, pool: options.pool });
     try {
-      await runPass(ms, vsyncIndices);
+      await inFlight.run(() => runPass(ms, vsyncIndices));
     } finally {
       await ms.close();
     }
@@ -1269,6 +1322,13 @@ export async function measureMount(
   // window. They are re-measured entirely under vsync pacing.
   const vsyncQueue: number[] = [];
 
+  // M59: tracked rather than passed, so a failure in a pass preamble reports
+  // the phase alone and one inside a combo reports the combo too.
+  const inFlight = createPhaseTracker("mount", harness);
+  // Errors seen by a combo's driven attempt before it bailed to the vsync
+  // queue; merged into the result the re-measurement writes.
+  const carriedErrors = new Map<number, PageErrorDrain | undefined>();
+
   const runPass = async (
     ms: MeasurementSession,
     indices: number[],
@@ -1285,6 +1345,7 @@ export async function measureMount(
     const retryBudget = createRetryBudget();
 
     for (const [position, ci] of indices.entries()) {
+      inFlight.combo = ci;
       const props = combos[ci];
 
       // Warmup: JIT + module cache stabilization, on this combo's own props
@@ -1330,7 +1391,15 @@ export async function measureMount(
           measuredState = run.measuredState;
         }
       }
-      if (bailed) continue;
+      // M59: closes this combo's window over the page's error stream. A combo
+      // that bails to the vsync queue keeps what the driven attempt saw, so the
+      // re-measurement adds to it rather than replacing it.
+      const drained = ms.errorCapture.drain();
+      if (bailed) {
+        carriedErrors.set(ci, mergeDrains(carriedErrors.get(ci), drained));
+        continue;
+      }
+      const pageErrors = mergeDrains(carriedErrors.get(ci), drained);
 
       let heapDelta = 0;
       try {
@@ -1349,18 +1418,21 @@ export async function measureMount(
         measuredState,
         mountTraces,
         pacing: ms.pacing,
+        ...(hasPageErrors(pageErrors) ? { pageErrors: pageErrors! } : {}),
       };
     }
   };
 
   const driven = await openMeasurementSession({ driven: true, onWarning: options.onWarning, pool: options.pool });
   try {
-    await runPass(
-      driven,
-      combos.map((_, i) => i),
-      // A probe fallback already runs the whole pass under vsync — nothing to
-      // bail to in that case.
-      driven.pacing === "driven",
+    await inFlight.run(() =>
+      runPass(
+        driven,
+        combos.map((_, i) => i),
+        // A probe fallback already runs the whole pass under vsync — nothing to
+        // bail to in that case.
+        driven.pacing === "driven",
+      ),
     );
   } finally {
     await driven.close();
@@ -1369,7 +1441,7 @@ export async function measureMount(
   if (vsyncQueue.length > 0) {
     const vs = await openMeasurementSession({ driven: false, onWarning: options.onWarning, pool: options.pool });
     try {
-      await runPass(vs, vsyncQueue, false);
+      await inFlight.run(() => runPass(vs, vsyncQueue, false));
     } finally {
       await vs.close();
     }

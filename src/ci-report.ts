@@ -319,6 +319,15 @@ function failureBody(report: Report): string {
     case "combo":
       for (const combo of report.combos) {
         if (combo.verdict !== "fail") continue;
+        // M59: a render error fails without any budget being exceeded, so
+        // naming a tier here would send the reader after the wrong number.
+        if (combo.renderHealth === "error") {
+          lines.push(
+            `combo ${combo.comboIndex}: rendered 0 DOM nodes while the page threw — ` +
+            (combo.pageErrors ?? []).join("; "),
+          );
+          continue;
+        }
         lines.push(
           `combo ${combo.comboIndex}: mount ${combo.mount.median.toFixed(2)}ms, ` +
           `rerender ${combo.rerender.median.toFixed(2)}ms — over budget for tier ${combo.tier ?? "?"}`,

@@ -1,3 +1,4 @@
+import { isSuperlinearGrowth } from "./metrics.js";
 import type { Report } from "./report.js";
 
 // A hint is documentation attached to a diagnosis, not advice generated from
@@ -13,7 +14,8 @@ export type HintId =
   | "superlinearGrowth"
   | "budgetBreach"
   | "domFlat"
-  | "measuredState";
+  | "measuredState"
+  | "renderError";
 
 export interface Hint {
   id: HintId;
@@ -113,6 +115,16 @@ export const HINTS: Record<HintId, Hint> = {
     ],
     anchor: "#scaling-curves",
   },
+  renderError: {
+    id: "renderError",
+    title: "the component threw instead of rendering",
+    lines: [
+      "Nothing reached the DOM and the page raised an uncaught error, so the timings describe a",
+      "broken tree. Read the page errors above: a missing provider needs --wrap pointing at a",
+      "setup module, and an undefined prop needs a <stem>.props.tsx preset supplying a real value.",
+    ],
+    anchor: "#render-errors",
+  },
   measuredState: {
     id: "measuredState",
     title: "the numbers describe a loading state",
@@ -137,13 +149,15 @@ export function hintsForReport(report: Report): HintId[] {
     if ((optimizations?.callbackIdentityDeltas?.length ?? 0) > 0) found.add("callbackIdentity");
     if ((optimizations?.portalOrphans ?? 0) > 0) found.add("portalOrphans");
 
-    if (combo.verdict === "fail") found.add("budgetBreach");
+    // A render error fails the combo without any budget being exceeded, so the
+    // budget hint would send the reader to the cost attribution of a tree that
+    // never existed.
+    if (combo.renderHealth === "error") found.add("renderError");
+    else if (combo.verdict === "fail") found.add("budgetBreach");
     if (combo.measuredState && combo.measuredState !== "settled") found.add("measuredState");
 
     for (const curve of [combo.scalingCurve, combo.rerenderScalingCurve]) {
-      if (curve && (curve.growthClass === "quadratic" || curve.growthClass === "exponential")) {
-        found.add("superlinearGrowth");
-      }
+      if (isSuperlinearGrowth(curve)) found.add("superlinearGrowth");
     }
   }
 
@@ -153,10 +167,10 @@ export function hintsForReport(report: Report): HintId[] {
 
   const curveReport = report.scalingCurveReport;
   if (curveReport?.domFlat) found.add("domFlat");
+  // Both classes are printed on the curve screen's `Growth:` line, so the hint
+  // never cites a classification the reader cannot see.
   for (const curve of [curveReport?.mountCurve, curveReport?.rerenderCurve]) {
-    if (curve && (curve.growthClass === "quadratic" || curve.growthClass === "exponential")) {
-      found.add("superlinearGrowth");
-    }
+    if (isSuperlinearGrowth(curve)) found.add("superlinearGrowth");
   }
 
   // Stable order so the terminal output does not reshuffle between runs.

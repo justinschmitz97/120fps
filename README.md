@@ -395,6 +395,10 @@ Doubling the input more than doubles the time, so there is work per item that to
 
 `--curve` measured several scale points but the DOM node count never moved, so the growth class describes nothing that was rendered. Check that the prop actually drives what renders, or point `--curve prop:type` at the prop that does.
 
+### Render errors
+
+Every page error raised while a combo was measured is captured and printed under `Page errors`, and a combo that rendered zero DOM nodes while the page threw is a `FAIL` marked `[render error]` — its timings describe the renderer mounting and unmounting a broken tree, not the component. The usual causes are a missing provider (point `--wrap` at a setup module that supplies it) and a prop the extractor could not populate (supply a real value from a `<stem>.props.tsx` preset). A combo that rendered nothing without throwing is legal and only annotated: the component renders nothing for those props.
+
 ### Async wrapper setup
 
 A component still fetching when the sample window closed is measured as its skeleton, and the report says so. Export `setup` from your wrapper module to stub the request before first render:

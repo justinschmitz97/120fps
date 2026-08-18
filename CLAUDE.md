@@ -59,7 +59,8 @@ src/
   compare.ts        — --compare interleaved A/B measurement against a git ref
   ci-report.ts      — --report-md / --report-junit serializers
   isolation.ts      — isolated per-phase measurements, churn/leak/strictmode checks
-  page-errors.ts    — browser page-error capture (deduped, capped) + timeout error enrichment
+  page-errors.ts    — browser page-error capture (deduped, capped), per-combo drains,
+                      navigation/timeout enrichment, measurement-phase error context
   cli.ts            — CLI entry point, arg parsing, exit codes
   index.ts          — barrel export
 specs/

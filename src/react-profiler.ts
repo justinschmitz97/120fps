@@ -3,8 +3,12 @@ import path from "node:path";
 import { chromium, type Browser, type CDPSession, type Page } from "playwright";
 import { renderTreeHelper, setupApiBlock, setupBlock, wrapImportLine, type HarnessResult } from "./harness.js";
 import type { PropCombination } from "./prop-gen-values.js";
-import { applyWrapperViewport, collectTrace, parseTraceDuration, settleStyles, tryCollectGarbage, computeMedian, HARNESS_NAV_WAIT } from "./measure.js";
-import { attachPageErrorCapture, enrichTimeoutError } from "./page-errors.js";
+import { applyWrapperViewport, collectTrace, createPhaseTracker, parseTraceDuration, settleStyles, tryCollectGarbage, computeMedian, HARNESS_NAV_WAIT } from "./measure.js";
+import {
+  attachPageErrorCapture,
+  enrichTimeoutError,
+  gotoWithErrorContext,
+} from "./page-errors.js";
 
 export interface FiberInfo {
   name: string;
@@ -551,8 +555,12 @@ export async function runReactAnalysis(
   const results = new Map<number, ReactOptimizations>();
   let browser: Browser | undefined;
   let context: import("playwright").BrowserContext | undefined;
+  // M59: this pass owns the probe page and its own tracing windows, so a
+  // harness crash here escapes with no phase of its own otherwise.
+  const inFlight = createPhaseTracker("attribution", harness);
 
   try {
+    return await inFlight.run(async () => {
     if (options.pool) {
       context = await (await options.pool.acquire(false)).newContext();
     } else {
@@ -565,7 +573,10 @@ export async function runReactAnalysis(
 
     const errorCapture = attachPageErrorCapture(page);
 
-    await page.goto(probeUrl, { timeout: 30000, waitUntil: HARNESS_NAV_WAIT });
+    await gotoWithErrorContext(page, probeUrl, errorCapture, "react analysis harness", {
+      timeout: 30000,
+      waitUntil: HARNESS_NAV_WAIT,
+    });
     try {
       await page.waitForFunction(
         () => typeof (window as any).__120fps === "object",
@@ -592,6 +603,7 @@ export async function runReactAnalysis(
     const portalBaseline = await countBodyOrphans(page);
 
     for (let ci = 0; ci < combos.length; ci++) {
+      inFlight.combo = ci;
       const props = combos[ci];
 
       // --- Memo bailout detection ---
@@ -688,6 +700,7 @@ export async function runReactAnalysis(
     }
 
     return results;
+    });
   } finally {
     if (context) await context.close();
     if (browser) await browser.close();

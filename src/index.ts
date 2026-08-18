@@ -159,7 +159,20 @@ export {
 export { analyze, buildReport, isFixturePath, detectFixture, hasScaleExport, resolveWrapPath, resolveCssFiles, type AnalyzeOptions, type BuildReportInput } from "./analyze.js";
 export { detectScaleExport, loadTsconfigAliases, findProjectRoot, sweepStaleHarnessDirs, detectComponentExport, createServerPool, SWEEP_DEP_WARNING, type ServerPool } from "./harness.js";
 export { scanExports } from "./prop-gen.js";
-export { attachPageErrorCapture, enrichTimeoutError, type PageErrorCapture } from "./page-errors.js";
+export {
+  attachPageErrorCapture,
+  enrichTimeoutError,
+  enrichPhaseError,
+  gotoWithErrorContext,
+  mergeDrains,
+  hasPageErrors,
+  renderDrain,
+  HARNESS_STALL_HINT,
+  type PageErrorCapture,
+  type PageErrorDrain,
+  type MeasurementPhase,
+  type PhaseContext,
+} from "./page-errors.js";
 export {
   resolveStressPattern,
   executeStressPattern,

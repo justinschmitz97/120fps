@@ -210,10 +210,13 @@ describe("H19: injection with auto-scale rendering", () => {
 describe("H22: harness navigation wait", () => {
   const src = (name: string) => fs.readFileSync(path.resolve("src", name), "utf-8");
 
+  // M59 routes every harness navigation through gotoWithErrorContext so the
+  // captured page errors reach a navigation timeout; the wait option is still
+  // passed at the call site, so the invariant reads the same either way.
   it("never navigates with the default load wait", () => {
     for (const file of ["analyze.ts", "explorer.ts", "measure.ts", "react-profiler.ts"]) {
       const text = src(file);
-      const gotos = text.match(/page\.goto\([^)]*\)/g) ?? [];
+      const gotos = text.match(/(?:page\.goto|gotoWithErrorContext)\([^)]*\)/g) ?? [];
       expect(gotos.length).toBeGreaterThan(0);
       for (const call of gotos) {
         expect(call).toContain("HARNESS_NAV_WAIT");
