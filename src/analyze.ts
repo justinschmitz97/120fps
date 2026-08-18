@@ -464,8 +464,7 @@ export function buildReport(input: BuildReportInput): Report {
     }
 
     if (!input.skipAttribution && mount.mountTraces && mount.mountTraces.length > 0) {
-      const allEvents = mount.mountTraces.flat();
-      combo.costAttribution = attributeCost(allEvents);
+      combo.costAttribution = attributeCost(mount.mountTraces);
     }
 
     // M59: mount and rerender each watched the page over their own window; the

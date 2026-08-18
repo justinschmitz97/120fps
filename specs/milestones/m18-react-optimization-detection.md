@@ -18,5 +18,5 @@ Traps:
 - Memo bailout reports only MEMOIZED components that re-rendered — unmemoized parent-cascade is React by design, not a defect.
 - Context probe: component rendered behind `__120fpsStable` memo boundary so the synthetic provider's own re-render can't cascade; fan-out = only actual context readers.
 - Name filter (one predicate for all three detectors): probe scaffolding Root/AppRoot/`__120fps` PREFIX (bundlers suffix duplicate names) + compiler cache slots /^_c\d+$/ (`_carousel` stays — user's).
-- Callback identity: stable vs fresh reference rerender delta; report >0.5ms, warn >2ms.
+- Callback identity: stable vs fresh reference rerender delta. Both arms mount with the page's cached callbacks and alternate order, so only the traced rerender's identity differs; report when the delta clears 0.5ms *and* both arms' sample spreads (M66), warn >2ms.
 - All findings warn, NEVER fail. Analysis is post-pipeline (zero overhead on measurements).

@@ -1081,7 +1081,7 @@ export function buildCurveReport(input: BuildCurveReportInput): ScalingCurveRepo
     };
 
     if (!input.skipAttribution && mount?.mountTraces && mount.mountTraces.length > 0) {
-      point.costAttribution = attributeCost(mount.mountTraces.flat());
+      point.costAttribution = attributeCost(mount.mountTraces);
     }
 
     points.push(point);

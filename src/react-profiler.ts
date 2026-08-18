@@ -31,6 +31,35 @@ export interface ProfilerDiff {
 export interface CallbackIdentityDelta {
   propName: string;
   deltaMs: number;
+  // M66: the two medians the delta came from. A difference alone hides whether
+  // it is 6ms of 8ms or 6ms of 300ms.
+  stableMs?: number;
+  freshMs?: number;
+}
+
+// A callback-identity effect is the gap between two arms measured minutes apart
+// on a machine whose baseline drifts. Each arm's own spread is that drift, so an
+// effect smaller than the two spreads together is the drift and nothing else.
+// Fewer than two samples in an arm measures no spread at all and reports
+// nothing. Threshold evidence: an A/A control (both arms stable) on a 900-node
+// memoized fixture produced +18.1ms and +30.9ms apparent effects.
+const CALLBACK_IDENTITY_MIN_DELTA_MS = 0.5;
+
+export function computeCallbackIdentityDelta(
+  stableSamples: number[],
+  freshSamples: number[],
+): { deltaMs: number; stableMs: number; freshMs: number } | null {
+  if (stableSamples.length < 2 || freshSamples.length < 2) return null;
+
+  const stableMs = computeMedian(stableSamples);
+  const freshMs = computeMedian(freshSamples);
+  const deltaMs = freshMs - stableMs;
+  if (deltaMs <= CALLBACK_IDENTITY_MIN_DELTA_MS) return null;
+
+  const spread = (xs: number[]) => Math.max(...xs) - Math.min(...xs);
+  if (deltaMs <= spread(stableSamples) + spread(freshSamples)) return null;
+
+  return { deltaMs, stableMs, freshMs };
 }
 
 export interface RenderAttribution {
@@ -354,6 +383,27 @@ export interface ProbeEntryOptions {
   wrapRelative?: string;
 }
 
+// Page-side props builder for the callback-identity arms, kept as source so one
+// definition serves the browser and the unit tests. Every function-valued prop
+// becomes a real function held stable across calls; only `measured` differs
+// between the arms, and it is present in the mount as well as both re-renders.
+export const CALLBACK_PROPS_SOURCE = `function __120fpsCallbackProps(props, cache, marker, measured, fresh) {
+  var out = {};
+  var keys = Object.keys(props || {});
+  for (var i = 0; i < keys.length; i++) out[keys[i]] = props[keys[i]];
+  var stableFor = function (name) {
+    if (!cache.has(name)) cache.set(name, function __120fpsStableCallback() {});
+    return cache.get(name);
+  };
+  for (var j = 0; j < keys.length; j++) {
+    if (out[keys[j]] === marker) out[keys[j]] = stableFor(keys[j]);
+  }
+  if (measured) {
+    out[measured] = fresh ? function __120fpsFreshCallback() {} : stableFor(measured);
+  }
+  return out;
+}`;
+
 export function generateProbeEntry(opts: ProbeEntryOptions): string {
   const importLine = opts.isDefaultExport
     ? `import ${opts.componentName} from "/${opts.componentRelative}";`
@@ -389,6 +439,7 @@ const container = document.getElementById("root")!;
 let root = createRoot(container);
 let mounted = false;
 const stableCallbackCache = new Map<string, Function>();
+${CALLBACK_PROPS_SOURCE}
 ${renderTreeHelper(opts.wrapRelative)}
 ${setupBlock(opts.wrapRelative)}
 (window as any).__120fps = {
@@ -429,22 +480,17 @@ ${setupBlock(opts.wrapRelative)}
   forceContextUpdate() {
     (window as any).__120fps_forceContext?.();
   },
-  rerenderWithStableCallbacks(props: any, fnPropNames: string[]) {
-    const stableProps = { ...props };
-    for (const name of fnPropNames) {
-      if (!stableCallbackCache.has(name)) {
-        stableCallbackCache.set(name, () => {});
-      }
-      stableProps[name] = stableCallbackCache.get(name);
-    }
-    this.rerender(stableProps);
+  // The mount installs the same cached callback the stable arm re-renders with:
+  // mounting with a fresh function makes both arms change callback identity, and
+  // the measured difference is then drift rather than identity.
+  mountWithStableCallbacks(props: any, measured: string) {
+    this.mount(__120fpsCallbackProps(props, stableCallbackCache, "${FUNCTION_MARKER}", measured, false));
   },
-  rerenderWithFreshCallbacks(props: any, fnPropNames: string[]) {
-    const freshProps = { ...props };
-    for (const name of fnPropNames) {
-      freshProps[name] = () => {};
-    }
-    this.rerender(freshProps);
+  rerenderWithStableCallbacks(props: any, measured: string) {
+    this.rerender(__120fpsCallbackProps(props, stableCallbackCache, "${FUNCTION_MARKER}", measured, false));
+  },
+  rerenderWithFreshCallbacks(props: any, measured: string) {
+    this.rerender(__120fpsCallbackProps(props, stableCallbackCache, "${FUNCTION_MARKER}", measured, true));
   },
   getContainer() {
     return container;
@@ -509,6 +555,25 @@ async function mountAndWaitProbe(page: Page, props: PropCombination): Promise<vo
       (window as any).__120fps.mount(p);
     },
     [safeProps, FUNCTION_MARKER] as [Record<string, unknown>, string],
+  );
+  await page.evaluate(
+    () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))),
+  );
+}
+
+// Mount for a callback-identity arm: the measured prop and every other function
+// prop are the page's cached callbacks, so the stable arm's re-render changes
+// nothing and the fresh arm's changes exactly one identity.
+async function mountWithStableCallbacksProbe(
+  page: Page,
+  props: PropCombination,
+  measured: string,
+): Promise<void> {
+  await page.evaluate(() => (window as any).__120fps.unmount());
+  await page.evaluate(
+    ([p, name]: [any, string]) =>
+      (window as any).__120fps.mountWithStableCallbacks(p, name),
+    [serializeProps(props), measured] as [Record<string, unknown>, string],
   );
   await page.evaluate(
     () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))),
@@ -638,39 +703,39 @@ export async function runReactAnalysis(
           const stableSamples: number[] = [];
           const freshSamples: number[] = [];
 
-          for (let s = 0; s < samples; s++) {
+          const measureArm = async (fresh: boolean, sink: number[]) => {
             await tryCollectGarbage(cdp);
-            await mountAndWaitProbe(page, props);
-            const stableEvents = await collectTrace(cdp, async () => {
+            await mountWithStableCallbacksProbe(page, props, fnProp);
+            const events = await collectTrace(cdp, async () => {
               await page.evaluate(
-                ([p, names]: [any, string[]]) => (window as any).__120fps.rerenderWithStableCallbacks(p, names),
-                [serializeProps(props), [fnProp]] as [Record<string, unknown>, string[]],
+                ([p, name, isFresh]: [any, string, boolean]) =>
+                  (window as any).__120fps[
+                    isFresh ? "rerenderWithFreshCallbacks" : "rerenderWithStableCallbacks"
+                  ](p, name),
+                [serializeProps(props), fnProp, fresh] as [Record<string, unknown>, string, boolean],
               );
               await page.evaluate(
                 () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))),
               );
             });
-            stableSamples.push(parseTraceDuration(stableEvents).totalDuration);
-          }
+            sink.push(parseTraceDuration(events).totalDuration);
+          };
 
+          // Arms alternate: measured all-stable-then-all-fresh, a baseline that
+          // drifts over the pass lands entirely on the fresh arm.
           for (let s = 0; s < samples; s++) {
-            await tryCollectGarbage(cdp);
-            await mountAndWaitProbe(page, props);
-            const freshEvents = await collectTrace(cdp, async () => {
-              await page.evaluate(
-                ([p, names]: [any, string[]]) => (window as any).__120fps.rerenderWithFreshCallbacks(p, names),
-                [serializeProps(props), [fnProp]] as [Record<string, unknown>, string[]],
-              );
-              await page.evaluate(
-                () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))),
-              );
-            });
-            freshSamples.push(parseTraceDuration(freshEvents).totalDuration);
+            if (s % 2 === 0) {
+              await measureArm(false, stableSamples);
+              await measureArm(true, freshSamples);
+            } else {
+              await measureArm(true, freshSamples);
+              await measureArm(false, stableSamples);
+            }
           }
 
-          const delta = computeMedian(freshSamples) - computeMedian(stableSamples);
-          if (delta > 0.5) {
-            callbackIdentityDeltas.push({ propName: fnProp, deltaMs: delta });
+          const delta = computeCallbackIdentityDelta(stableSamples, freshSamples);
+          if (delta) {
+            callbackIdentityDeltas.push({ propName: fnProp, ...delta });
           }
         }
       }

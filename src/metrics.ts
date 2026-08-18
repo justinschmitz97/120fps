@@ -46,6 +46,11 @@ export interface CostBucket {
 export interface CostAttribution {
   buckets: CostBucket[];
   unattributed: number;
+  // M66: how many mount windows the buckets were folded from, and what they
+  // summed to before the fold. Without them a reader cannot tell a per-mount
+  // breakdown from a total across every measured mount.
+  sampleCount: number;
+  totalScriptingMs: number;
 }
 
 export interface ParseMetricsOptions {
@@ -136,65 +141,30 @@ function resolveSource(rawUrl: string): { source: string; category: CostBucket["
   return { source: srcPath, category: "user" };
 }
 
-export function attributeCost(events: TraceEvent[]): CostAttribution {
+type SourceDurations = Map<string, { durationMs: number; category: CostBucket["category"] }>;
+
+// One trace window's script events, net of nesting: a child span's time is
+// subtracted from its parent so React→Radix→motion never double-counts.
+function accumulateWindow(events: TraceEvent[], into: SourceDurations): void {
   const scriptEvents = events.filter(
     (e) => e.ph === "X" && typeof e.dur === "number" && e.ts !== undefined &&
       e.name !== undefined && SCRIPT_EVENTS.has(e.name),
   );
-
-  if (scriptEvents.length === 0) {
-    return { buckets: [], unattributed: 0 };
-  }
+  if (scriptEvents.length === 0) return;
 
   const sorted = [...scriptEvents].sort((a, b) => (a.ts ?? 0) - (b.ts ?? 0));
 
-  interface NestingEntry { end: number; source: string; childDur: number }
-  const stack: NestingEntry[] = [];
-  const sourceDurations = new Map<string, { durationMs: number; category: CostBucket["category"] }>();
-
-  function addDuration(source: string, category: CostBucket["category"], ms: number) {
-    const existing = sourceDurations.get(source);
-    if (existing) {
-      existing.durationMs += ms;
-    } else {
-      sourceDurations.set(source, { durationMs: ms, category });
-    }
-  }
-
-  for (const event of sorted) {
-    const durMs = event.dur! / 1000;
-    const eventStart = event.ts!;
-    const eventEnd = eventStart + event.dur!;
-
-    while (stack.length > 0 && stack[stack.length - 1].end <= eventStart) {
-      stack.pop();
-    }
-
-    const url = extractUrl(event);
-    const resolved = url ? resolveSource(url) : { source: "browser", category: "browser" as const };
-
-    if (stack.length > 0) {
-      stack[stack.length - 1].childDur += durMs;
-    }
-
-    stack.push({ end: eventEnd, source: resolved.source, childDur: 0 });
-    addDuration(resolved.source, resolved.category, durMs);
-  }
-
-  // Second pass: subtract child durations from parents
-  // We need to re-process to correctly handle nesting
-  sourceDurations.clear();
-
   interface Entry { end: number; source: string; category: CostBucket["category"]; durMs: number }
-  const entries: Entry[] = [];
-  for (const event of sorted) {
-    const durMs = event.dur! / 1000;
-    const eventStart = event.ts!;
-    const eventEnd = eventStart + event.dur!;
+  const entries: Entry[] = sorted.map((event) => {
     const url = extractUrl(event);
     const resolved = url ? resolveSource(url) : { source: "browser", category: "browser" as const };
-    entries.push({ end: eventEnd, source: resolved.source, category: resolved.category, durMs });
-  }
+    return {
+      end: event.ts! + event.dur!,
+      source: resolved.source,
+      category: resolved.category,
+      durMs: event.dur! / 1000,
+    };
+  });
 
   const nestStack: { end: number; idx: number }[] = [];
   const childDeductions = new Float64Array(entries.length);
@@ -215,29 +185,51 @@ export function attributeCost(events: TraceEvent[]): CostAttribution {
 
   for (let i = 0; i < entries.length; i++) {
     const net = entries[i].durMs - childDeductions[i];
-    if (net > 0) {
-      addDuration(entries[i].source, entries[i].category, net);
+    if (net <= 0) continue;
+    const existing = into.get(entries[i].source);
+    if (existing) {
+      existing.durationMs += net;
+    } else {
+      into.set(entries[i].source, { durationMs: net, category: entries[i].category });
     }
   }
+}
 
-  let totalMs = 0;
+// M66: a combo's mount is measured N times, so N windows arrive. Summing them
+// produced a breakdown N× the Mount column it sits next to. Buckets are the mean
+// scripting time inside one mount; `totalScriptingMs` and `sampleCount` keep the
+// raw sum and the window count recoverable.
+export function attributeCost(
+  traces: TraceEvent[] | TraceEvent[][],
+): CostAttribution {
+  const windows: TraceEvent[][] = Array.isArray(traces[0])
+    ? (traces as TraceEvent[][])
+    : [traces as TraceEvent[]];
+  const sampleCount = Math.max(1, windows.length);
+
+  const sourceDurations: SourceDurations = new Map();
+  for (const window of windows) {
+    accumulateWindow(window, sourceDurations);
+  }
+
+  let totalScriptingMs = 0;
   for (const v of sourceDurations.values()) {
-    totalMs += v.durationMs;
+    totalScriptingMs += v.durationMs;
   }
 
   const buckets: CostBucket[] = [];
   for (const [source, data] of sourceDurations) {
     buckets.push({
       source,
-      durationMs: data.durationMs,
-      percentage: totalMs > 0 ? (data.durationMs / totalMs) * 100 : 0,
+      durationMs: data.durationMs / sampleCount,
+      percentage: totalScriptingMs > 0 ? (data.durationMs / totalScriptingMs) * 100 : 0,
       category: data.category,
     });
   }
 
   buckets.sort((a, b) => b.durationMs - a.durationMs);
 
-  return { buckets, unattributed: 0 };
+  return { buckets, unattributed: 0, sampleCount, totalScriptingMs };
 }
 
 const STYLE_RECALC_EVENTS = new Set(["UpdateLayoutTree", "RecalcStyles"]);

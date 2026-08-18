@@ -16,6 +16,7 @@ Non-obvious:
 - Vite URL munging: strip ?v=/?t=, resolve /@fs/, and reverse .vite/deps underscore-joined names (`@radix-ui_react-accordion.js`).
 - Nesting-stack dedupe: child span subtracted from parent's attribution (React→Radix→motion never double-counts).
 - No source maps required (v1). Layout/paint/style-recalc never attributed (no meaningful stacks).
-- Invariant: sum(buckets)+unattributed ≤ totalScriptingDuration.
+- Window: `attributeCost` takes a combo's per-sample mount traces and reports the **mean scripting time inside one mount**, so the breakdown is comparable to the Mount column beside it (M66). `sampleCount` and `totalScriptingMs` carry the window and the raw sum.
+- Invariant: sum(buckets)+unattributed ≤ totalScriptingDuration of one mount; sum(buckets) = totalScriptingMs / sampleCount.
 
 Open: attribute interaction traces too?; merge @radix-ui/* scopes? (per-package chosen — identifies the expensive primitive).
