@@ -42,7 +42,8 @@ rivals' R² on raw y.
   sample array still describe the whole alternation.
 - `computeScalingCurve` ranks every candidate by R² on the raw metric; the
   exponential candidate is scored on its back-transformed predictions and
-  scores 0 when they are non-finite.
+  scores 0 when they are non-finite. M63 keeps that ranking and applies it only
+  to candidates admitted by its magnitude and residual-share gates.
 - Not done: no JSON field renamed (`p95`, `cv` keep their names), no budget
   threshold changed, no work added inside a traced window.
 

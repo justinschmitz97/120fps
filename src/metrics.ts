@@ -485,6 +485,39 @@ function rawR2(
   return Number.isFinite(r2) ? r2 : 0;
 }
 
+// The share of the linear fit's leftover variance a candidate must still
+// explain to be admitted. All three candidates are two-parameter fits, so an
+// information criterion reduces to ranking by residual sum of squares — the
+// rule that let noise flip an unchanged component between linear and
+// quadratic. The margin has to be relative: on the default sweep a perfect
+// quadratic only beats its own linear fit by 0.052 of R².
+export const SUPERLINEAR_RESIDUAL_SHARE = 0.5;
+
+// Cost that grew slower than its data over the measured sweep is not
+// super-linear in that data, whatever curve happens to fit it.
+export const SUPERLINEAR_MIN_EXPONENT = 1;
+
+// The log-log slope between the sweep's endpoints: 1 means cost grew exactly as
+// fast as n, 2 means it grew as n². Points that cannot be logged (n ≤ 0,
+// metric ≤ 0, non-finite) carry no exponent and are dropped.
+export function growthExponent(points: { n: number; metric: number }[]): number {
+  const usable = points
+    .filter((p) => p.n > 0 && p.metric > 0 && Number.isFinite(p.n) && Number.isFinite(p.metric))
+    .sort((a, b) => a.n - b.n);
+  if (usable.length < 2) return 0;
+  const first = usable[0];
+  const last = usable[usable.length - 1];
+  if (last.n <= first.n) return 0;
+  const exponent = Math.log(last.metric / first.metric) / Math.log(last.n / first.n);
+  return Number.isFinite(exponent) ? exponent : 0;
+}
+
+// One predicate, so the growth column, the JSON and the hint can never disagree
+// about what "superlinear" means.
+export function isSuperlinearGrowth(curve: ScalingCurve | null | undefined): boolean {
+  return curve?.growthClass === "quadratic" || curve?.growthClass === "exponential";
+}
+
 export function computeScalingCurve(
   points: { n: number; metric: number }[],
 ): ScalingCurve {
@@ -541,20 +574,31 @@ export function computeScalingCurve(
     ? rawR2(points, (n) => Math.exp(expFit.intercept + expFit.slope * n))
     : 0;
 
-  const candidates: { r2: number; growthClass: ScalingCurve["growthClass"] }[] = [
-    { r2: linResult.r2, growthClass: "linear" },
-    { r2: quadResult.r2, growthClass: "quadratic" },
-    { r2: expR2, growthClass: "exponential" },
-  ];
-
-  candidates.sort((a, b) => b.r2 - a.r2);
-
-  return {
+  const linear: ScalingCurve = {
     slope: linResult.slope,
     intercept: linResult.intercept,
     r2: linResult.r2,
-    growthClass: candidates[0].growthClass,
+    growthClass: "linear",
   };
+
+  // Magnitude gate: a superlinear label claims cost outran the data. Data that
+  // grew 50x while cost grew 2.6x refutes the claim regardless of fit.
+  if (growthExponent(points) < SUPERLINEAR_MIN_EXPONENT) return linear;
+
+  // Fit gate: a nothing-left-to-explain linear fit admits no rival, and every
+  // rival must still explain half of what linear leaves.
+  const leftover = 1 - linResult.r2;
+  if (leftover <= 1e-9) return linear;
+  const admitted = [
+    { r2: quadResult.r2, growthClass: "quadratic" as const },
+    { r2: expR2, growthClass: "exponential" as const },
+  ].filter((c) => 1 - c.r2 <= SUPERLINEAR_RESIDUAL_SHARE * leftover);
+  if (admitted.length === 0) return linear;
+
+  // M53's ranking, applied to the survivors: raw-y R² decides.
+  admitted.sort((a, b) => b.r2 - a.r2);
+
+  return { ...linear, growthClass: admitted[0].growthClass };
 }
 
 export async function createCalibrationTrace(
