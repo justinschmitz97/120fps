@@ -9,3 +9,4 @@ dist/
 120fps-report*.json
 120fps-verify.json
 120fps-baseline.json
+test-results/
