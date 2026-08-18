@@ -487,6 +487,45 @@ function countCoveredPairs(
   return count;
 }
 
+// Structurally identical to report.ts's `MatrixAxis`; declared locally so
+// this module gains no dependency on report.ts for one shape.
+export interface MatrixAxisLike {
+  propName: string;
+  values: unknown[];
+}
+
+// M61: --max-combos never bounded matrix cells at all. Capping needs an
+// order: keep the all-anchor base cell (every axis at its first/anchor
+// value — never dropped), then cells one axis away from it (the same
+// single-prop-effect story --max-combos already tells in plain-combo mode),
+// then two axes away, and so on. Ties keep generation order, so a
+// lexicographic cartesian or a pairwise-cover fallback both cap
+// predictably. This selects over an already-generated cell set; it does not
+// change generatePropMatrix's generation or cell ordering.
+export function selectMatrixCombos(
+  combos: PropCombination[],
+  axes: MatrixAxisLike[],
+  max: number,
+): number[] {
+  if (max <= 0) return [];
+  if (combos.length <= max) return combos.map((_, i) => i);
+
+  const anchor: PropCombination = {};
+  for (const axis of axes) anchor[axis.propName] = axis.values[0];
+
+  const distance = (combo: PropCombination): number =>
+    axes.reduce(
+      (acc, axis) => acc + (comboKey(combo[axis.propName]) === comboKey(anchor[axis.propName]) ? 0 : 1),
+      0,
+    );
+
+  const ranked = combos
+    .map((combo, index) => ({ index, distance: distance(combo) }))
+    .sort((a, b) => a.distance - b.distance || a.index - b.index);
+
+  return ranked.slice(0, max).map((r) => r.index).sort((a, b) => a - b);
+}
+
 export const DEFAULT_MEASURED_COMBOS = 8;
 
 // `generateCombinations` stratifies its sample across the value space, so a

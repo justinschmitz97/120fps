@@ -224,15 +224,18 @@ describe("H15: rerenderScalingCurve with single combo", () => {
     expect(report.combos[0].rerenderScalingCurve).toBeUndefined();
   });
 
-  it("sets rerenderScalingCurve when multiple distinct DOM sizes", () => {
+  it("sets rerenderScalingCurve across scale-probe combos with distinct DOM sizes", () => {
+    // M61: the marker (`__120fps_scaleN`, surfaced as `scaleProbe`) is what
+    // makes these scale combos, not merely differing DOM counts — see the
+    // sibling test below for real combos that only differ in DOM size.
     const report = buildReport({
       componentPath: "./Button.tsx",
       componentName: "Button",
       machine: baseMachine,
       calibration: baseCal,
       mounts: [
-        { comboIndex: 0, props: {}, mount: { samples: [5], median: 5, p95: 5 }, unmount: { samples: [2], median: 2, p95: 2 }, domNodeCount: 10 },
-        { comboIndex: 1, props: {}, mount: { samples: [10], median: 10, p95: 10 }, unmount: { samples: [3], median: 3, p95: 3 }, domNodeCount: 50 },
+        { comboIndex: 0, props: { __120fps_scaleN: 1 }, mount: { samples: [5], median: 5, p95: 5 }, unmount: { samples: [2], median: 2, p95: 2 }, domNodeCount: 10 },
+        { comboIndex: 1, props: { __120fps_scaleN: 5 }, mount: { samples: [10], median: 10, p95: 10 }, unmount: { samples: [3], median: 3, p95: 3 }, domNodeCount: 50 },
       ],
       explores: [
         { graph: makeEmptyGraph(), comboIndex: 0, props: {} },
@@ -247,6 +250,37 @@ describe("H15: rerenderScalingCurve with single combo", () => {
     });
     expect(report.combos[0].rerenderScalingCurve).not.toBeNull();
     expect(report.combos[0].rerenderScalingCurve).not.toBeUndefined();
+  });
+
+  // M61 regression: two real (non-probe) combos that merely differ in DOM
+  // size — e.g. a boolean toggling whether a panel renders — used to be
+  // fitted into a fabricated "scaling" curve and stamped onto both. Neither
+  // combo carries `__120fps_scaleN`, so no curve should be fitted at all.
+  it("does not fabricate a curve from real combos that only differ in DOM size", () => {
+    const report = buildReport({
+      componentPath: "./Button.tsx",
+      componentName: "Button",
+      machine: baseMachine,
+      calibration: baseCal,
+      mounts: [
+        { comboIndex: 0, props: { open: false }, mount: { samples: [5], median: 5, p95: 5 }, unmount: { samples: [2], median: 2, p95: 2 }, domNodeCount: 10 },
+        { comboIndex: 1, props: { open: true }, mount: { samples: [10], median: 10, p95: 10 }, unmount: { samples: [3], median: 3, p95: 3 }, domNodeCount: 50 },
+      ],
+      explores: [
+        { graph: makeEmptyGraph(), comboIndex: 0, props: {} },
+        { graph: makeEmptyGraph(), comboIndex: 1, props: {} },
+      ],
+      heapDeltas: [0, 0],
+      thresholds: { ...baseThresholds, mountMs: 100 },
+      rerenders: [
+        { comboIndex: 0, stable: { samples: [3], median: 3, p95: 3 } },
+        { comboIndex: 1, stable: { samples: [8], median: 8, p95: 8 } },
+      ],
+    });
+    expect(report.combos[0].scalingCurve).toBeNull();
+    expect(report.combos[1].scalingCurve).toBeNull();
+    expect(report.combos[0].rerenderScalingCurve).toBeUndefined();
+    expect(report.combos[1].rerenderScalingCurve).toBeUndefined();
   });
 });
 

@@ -167,7 +167,10 @@ describe("buildReport", () => {
     expect(report.combos[0].interactions).toHaveLength(0);
   });
 
-  it("computes scaling curve when combos have different DOM sizes", () => {
+  // M61: only combos marked as the sibling-copies probe (`__120fps_scaleN`,
+  // surfaced as `scaleProbe`) receive a fitted curve — merely differing DOM
+  // sizes across real combos is not enough (see the sibling test below).
+  it("computes scaling curve across scale-probe combos with different DOM sizes", () => {
     const input: BuildReportInput = {
       componentPath: "./Button.tsx",
       componentName: "Button",
@@ -177,9 +180,9 @@ describe("buildReport", () => {
       },
       calibration: makeCalibration(),
       mounts: [
-        makeMountResult({ comboIndex: 0, domNodeCount: 10, mount: { samples: [5], median: 5, p95: 5 } }),
-        makeMountResult({ comboIndex: 1, domNodeCount: 50, mount: { samples: [25], median: 25, p95: 25 } }),
-        makeMountResult({ comboIndex: 2, domNodeCount: 100, mount: { samples: [50], median: 50, p95: 50 } }),
+        makeMountResult({ comboIndex: 0, props: { __120fps_scaleN: 1 }, domNodeCount: 10, mount: { samples: [5], median: 5, p95: 5 } }),
+        makeMountResult({ comboIndex: 1, props: { __120fps_scaleN: 5 }, domNodeCount: 50, mount: { samples: [25], median: 25, p95: 25 } }),
+        makeMountResult({ comboIndex: 2, props: { __120fps_scaleN: 20 }, domNodeCount: 100, mount: { samples: [50], median: 50, p95: 50 } }),
       ],
       explores: [
         makeExploreResult({ comboIndex: 0 }),

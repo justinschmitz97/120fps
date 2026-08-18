@@ -234,15 +234,17 @@ describe("buildReport with rerender", () => {
   });
 
   it("computes rerender scaling curve across scale combos", () => {
+    // M61: only combos actually marked as the sibling-copies probe
+    // (`__120fps_scaleN`, surfaced as `scaleProbe`) receive a fitted curve.
     const report = buildReport({
       componentPath: "./accordion.fixture.tsx",
       componentName: "AccordionScene",
       machine: baseMachine,
       calibration: baseCal,
       mounts: [
-        { comboIndex: 0, props: {}, mount: { samples: [5], median: 5, p95: 5 }, unmount: { samples: [2], median: 2, p95: 2 }, domNodeCount: 10 },
-        { comboIndex: 1, props: {}, mount: { samples: [10], median: 10, p95: 10 }, unmount: { samples: [3], median: 3, p95: 3 }, domNodeCount: 50 },
-        { comboIndex: 2, props: {}, mount: { samples: [15], median: 15, p95: 15 }, unmount: { samples: [4], median: 4, p95: 4 }, domNodeCount: 100 },
+        { comboIndex: 0, props: { __120fps_scaleN: 1 }, mount: { samples: [5], median: 5, p95: 5 }, unmount: { samples: [2], median: 2, p95: 2 }, domNodeCount: 10 },
+        { comboIndex: 1, props: { __120fps_scaleN: 5 }, mount: { samples: [10], median: 10, p95: 10 }, unmount: { samples: [3], median: 3, p95: 3 }, domNodeCount: 50 },
+        { comboIndex: 2, props: { __120fps_scaleN: 20 }, mount: { samples: [15], median: 15, p95: 15 }, unmount: { samples: [4], median: 4, p95: 4 }, domNodeCount: 100 },
       ],
       explores: [
         { graph: makeEmptyGraph(), comboIndex: 0, props: {} },

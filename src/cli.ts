@@ -708,8 +708,9 @@ Multiple components:
   wrote. Components are measured in sorted path order, not argument order.
 
 Combo caps:
-  --max-combos bounds the default prop-combo mode. Matrix mode measures every
-  cell of its axes and is not bounded by it — use --no-matrix for a capped run.
+  --max-combos bounds both prop-combo mode and matrix mode (default: 8 cells
+  either way). In matrix mode, the base/anchor cell is always kept, then
+  single-axis deviations from it, before wider cells are dropped.
 
 Which mode answers which question:
   is it fast?                    (default)

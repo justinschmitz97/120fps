@@ -168,6 +168,11 @@ export interface ComboReport {
   // this combo's explored interactions. Absent when exploration produced no
   // interaction traces for the combo.
   inp?: number;
+  // M61: set when this combo is the auto-scale sibling-copies probe (N whole
+  // extra trees mounted side by side), never a real prop variation. `props`
+  // never carries the `__120fps_scaleN` marker that produced it — this field
+  // is where that identity now lives.
+  scaleProbe?: number;
 }
 
 export interface PropDelta {
@@ -548,15 +553,26 @@ export function formatTable(report: Report): string {
   let hasUnstable = false;
 
   for (const combo of report.combos) {
-    const autoSuffix = report.autoScalingProp ? ` (auto: ${report.autoScalingProp})` : "";
-    const scaling = combo.scalingCurve ? combo.scalingCurve.growthClass + autoSuffix : "-";
+    // M61: a scale-probe combo's curve describes N sibling copies of the
+    // whole component, not a real prop — it must never read as "auto:
+    // <prop>", which is the real detected-prop mechanism's label.
+    let scaling = "-";
+    if (combo.scalingCurve) {
+      scaling = combo.scaleProbe !== undefined
+        ? `${combo.scalingCurve.growthClass} (synthetic copies)`
+        : combo.scalingCurve.growthClass +
+          (report.autoScalingProp ? ` (auto: ${report.autoScalingProp})` : "");
+    }
+    const indexLabel = combo.scaleProbe !== undefined
+      ? `×${combo.scaleProbe} copies`
+      : String(combo.comboIndex);
     const tierSuffix = combo.tier ? ` (${combo.tier})` : "";
     const animSuffix = combo.hasAnimation && combo.tier ? " [anim]" : "";
     const verdictStr =
       combo.verdict.toUpperCase() + tierSuffix + animSuffix + renderHealthMarks(combo);
     lines.push(
       padRow([
-        String(combo.comboIndex),
+        indexLabel,
         `${combo.mount.median.toFixed(2)}ms`,
         `${combo.rerender.median.toFixed(2)}ms`,
         `${combo.unmount.median.toFixed(2)}ms`,
@@ -1371,10 +1387,23 @@ export function describeMode(report: Report): string {
       return "Mode: prop matrix";
   }
 
-  const measured = report.combos.length;
+  // M61: the sibling-copies scale probe is not a prop combo — counting it in
+  // "measured" without a matching "generated" is exactly the contradiction
+  // dogfooding found ("12 measured of 8 generated").
+  const propCombos = report.combos.filter((c) => c.scaleProbe === undefined);
+  const scaleProbes = report.combos.length - propCombos.length;
+  const measured = propCombos.length;
+  const probeSuffix = scaleProbes > 0
+    ? `, +${scaleProbes} scale probe${scaleProbes === 1 ? "" : "s"}`
+    : "";
+
+  if (measured === 0 && scaleProbes > 0) {
+    return `Mode: scale probe (${scaleProbes} point${scaleProbes === 1 ? "" : "s"}, no prop combos)`;
+  }
+
   const capNote = report.warnings?.find((w) => w.includes("prop combos"));
   const generated = capNote?.match(/of (\d+) prop combos/)?.[1];
   return generated
-    ? `Mode: prop combos (${measured} measured of ${generated} generated)`
-    : `Mode: prop combos (${measured} measured)`;
+    ? `Mode: prop combos (${measured} measured of ${generated} generated${probeSuffix})`
+    : `Mode: prop combos (${measured} measured${probeSuffix})`;
 }

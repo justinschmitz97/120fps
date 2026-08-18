@@ -72,7 +72,7 @@ describe("analyze e2e", () => {
       thresholds: { mountMs: 0.001, interactionMs: 0.001, relativeMount: 0.001 },
     });
     expect(report.pass).toBe(false);
-    const measured = report.combos.filter((c) => !("__120fps_scaleN" in c.props));
+    const measured = report.combos.filter((c) => c.scaleProbe === undefined);
     expect(measured.length).toBeGreaterThan(0);
     expect(measured.every((c) => c.verdict === "fail")).toBe(true);
   }, 120000);

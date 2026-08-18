@@ -49,6 +49,7 @@ import {
   generatePropMatrix,
   shouldAutoActivateMatrix,
   selectRepresentativeCombos,
+  selectMatrixCombos,
   countCombinationSpace,
   countDeltaPairSpace,
   DEFAULT_MEASURED_COMBOS,
@@ -159,6 +160,37 @@ export {
 export const COMBO_CAP_WARNING = (kept: number, total: number): string =>
   `measured ${kept} of ${total} prop combos; ${total - kept} were dropped to bound the run. ` +
   `Raise it with --max-combos <n>.`;
+
+export const MATRIX_CELL_CAP_WARNING = (kept: number, total: number): string =>
+  `measured ${kept} of ${total} matrix cells; ${total - kept} were dropped to bound the run. ` +
+  `Raise it with --max-combos <n>.`;
+
+// M61: the most lenient tier budget the tool has. A component whose single
+// instance already costs this much will not cost less per copy at N=5/20/50 —
+// quadrupling the instance count is exactly the shape of dogfooding's 46.9s
+// single-probe reproduction.
+export const SCALE_PROBE_GATE_MS = TIER_BUDGETS.T4.mountMs;
+
+export const SCALE_PROBE_COST_WARNING = (
+  probeN: number,
+  probeMs: number,
+  skipped: number[],
+): string =>
+  `scale probe: N=${probeN} already mounts at ${probeMs.toFixed(1)}ms (over the ${SCALE_PROBE_GATE_MS}ms ` +
+  `T4 budget) — skipped N=${skipped.join(", ")} to avoid a multi-minute probe. Raise the ceiling with --scale.`;
+
+// Pure decision over an already-measured probe cost — no browser involved, so
+// it is unit-testable independent of the measurement call that produces
+// `probeMs`.
+export function boundScalePointsByProbeCost(
+  scalePoints: number[],
+  probeMs: number,
+  gateMs: number = SCALE_PROBE_GATE_MS,
+): { points: number[]; skipped: number[] } {
+  if (scalePoints.length <= 1 || probeMs <= gateMs) return { points: scalePoints, skipped: [] };
+  const probeN = Math.min(...scalePoints);
+  return { points: [probeN], skipped: scalePoints.filter((n) => n !== probeN) };
+}
 
 // The raw cartesian prop space can be astronomically large (many multi-valued
 // props); display, not arithmetic, is what needs the cap.
@@ -379,9 +411,19 @@ export function buildReport(input: BuildReportInput): Report {
       ? buildTimingWithCV(rerenderResult.stable.samples)
       : buildTimingWithCV([0]);
 
+    // M61: `__120fps_scaleN` is the harness trigger key for the sibling-copies
+    // probe, not a real prop — it never belongs in the report's `props`.
+    // `scaleProbe` is where that identity now lives instead.
+    const rawProps = mount.props as Record<string, unknown>;
+    const scaleProbeValue = rawProps["__120fps_scaleN"];
+    const isScaleProbe = typeof scaleProbeValue === "number";
+    const props = isScaleProbe
+      ? Object.fromEntries(Object.entries(rawProps).filter(([k]) => k !== "__120fps_scaleN"))
+      : rawProps;
+
     const combo: ComboReport = {
       comboIndex: mount.comboIndex,
-      props: mount.props as Record<string, unknown>,
+      props,
       mount: buildTimingWithCV(mount.mount.samples),
       unmount: buildTimingWithCV(mount.unmount.samples),
       rerender: rerenderTiming,
@@ -392,6 +434,7 @@ export function buildReport(input: BuildReportInput): Report {
       relativeMount,
       verdict: "pass",
       measuredState: mount.measuredState ?? "settled",
+      ...(isScaleProbe ? { scaleProbe: scaleProbeValue as number } : {}),
     };
 
     if (rerenderResult?.change) {
@@ -423,17 +466,21 @@ export function buildReport(input: BuildReportInput): Report {
     combos.push(combo);
   }
 
-  const distinctDomSizes = new Set(combos.map((c) => c.domNodeCount));
-  if (distinctDomSizes.size >= 2) {
-    const points = combos.map((c) => ({ n: c.domNodeCount, metric: c.mount.median }));
+  // M61: domNodeCount growth used to be fitted across every combo — mixing
+  // the sibling-copies probe's real N-copies growth with whatever incidental
+  // DOM differences unrelated real prop combos happened to have, then
+  // stamping the result onto all of them (the GameControls fabrication:
+  // r²=0.9999 "linear" scaling on two function props that never scaled
+  // anything). The probe combos carry their own true independent variable
+  // (scaleProbe), and only they receive the fit.
+  const scaleProbeCombos = combos.filter((c) => c.scaleProbe !== undefined);
+  if (scaleProbeCombos.length >= 2) {
+    const points = scaleProbeCombos.map((c) => ({ n: c.scaleProbe!, metric: c.mount.median }));
     const curve = computeScalingCurve(points);
-    for (const combo of combos) {
-      combo.scalingCurve = curve;
-    }
-
-    const rerenderPoints = combos.map((c) => ({ n: c.domNodeCount, metric: c.rerender.median }));
+    const rerenderPoints = scaleProbeCombos.map((c) => ({ n: c.scaleProbe!, metric: c.rerender.median }));
     const rerenderCurve = computeScalingCurve(rerenderPoints);
-    for (const combo of combos) {
+    for (const combo of scaleProbeCombos) {
+      combo.scalingCurve = curve;
       combo.rerenderScalingCurve = rerenderCurve;
     }
   }
@@ -937,7 +984,7 @@ async function runCurveMode(ctx: ModeContext, match: ScalingPropMatch): Promise<
 async function runMatrixMode(ctx: ModeContext, matrixAutoActivated: boolean): Promise<Report> {
   const { options, harness, samples, cpuThrottle, warmupRuns, pool, onWarning, runWarnings, machine, calibration, thresholds, explicitThresholds } = ctx;
   const schemas = await ctx.getSchemas();
-  const matrixCombos = generatePropMatrix(schemas);
+  let matrixCombos = generatePropMatrix(schemas);
   const matrixAxes: MatrixAxis[] = schemas
     .filter((s) => s.kind === "boolean" || (s.kind === "union" && s.values.length >= 1 && s.values.length <= 8))
     .map((s) => ({
@@ -950,6 +997,17 @@ async function runMatrixMode(ctx: ModeContext, matrixAutoActivated: boolean): Pr
   const fullMatrixCells = matrixAxes.reduce((acc, a) => acc * a.values.length, 1);
   if (fullMatrixCells > matrixCombos.length) {
     runWarnings.push(MATRIX_PAIRWISE_COVER_WARNING(matrixCombos.length, fullMatrixCells));
+  }
+
+  // M61: --max-combos previously did nothing once matrix mode auto-activated
+  // — a 4-prop badge ran all 64 cells regardless of the flag or the implicit
+  // default. The same cap (default 8) now bounds cells measured, keeping the
+  // base cell and single-axis deviations first.
+  const matrixComboCap = options.maxCombos ?? DEFAULT_MEASURED_COMBOS;
+  if (matrixCombos.length > matrixComboCap) {
+    const keptIndices = selectMatrixCombos(matrixCombos, matrixAxes, matrixComboCap);
+    runWarnings.push(MATRIX_CELL_CAP_WARNING(keptIndices.length, matrixCombos.length));
+    matrixCombos = keptIndices.map((i) => matrixCombos[i]);
   }
 
   // M54: this path returns before applyBaselineWorkflow, so every baseline
@@ -1214,16 +1272,21 @@ async function applyAutoScalingCurves(
     metric: r.stable.median,
   }));
 
+  // M61: the sibling-copies probe already carries its own scale-probe curve
+  // (buildReport) — overwriting it here with the real detected-prop curve
+  // would silently replace a synthetic-copies fact with an unrelated one
+  // under the same field. Only combos that are not scale probes take this
+  // curve.
   if (mountPoints.length >= 2) {
     const curve = computeScalingCurve(mountPoints);
     for (const combo of report.combos) {
-      combo.scalingCurve = curve;
+      if (combo.scaleProbe === undefined) combo.scalingCurve = curve;
     }
   }
   if (rerenderPoints.length >= 2) {
     const rerenderCurve = computeScalingCurve(rerenderPoints);
     for (const combo of report.combos) {
-      combo.rerenderScalingCurve = rerenderCurve;
+      if (combo.scaleProbe === undefined) combo.rerenderScalingCurve = rerenderCurve;
     }
   }
 
@@ -1233,6 +1296,36 @@ async function applyAutoScalingCurves(
 
   report.autoScalingProp = match.schema.name;
   report.autoScalingReason = match.reason;
+}
+
+// M61: measures the cheapest requested scale point alone (3 samples — a
+// go/no-go check, not a reported number) and applies the pure gate to decide
+// whether the rest are worth measuring. The cheapest point is remeasured
+// inside the main batch rather than spliced in: measureMount assigns
+// comboIndex by array position, and every downstream pass (measureRerender,
+// explore, runReactAnalysis) relies on that, so this keeps one array owned
+// end to end instead of reshuffling a spliced result into it. The remeasure
+// costs one extra small mount, bounded by construction since it is the
+// cheapest of the requested points.
+async function gateScalePoints(
+  ctx: Pick<ModeContext, "harness" | "cpuThrottle" | "warmupRuns" | "pool" | "onWarning" | "samples">,
+  scalePoints: number[],
+): Promise<{ points: number[]; warning?: string }> {
+  if (scalePoints.length <= 1) return { points: scalePoints };
+  const { harness, cpuThrottle, warmupRuns, pool, onWarning, samples } = ctx;
+  const probeN = Math.min(...scalePoints);
+  const [probe] = await measureMount(harness, {
+    samples: Math.min(3, samples),
+    cpuThrottle,
+    warmupRuns,
+    combos: [{ __120fps_scaleN: probeN }],
+    pool,
+    onWarning,
+  });
+  if (!probe) return { points: scalePoints };
+  const { points, skipped } = boundScalePointsByProbeCost(scalePoints, probe.mount.median);
+  if (skipped.length === 0) return { points };
+  return { points, warning: SCALE_PROBE_COST_WARNING(probeN, probe.mount.median, skipped) };
 }
 
 // The standard path: stratified prop combos plus scale anchors, mount /
@@ -1246,7 +1339,9 @@ async function runComboMode(ctx: ModeContext, fixtureHasScale: boolean): Promise
   let schemas: PropSchema[] | undefined;
   let zeroPropsExtracted = false;
   if (fixtureHasScale) {
-    combos = scalePoints.map((n) => ({ __120fps_scaleN: n }));
+    const gated = await gateScalePoints(ctx, scalePoints);
+    if (gated.warning) runWarnings.push(gated.warning);
+    combos = gated.points.map((n) => ({ __120fps_scaleN: n }));
   } else if (useFixture || composed) {
     combos = [{}];
   } else {
@@ -1264,7 +1359,9 @@ async function runComboMode(ctx: ModeContext, fixtureHasScale: boolean): Promise
       runWarnings.push(COMBO_CAP_WARNING(kept.length, combos.length));
       combos = kept.map((i) => combos[i]);
     }
-    const scaleCombos = scalePoints.map((n) => ({ __120fps_scaleN: n }));
+    const gated = await gateScalePoints(ctx, scalePoints);
+    if (gated.warning) runWarnings.push(gated.warning);
+    const scaleCombos = gated.points.map((n) => ({ __120fps_scaleN: n }));
     combos = [...combos, ...scaleCombos];
   }
 

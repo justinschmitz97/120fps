@@ -593,8 +593,12 @@ describe("M64.8 CLI documentation", () => {
     expect(help).toContain(".<stem>.json");
   });
 
-  it("documents that --max-combos does not bound matrix mode", () => {
-    expect(helpText()).toMatch(/--max-combos[\s\S]*matrix/i);
+  // M64 documented the old carve-out ("not bounded by it"); M61 closed it —
+  // --max-combos now bounds matrix cells too, and the help text says so.
+  it("documents that --max-combos bounds matrix mode", () => {
+    const help = helpText();
+    expect(help).toMatch(/--max-combos[\s\S]*matrix/i);
+    expect(help.toLowerCase()).not.toContain("not bounded by it");
   });
 });
 
