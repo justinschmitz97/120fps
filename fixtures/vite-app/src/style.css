@@ -1,0 +1,8 @@
+:root {
+  --fixture-bg: #101014;
+}
+
+body {
+  background: var(--fixture-bg);
+  font-family: system-ui, sans-serif;
+}

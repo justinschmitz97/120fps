@@ -14,6 +14,7 @@ import {
   findWorkspaceRoot,
   isPackageAvailable,
   isPackageDeclared,
+  workspaceLevels,
 } from "./project-model.js";
 
 export { findProjectRoot };
@@ -184,6 +185,8 @@ export interface BuildHarnessOptions {
 }
 
 // Probe order is significant: first hit wins, and detection returns at most one.
+// M71: the create-vite name and the Sass spellings are appended, so every path
+// that already won still wins.
 export const GLOBAL_CSS_CANDIDATES = [
   "app/globals.css",
   "app/global.css",
@@ -193,6 +196,16 @@ export const GLOBAL_CSS_CANDIDATES = [
   "styles/globals.css",
   "src/index.css",
   "src/global.css",
+  "src/style.css",
+  "app/globals.scss",
+  "app/global.scss",
+  "src/app/globals.scss",
+  "src/app/global.scss",
+  "src/styles/globals.scss",
+  "styles/globals.scss",
+  "src/index.scss",
+  "src/global.scss",
+  "src/style.scss",
 ];
 
 export function detectGlobalCss(projectRoot: string): string | undefined {
@@ -205,6 +218,267 @@ export function detectGlobalCss(projectRoot: string): string | undefined {
     }
   }
   return undefined;
+}
+
+export const STYLESHEET_EXTENSIONS = [".css", ".scss", ".sass", ".less", ".styl"];
+
+// Vite fails the whole entry module with "Preprocessor dependency … not found"
+// when the compiler is absent, which costs the run rather than the stylesheet.
+const PREPROCESSOR_PACKAGES: Record<string, string[]> = {
+  ".scss": ["sass", "sass-embedded"],
+  ".sass": ["sass", "sass-embedded"],
+  ".less": ["less"],
+  ".styl": ["stylus"],
+};
+
+function isStylesheet(file: string): boolean {
+  return STYLESHEET_EXTENSIONS.includes(path.extname(file).toLowerCase());
+}
+
+// A CSS module exports class names; injecting one globally measures a stylesheet
+// the application never loads globally.
+function isCssModule(file: string): boolean {
+  return /\.module\.[^.]+$/i.test(path.basename(file));
+}
+
+function preprocessorFor(file: string, memberRoot: string, workspaceRoot: string): string | undefined {
+  const packages = PREPROCESSOR_PACKAGES[path.extname(file).toLowerCase()];
+  if (!packages) return undefined;
+  if (packages.some((pkg) => isPackageAvailable(pkg, memberRoot, workspaceRoot))) return undefined;
+  return packages[0];
+}
+
+export function CSS_IMPORT_SKIPPED_WARNING(specifiers: string[]): string {
+  return (
+    `the project entry imports ${specifiers.join(", ")}, which resolved to no file the harness can serve; ` +
+    "those stylesheets are not injected and the component may render unstyled"
+  );
+}
+
+export function CSS_PREPROCESSOR_MISSING_WARNING(file: string, pkg: string): string {
+  return (
+    `${file} needs ${pkg}, which this project does not have installed; the stylesheet is not injected ` +
+    "because Vite would fail the harness entry module instead"
+  );
+}
+
+export function CSS_FALLBACK_WARNING(relative: string): string {
+  return (
+    `no entry stylesheet import and no conventional global stylesheet were found, so ${relative} was ` +
+    "injected because it is the largest stylesheet in the project; pass --css to name the right one"
+  );
+}
+
+export function CSS_DROPPED_WARNING(file: string): string {
+  return (
+    `auto-detected stylesheet ${file} does not exist and was dropped; an unresolvable import would have ` +
+    "failed the whole harness entry module"
+  );
+}
+
+// M71: only --css validated its input, and a specifier that resolves to nothing
+// takes the entry module down with it. Every auto-detected path passes here.
+export function validateCssFiles(files: string[], warningsOut?: string[]): string[] {
+  const kept: string[] = [];
+  for (const file of files) {
+    if (isFile(file)) kept.push(file);
+    else warningsOut?.push(CSS_DROPPED_WARNING(file));
+  }
+  return kept;
+}
+
+const NEXT_ENTRY_STEMS = ["app/layout", "src/app/layout", "pages/_app", "src/pages/_app"];
+const ENTRY_EXTENSIONS = [".tsx", ".jsx", ".ts", ".js"];
+const MODULE_SCRIPT_TAG = /<script\b[^>]*>/gi;
+
+// The module the project's own toolchain starts from: what index.html loads, or
+// the module Next.js renders every route through.
+export function findProjectEntry(projectRoot: string): string | undefined {
+  const html = path.join(projectRoot, "index.html");
+  let markup: string | undefined;
+  try {
+    markup = fs.readFileSync(html, "utf-8");
+  } catch {
+    markup = undefined;
+  }
+  if (markup) {
+    MODULE_SCRIPT_TAG.lastIndex = 0;
+    for (const tag of markup.match(MODULE_SCRIPT_TAG) ?? []) {
+      if (!/\btype\s*=\s*["']module["']/i.test(tag)) continue;
+      const src = /\bsrc\s*=\s*["']([^"']+)["']/i.exec(tag)?.[1];
+      if (!src || /^[a-z][a-z0-9+.-]*:/i.test(src)) continue;
+      const resolved = src.startsWith("/")
+        ? path.join(projectRoot, src)
+        : path.resolve(path.dirname(html), src);
+      if (isFile(resolved)) return resolved;
+    }
+  }
+  for (const stem of NEXT_ENTRY_STEMS) {
+    for (const extension of ENTRY_EXTENSIONS) {
+      const candidate = path.join(projectRoot, stem + extension);
+      if (isFile(candidate)) return candidate;
+    }
+  }
+  return undefined;
+}
+
+function resolveStylesheetSpecifier(
+  specifier: string,
+  entryFile: string,
+  projectRoot: string,
+  aliases: Array<{ find: RegExp; replacement: string }>,
+): string | undefined {
+  if (specifier.startsWith(".")) {
+    const resolved = path.resolve(path.dirname(entryFile), specifier);
+    return isFile(resolved) ? resolved : undefined;
+  }
+  if (specifier.startsWith("/")) {
+    const resolved = path.join(projectRoot, specifier);
+    return isFile(resolved) ? resolved : undefined;
+  }
+  for (const { find, replacement } of aliases) {
+    if (!find.test(specifier)) continue;
+    const target = path.resolve(specifier.replace(find, replacement));
+    if (isFile(target)) return target;
+  }
+  return undefined;
+}
+
+// The entry's own side-effect stylesheet imports, in import order. A bound
+// import (`import styles from "./x.module.css"`) is a CSS module read, not a
+// global stylesheet, and a deeper walk is out of scope: the file the project
+// starts from is where a global stylesheet is loaded.
+export function entryStylesheetImports(
+  entryFile: string,
+  projectRoot: string,
+  aliases: Array<{ find: RegExp; replacement: string }>,
+  warningsOut?: string[],
+  workspaceRoot: string = findWorkspaceRoot(projectRoot),
+): string[] {
+  let sourceText: string;
+  try {
+    sourceText = fs.readFileSync(entryFile, "utf-8");
+  } catch {
+    return [];
+  }
+  const kind = /\.[jt]sx$/i.test(entryFile) ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
+  const source = ts.createSourceFile(entryFile, sourceText, ts.ScriptTarget.Latest, false, kind);
+
+  const files: string[] = [];
+  const unresolved: string[] = [];
+  for (const statement of source.statements) {
+    if (!ts.isImportDeclaration(statement) || statement.importClause) continue;
+    if (!ts.isStringLiteral(statement.moduleSpecifier)) continue;
+    const specifier = statement.moduleSpecifier.text.split("?")[0];
+    if (!specifier || !isStylesheet(specifier) || isCssModule(specifier)) continue;
+    const resolved = resolveStylesheetSpecifier(specifier, entryFile, projectRoot, aliases);
+    if (!resolved) {
+      unresolved.push(specifier);
+      continue;
+    }
+    const missing = preprocessorFor(resolved, projectRoot, workspaceRoot);
+    if (missing) {
+      warningsOut?.push(CSS_PREPROCESSOR_MISSING_WARNING(resolved, missing));
+      continue;
+    }
+    if (!files.includes(resolved)) files.push(resolved);
+  }
+  if (unresolved.length > 0) warningsOut?.push(CSS_IMPORT_SKIPPED_WARNING(unresolved));
+  return files;
+}
+
+const STYLESHEET_SCAN_SKIP_DIRS = new Set([
+  "node_modules",
+  "dist",
+  "build",
+  "out",
+  "coverage",
+  "public",
+  "storybook-static",
+]);
+const STYLESHEET_SCAN_MAX_DEPTH = 8;
+const STYLESHEET_SCAN_MAX_ENTRIES = 4000;
+
+// Last resort, and bounded: a repository is big and this runs before anything is
+// measured. Ties break on path so one project always yields one answer.
+export function largestStylesheet(projectRoot: string): string | undefined {
+  let best: { file: string; size: number } | undefined;
+  let visited = 0;
+
+  const walk = (dir: string, depth: number): void => {
+    if (depth > STYLESHEET_SCAN_MAX_DEPTH || visited >= STYLESHEET_SCAN_MAX_ENTRIES) return;
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (visited >= STYLESHEET_SCAN_MAX_ENTRIES) return;
+      visited++;
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (entry.name.startsWith(".") || STYLESHEET_SCAN_SKIP_DIRS.has(entry.name)) continue;
+        walk(full, depth + 1);
+        continue;
+      }
+      if (!entry.isFile() || !isStylesheet(entry.name) || isCssModule(entry.name)) continue;
+      let size: number;
+      try {
+        size = fs.statSync(full).size;
+      } catch {
+        continue;
+      }
+      if (!best || size > best.size || (size === best.size && full < best.file)) {
+        best = { file: full, size };
+      }
+    }
+  };
+
+  walk(projectRoot, 0);
+  return best?.file;
+}
+
+export interface CssDiscovery {
+  files: string[];
+  source: "entry" | "candidate" | "fallback" | "none";
+}
+
+// M71: evidence before convention. What the project's own entry imports is what
+// the project loads; a filename list is a guess, and the largest stylesheet in
+// the tree is a guess that says so.
+export function discoverGlobalCss(projectRoot: string, warningsOut?: string[]): CssDiscovery {
+  const workspaceRoot = findWorkspaceRoot(projectRoot);
+
+  const entry = findProjectEntry(projectRoot);
+  if (entry) {
+    const imported = validateCssFiles(
+      entryStylesheetImports(
+        entry,
+        projectRoot,
+        loadTsconfigAliases(projectRoot),
+        warningsOut,
+        workspaceRoot,
+      ),
+      warningsOut,
+    );
+    if (imported.length > 0) return { files: imported, source: "entry" };
+  }
+
+  for (const candidate of GLOBAL_CSS_CANDIDATES) {
+    const full = path.join(projectRoot, candidate);
+    if (!isFile(full)) continue;
+    if (preprocessorFor(full, projectRoot, workspaceRoot)) continue;
+    return { files: [full], source: "candidate" };
+  }
+
+  const largest = largestStylesheet(projectRoot);
+  if (largest && !preprocessorFor(largest, projectRoot, workspaceRoot)) {
+    warningsOut?.push(CSS_FALLBACK_WARNING(path.relative(projectRoot, largest).replace(/\\/g, "/")));
+    return { files: [largest], source: "fallback" };
+  }
+
+  return { files: [], source: "none" };
 }
 
 // Vite's root is projectRoot, so an in-root stylesheet uses the same
@@ -246,6 +520,345 @@ export async function loadTailwindVitePlugin(projectRoot: string): Promise<unkno
     );
     return [];
   }
+}
+
+// M71: styling generated by a build step the harness does not run. Recognized
+// so an unstyled-looking number is explainable; no plugin is ever loaded.
+export const UNSUPPORTED_STYLE_ENGINES = [
+  "unocss",
+  "@unocss/vite",
+  "@linaria/vite",
+  "@linaria/core",
+  "@pandacss/dev",
+];
+
+export function detectUnsupportedStyleEngines(
+  projectRoot: string,
+  workspaceRoot: string = findWorkspaceRoot(projectRoot),
+): string[] {
+  return UNSUPPORTED_STYLE_ENGINES.filter((pkg) =>
+    isPackageAvailable(pkg, projectRoot, workspaceRoot),
+  );
+}
+
+export function UNSUPPORTED_STYLE_ENGINE_WARNING(packages: string[]): string {
+  return (
+    `${packages.join(", ")} generates styles through a build step this harness does not run, so that ` +
+    "styling is not replicated and the component may measure unstyled"
+  );
+}
+
+// postcss-load-config's own search places, minus package.json.
+const POSTCSS_CONFIG_FILES = [
+  "postcss.config.ts",
+  "postcss.config.cts",
+  "postcss.config.mts",
+  "postcss.config.js",
+  "postcss.config.cjs",
+  "postcss.config.mjs",
+  ".postcssrc",
+  ".postcssrc.json",
+  ".postcssrc.yaml",
+  ".postcssrc.yml",
+  ".postcssrc.ts",
+  ".postcssrc.cts",
+  ".postcssrc.mts",
+  ".postcssrc.js",
+  ".postcssrc.cjs",
+  ".postcssrc.mjs",
+];
+
+// Verified against the installed Vite 6.4.2: resolvePostcssConfig searches from
+// its root up to searchForWorkspaceRoot(root) inclusive, and that helper knows
+// only pnpm-workspace.yaml, lerna.json, and a package.json "workspaces" field.
+// A repo whose root carries a lockfile alone stops Vite's walk at the member,
+// so an inherited config is found here and passed in by hand. A member with its
+// own config needs nothing: Vite's first level is already that directory.
+export function findPostcssConfigAbove(
+  memberRoot: string,
+  workspaceRoot: string = findWorkspaceRoot(memberRoot),
+): string | undefined {
+  const hasConfig = (dir: string): boolean =>
+    POSTCSS_CONFIG_FILES.some((name) => isFile(path.join(dir, name)));
+  if (hasConfig(memberRoot)) return undefined;
+  for (const level of workspaceLevels(memberRoot, workspaceRoot).slice(1)) {
+    if (hasConfig(level)) return level;
+  }
+  return undefined;
+}
+
+export interface StyleTooling {
+  tailwind: boolean;
+  unsupportedEngines: string[];
+  postcssConfigDir?: string;
+  warnings: string[];
+}
+
+// M71: the Tailwind plugin generates utility CSS for the classes the measured
+// component uses. Whether a global stylesheet was also found says nothing about
+// whether it is needed, so no stylesheet list reaches this decision.
+export function resolveStyleTooling(
+  projectRoot: string,
+  workspaceRoot: string = findWorkspaceRoot(projectRoot),
+): StyleTooling {
+  const unsupportedEngines = detectUnsupportedStyleEngines(projectRoot, workspaceRoot);
+  const postcssConfigDir = findPostcssConfigAbove(projectRoot, workspaceRoot);
+  return {
+    tailwind: detectTailwindVite(projectRoot),
+    unsupportedEngines,
+    warnings:
+      unsupportedEngines.length > 0 ? [UNSUPPORTED_STYLE_ENGINE_WARNING(unsupportedEngines)] : [],
+    ...(postcssConfigDir ? { postcssConfigDir } : {}),
+  };
+}
+
+// Probe order decides which file answers; `.ts` first matches what a project
+// with two configs lying around is actually built with.
+const VITE_CONFIG_FILES = [
+  "vite.config.ts",
+  "vite.config.mts",
+  "vite.config.cts",
+  "vite.config.js",
+  "vite.config.mjs",
+  "vite.config.cjs",
+];
+
+// Ordered so the warning reads the same however the config file was written.
+const IGNORED_KEY_ORDER = [
+  "a computed config object",
+  "publicDir",
+  "resolve.alias",
+  "css.preprocessorOptions",
+  "plugins",
+];
+
+export interface ViteConfigData {
+  configFile?: string;
+  publicDir?: string;
+  aliases: Array<{ find: RegExp; replacement: string }>;
+  ignoredKeys: string[];
+}
+
+export function VITE_CONFIG_IGNORED_WARNING(configFile: string, keys: string[]): string {
+  const base =
+    `${configFile} declares ${keys.join(", ")}, which the harness read but cannot honor: the project's ` +
+    "Vite config is never executed";
+  return keys.includes("css.preprocessorOptions")
+    ? `${base}; preprocessor globals (additionalData) are not replicated, so Sass or Less variables ` +
+        "injected there are missing"
+    : base;
+}
+
+function literalPropertyName(property: ts.ObjectLiteralElementLike): string | undefined {
+  const name = property.name;
+  if (!name) return undefined;
+  if (ts.isIdentifier(name) || ts.isStringLiteral(name)) return name.text;
+  return undefined;
+}
+
+function stringLiteralValue(node: ts.Expression): string | undefined {
+  if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) return node.text;
+  return undefined;
+}
+
+// The exported config object, through the shapes a config file is written in.
+// Nothing is called and nothing is imported: this is the text of a file the
+// harness must never execute.
+function findViteConfigObject(source: ts.SourceFile): ts.ObjectLiteralExpression | undefined {
+  const unwrap = (node: ts.Expression | undefined, depth = 0): ts.ObjectLiteralExpression | undefined => {
+    if (!node || depth > 4) return undefined;
+    if (ts.isObjectLiteralExpression(node)) return node;
+    if (ts.isParenthesizedExpression(node)) return unwrap(node.expression, depth + 1);
+    if (ts.isAsExpression(node) || ts.isSatisfiesExpression(node)) {
+      return unwrap(node.expression, depth + 1);
+    }
+    if (ts.isCallExpression(node)) return unwrap(node.arguments[0], depth + 1);
+    if (ts.isArrowFunction(node) || ts.isFunctionExpression(node)) {
+      const body = node.body;
+      if (ts.isBlock(body)) {
+        for (const statement of body.statements) {
+          if (ts.isReturnStatement(statement)) return unwrap(statement.expression, depth + 1);
+        }
+        return undefined;
+      }
+      return unwrap(body, depth + 1);
+    }
+    return undefined;
+  };
+
+  for (const statement of source.statements) {
+    if (ts.isExportAssignment(statement) && !statement.isExportEquals) {
+      return unwrap(statement.expression);
+    }
+    if (
+      ts.isExpressionStatement(statement) &&
+      ts.isBinaryExpression(statement.expression) &&
+      statement.expression.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      statement.expression.left.getText(source).replace(/\s/g, "") === "module.exports"
+    ) {
+      return unwrap(statement.expression.right);
+    }
+  }
+  return undefined;
+}
+
+// M71: the config is read as text and parsed as a source file. It is never
+// imported, so its plugins never load into this Vite and the invariant holds.
+export function readViteConfigData(projectRoot: string): ViteConfigData {
+  const data: ViteConfigData = { aliases: [], ignoredKeys: [] };
+
+  let configFile: string | undefined;
+  for (const name of VITE_CONFIG_FILES) {
+    const candidate = path.join(projectRoot, name);
+    if (isFile(candidate)) {
+      configFile = candidate;
+      break;
+    }
+  }
+  if (!configFile) return data;
+  data.configFile = configFile;
+
+  let text: string;
+  try {
+    text = fs.readFileSync(configFile, "utf-8");
+  } catch {
+    return data;
+  }
+
+  const source = ts.createSourceFile(configFile, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const config = findViteConfigObject(source);
+  if (!config) {
+    data.ignoredKeys.push("a computed config object");
+    return data;
+  }
+
+  const configDir = path.dirname(configFile);
+  const ignored = new Set<string>();
+
+  for (const property of config.properties) {
+    if (!ts.isPropertyAssignment(property)) continue;
+    const name = literalPropertyName(property);
+
+    if (name === "publicDir") {
+      const literal = stringLiteralValue(property.initializer);
+      const resolved = literal === undefined ? undefined : path.resolve(configDir, literal);
+      if (resolved && isDirectory(resolved)) data.publicDir = resolved;
+      else ignored.add("publicDir");
+      continue;
+    }
+
+    if (name === "resolve" && ts.isObjectLiteralExpression(property.initializer)) {
+      for (const inner of property.initializer.properties) {
+        if (!ts.isPropertyAssignment(inner) || literalPropertyName(inner) !== "alias") continue;
+        if (!ts.isObjectLiteralExpression(inner.initializer)) {
+          ignored.add("resolve.alias");
+          continue;
+        }
+        for (const entry of inner.initializer.properties) {
+          const find = ts.isPropertyAssignment(entry) ? literalPropertyName(entry) : undefined;
+          const target = ts.isPropertyAssignment(entry)
+            ? stringLiteralValue(entry.initializer)
+            : undefined;
+          if (!find || target === undefined) {
+            ignored.add("resolve.alias");
+            continue;
+          }
+          const replacement = path.resolve(configDir, target);
+          if (!fs.existsSync(replacement)) {
+            ignored.add("resolve.alias");
+            continue;
+          }
+          data.aliases.push({
+            // Vite's object form matches a whole leading segment, the rule
+            // @rollup/plugin-alias applies to a string `find`.
+            find: new RegExp(`^${escapeRegex(find)}(?=/|$)`),
+            replacement: replacement.replace(/\\/g, "/"),
+          });
+        }
+      }
+      continue;
+    }
+
+    if (name === "css" && ts.isObjectLiteralExpression(property.initializer)) {
+      const hasPreprocessor = property.initializer.properties.some(
+        (inner) => literalPropertyName(inner) === "preprocessorOptions",
+      );
+      if (hasPreprocessor) ignored.add("css.preprocessorOptions");
+      continue;
+    }
+
+    if (name === "plugins") {
+      const empty =
+        ts.isArrayLiteralExpression(property.initializer) &&
+        property.initializer.elements.length === 0;
+      if (!empty) ignored.add("plugins");
+    }
+  }
+
+  data.ignoredKeys = IGNORED_KEY_ORDER.filter((key) => ignored.has(key));
+  return data;
+}
+
+export const ENV_DEFINE_PREFIXES = ["NEXT_PUBLIC_", "VITE_"];
+const ENV_FILES = [".env", ".env.local"];
+const ENV_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+// KEY=VALUE only: no interpolation, no export semantics, no dotenv dependency.
+export function parseEnvFile(text: string): Record<string, string> {
+  const values: Record<string, string> = {};
+  for (const rawLine of text.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) continue;
+    const assignment = line.startsWith("export ") ? line.slice(7).trim() : line;
+    const separator = assignment.indexOf("=");
+    if (separator <= 0) continue;
+    const key = assignment.slice(0, separator).trim();
+    if (!ENV_KEY_PATTERN.test(key)) continue;
+    let value = assignment.slice(separator + 1).trim();
+    const quote = value.charAt(0);
+    if (value.length >= 2 && (quote === '"' || quote === "'") && value.endsWith(quote)) {
+      value = value.slice(1, -1);
+    }
+    values[key] = value;
+  }
+  return values;
+}
+
+// Verified against the installed Vite 6.4.2: the vite:define transform returns
+// early for a client environment outside a build, so config defines reach the
+// page through vite/dist/client/env.mjs, which walks each dotted key and assigns
+// it onto globalThis. Without one, `process` is undefined in the page and any
+// `process.env.X` throws. Keys are sorted before serialization, so the bare
+// object is created first and the specific keys are written into it.
+// Only public prefixes are exported: a .env also holds database URLs.
+export function readEnvDefines(
+  memberRoot: string,
+  workspaceRoot: string = findWorkspaceRoot(memberRoot),
+): Record<string, string> {
+  const levels =
+    path.resolve(workspaceRoot) === path.resolve(memberRoot)
+      ? [memberRoot]
+      : [workspaceRoot, memberRoot];
+
+  const values: Record<string, string> = {};
+  for (const level of levels) {
+    for (const name of ENV_FILES) {
+      let text: string;
+      try {
+        text = fs.readFileSync(path.join(level, name), "utf-8");
+      } catch {
+        continue;
+      }
+      Object.assign(values, parseEnvFile(text));
+    }
+  }
+
+  const defines: Record<string, string> = { "process.env": "{}" };
+  for (const [key, value] of Object.entries(values)) {
+    if (!ENV_DEFINE_PREFIXES.some((prefix) => key.startsWith(prefix))) continue;
+    defines[`process.env.${key}`] = JSON.stringify(value);
+  }
+  return defines;
 }
 
 export const REACT_COMPILER_PACKAGE = "babel-plugin-react-compiler";
@@ -783,11 +1396,22 @@ export async function buildAndServe(
   // M69: alias construction and the scan both report what they could not
   // resolve, and both feed the same run warnings.
   const configWarnings: string[] = [];
+  const workspaceRoot = findWorkspaceRoot(projectRoot);
   const tsconfigAliases = loadTsconfigAliases(projectRoot, configWarnings);
   const hasNextJs = !options?.noShims && detectNextJs(projectRoot);
   const shimAliases = buildShimAliases(hasNextJs);
+  // M71: what the project's own vite.config says, read as text. Its aliases sit
+  // below the tsconfig paths, which is the precedence a TypeScript project
+  // already assumes, and above the shims, which answer for one module each.
+  const viteConfig = readViteConfigData(projectRoot);
+  if (viteConfig.configFile && viteConfig.ignoredKeys.length > 0) {
+    configWarnings.push(
+      VITE_CONFIG_IGNORED_WARNING(path.basename(viteConfig.configFile), viteConfig.ignoredKeys),
+    );
+  }
   const alias: Array<{ find: RegExp; replacement: string; isShim?: boolean }> = [
     ...tsconfigAliases,
+    ...viteConfig.aliases,
     ...shimAliases,
   ];
 
@@ -843,12 +1467,14 @@ export async function buildAndServe(
     readDepCacheMetadata(projectRoot),
   );
 
-  // PostCSS needs no wiring: Vite loads postcss.config.* from its own root,
-  // which is already projectRoot. Only the plugin path has to be loaded by hand.
-  const plugins: unknown[] =
-    cssFiles.length > 0 && detectTailwindVite(projectRoot)
-      ? await loadTailwindVitePlugin(projectRoot)
-      : [];
+  // M71: the Tailwind plugin is decided by the project's dependency alone. A
+  // component using utility classes needs it whether or not a global stylesheet
+  // was found, and the styling engines nothing here can replicate say so once.
+  const styleTooling = resolveStyleTooling(projectRoot, workspaceRoot);
+  configWarnings.push(...styleTooling.warnings);
+  const plugins: unknown[] = styleTooling.tailwind
+    ? await loadTailwindVitePlugin(projectRoot)
+    : [];
   // Appended, never substituted: the Tailwind entries above must survive.
   if (reactCompiler.active) {
     plugins.push(...(await loadReactCompilerPlugin(reactCompiler.pluginPath!)));
@@ -871,8 +1497,12 @@ export async function buildAndServe(
   // Vite's defaults everywhere they already worked.
   // Vite's own default is the one root it searches for; widening never narrows
   // it, so its answer joins the list whenever the list exists at all.
-  const aliasAllow = fsAllowDirs(projectRoot, findWorkspaceRoot(projectRoot), alias);
+  const aliasAllow = fsAllowDirs(projectRoot, workspaceRoot, alias);
   const fsAllow = aliasAllow && [...new Set([...aliasAllow, searchForWorkspaceRoot(projectRoot)])];
+
+  // M71: without these the page has no `process` at all, and a component
+  // reading process.env throws before it renders.
+  const define = readEnvDefines(projectRoot, workspaceRoot);
 
   const bootServer = async (): Promise<ViteDevServer> => {
     const created = await createServer({
@@ -884,6 +1514,16 @@ export async function buildAndServe(
       configFile: false,
       logLevel: "silent",
       plugins: plugins as never,
+      define,
+      // The project's own static directory, recovered from the config text: its
+      // fonts 404 otherwise and every text metric becomes a fallback-font one.
+      ...(viteConfig.publicDir ? { publicDir: viteConfig.publicDir } : {}),
+      // Vite searches from its root up to its own idea of the workspace root,
+      // which a lockfile-only monorepo root does not satisfy; naming the
+      // directory is a no-op wherever its own walk already reaches.
+      ...(styleTooling.postcssConfigDir
+        ? { css: { postcss: styleTooling.postcssConfigDir } }
+        : {}),
       server: {
         port: 0,
         strictPort: false,
@@ -1074,6 +1714,14 @@ const EXTENSIONS = [...SOURCE_EXTENSIONS, ".json"];
 function isFile(candidate: string): boolean {
   try {
     return fs.statSync(candidate).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function isDirectory(candidate: string): boolean {
+  try {
+    return fs.statSync(candidate).isDirectory();
   } catch {
     return false;
   }

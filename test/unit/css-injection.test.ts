@@ -86,6 +86,9 @@ const TREE: CompositionTree = {
 // --- C1 resolution: detectGlobalCss ---
 
 describe("detectGlobalCss", () => {
+  // M71 appended the create-vite name and the Sass spellings; the entry-graph
+  // layer that now runs before this one lives in
+  // test/unit/global-stylesheet-fallbacks.test.ts.
   it("declares the probe order from the spec", () => {
     expect(GLOBAL_CSS_CANDIDATES).toEqual([
       "app/globals.css",
@@ -96,6 +99,16 @@ describe("detectGlobalCss", () => {
       "styles/globals.css",
       "src/index.css",
       "src/global.css",
+      "src/style.css",
+      "app/globals.scss",
+      "app/global.scss",
+      "src/app/globals.scss",
+      "src/app/global.scss",
+      "src/styles/globals.scss",
+      "styles/globals.scss",
+      "src/index.scss",
+      "src/global.scss",
+      "src/style.scss",
     ]);
   });
 

@@ -1,7 +1,7 @@
 import os from "node:os";
 import fs from "node:fs";
 import path from "node:path";
-import { buildAndServe, detectComponentExport, detectProjectTransforms, detectGlobalCss, detectScaleExport, detectWrapper, findProjectRoot, resolveReactCompilerState, type HarnessResult } from "./harness.js";
+import { buildAndServe, detectComponentExport, detectProjectTransforms, discoverGlobalCss, detectScaleExport, detectWrapper, findProjectRoot, resolveReactCompilerState, type HarnessResult } from "./harness.js";
 import {
   attachPageErrorCapture,
   enrichTimeoutError,
@@ -2017,7 +2017,9 @@ export async function analyze(
     frameworkWarnings.push(w),
   );
   const { wrapPath, wrapAutoDetected } = resolveWrapPath(options, projectRoot, framework);
-  const resolvedCss = resolveCssFiles(options, projectRoot);
+  // M71: what discovery had to guess at, folded into the run's warnings below.
+  const cssWarnings: string[] = [];
+  const resolvedCss = resolveCssFiles(options, projectRoot, cssWarnings);
   const cssReport: CssReport | undefined =
     resolvedCss.files.length > 0
       ? {
@@ -2035,7 +2037,7 @@ export async function analyze(
   // M48: kept outside the try so a failure on the way out can still name them.
   let transformHits: import("./preflight.js").PreflightHit[] = [];
   let activeTransforms: string[] | undefined;
-  const runWarnings: string[] = [...frameworkWarnings];
+  const runWarnings: string[] = [...frameworkWarnings, ...cssWarnings];
   // M46: counted before dedup: one surviving reload is a noise signal, and the
   // warning list deliberately shows it once however often it happened.
   let contextRetries = 0;
@@ -2442,11 +2444,13 @@ export const CURVE_RENDER_ERROR_WARNING = (n: number, messages: string[]): strin
   `broken render: ${messages.join("; ")}`;
 
 // --no-css wins over an explicit --css, matching --no-wrap/--wrap. Explicit
-// paths resolve against process.cwd() and suppress detection; detection returns
-// at most one file.
+// paths resolve against process.cwd() and suppress detection. M71: detection
+// follows the project's own entry imports first and can return several files,
+// in import order; whatever it had to guess at travels in `warningsOut`.
 export function resolveCssFiles(
   options: Pick<AnalyzeOptions, "cssFiles" | "noCss">,
   projectRoot: string,
+  warningsOut?: string[],
 ): { files: string[]; autoDetected: boolean } {
   if (options.noCss) return { files: [], autoDetected: false };
 
@@ -2466,8 +2470,10 @@ export function resolveCssFiles(
     return { files, autoDetected: false };
   }
 
-  const detected = detectGlobalCss(projectRoot);
-  return detected ? { files: [detected], autoDetected: true } : { files: [], autoDetected: false };
+  const discovered = discoverGlobalCss(projectRoot, warningsOut);
+  return discovered.files.length > 0
+    ? { files: discovered.files, autoDetected: true }
+    : { files: [], autoDetected: false };
 }
 
 // --no-wrap wins over an explicit --wrap, matching --no-isolate/--isolate.
