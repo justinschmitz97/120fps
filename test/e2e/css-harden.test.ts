@@ -128,6 +128,19 @@ describe("H10: font settle timeout", () => {
 // H12: @tailwindcss/vite present in the project's own node_modules,
 // alongside a postcss.config.* in the same project (open question 3)
 describe("H12: @tailwindcss/vite plugin path", () => {
+  // M73: buildAndServe refuses a React project whose react-dom has no client
+  // entry, so a fabricated project booting a real server owns a resolvable one.
+  function installReactDom(projectRoot: string): void {
+    const pkgDir = path.join(projectRoot, "node_modules", "react-dom");
+    fs.mkdirSync(pkgDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(pkgDir, "package.json"),
+      JSON.stringify({ name: "react-dom", version: "19.0.0", main: "index.js" }),
+    );
+    fs.writeFileSync(path.join(pkgDir, "index.js"), "module.exports = {};");
+    fs.writeFileSync(path.join(pkgDir, "client.js"), "module.exports = {};");
+  }
+
   it("loads the plugin from the project and still runs the project's PostCSS config", async () => {
     const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "120fps-twvite-"));
     const vitePluginMarker = path.join(projectRoot, "vite-plugin-ran.txt");
@@ -158,6 +171,7 @@ describe("H12: @tailwindcss/vite plugin path", () => {
     fs.writeFileSync(cssPath, ".x{color:red}");
     const componentPath = path.join(projectRoot, "Comp.tsx");
     fs.writeFileSync(componentPath, "export function Comp() { return null; }\n");
+    installReactDom(projectRoot);
 
     const harness = await buildAndServe(componentPath, { cssFiles: [cssPath] });
     try {
@@ -191,6 +205,7 @@ describe("H12: @tailwindcss/vite plugin path", () => {
     fs.writeFileSync(cssPath, ".x{color:red}");
     const componentPath = path.join(projectRoot, "Comp.tsx");
     fs.writeFileSync(componentPath, "export function Comp() { return null; }\n");
+    installReactDom(projectRoot);
 
     const written: string[] = [];
     const original = process.stderr.write.bind(process.stderr);
