@@ -29,10 +29,18 @@ A portability audit found three path-handling defects, all code-verified:
   `packages/ui/*.tsx`, `**/*.tsx`) against files returned by `PathReader.walk`
   whether `walk` returns paths relative to the working directory or absolute
   filesystem paths (`nodePathReader`'s production shape, via `path.resolve` at
-  `src/cli.ts:1171` and `path.join` at `src/cli.ts:1162`).
-- The compiled pattern (`globToRegExp`, `src/cli.ts:1075-1093`) stays anchored
+  `src/cli.ts:1207` and `path.join` at `src/cli.ts:1198`).
+- The compiled pattern (`globToRegExp`, `src/cli.ts:1101-1119`) stays anchored
   (`^...$`); the walked file's path is normalized against the pattern's frame of
   reference before the test, not the other way around.
+- **Relative pattern** (`src/**/*.tsx`): the walked file is relativized to
+  `process.cwd()` before the test, since the pattern is written against cwd.
+- **Absolute pattern** (`C:/repo/src/**/*.tsx`, `/repo/src/**/*.tsx`): the
+  pattern is already anchored to the same frame `walk` returns, so it MUST be
+  tested against the walked file's posix-normalized absolute form instead —
+  relativizing it to cwd would never match. Absoluteness is decided by
+  `path.isAbsolute` on the posix-normalized pattern (`src/cli.ts:1148`), which
+  covers both a drive-letter prefix and a leading `/`.
 - Windows-style backslash separators in both the pattern and the walked path
   MUST normalize to `/` before matching (existing `.replace(/\\/g, "/")`
   behavior, preserved).
@@ -63,19 +71,26 @@ A portability audit found three path-handling defects, all code-verified:
 
 ## Design
 
-**Glob matching moves to relative-path comparison.** `globRoot` already
-computes the literal, non-wildcard prefix of a pattern (`src` for
+**Glob matching branches on whether the pattern itself is absolute.** `globRoot`
+already computes the literal, non-wildcard prefix of a pattern (`src` for
 `src/**/*.tsx`, `.` for `**/*.tsx`); `walk(globRoot(pattern))` is called with
 that prefix. The regex, however, is anchored to match the pattern text
 verbatim from position 0, which assumes the tested string starts the same way
 the pattern does. `nodePathReader().walk` resolves its root with `path.resolve`
 before recursing, so every returned path is absolute — it does not start with
-`src/`, it starts with the OS drive/root. Making the walked path relative to
-`process.cwd()` before testing restores the assumption the regex depends on,
-for both the production reader (absolute paths in) and the test double already
-in `test/unit/cli-path-resolution.test.ts` (relative paths in, where
-`path.relative(cwd, relativePath)` is a no-op because Node resolves a relative
-second argument against cwd first).
+`src/`, it starts with the OS drive/root.
+
+For a relative pattern this breaks the anchor, so the walked path is made
+relative to `process.cwd()` before testing — a no-op for the relative-path
+test double already in `test/unit/cli-path-resolution.test.ts`, since
+`path.relative(cwd, relativePath)` resolves a relative second argument against
+cwd first. But a pattern the user typed as absolute is already in the same
+frame `walk` returns; relativizing it to cwd produces something like
+`..\..\win-fixture\src\...`, which the pattern's own absolute anchor can never
+match — the regression an adversarial review caught. `patternIsAbsolute` (via
+`path.isAbsolute` on the posix-normalized pattern) picks the frame per call:
+absolute patterns compare against the walked file's own posix-normalized form,
+relative patterns compare against the cwd-relative form.
 
 **Case-fold only the collision key.** `resolveReportPaths` already dedupes
 identical basenames case-sensitively; folding the `Map` key to lowercase while

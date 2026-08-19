@@ -1138,14 +1138,19 @@ export function expandComponentPaths(
 
     if (arg.includes("*")) {
       const re = globToRegExp(arg);
+      // An absolute pattern (`C:/repo/src/**/*.tsx`, `/repo/src/**/*.tsx`) is
+      // already anchored to the same frame nodePathReader().walk returns
+      // (path.resolve at cli.ts:1207), so it must be tested against the
+      // walked file's absolute form. A relative pattern (`src/**/*.tsx`) is
+      // written against cwd, so the walked file is relativized to cwd first —
+      // a no-op for the relative-path test double, since path.relative
+      // resolves a relative `to` against cwd too.
+      const patternIsAbsolute = path.isAbsolute(arg.replace(/\\/g, "/"));
       for (const file of reader.walk(globRoot(arg))) {
-        // The pattern is written relative to cwd (`src/**/*.tsx`), but
-        // nodePathReader().walk returns absolute paths (path.resolve at
-        // cli.ts:1171). Relativizing against cwd restores the frame the regex
-        // was anchored against; for the relative-path test double this is a
-        // no-op, since path.relative resolves a relative `to` against cwd too.
-        const rel = path.relative(process.cwd(), file).replace(/\\/g, "/");
-        if (re.test(rel) && isComponentFile(rel)) matches.push(file);
+        const target = patternIsAbsolute
+          ? file.replace(/\\/g, "/")
+          : path.relative(process.cwd(), file).replace(/\\/g, "/");
+        if (re.test(target) && isComponentFile(target)) matches.push(file);
       }
     } else if (reader.exists(arg) && reader.isDirectory(arg)) {
       for (const file of reader.walk(arg)) {

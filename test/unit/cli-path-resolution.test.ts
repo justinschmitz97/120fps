@@ -191,6 +191,64 @@ describe("path expansion against an absolute-path filesystem", () => {
   });
 });
 
+// A pattern typed as an absolute path (`C:/repo/src/**/*.tsx`,
+// `/repo/src/**/*.tsx`) is already anchored to the same frame
+// nodePathReader().walk returns, so relativizing the walked path to cwd (the
+// M67 fix above) makes it never match. This reader returns exactly the
+// absolute paths it is given, filtered on a posix-normalized prefix, so the
+// test is independent of how the host platform's own path.resolve behaves.
+function fixedFilesReader(files: string[]): PathReader {
+  return {
+    exists: () => false,
+    isDirectory: () => false,
+    walk: (root) => {
+      const rootPosix = root.replace(/\\/g, "/");
+      const prefix = rootPosix.endsWith("/") ? rootPosix : `${rootPosix}/`;
+      return files.filter((f) => `${f.replace(/\\/g, "/")}/`.startsWith(prefix));
+    },
+  };
+}
+
+describe("path expansion for an absolute glob pattern", () => {
+  it("matches a Windows-style absolute glob (drive letter, built via path.resolve)", () => {
+    const files = [
+      path.resolve("C:/win-fixture/src", "components/Button.tsx"),
+      path.resolve("C:/win-fixture/src", "main.tsx"),
+      path.resolve("C:/win-fixture/src", "components/Button.test.tsx"),
+    ];
+    const result = expandComponentPaths(
+      ["C:/win-fixture/src/**/*.tsx"],
+      fixedFilesReader(files),
+    );
+    expect(result.error).toBeUndefined();
+    expect(result.paths.slice().sort()).toEqual(
+      [
+        path.resolve("C:/win-fixture/src", "components/Button.tsx"),
+        path.resolve("C:/win-fixture/src", "main.tsx"),
+      ].sort(),
+    );
+  });
+
+  it("matches a POSIX-style absolute glob (built via path.posix.resolve)", () => {
+    const files = [
+      path.posix.resolve("/posix-fixture/src/components/Button.tsx"),
+      path.posix.resolve("/posix-fixture/src/main.tsx"),
+      path.posix.resolve("/posix-fixture/src/components/Button.test.tsx"),
+    ];
+    const result = expandComponentPaths(
+      ["/posix-fixture/src/**/*.tsx"],
+      fixedFilesReader(files),
+    );
+    expect(result.error).toBeUndefined();
+    expect(result.paths.slice().sort()).toEqual(
+      [
+        path.posix.resolve("/posix-fixture/src/components/Button.tsx"),
+        path.posix.resolve("/posix-fixture/src/main.tsx"),
+      ].sort(),
+    );
+  });
+});
+
 import { resolveReportPaths } from "../../src/cli.js";
 
 describe("--json survives expansion into many components", () => {
