@@ -133,6 +133,27 @@ export function linkNodeModules(repoRoot: string, worktree: string, memberRoot: 
   }
 }
 
+// Windows fix: `git worktree remove` and a naive recursive delete both
+// walk into a junction rather than unlinking it, so removing the worktree
+// while linkNodeModules's links are still in place deletes files out of
+// repoRoot's real node_modules -- the one every other process in the repo,
+// including this one, is using. Called before either teardown path, so
+// neither ever sees the link. rmdirSync detaches a Windows junction without
+// touching its target; a POSIX dir symlink is removed with unlinkSync
+// instead, since POSIX rmdir refuses a path that is not itself a directory.
+export function unlinkNodeModules(worktree: string, repoRoot: string, memberRoot: string): void {
+  for (const dir of nodeModulesLinkDirs(repoRoot, memberRoot)) {
+    const target = path.join(worktree, dir, "node_modules");
+    try {
+      if (!fs.lstatSync(target).isSymbolicLink()) continue;
+      if (process.platform === "win32") fs.rmdirSync(target);
+      else fs.unlinkSync(target);
+    } catch {
+      // Already gone, or linkNodeModules itself never created it: nothing to detach.
+    }
+  }
+}
+
 function git(args: string[], cwd: string): string {
   return execFileSync("git", args, { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] }).trim();
 }
@@ -320,6 +341,10 @@ export async function compareAgainstRef(
     if (pool) await pool.closeAll();
     if (harnessWorking) await harnessWorking.cleanup();
     if (harnessReference) await harnessReference.cleanup();
+    // Detach linkNodeModules's junction(s) before either teardown path below
+    // walks the worktree tree, or that walk deletes through them into
+    // repoRoot's real node_modules.
+    unlinkNodeModules(dir, repoRoot, projectRoot);
     // Every exit path: a leaked worktree interferes with every other tool in
     // the repo, not just this one.
     try {
