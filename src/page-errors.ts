@@ -81,6 +81,23 @@ export function attachPageErrorCapture(page: Page): PageErrorCapture {
     session.record(msg.text());
     segment.record(msg.text());
   });
+  // A CSS import that 404s, or a preprocessor that answers 500, kills module
+  // evaluation with no exception of its own: the readiness gate just never
+  // resolves. Neither case is proof a render crashed, so neither sets `fatal`,
+  // matching console.error's dev-warning noise.
+  page.on("requestfailed", (request) => {
+    const failure = request.failure();
+    const detail = failure?.errorText ? ` (${failure.errorText})` : "";
+    const message = `request failed: ${request.method()} ${request.url()}${detail}`;
+    session.record(message);
+    segment.record(message);
+  });
+  page.on("response", (response) => {
+    if (response.status() < 400) return;
+    const message = `response ${response.status()}: ${response.request().method()} ${response.url()}`;
+    session.record(message);
+    segment.record(message);
+  });
 
   return {
     get errors(): string[] {

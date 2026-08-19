@@ -137,6 +137,21 @@ function git(args: string[], cwd: string): string {
   return execFileSync("git", args, { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] }).trim();
 }
 
+// Best-effort, mirroring sweepStaleHarnessDirs/sweepStaleTmpDirs: a SIGKILL or
+// OOM mid-compare escapes the `finally` block's own `git worktree remove` and
+// leaves <repoRoot>/.git/worktrees/<name> registered with no working
+// directory behind it. Nothing else sweeps that, so it accumulates forever
+// and can collide with a fresh `worktree add`. Never blocks a compare run:
+// a corrupted .git, a missing `git`, or repoRoot not being a repository at
+// all must not stop this from proceeding.
+export function pruneStaleWorktrees(repoRoot: string): void {
+  try {
+    git(["worktree", "prune"], repoRoot);
+  } catch {
+    // best-effort
+  }
+}
+
 export interface CompareOptions {
   samples?: number;
   cpuThrottle?: number;
@@ -175,6 +190,11 @@ export async function compareAgainstRef(
   const relativeComponent = path.relative(repoRoot, resolved).replace(/\\/g, "/");
   const dir = worktreeDir();
   const warnings: string[] = [];
+  // Working and reference sides can each fail to settle fonts independently;
+  // one line per distinct message either way.
+  const onWarning = (warning: string): void => {
+    if (!warnings.includes(warning)) warnings.push(warning);
+  };
 
   let harnessWorking: HarnessResult | undefined;
   let harnessReference: HarnessResult | undefined;
@@ -183,6 +203,7 @@ export async function compareAgainstRef(
   let pool: BrowserPool | undefined;
 
   try {
+    pruneStaleWorktrees(repoRoot);
     git(["worktree", "add", "--detach", dir, ref], repoRoot);
 
     // The lockfile guard is what makes the next step sound: identical
@@ -223,13 +244,14 @@ export async function compareAgainstRef(
     await enterHarness(sessionWorking.page, sessionWorking.session.cdp, harnessWorking, sessionWorking.errorCapture, {
       label: "compare working tree",
       cpuThrottle,
+      onWarning,
     });
     await enterHarness(
       sessionReference.page,
       sessionReference.session.cdp,
       harnessReference,
       sessionReference.errorCapture,
-      { label: `compare ${ref}`, cpuThrottle },
+      { label: `compare ${ref}`, cpuThrottle, onWarning },
     );
 
     for (let w = 0; w < warmupRuns; w++) {

@@ -21,6 +21,7 @@ import {
   computeP95,
   parseTraceDuration,
   settleStyles,
+  reportFontSettle,
   tryCollectGarbage,
   suspendThrottle,
   withContextRetry,
@@ -479,7 +480,7 @@ export async function explore(
       }
 
       await applyWrapperViewport(page);
-      await settleStyles(page, harness);
+      reportFontSettle(await settleStyles(page, harness), options.onWarning);
       await session.cdp.send("Emulation.setCPUThrottlingRate", { rate: cpuThrottle });
     };
 

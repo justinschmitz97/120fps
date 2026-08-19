@@ -9,7 +9,7 @@ import {
   readProjectManifest,
 } from "./project-model.js";
 import type { PropCombination } from "./prop-gen-values.js";
-import { applyWrapperViewport, collectTrace, createPhaseTracker, parseTraceDuration, settleStyles, tryCollectGarbage, computeMedian, HARNESS_NAV_WAIT } from "./measure.js";
+import { applyWrapperViewport, collectTrace, createPhaseTracker, parseTraceDuration, settleStyles, reportFontSettle, tryCollectGarbage, computeMedian, HARNESS_NAV_WAIT } from "./measure.js";
 import {
   attachPageErrorCapture,
   enrichTimeoutError,
@@ -553,6 +553,9 @@ export interface ReactAnalysisOptions {
   fnPropNames?: string[];
   // M37: reuse the pooled vsync browser (fresh context per pass).
   pool?: import("./measure.js").BrowserPool;
+  // M70: this pass settles fonts on its own probe page, independently of the
+  // mount/rerender passes; a timeout here needs its own way out.
+  onWarning?: (warning: string) => void;
 }
 
 const FUNCTION_MARKER = "__120fps_fn__";
@@ -678,7 +681,7 @@ export async function runReactAnalysis(
     }
 
     await applyWrapperViewport(page);
-    await settleStyles(page, harness);
+    reportFontSettle(await settleStyles(page, harness), options.onWarning);
     await cdp.send("Emulation.setCPUThrottlingRate", { rate: cpuThrottle });
 
     // Warmup

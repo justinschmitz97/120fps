@@ -319,6 +319,13 @@ export async function settleStyles(
   }, FONT_SETTLE_TIMEOUT_MS);
 }
 
+// One wording, one place it is spelled: every phase that calls settleStyles
+// and wants its failure surfaced routes through here instead of inventing its
+// own message.
+export function reportFontSettle(settled: boolean, onWarning?: (warning: string) => void): void {
+  if (!settled) onWarning?.(FONT_SETTLE_WARNING);
+}
+
 const HARNESS_READY_TIMEOUT_MS = 30000;
 
 export interface HarnessSessionOptions {
@@ -361,7 +368,7 @@ export async function enterHarness(
   await applyWrapperViewport(page);
   // Before any mount, so every sample runs under the same instrumentation.
   await installMeasuredStateProbe(page);
-  await settleStyles(page, harness);
+  reportFontSettle(await settleStyles(page, harness), options.onWarning);
   await cdp.send("Emulation.setCPUThrottlingRate", { rate: options.cpuThrottle ?? 4 });
 }
 
@@ -1201,6 +1208,7 @@ export async function measureRerender(
       await enterHarness(ms.page, ms.session.cdp, harness, ms.errorCapture, {
         label: "rerender harness",
         cpuThrottle,
+        onWarning: options.onWarning,
       });
     };
     await enter();
@@ -1339,6 +1347,7 @@ export async function measureMount(
       await enterHarness(ms.page, ms.session.cdp, harness, ms.errorCapture, {
         label: "mount harness",
         cpuThrottle,
+        onWarning: options.onWarning,
       });
     };
     await enter();

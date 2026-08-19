@@ -1521,6 +1521,15 @@ async function runComboMode(ctx: ModeContext, fixtureHasScale: boolean): Promise
       warmupRuns: 1,
       fnPropNames,
       pool,
+      // M70: this pass runs after ctx.attachHarnessContext(report) already
+      // flushed runWarnings into report.warnings above, so routing through
+      // the shared onWarning would push into an array nothing reads again.
+      // Writing straight onto the already-built report is order-independent.
+      onWarning: (warning) => {
+        if (!(report.warnings ?? []).includes(warning)) {
+          report.warnings = [...(report.warnings ?? []), warning];
+        }
+      },
     });
 
     for (const combo of report.combos) {

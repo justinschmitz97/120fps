@@ -24,6 +24,22 @@ function makeTimeoutError(message = "Timeout 30000ms exceeded."): Error {
   return err;
 }
 
+function makeFailedRequest(method: string, url: string, errorText: string | null = "net::ERR_ABORTED") {
+  return {
+    method: () => method,
+    url: () => url,
+    failure: () => (errorText === null ? null : { errorText }),
+  };
+}
+
+function makeResponse(status: number, method: string, url: string) {
+  return {
+    status: () => status,
+    url: () => url,
+    request: () => ({ method: () => method, url: () => url }),
+  };
+}
+
 // ====================================================================
 // attachPageErrorCapture
 // ====================================================================
@@ -169,6 +185,101 @@ describe("attachPageErrorCapture", () => {
 });
 
 // ====================================================================
+// network failure capture
+// ====================================================================
+
+describe("attachPageErrorCapture: network failures", () => {
+  it("records a failed request with its method, url and error text", () => {
+    const { page, emitter } = makeFakePage();
+    const capture = attachPageErrorCapture(page);
+    emitter.emit("requestfailed", makeFailedRequest("GET", "http://localhost/app.css", "net::ERR_ABORTED"));
+    expect(capture.errors).toEqual([
+      "request failed: GET http://localhost/app.css (net::ERR_ABORTED)",
+    ]);
+  });
+
+  it("records a failed request with no failure text without a trailing paren", () => {
+    const { page, emitter } = makeFakePage();
+    const capture = attachPageErrorCapture(page);
+    emitter.emit("requestfailed", makeFailedRequest("GET", "http://localhost/app.css", null));
+    expect(capture.errors).toEqual(["request failed: GET http://localhost/app.css"]);
+  });
+
+  it("records a 404 response with its status, method and url", () => {
+    const { page, emitter } = makeFakePage();
+    const capture = attachPageErrorCapture(page);
+    emitter.emit("response", makeResponse(404, "GET", "http://localhost/missing.css"));
+    expect(capture.errors).toEqual(["response 404: GET http://localhost/missing.css"]);
+  });
+
+  it("records a 500 response", () => {
+    const { page, emitter } = makeFakePage();
+    const capture = attachPageErrorCapture(page);
+    emitter.emit("response", makeResponse(500, "GET", "http://localhost/preprocess.css"));
+    expect(capture.errors).toEqual(["response 500: GET http://localhost/preprocess.css"]);
+  });
+
+  it("ignores successful and redirect responses", () => {
+    const { page, emitter } = makeFakePage();
+    const capture = attachPageErrorCapture(page);
+    emitter.emit("response", makeResponse(200, "GET", "http://localhost/ok.css"));
+    emitter.emit("response", makeResponse(304, "GET", "http://localhost/cached.css"));
+    emitter.emit("response", makeResponse(302, "GET", "http://localhost/redirect.css"));
+    expect(capture.errors).toEqual([]);
+  });
+
+  it("does not mark the drain fatal for network failures alone", () => {
+    const { page, emitter } = makeFakePage();
+    const capture = attachPageErrorCapture(page);
+    emitter.emit("requestfailed", makeFailedRequest("GET", "http://localhost/app.css"));
+    emitter.emit("response", makeResponse(404, "GET", "http://localhost/missing.css"));
+    expect(capture.drain().fatal).toBe(false);
+  });
+
+  it("still marks fatal when a pageerror arrives alongside network failures", () => {
+    const { page, emitter } = makeFakePage();
+    const capture = attachPageErrorCapture(page);
+    emitter.emit("response", makeResponse(404, "GET", "http://localhost/missing.css"));
+    emitter.emit("pageerror", new Error("boom"));
+    expect(capture.drain().fatal).toBe(true);
+  });
+
+  it("dedupes repeated identical network failures with a repeat count", () => {
+    const { page, emitter } = makeFakePage();
+    const capture = attachPageErrorCapture(page);
+    for (let i = 0; i < 3; i++) {
+      emitter.emit("response", makeResponse(404, "GET", "http://localhost/missing.css"));
+    }
+    expect(capture.errors).toEqual(["response 404: GET http://localhost/missing.css (×3)"]);
+  });
+
+  it("shares the same 20-distinct cap with pageerror and console messages", () => {
+    const { page, emitter } = makeFakePage();
+    const capture = attachPageErrorCapture(page);
+    for (let i = 0; i < 15; i++) {
+      emitter.emit("pageerror", new Error(`distinct ${i}`));
+    }
+    for (let i = 0; i < 10; i++) {
+      emitter.emit("response", makeResponse(404, "GET", `http://localhost/missing-${i}.css`));
+    }
+    expect(capture.errors).toHaveLength(20);
+    expect(capture.summary()).toContain("5 more");
+  });
+
+  it("participates in drain()/segment reset like console errors", () => {
+    const { page, emitter } = makeFakePage();
+    const capture = attachPageErrorCapture(page);
+    emitter.emit("response", makeResponse(404, "GET", "http://localhost/missing.css"));
+    const first = capture.drain();
+    expect(first.messages).toEqual(["response 404: GET http://localhost/missing.css"]);
+    const second = capture.drain();
+    expect(second.messages).toEqual([]);
+    // The session bucket (used by `errors`/`summary`) is unaffected by drain().
+    expect(capture.errors).toEqual(["response 404: GET http://localhost/missing.css"]);
+  });
+});
+
+// ====================================================================
 // enrichTimeoutError
 // ====================================================================
 
@@ -179,6 +290,14 @@ describe("enrichTimeoutError", () => {
     for (const e of errors) emitter.emit("pageerror", new Error(e));
     return capture;
   }
+
+  it("names the 404'd url when a timeout is enriched after a failed css request", () => {
+    const { page, emitter } = makeFakePage();
+    const capture = attachPageErrorCapture(page);
+    emitter.emit("response", makeResponse(404, "GET", "http://localhost/app.css"));
+    const result = enrichTimeoutError(makeTimeoutError(), capture, "component harness");
+    expect(result.message).toContain("response 404: GET http://localhost/app.css");
+  });
 
   it("enriches a TimeoutError with context and captured page errors", () => {
     const capture = makeCaptureWith(["component threw at import"]);

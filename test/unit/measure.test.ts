@@ -4,7 +4,34 @@ import {
   computeP95,
   parseTraceDuration,
   tryCollectGarbage,
+  reportFontSettle,
+  FONT_SETTLE_WARNING,
 } from "../../src/measure.js";
+
+// M70: the one place a font-timeout run becomes a warning, shared by every
+// phase (harness entry, explore, react-analysis attribution) that calls
+// settleStyles and previously discarded its result.
+describe("reportFontSettle", () => {
+  it("calls onWarning with the font-settle warning when settling failed", () => {
+    const warnings: string[] = [];
+    reportFontSettle(false, (w) => warnings.push(w));
+    expect(warnings).toEqual([FONT_SETTLE_WARNING]);
+  });
+
+  it("does not call onWarning when settling succeeded", () => {
+    const warnings: string[] = [];
+    reportFontSettle(true, (w) => warnings.push(w));
+    expect(warnings).toEqual([]);
+  });
+
+  it("does not throw when settling failed and no onWarning is supplied", () => {
+    expect(() => reportFontSettle(false, undefined)).not.toThrow();
+  });
+
+  it("does not throw when settling succeeded and no onWarning is supplied", () => {
+    expect(() => reportFontSettle(true, undefined)).not.toThrow();
+  });
+});
 
 describe("computeMedian", () => {
   it("returns middle value for odd-length array", () => {
