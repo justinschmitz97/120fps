@@ -213,11 +213,15 @@ describe("package availability across workspace levels", () => {
     expect(isPackageAvailable("@tailwindcss/vite", member(), tmpDir)).toBe(true);
   });
 
-  it("refuses a package installed above the workspace root", () => {
+  // M75: the probe follows node's own lookup chain past the workspace root.
+  // Every loader in this codebase resolves through createRequire, which has no
+  // such bound, so stopping here reported packages the harness can import as
+  // absent. test/unit/package-availability-resolution.test.ts owns the rule.
+  it("accepts a package installed above the workspace root", () => {
     makeTree({ "repo/package.json": "{}", "repo/packages/ui/package.json": "{}" });
     installPackage(tmpDir, "next");
     const ui = path.join(tmpDir, "repo", "packages", "ui");
-    expect(isPackageAvailable("next", ui, path.join(tmpDir, "repo"))).toBe(false);
+    expect(isPackageAvailable("next", ui, path.join(tmpDir, "repo"))).toBe(true);
   });
 
   it("refuses a package that is neither declared nor installed", () => {

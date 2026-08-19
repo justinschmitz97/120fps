@@ -138,13 +138,37 @@ export function isPackageDeclared(
   return declaredPackages(memberRoot).has(pkg) || declaredPackages(workspaceRoot).has(pkg);
 }
 
+// M75. Node's own CommonJS lookup chain: the directory, then every ancestor to
+// the filesystem root, skipping a `node_modules` directory as a base the way
+// Module._nodeModulePaths does. This is the reach every loader in this codebase
+// already has, all of them resolving through `createRequire(path.join(root, "/"))`,
+// so a package installed above the workspace root is importable and the
+// per-level walk (memberRoot up to workspaceRoot) reported it absent.
+//
+// Still a directory probe rather than require.resolve, for two measured reasons:
+// pnpm exports NODE_PATH into its hoisted store for every script it runs, so
+// under `pnpm test` every package resolves from every directory; and
+// `<pkg>/package.json` is answered through the package's `exports` map, which
+// @vitejs/plugin-vue does not open.
+function isInstalledOnResolutionChain(fromDir: string, pkg: string): boolean {
+  let current = path.resolve(fromDir);
+  while (true) {
+    if (path.basename(current) !== "node_modules" && isInstalledAt(current, pkg)) return true;
+    const parent = path.dirname(current);
+    if (parent === current) return false;
+    current = parent;
+  }
+}
+
+// The chain walk is a strict superset of the workspace levels: every level is
+// memberRoot or one of its ancestors, so it needs no separate probe.
 export function isPackageAvailable(
   pkg: string,
   memberRoot: string,
   workspaceRoot: string = findWorkspaceRoot(memberRoot),
 ): boolean {
   if (isPackageDeclared(pkg, memberRoot, workspaceRoot)) return true;
-  return workspaceLevels(memberRoot, workspaceRoot).some((level) => isInstalledAt(level, pkg));
+  return isInstalledOnResolutionChain(memberRoot, pkg);
 }
 
 const PNP_MARKERS = [".pnp.cjs", ".pnp.loader.mjs"];

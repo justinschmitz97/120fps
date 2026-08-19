@@ -72,6 +72,18 @@ export const TRANSFORM_RECOGNIZERS: TransformRecognizer[] = [
     test: (s) => /\.mdx$/.test(s),
     owner: "@mdx-js/rollup",
   },
+  // M75: Vite core serves `.wasm?init` and `.wasm?url`; the bare specifier is
+  // the one that needs a plugin, so only that shape is claimed here.
+  {
+    code: "wasm",
+    test: (s) => /\.wasm$/.test(s),
+    owner: "vite-plugin-wasm",
+  },
+  {
+    code: "shader",
+    test: (s) => /\.(glsl|wgsl|vert|frag|geom|comp)$/.test(s),
+    owner: "a shader loader plugin (e.g. vite-plugin-glsl)",
+  },
   {
     code: "css-preprocessor",
     test: (s) => /\.(scss|sass|less|styl|stylus)$/.test(s),
