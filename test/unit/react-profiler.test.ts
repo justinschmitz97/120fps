@@ -130,6 +130,24 @@ describe("detectFramework", () => {
     expect(warnings).toEqual([]);
   });
 
+  // M72 post-review fix: after M75 widened isPackageAvailable to walk
+  // ancestor node_modules, keying this warning on it let a transitive,
+  // hoisted-but-undeclared solid-js trigger a "declares" claim that was not
+  // true. Same declared-vs-available principle as the runPreflight fix
+  // (8e8342c): a mere advisory still must not assert a false fact.
+  it("does not warn about a transitively available but undeclared solid-js", () => {
+    const dir = makeProject(JSON.stringify({ dependencies: { react: "^19.0.0" } }));
+    const solidDir = path.join(dir, "node_modules", "solid-js");
+    fs.mkdirSync(solidDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(solidDir, "package.json"),
+      JSON.stringify({ name: "solid-js", version: "1.8.0" }),
+    );
+    const warnings: string[] = [];
+    expect(detectFramework(dir, (w) => warnings.push(w))).toBe("react");
+    expect(warnings).toEqual([]);
+  });
+
   // M74 (D6): a plain-Preact project used to resolve "vanilla" in total
   // silence, skipping every React-family analysis pass with no signal.
   it("warns with PREACT_UNSUPPORTED_WARNING when preact is declared and nothing else resolves", () => {

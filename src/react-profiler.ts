@@ -156,8 +156,11 @@ export function detectFramework(
     }
   }
   // M72: solid-js alongside react is not rejected here (see runPreflight for
-  // the solid-only rejection); it only warns.
-  if (resolved === "react" && isPackageAvailable("solid-js", memberRoot, workspaceRoot)) {
+  // the solid-only rejection); it only warns. Declared, not merely available
+  // (M75 widened isPackageAvailable to walk ancestor node_modules): the
+  // message asserts the project "declares" solid-js, which must stay true, so
+  // a transitive, hoisted-but-undeclared solid-js must not trigger it.
+  if (resolved === "react" && isPackageDeclared("solid-js", memberRoot, workspaceRoot)) {
     onWarning?.(SOLID_AND_REACT_DECLARED(memberRoot));
   }
   // M74 (D6): vanilla is a real resolution when nothing is declared or
