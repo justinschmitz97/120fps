@@ -194,6 +194,39 @@ describe("solid-js rejection", () => {
     expect(message).toContain("Solid");
     expect(message).not.toContain("Extract the client part");
   });
+
+  // M72 post-review fix: the gate keys on declared packages (M27's rule for
+  // consequential decisions; M68's isPackageDeclared vs isPackageAvailable
+  // split), not merely resolvable ones — a Vue/vanilla project with some
+  // unrelated dependency's transitive, hoisted solid-js must not be rejected,
+  // and the failure message's "declares solid-js" claim must stay true.
+  it("does not reject a transitively available but undeclared solid-js", () => {
+    const { root, entry } = makeIsolatedRoot("120fps-preflight-transitive-solid-", {
+      "package.json": JSON.stringify({ dependencies: { lodash: "^4.0.0" } }),
+    });
+    const solidDir = path.join(root, "node_modules", "solid-js");
+    fs.mkdirSync(solidDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(solidDir, "package.json"),
+      JSON.stringify({ name: "solid-js", version: "1.8.0" }),
+    );
+    const result = runPreflight({ projectRoot: root, entries: [entry] });
+    expect(result.hard.map((h) => h.kind)).not.toContain("unsupported-framework");
+  });
+
+  it("still rejects a declared solid-js when react is only transitively available", () => {
+    const { root, entry } = makeIsolatedRoot("120fps-preflight-transitive-react-", {
+      "package.json": JSON.stringify({ dependencies: { "solid-js": "^1.8.0" } }),
+    });
+    const reactDir = path.join(root, "node_modules", "react");
+    fs.mkdirSync(reactDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(reactDir, "package.json"),
+      JSON.stringify({ name: "react", version: "19.0.0" }),
+    );
+    const result = runPreflight({ projectRoot: root, entries: [entry] });
+    expect(result.hard.map((h) => h.kind)).toContain("unsupported-framework");
+  });
 });
 
 // M72: PnP swaps node_modules for a virtual filesystem this harness cannot

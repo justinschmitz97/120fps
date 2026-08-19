@@ -37,6 +37,8 @@ Two roots replace one:
 
 Deviation from the audit's literal wording (`createRequire(memberRoot).resolve(pkg)`), with reason: `require.resolve` honours `NODE_PATH`, which the test runner points at pnpm's hoisted store, so every package would resolve from every directory and the gate would be meaningless under test. It also resolves symlinks, so a pnpm member link answers with a store path that no longer names the level it was reached from. The directory probe is deterministic, is not weaker than today's gate anywhere, and covers the case the audit named: an npm/yarn/pnpm hoist that puts a package at a level the manifests do not mention. A package resolvable only from above `workspaceRoot` stays undetected, exactly as today.
 
+`isPackageAvailable`'s per-level `node_modules/<pkg>` probe only sees a package that landed at one of those levels' own `node_modules`; under pnpm's strict, non-hoisting layout a dependency's own transitive dependency (e.g. Nuxt's bundled `@vitejs/plugin-vue`) lives inside that dependency's `node_modules`, one level the probe never walks into, and stays invisible to `isPackageAvailable` there. Hoisted layouts (npm, yarn classic, pnpm with hoisting) are the case this primitive covers.
+
 ### Detectors switched to the presence primitive
 
 - `detectNextJs` (`src/harness.ts:49`): also reads `peerDependencies`, which the other detectors already did.

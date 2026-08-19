@@ -4,7 +4,7 @@ import { builtinModules } from "node:module";
 import ts from "typescript";
 import { projectCompilerOptions } from "./prop-gen.js";
 import { isVueFile, parseSfcScript, type VueSfcCompiler } from "./vue-sfc.js";
-import { detectPnP, findWorkspaceRoot, isPackageAvailable } from "./project-model.js";
+import { detectPnP, findWorkspaceRoot, isPackageDeclared } from "./project-model.js";
 
 // The marker package a server module imports to make the boundary explicit.
 // M72: "next/server-only" was never a real module (Next.js re-exports the
@@ -363,10 +363,18 @@ export function runPreflight(options: PreflightOptions): PreflightResult {
   if (detectPnP(workspaceRoot)) {
     hard.push({ kind: "yarn-pnp", chain: entryChain });
   }
+  // M72 (fixed post-review): isPackageAvailable also counts a transitive,
+  // hoisted node_modules/<pkg> nobody declared (M68's declared-vs-available
+  // split). A hard rejection is consequential enough to key on declaration
+  // only (M27's rule) — both to avoid rejecting a Vue/vanilla project over a
+  // dependency's own transitive solid-js, and because the failure message
+  // below asserts "declares solid-js", which must be literally true. The
+  // react-also-declared exception uses the same, symmetric standard: a
+  // hoisted-but-undeclared react does not excuse a declared solid-js either.
   const hasReact =
-    isPackageAvailable("react", projectRoot, workspaceRoot) ||
-    isPackageAvailable("react-dom", projectRoot, workspaceRoot);
-  if (!hasReact && isPackageAvailable("solid-js", projectRoot, workspaceRoot)) {
+    isPackageDeclared("react", projectRoot, workspaceRoot) ||
+    isPackageDeclared("react-dom", projectRoot, workspaceRoot);
+  if (!hasReact && isPackageDeclared("solid-js", projectRoot, workspaceRoot)) {
     hard.push({ kind: "unsupported-framework", chain: entryChain, specifier: "solid-js" });
   }
 

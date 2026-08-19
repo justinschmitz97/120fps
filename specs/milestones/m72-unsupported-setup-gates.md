@@ -26,13 +26,25 @@ each of these name itself before or in place of the confusing failure.
 ### 1. Solid rejection (`src/preflight.ts`, `src/project-model.ts`)
 
 `runPreflight` (`src/preflight.ts:319`) gains an environment-level check, run once per call before
-the import-graph walk: if the project declares `solid-js` (`isPackageAvailable`, checked at
+the import-graph walk: if the project declares `solid-js` (`isPackageDeclared`, checked at
 `projectRoot` and `findWorkspaceRoot(projectRoot)`) and declares neither `react` nor `react-dom`,
 it pushes a new hard `PreflightKind` of `"unsupported-framework"`
 (`src/preflight.ts:13-20`) with `chain` set to the measured entry and `specifier: "solid-js"`. A
 project that declares both `react` and `solid-js` is not rejected: mixed repositories exist, and
 the react tree is still measurable. That case instead gets a non-fatal warning from
 `detectFramework` (`src/react-profiler.ts:119`, scope 2 below).
+
+Both the `solid-js` check and its `react`/`react-dom` exception use `isPackageDeclared`, not
+`isPackageAvailable`: a hard rejection is consequential enough to key on declaration only (the
+declared-vs-available split from `specs/milestones/m68-workspace-project-model.md`), so a
+transitive, hoisted `node_modules/solid-js` that nothing declares does not reject a Vue or vanilla
+project, and the failure message's "declares solid-js" claim stays literally true. The same
+standard applies symmetrically to the exception: a hoisted-but-undeclared `react` does not excuse
+a project that genuinely declares `solid-js`.
+
+The PnP check (below) has no analogous concern: `detectPnP` reads workspace-root-level install
+artifacts (`.pnp.cjs`, `.pnp.loader.mjs`, `process.versions.pnp`), not a dependency's declared-vs-
+resolvable status — there is no "declared" form of an install mechanism to key on instead.
 
 `preflightFailureMessage` (`src/preflight.ts:470`) already throws through `analyze.ts:2225`
 unmodified — this milestone does not touch `analyze.ts`, only extends the `HARD_CAUSE` and a new
@@ -136,6 +148,11 @@ existing `if (!resolved) continue` at `src/preflight.ts:423`).
 - A project with both `react` and `solid-js` declared: `runPreflight` returns no hard hit for
   either package; `detectFramework` still resolves `"react"` and calls `onWarning` once, naming
   both packages.
+- A project with a transitive, hoisted `node_modules/solid-js` that no manifest (member or
+  workspace) declares: `runPreflight` returns no `unsupported-framework` hit.
+- A project that declares `solid-js` and no `react`/`react-dom`, but has a transitive, hoisted
+  `node_modules/react`: `runPreflight` still returns the hard `unsupported-framework` hit — a
+  hoisted-but-undeclared `react` does not grant the mixed-repo exception.
 - A project whose resolved `react-dom/package.json` names anything other than `"react-dom"` (or
   fails to resolve): `runReactAnalysis` returns an empty map and warns, without opening a browser.
 - A resolved `react-dom` version below `16.5` or `19.x` and above: `runReactAnalysis` still runs
