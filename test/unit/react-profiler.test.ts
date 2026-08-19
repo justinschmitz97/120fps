@@ -19,6 +19,7 @@ import {
   REACT_DOM_NOT_REACT_WARNING,
   REACT_DOM_VERSION_RANGE_WARNING,
   SOLID_AND_REACT_DECLARED,
+  PREACT_UNSUPPORTED_WARNING,
   type ProfilerSnapshot,
   type ProfilerDiff,
   type ReactOptimizations,
@@ -127,6 +128,47 @@ describe("detectFramework", () => {
     const warnings: string[] = [];
     expect(detectFramework(dir, (w) => warnings.push(w))).toBe("vanilla");
     expect(warnings).toEqual([]);
+  });
+
+  // M74 (D6): a plain-Preact project used to resolve "vanilla" in total
+  // silence, skipping every React-family analysis pass with no signal.
+  it("warns with PREACT_UNSUPPORTED_WARNING when preact is declared and nothing else resolves", () => {
+    const dir = makeProject(JSON.stringify({ dependencies: { preact: "^10.19.0" } }));
+    const warnings: string[] = [];
+    expect(detectFramework(dir, (w) => warnings.push(w))).toBe("vanilla");
+    expect(warnings).toEqual([PREACT_UNSUPPORTED_WARNING(dir)]);
+  });
+
+  it("does not warn about preact when react is declared alongside it", () => {
+    const dir = makeProject(
+      JSON.stringify({ dependencies: { react: "^19.0.0", preact: "^10.19.0" } }),
+    );
+    const warnings: string[] = [];
+    expect(detectFramework(dir, (w) => warnings.push(w))).toBe("react");
+    expect(warnings).toEqual([]);
+  });
+
+  it("does not warn about preact when vue is declared alongside it", () => {
+    const dir = makeProject(
+      JSON.stringify({ dependencies: { vue: "^3.4.0", preact: "^10.19.0" } }),
+    );
+    const warnings: string[] = [];
+    expect(detectFramework(dir, (w) => warnings.push(w))).toBe("vue");
+    expect(warnings).toEqual([]);
+  });
+
+  it("does not warn about preact when nothing declares it", () => {
+    const dir = makeProject(JSON.stringify({ dependencies: { lodash: "^4.0.0" } }));
+    const warnings: string[] = [];
+    expect(detectFramework(dir, (w) => warnings.push(w))).toBe("vanilla");
+    expect(warnings).toEqual([]);
+  });
+
+  it("does not warn about preact when the manifest is unreadable", () => {
+    const dir = makeProject(null);
+    const warnings: string[] = [];
+    expect(detectFramework(dir, (w) => warnings.push(w))).toBe("vanilla");
+    expect(warnings.some((w) => w.includes("preact"))).toBe(false);
   });
 });
 

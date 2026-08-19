@@ -6,30 +6,59 @@ import {
   tryCollectGarbage,
   reportFontSettle,
   FONT_SETTLE_WARNING,
+  FONT_LOAD_FAILED_WARNING,
 } from "../../src/measure.js";
 
 // M70: the one place a font-timeout run becomes a warning, shared by every
 // phase (harness entry, explore, react-analysis attribution) that calls
 // settleStyles and previously discarded its result.
+// M74 (B10): extended to also carry which font families failed to load at
+// all, since fonts.ready resolves regardless of a per-face load failure.
 describe("reportFontSettle", () => {
   it("calls onWarning with the font-settle warning when settling failed", () => {
     const warnings: string[] = [];
-    reportFontSettle(false, (w) => warnings.push(w));
+    reportFontSettle({ settled: false, failedFamilies: [] }, (w) => warnings.push(w));
     expect(warnings).toEqual([FONT_SETTLE_WARNING]);
   });
 
-  it("does not call onWarning when settling succeeded", () => {
+  it("does not call onWarning when settling succeeded and nothing failed to load", () => {
     const warnings: string[] = [];
-    reportFontSettle(true, (w) => warnings.push(w));
+    reportFontSettle({ settled: true, failedFamilies: [] }, (w) => warnings.push(w));
     expect(warnings).toEqual([]);
   });
 
   it("does not throw when settling failed and no onWarning is supplied", () => {
-    expect(() => reportFontSettle(false, undefined)).not.toThrow();
+    expect(() => reportFontSettle({ settled: false, failedFamilies: [] }, undefined)).not.toThrow();
   });
 
   it("does not throw when settling succeeded and no onWarning is supplied", () => {
-    expect(() => reportFontSettle(true, undefined)).not.toThrow();
+    expect(() => reportFontSettle({ settled: true, failedFamilies: [] }, undefined)).not.toThrow();
+  });
+
+  it("calls onWarning with FONT_LOAD_FAILED_WARNING when a font family failed to load", () => {
+    const warnings: string[] = [];
+    reportFontSettle({ settled: true, failedFamilies: ["Inter"] }, (w) => warnings.push(w));
+    expect(warnings).toEqual([FONT_LOAD_FAILED_WARNING(["Inter"])]);
+  });
+
+  it("calls onWarning twice, settle warning first, when both conditions fire", () => {
+    const warnings: string[] = [];
+    reportFontSettle({ settled: false, failedFamilies: ["Inter", "Roboto"] }, (w) => warnings.push(w));
+    expect(warnings).toEqual([FONT_SETTLE_WARNING, FONT_LOAD_FAILED_WARNING(["Inter", "Roboto"])]);
+  });
+
+  it("does not throw when a failed family is present and no onWarning is supplied", () => {
+    expect(() =>
+      reportFontSettle({ settled: true, failedFamilies: ["Inter"] }, undefined),
+    ).not.toThrow();
+  });
+});
+
+describe("FONT_LOAD_FAILED_WARNING", () => {
+  it("names every failed family", () => {
+    const message = FONT_LOAD_FAILED_WARNING(["Inter", "Roboto"]);
+    expect(message).toContain("Inter");
+    expect(message).toContain("Roboto");
   });
 });
 

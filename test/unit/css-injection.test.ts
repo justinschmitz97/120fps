@@ -508,14 +508,17 @@ describe("needsStyleSettle", () => {
 });
 
 describe("settleStyles", () => {
-  function fakePage(result: boolean) {
+  // M74 (B10): the page-side evaluate now resolves { settled, failedFamilies }
+  // instead of a bare boolean; the mock stands in for that whole evaluate
+  // call, so it returns the same shape the real browser-side code does.
+  function fakePage(settled: boolean, failedFamilies: string[] = []) {
     const calls: unknown[] = [];
     return {
       calls,
       page: {
         evaluate: async (fn: unknown, arg: unknown) => {
           calls.push(arg);
-          return result;
+          return { settled, failedFamilies };
         },
       },
     };
@@ -523,13 +526,19 @@ describe("settleStyles", () => {
 
   it("does nothing and reports settled when the gate is inactive", async () => {
     const { page, calls } = fakePage(false);
-    await expect(settleStyles(page as never, {})).resolves.toBe(true);
+    await expect(settleStyles(page as never, {})).resolves.toEqual({
+      settled: true,
+      failedFamilies: [],
+    });
     expect(calls.length).toBe(0);
   });
 
   it("runs in the page and reports settled when fonts resolve", async () => {
     const { page, calls } = fakePage(true);
-    await expect(settleStyles(page as never, { cssFiles: ["/a.css"] })).resolves.toBe(true);
+    await expect(settleStyles(page as never, { cssFiles: ["/a.css"] })).resolves.toEqual({
+      settled: true,
+      failedFamilies: [],
+    });
     expect(calls).toEqual([FONT_SETTLE_TIMEOUT_MS]);
   });
 
@@ -537,7 +546,14 @@ describe("settleStyles", () => {
     const { page } = fakePage(false);
     await expect(
       settleStyles(page as never, { wrapRelative: "120fps.setup.tsx" }),
-    ).resolves.toBe(false);
+    ).resolves.toEqual({ settled: false, failedFamilies: [] });
+  });
+
+  it("threads failed font families through from the page", async () => {
+    const { page } = fakePage(true, ["Inter"]);
+    await expect(
+      settleStyles(page as never, { cssFiles: ["/a.css"] }),
+    ).resolves.toEqual({ settled: true, failedFamilies: ["Inter"] });
   });
 
   it("uses the 5s bound and the spec warning text", () => {

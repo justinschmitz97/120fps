@@ -57,7 +57,7 @@ import {
   DEFAULT_MEASURED_COMBOS,
   type PropCombination,
 } from "./prop-gen-values.js";
-import { applyWrapperViewport, createBrowserPool, measureMount, measureRerender, measureWrapperOverhead, openMeasurementSession, settleStyles, suspendThrottle, CONTEXT_RETRY_WARNING, FONT_SETTLE_WARNING, HARNESS_NAV_WAIT, type BrowserPool, type MeasurementSession, type MountResult, type RerenderResult } from "./measure.js";
+import { applyWrapperViewport, createBrowserPool, measureMount, measureRerender, measureWrapperOverhead, openMeasurementSession, settleStyles, reportFontSettle, suspendThrottle, CONTEXT_RETRY_WARNING, HARNESS_NAV_WAIT, type BrowserPool, type MeasurementSession, type MountResult, type RerenderResult } from "./measure.js";
 import {
   explore,
   restoreComboIndices,
@@ -2034,7 +2034,6 @@ export async function analyze(
   const presetPath = useFixture ? undefined : detectPropPresets(resolvedPath);
   const presets = presetPath ? loadPropPresets(presetPath, projectRoot) : undefined;
 
-  let fontsSettled = true;
   // M65: provider-dependent imports found by the preflight walk.
   let providerCandidates: string[] = [];
   // M48: kept outside the try so a failure on the way out can still name them.
@@ -2159,9 +2158,6 @@ export async function analyze(
     if (compiler?.warning) {
       report.warnings = [...(report.warnings ?? []), compiler.warning];
     }
-    if (!fontsSettled) {
-      report.warnings = [...(report.warnings ?? []), FONT_SETTLE_WARNING];
-    }
   };
 
   let harness: HarnessResult | undefined;
@@ -2274,7 +2270,10 @@ export async function analyze(
       }
 
       await applyWrapperViewport(page);
-      fontsSettled = await settleStyles(page, harness!);
+      // M74 (B10): threads both the settle-timeout warning and, when a
+      // @font-face 404'd or failed to decode, the failed-family warning
+      // through the same sink every other settleStyles call site uses.
+      reportFontSettle(await settleStyles(page, harness!), onWarning);
     };
 
     await enterHarnessPage();

@@ -256,7 +256,7 @@ describe("css e2e: settle gate", () => {
     try {
       expect(needsStyleSettle(harness)).toBe(true);
       const { page } = await openHarness(harness);
-      await expect(settleStyles(page, harness)).resolves.toBe(true);
+      await expect(settleStyles(page, harness)).resolves.toMatchObject({ settled: true });
       await page.close();
     } finally {
       await harness.cleanup();
@@ -278,9 +278,9 @@ describe("css e2e: settle gate", () => {
         },
       });
       const started = Date.now();
-      const settled = await settleStyles(page, harness);
+      const result = await settleStyles(page, harness);
       const elapsed = Date.now() - started;
-      expect(settled).toBe(false);
+      expect(result.settled).toBe(false);
       expect(elapsed).toBeGreaterThanOrEqual(4500);
       await page.close();
     } finally {
@@ -304,7 +304,7 @@ describe("css e2e: settle gate", () => {
         },
       });
       const started = Date.now();
-      await expect(settleStyles(page, harness)).resolves.toBe(true);
+      await expect(settleStyles(page, harness)).resolves.toMatchObject({ settled: true });
       expect(Date.now() - started).toBeLessThan(4000);
       await page.close();
     } finally {
@@ -321,7 +321,7 @@ describe("css e2e: settle gate", () => {
       expect(needsStyleSettle(harness)).toBe(true);
 
       const { page } = await openHarness(harness);
-      await expect(settleStyles(page, harness)).resolves.toBe(true);
+      await expect(settleStyles(page, harness)).resolves.toMatchObject({ settled: true });
       await mount(page, {});
       await page.waitForSelector(".theme-probe", { timeout: 10000 });
       const color = await page.evaluate(
@@ -340,7 +340,7 @@ describe("css e2e: settle gate", () => {
       expect(needsStyleSettle(harness)).toBe(false);
       const { page } = await openHarness(harness);
       const started = Date.now();
-      await expect(settleStyles(page, harness)).resolves.toBe(true);
+      await expect(settleStyles(page, harness)).resolves.toMatchObject({ settled: true });
       expect(Date.now() - started).toBeLessThan(1000);
       await page.close();
     } finally {

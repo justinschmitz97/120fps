@@ -7,6 +7,7 @@ import {
   declaredPackages,
   findWorkspaceRoot,
   isPackageAvailable,
+  isPackageDeclared,
   readProjectManifest,
 } from "./project-model.js";
 import type { PropCombination } from "./prop-gen-values.js";
@@ -110,6 +111,14 @@ export const SOLID_AND_REACT_DECLARED = (root: string): string =>
   `${root} declares both react and solid-js; 120fps only measures the React tree, so a Solid ` +
   "component here will fail to mount.";
 
+// M74 (D6): a project that declares preact but neither react nor vue used to
+// resolve "vanilla" in total silence, skipping every React-family analysis
+// pass (memo bailout, context fan-out, callback identity, render
+// attribution) with no signal that anything was skipped.
+export const PREACT_UNSUPPORTED_WARNING = (root: string): string =>
+  `${root} declares preact but no react or vue; Preact-specific analysis is not supported, so ` +
+  "the run proceeds framework-agnostic (measured as vanilla).";
+
 // React wins a tie: a project with both installed is a React project that also
 // ships some Vue, and the React optimization pass is the one with findings.
 function frameworkFrom(names: Set<string>): "react" | "vue" | undefined {
@@ -150,6 +159,12 @@ export function detectFramework(
   // the solid-only rejection); it only warns.
   if (resolved === "react" && isPackageAvailable("solid-js", memberRoot, workspaceRoot)) {
     onWarning?.(SOLID_AND_REACT_DECLARED(memberRoot));
+  }
+  // M74 (D6): vanilla is a real resolution when nothing is declared or
+  // installed at all, but a project that declares preact and stops there
+  // deserves to know its React-family analysis is being skipped.
+  if (resolved === "vanilla" && isPackageDeclared("preact", memberRoot, workspaceRoot)) {
+    onWarning?.(PREACT_UNSUPPORTED_WARNING(memberRoot));
   }
   return resolved;
 }
