@@ -93,14 +93,16 @@ describe("detectFramework", () => {
     expect(detectFramework(dir)).toBe("vanilla");
   });
 
-  it("returns 'react' when package.json is missing", () => {
+  // M68: an unreadable manifest says nothing, and guessing react mounted
+  // non-React code as React.
+  it("returns 'vanilla' when package.json is missing", () => {
     const dir = makeProject(null);
-    expect(detectFramework(dir)).toBe("react");
+    expect(detectFramework(dir)).toBe("vanilla");
   });
 
-  it("returns 'react' when package.json is malformed JSON", () => {
+  it("returns 'vanilla' when package.json is malformed JSON", () => {
     const dir = makeProject("{ not valid json !!");
-    expect(detectFramework(dir)).toBe("react");
+    expect(detectFramework(dir)).toBe("vanilla");
   });
 });
 

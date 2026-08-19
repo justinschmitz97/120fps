@@ -2,6 +2,12 @@ import fs from "node:fs";
 import path from "node:path";
 import { chromium, type Browser, type CDPSession, type Page } from "playwright";
 import { renderTreeHelper, setupApiBlock, setupBlock, wrapImportLine, type HarnessResult } from "./harness.js";
+import {
+  declaredPackages,
+  findWorkspaceRoot,
+  isPackageAvailable,
+  readProjectManifest,
+} from "./project-model.js";
 import type { PropCombination } from "./prop-gen-values.js";
 import { applyWrapperViewport, collectTrace, createPhaseTracker, parseTraceDuration, settleStyles, tryCollectGarbage, computeMedian, HARNESS_NAV_WAIT } from "./measure.js";
 import {
@@ -92,25 +98,44 @@ export function detectDurationsUnavailable(snapshot: {
   return true;
 }
 
+export const FRAMEWORK_MANIFEST_UNREADABLE = (root: string): string =>
+  `no readable package.json in ${root}, so the component is measured as vanilla; ` +
+  `pass --framework react|vue to say what it is.`;
+
 // React wins a tie: a project with both installed is a React project that also
 // ships some Vue, and the React optimization pass is the one with findings.
-// A `.vue` file overrides this entirely: see analyze's resolveFramework.
-export function detectFramework(projectRoot: string): "react" | "vue" | "vanilla" {
-  try {
-    const raw = fs.readFileSync(path.join(projectRoot, "package.json"), "utf-8");
-    const pkg = JSON.parse(raw);
-    if (typeof pkg !== "object" || pkg === null) return "react";
-    let vue = false;
-    for (const section of [pkg.dependencies, pkg.devDependencies, pkg.peerDependencies]) {
-      if (section == null) continue;
-      if (typeof section !== "object") return "react";
-      if ("react" in section || "react-dom" in section) return "react";
-      if ("vue" in section) vue = true;
-    }
-    return vue ? "vue" : "vanilla";
-  } catch {
+function frameworkFrom(names: Set<string>): "react" | "vue" | undefined {
+  if (names.has("react") || names.has("react-dom")) return "react";
+  if (names.has("vue")) return "vue";
+  return undefined;
+}
+
+// M68. The member's own manifest decides whenever it names a framework: a Vue
+// package inside a React monorepo is a Vue package. Only a member that names
+// none falls back to the workspace root and then to what is installed.
+// An unreadable manifest is evidence of nothing, so it fails closed to vanilla:
+// the old `react` default mounted non-React code as React.
+// A `.vue` file overrides all of it: see analyze's resolveFramework.
+export function detectFramework(
+  memberRoot: string,
+  onWarning?: (warning: string) => void,
+): "react" | "vue" | "vanilla" {
+  if (!readProjectManifest(memberRoot)) {
+    onWarning?.(FRAMEWORK_MANIFEST_UNREADABLE(memberRoot));
+    return "vanilla";
+  }
+  const own = frameworkFrom(declaredPackages(memberRoot));
+  if (own) return own;
+  const workspaceRoot = findWorkspaceRoot(memberRoot);
+  const shared = frameworkFrom(declaredPackages(workspaceRoot));
+  if (shared) return shared;
+  if (
+    isPackageAvailable("react", memberRoot, workspaceRoot) ||
+    isPackageAvailable("react-dom", memberRoot, workspaceRoot)
+  ) {
     return "react";
   }
+  return isPackageAvailable("vue", memberRoot, workspaceRoot) ? "vue" : "vanilla";
 }
 
 export function diffSnapshots(

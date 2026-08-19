@@ -42,6 +42,7 @@ import {
   type CompositionTree,
 } from "./composition.js";
 import { detectFramework, runReactAnalysis, hasReactWarning, type ReactOptimizations } from "./react-profiler.js";
+import { findWorkspaceRoot } from "./project-model.js";
 import { isVueFile, loadVueCompiler, VUE_COMPILER_MISSING } from "./vue-sfc.js";
 import {
   generateCombinations,
@@ -2001,7 +2002,11 @@ export async function analyze(
   const { projectRoot, relativeComponent } = resolveProjectPaths(resolvedPath);
   // M57: resolved before the wrapper, because a Vue project's wrapper is an SFC
   // and a `.tsx` one left lying around could not render the component at all.
-  const framework = resolveFramework(options.framework ?? "auto", projectRoot, harnessPath);
+  // Collected before the run's warning list exists; folded into it below.
+  const frameworkWarnings: string[] = [];
+  const framework = resolveFramework(options.framework ?? "auto", projectRoot, harnessPath, (w) =>
+    frameworkWarnings.push(w),
+  );
   const { wrapPath, wrapAutoDetected } = resolveWrapPath(options, projectRoot, framework);
   const resolvedCss = resolveCssFiles(options, projectRoot);
   const cssReport: CssReport | undefined =
@@ -2021,7 +2026,7 @@ export async function analyze(
   // M48: kept outside the try so a failure on the way out can still name them.
   let transformHits: import("./preflight.js").PreflightHit[] = [];
   let activeTransforms: string[] | undefined;
-  const runWarnings: string[] = [];
+  const runWarnings: string[] = [...frameworkWarnings];
   // M46: counted before dedup: one surviving reload is a noise signal, and the
   // warning list deliberately shows it once however often it happened.
   let contextRetries = 0;
@@ -2075,20 +2080,7 @@ export async function analyze(
     if (path.resolve(metadataPath) !== path.resolve(harnessPath)) {
       extras.push(path.resolve(metadataPath));
     }
-    for (const name of [
-      "tailwind.config.js",
-      "tailwind.config.ts",
-      "tailwind.config.mjs",
-      "postcss.config.js",
-      "postcss.config.mjs",
-      "postcss.config.cjs",
-      "pnpm-lock.yaml",
-      "package-lock.json",
-      "yarn.lock",
-    ]) {
-      const candidate = path.join(projectRoot, name);
-      if (fs.existsSync(candidate)) extras.push(candidate);
-    }
+    extras.push(...projectConfigFingerprintFiles(projectRoot));
     fingerprintValue = computeSourceFingerprint(
       projectRoot,
       [...graph, ...extras],
@@ -2500,6 +2492,40 @@ export function resolveProjectPaths(resolvedPath: string): {
   return { projectRoot, relativeComponent };
 }
 
+// Tooling configs and lockfiles belong to the identity of a cached verdict. In
+// a workspace they sit at the root the member never mentions, so a root
+// lockfile bump used to leave every member's baseline valid. Member level
+// first: a name found there is the one that applies.
+const PROJECT_CONFIG_FINGERPRINT_FILES = [
+  "tailwind.config.js",
+  "tailwind.config.ts",
+  "tailwind.config.mjs",
+  "postcss.config.js",
+  "postcss.config.mjs",
+  "postcss.config.cjs",
+  "pnpm-lock.yaml",
+  "package-lock.json",
+  "yarn.lock",
+];
+
+export function projectConfigFingerprintFiles(
+  memberRoot: string,
+  workspaceRoot: string = findWorkspaceRoot(memberRoot),
+): string[] {
+  const roots = [...new Set([memberRoot, workspaceRoot])];
+  const found: string[] = [];
+  for (const name of PROJECT_CONFIG_FINGERPRINT_FILES) {
+    for (const root of roots) {
+      const candidate = path.join(root, name);
+      if (fs.existsSync(candidate)) {
+        found.push(candidate);
+        break;
+      }
+    }
+  }
+  return found;
+}
+
 export function legacyBaselineWarning(
   projectRoot: string,
   componentDir: string,
@@ -2520,9 +2546,10 @@ export function resolveFramework(
   mode: "react" | "vue" | "vanilla" | "auto",
   projectRoot: string,
   componentPath?: string,
+  onWarning?: (warning: string) => void,
 ): "react" | "vue" | "vanilla" {
   if (componentPath && isVueFile(componentPath)) return "vue";
-  return mode === "auto" ? detectFramework(projectRoot) : mode;
+  return mode === "auto" ? detectFramework(projectRoot, onWarning) : mode;
 }
 
 export function hasScaleExport(source: string): boolean {

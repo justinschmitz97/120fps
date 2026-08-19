@@ -1,0 +1,8 @@
+{
+  "name": "@workspace-monorepo-fixture/vue-widget",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "vue": "^3.5.0"
+  }
+}

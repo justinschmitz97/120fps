@@ -97,18 +97,39 @@ function worktreeDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), ".120fps-compare-"));
 }
 
+// M68. Every level from the repository root down to the member that has an
+// install of its own, root first. Under pnpm workspaces the member's own
+// node_modules is where react or vue lives, so linking the repo root alone left
+// the reference side unable to resolve the renderer.
+export function nodeModulesLinkDirs(repoRoot: string, memberRoot: string): string[] {
+  const relative = path.relative(repoRoot, memberRoot);
+  const inside = relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
+  const dirs = [""];
+  let current = "";
+  if (inside) {
+    for (const segment of relative.split(path.sep).filter(Boolean)) {
+      current = current ? `${current}/${segment}` : segment;
+      dirs.push(current);
+    }
+  }
+  return dirs.filter((dir) => fs.existsSync(path.join(repoRoot, dir, "node_modules")));
+}
+
 // A fresh worktree has no install of its own, so the reference harness could
 // not resolve react at all. Junction on Windows (no privileges needed), symlink
 // elsewhere. Sound only because the lockfiles matched.
-function linkNodeModules(repoRoot: string, worktree: string): void {
-  const source = path.join(repoRoot, "node_modules");
-  const target = path.join(worktree, "node_modules");
-  if (!fs.existsSync(source) || fs.existsSync(target)) return;
-  try {
-    fs.symlinkSync(source, target, process.platform === "win32" ? "junction" : "dir");
-  } catch {
-    // Without it the reference harness fails to boot and says so through the
-    // normal readiness path; a silent copy of node_modules would be worse.
+export function linkNodeModules(repoRoot: string, worktree: string, memberRoot: string): void {
+  for (const dir of nodeModulesLinkDirs(repoRoot, memberRoot)) {
+    const source = path.join(repoRoot, dir, "node_modules");
+    const target = path.join(worktree, dir, "node_modules");
+    if (fs.existsSync(target)) continue;
+    try {
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.symlinkSync(source, target, process.platform === "win32" ? "junction" : "dir");
+    } catch {
+      // Without it the reference harness fails to boot and says so through the
+      // normal readiness path; a silent copy of node_modules would be worse.
+    }
   }
 }
 
@@ -170,7 +191,7 @@ export async function compareAgainstRef(
     if (lockfileHash(repoRoot) !== lockfileHash(dir)) {
       throw new Error(DEPENDENCY_DRIFT_ERROR(ref));
     }
-    linkNodeModules(repoRoot, dir);
+    linkNodeModules(repoRoot, dir, projectRoot);
 
     const referencePath = path.join(dir, relativeComponent);
     if (!fs.existsSync(referencePath)) {

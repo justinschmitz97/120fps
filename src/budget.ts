@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { findWorkspaceRoot } from "./project-model.js";
 import {
   TIER_BUDGETS,
   type CalibrationResult,
@@ -231,18 +232,24 @@ function validateBudgetConfig(configPath: string, config: unknown): asserts conf
   }
 }
 
+// M68. A monorepo keeps one committed policy at the workspace root; a member
+// that has its own config still wins, because the nearer file is the more
+// specific statement.
 export function loadBudgetConfig(projectRoot: string): BudgetConfig | null {
-  const configPath = path.join(projectRoot, "120fps.config.json");
-  let config: unknown;
-  try {
-    const raw = fs.readFileSync(configPath, "utf-8");
-    config = JSON.parse(raw);
-  } catch (err: any) {
-    if (err.code === "ENOENT") return null;
-    throw new Error(`Failed to load 120fps.config.json: ${err.message}`);
+  for (const root of new Set([projectRoot, findWorkspaceRoot(projectRoot)])) {
+    const configPath = path.join(root, "120fps.config.json");
+    let config: unknown;
+    try {
+      const raw = fs.readFileSync(configPath, "utf-8");
+      config = JSON.parse(raw);
+    } catch (err: any) {
+      if (err.code === "ENOENT") continue;
+      throw new Error(`Failed to load 120fps.config.json: ${err.message}`);
+    }
+    validateBudgetConfig(configPath, config);
+    return config as BudgetConfig;
   }
-  validateBudgetConfig(configPath, config);
-  return config;
+  return null;
 }
 
 // M45. One committed baseline meets many machines. Rather than classifying the

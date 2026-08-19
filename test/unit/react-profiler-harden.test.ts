@@ -255,9 +255,9 @@ describe("H13: detectFramework edge-case package.json contents", () => {
     expect(detectFramework(sub)).toBe("vanilla");
   });
 
-  it("valid JSON that is not an object -> react (treated as unparseable)", () => {
-    expect(detectFramework(makeProject('"just a string"'))).toBe("react");
-    expect(detectFramework(makeProject("null"))).toBe("react");
+  it("valid JSON that is not an object -> vanilla (treated as unparseable)", () => {
+    expect(detectFramework(makeProject('"just a string"'))).toBe("vanilla");
+    expect(detectFramework(makeProject("null"))).toBe("vanilla");
   });
 
   it("react-lookalike dependency names do not count", () => {
@@ -267,9 +267,9 @@ describe("H13: detectFramework edge-case package.json contents", () => {
     expect(detectFramework(dir)).toBe("vanilla");
   });
 
-  it("dependency sections with non-object values -> react (defensive)", () => {
+  it("dependency sections with non-object values -> vanilla (defensive)", () => {
     const dir = makeProject(JSON.stringify({ dependencies: "react" }));
-    expect(detectFramework(dir)).toBe("react");
+    expect(detectFramework(dir)).toBe("vanilla");
   });
 });
 

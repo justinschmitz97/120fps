@@ -183,6 +183,16 @@ export {
 export { targetNotFoundMessage } from "./harness.js";
 export { PROVIDER_HINT_LINE } from "./hints.js";
 export { detectScaleExport, loadTsconfigAliases, findProjectRoot, sweepStaleHarnessDirs, detectComponentExport, createServerPool, SWEEP_DEP_WARNING, type ServerPool } from "./harness.js";
+export {
+  findWorkspaceRoot,
+  resolveProjectModel,
+  declaredPackages,
+  isPackageAvailable,
+  isPackageDeclared,
+  readProjectManifest,
+  WORKSPACE_LOCKFILES,
+  type ProjectModel,
+} from "./project-model.js";
 export { scanExports } from "./prop-gen.js";
 export {
   attachPageErrorCapture,

@@ -8,6 +8,14 @@ import { pathToFileURL } from "node:url";
 import type { CompositionTree, CompositionNode, ExportInfo } from "./composition.js";
 import { scanExports, normalizeComponentName } from "./prop-gen.js";
 import { isVueFile, loadVueCompiler, type VueSfcCompiler } from "./vue-sfc.js";
+import {
+  findProjectRoot,
+  findWorkspaceRoot,
+  isPackageAvailable,
+  isPackageDeclared,
+} from "./project-model.js";
+
+export { findProjectRoot };
 
 // M57. The measured file's own extension decides how it is mounted: a `.vue`
 // SFC cannot be rendered by React and a `.tsx` cannot be rendered by Vue, so
@@ -47,15 +55,7 @@ export const SHIM_MODULES: ShimEntry[] = [
 ];
 
 export function detectNextJs(projectRoot: string): boolean {
-  const pkgPath = path.join(projectRoot, "package.json");
-  if (!fs.existsSync(pkgPath)) return false;
-  try {
-    const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
-    const deps = { ...pkg.dependencies, ...pkg.devDependencies };
-    return "next" in deps;
-  } catch {
-    return false;
-  }
+  return isPackageAvailable("next", projectRoot);
 }
 
 export function buildShimAliases(
@@ -222,14 +222,7 @@ export function cssImportBlock(specifiers?: string[]): string {
 }
 
 export function detectTailwindVite(projectRoot: string): boolean {
-  const pkgPath = path.join(projectRoot, "package.json");
-  try {
-    const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
-    const deps = { ...pkg.dependencies, ...pkg.devDependencies };
-    return "@tailwindcss/vite" in deps;
-  } catch {
-    return false;
-  }
+  return isPackageAvailable("@tailwindcss/vite", projectRoot);
 }
 
 // Loaded from the project's own node_modules: the harness never carries a
@@ -268,18 +261,11 @@ export function reactCompilerResolutionWarning(projectRoot: string): string {
 
 // Package presence is the whole signal: next.config.* can be TypeScript and can
 // compute its own config, which is a large evaluation surface for one boolean.
+// Declared, never merely resolvable: the compiler rewrites the code that gets
+// measured, so a hoisted transitive copy must not switch it on (M27 H14). The
+// workspace root counts as a declaration; a hoisted install does not.
 export function detectReactCompiler(projectRoot: string): boolean {
-  try {
-    const pkg = JSON.parse(fs.readFileSync(path.join(projectRoot, "package.json"), "utf-8"));
-    if (typeof pkg !== "object" || pkg === null) return false;
-    for (const section of [pkg.dependencies, pkg.devDependencies, pkg.peerDependencies]) {
-      if (section === null || typeof section !== "object" || Array.isArray(section)) continue;
-      if (REACT_COMPILER_PACKAGE in section) return true;
-    }
-    return false;
-  } catch {
-    return false;
-  }
+  return isPackageDeclared(REACT_COMPILER_PACKAGE, projectRoot);
 }
 
 // Walking up from the resolved entry reaches the package's own manifest in any
@@ -461,20 +447,10 @@ export function resolvePluginFactory(
 }
 
 export function detectProjectTransforms(projectRoot: string): TransformPlugin[] {
-  let manifest: Record<string, unknown>;
-  try {
-    manifest = JSON.parse(fs.readFileSync(path.join(projectRoot, "package.json"), "utf-8"));
-  } catch {
-    return [];
-  }
-  const declared = new Set<string>();
-  for (const field of ["dependencies", "devDependencies", "peerDependencies"]) {
-    const section = manifest[field];
-    if (section && typeof section === "object") {
-      for (const name of Object.keys(section as Record<string, unknown>)) declared.add(name);
-    }
-  }
-  return SUPPORTED_TRANSFORM_PLUGINS.filter((entry) => declared.has(entry.packageName));
+  const workspaceRoot = findWorkspaceRoot(projectRoot);
+  return SUPPORTED_TRANSFORM_PLUGINS.filter((entry) =>
+    isPackageAvailable(entry.packageName, projectRoot, workspaceRoot),
+  );
 }
 
 // Server and HMR hooks are stripped: the harness owns the server's lifecycle,
@@ -1001,16 +977,6 @@ function readDepCacheMetadata(projectRoot: string): string | undefined {
     );
   } catch {
     return undefined;
-  }
-}
-
-export function findProjectRoot(dir: string): string | undefined {
-  let current = dir;
-  while (true) {
-    if (fs.existsSync(path.join(current, "package.json"))) return current;
-    const parent = path.dirname(current);
-    if (parent === current) return undefined;
-    current = parent;
   }
 }
 
