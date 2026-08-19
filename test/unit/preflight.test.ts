@@ -1,4 +1,6 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import {
   runPreflight,
@@ -16,6 +18,31 @@ function check(file: string, componentName?: string) {
     entries: [path.join(ROOT, file)],
     ...(componentName ? { componentName } : {}),
   });
+}
+
+// M72: solid-js and Yarn PnP rejection both key off package.json/workspace
+// markers that must not be polluted by this repo's own react devDependency
+// or pnpm workspace, so each gets an isolated os.tmpdir() root rather than a
+// fixture nested under this repository (matching workspace-root-discovery.test.ts).
+const tmpDirs: string[] = [];
+
+afterEach(() => {
+  for (const dir of tmpDirs.splice(0)) {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+function makeIsolatedRoot(prefix: string, files: Record<string, string>): { root: string; entry: string } {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  tmpDirs.push(root);
+  for (const [rel, content] of Object.entries(files)) {
+    const abs = path.join(root, rel);
+    fs.mkdirSync(path.dirname(abs), { recursive: true });
+    fs.writeFileSync(abs, content);
+  }
+  const entry = path.join(root, "Card.tsx");
+  if (!files["Card.tsx"]) fs.writeFileSync(entry, "export function Card() { return null; }\n");
+  return { root, entry };
 }
 
 // C1: the boundary is real and permanent; fail before booting anything.
@@ -126,5 +153,95 @@ describe("hardening", () => {
       componentName: "Clean",
     });
     expect(result.hard.map((h) => h.kind)).toContain("server-only");
+  });
+});
+
+// M72: solid-js declared without react cannot be measured; declared alongside
+// react it is a mixed repo and only warns (see detectFramework in
+// react-profiler.test.ts for that half).
+describe("solid-js rejection", () => {
+  it("rejects a project that declares solid-js and no react", () => {
+    const { root, entry } = makeIsolatedRoot("120fps-preflight-solid-", {
+      "package.json": JSON.stringify({ dependencies: { "solid-js": "^1.8.0" } }),
+    });
+    const result = runPreflight({ projectRoot: root, entries: [entry] });
+    expect(result.hard.map((h) => h.kind)).toContain("unsupported-framework");
+  });
+
+  it("does not reject when both react and solid-js are declared", () => {
+    const { root, entry } = makeIsolatedRoot("120fps-preflight-mixed-", {
+      "package.json": JSON.stringify({
+        dependencies: { react: "^19.0.0", "react-dom": "^19.0.0", "solid-js": "^1.8.0" },
+      }),
+    });
+    const result = runPreflight({ projectRoot: root, entries: [entry] });
+    expect(result.hard.map((h) => h.kind)).not.toContain("unsupported-framework");
+  });
+
+  it("passes a project with neither package declared", () => {
+    const { root, entry } = makeIsolatedRoot("120fps-preflight-neither-", {
+      "package.json": JSON.stringify({ dependencies: { lodash: "^4.0.0" } }),
+    });
+    expect(runPreflight({ projectRoot: root, entries: [entry] }).hard).toEqual([]);
+  });
+
+  it("names Solid in the failure message without the server-boundary remedy", () => {
+    const { root, entry } = makeIsolatedRoot("120fps-preflight-solid-msg-", {
+      "package.json": JSON.stringify({ dependencies: { "solid-js": "^1.8.0" } }),
+    });
+    const result = runPreflight({ projectRoot: root, entries: [entry] });
+    const message = preflightFailureMessage(result.hard);
+    expect(message).toContain("Solid");
+    expect(message).not.toContain("Extract the client part");
+  });
+});
+
+// M72: PnP swaps node_modules for a virtual filesystem this harness cannot
+// resolve through; unconditional, no mixed-repo exception.
+describe("Yarn PnP rejection", () => {
+  it("rejects a workspace carrying .pnp.cjs", () => {
+    const { root, entry } = makeIsolatedRoot("120fps-preflight-pnp-cjs-", {
+      "package.json": "{}",
+      ".pnp.cjs": "",
+    });
+    const result = runPreflight({ projectRoot: root, entries: [entry] });
+    expect(result.hard.map((h) => h.kind)).toContain("yarn-pnp");
+  });
+
+  it("rejects a workspace carrying .pnp.loader.mjs", () => {
+    const { root, entry } = makeIsolatedRoot("120fps-preflight-pnp-mjs-", {
+      "package.json": "{}",
+      ".pnp.loader.mjs": "",
+    });
+    const result = runPreflight({ projectRoot: root, entries: [entry] });
+    expect(result.hard.map((h) => h.kind)).toContain("yarn-pnp");
+  });
+
+  it("names Yarn Plug'n'Play in the failure message", () => {
+    const { root, entry } = makeIsolatedRoot("120fps-preflight-pnp-msg-", {
+      "package.json": "{}",
+      ".pnp.cjs": "",
+    });
+    const result = runPreflight({ projectRoot: root, entries: [entry] });
+    expect(preflightFailureMessage(result.hard)).toContain("Plug'n'Play");
+  });
+
+  it("passes a workspace with no PnP markers", () => {
+    const { root, entry } = makeIsolatedRoot("120fps-preflight-no-pnp-", {
+      "package.json": "{}",
+    });
+    expect(runPreflight({ projectRoot: root, entries: [entry] }).hard).toEqual([]);
+  });
+});
+
+// M72: "next/server-only" was never a real module; a stale entry here would
+// hard-reject an import that could not have caused the problem it claims to.
+describe("dead SERVER_ONLY_PACKAGES entry removed", () => {
+  it("does not treat next/server-only as the server-only marker", () => {
+    const { root, entry } = makeIsolatedRoot("120fps-preflight-next-server-only-", {
+      "Card.tsx": 'import "next/server-only";\nexport function Card() { return null; }\n',
+    });
+    const result = runPreflight({ projectRoot: root, entries: [entry] });
+    expect(result.hard.map((h) => h.kind)).not.toContain("server-only");
   });
 });

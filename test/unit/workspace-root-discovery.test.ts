@@ -8,6 +8,7 @@ import {
   resolveProjectModel,
   declaredPackages,
   isPackageAvailable,
+  detectPnP,
 } from "../../src/project-model.js";
 
 let tmpDir: string;
@@ -237,5 +238,30 @@ describe("package availability across workspace levels", () => {
     makeTree({ "package.json": JSON.stringify({ dependencies: { react: "^19.0.0" } }) });
     expect(isPackageAvailable("react", tmpDir, tmpDir)).toBe(true);
     expect(isPackageAvailable("next", tmpDir, tmpDir)).toBe(false);
+  });
+});
+
+// M72: Yarn PnP replaces node_modules with a virtual filesystem this harness
+// cannot resolve through, so it is detected and rejected rather than left to
+// fail with a raw resolution error.
+describe("Yarn PnP detection", () => {
+  it("is false for a plain node_modules workspace", () => {
+    makeTree({ "package.json": "{}" });
+    expect(detectPnP(tmpDir)).toBe(false);
+  });
+
+  it("detects .pnp.cjs at the workspace root", () => {
+    makeTree({ "package.json": "{}", ".pnp.cjs": "" });
+    expect(detectPnP(tmpDir)).toBe(true);
+  });
+
+  it("detects .pnp.loader.mjs at the workspace root", () => {
+    makeTree({ "package.json": "{}", ".pnp.loader.mjs": "" });
+    expect(detectPnP(tmpDir)).toBe(true);
+  });
+
+  it("does not detect a PnP marker one level below the workspace root", () => {
+    makeTree({ "package.json": "{}", "packages/ui/.pnp.cjs": "" });
+    expect(detectPnP(tmpDir)).toBe(false);
   });
 });

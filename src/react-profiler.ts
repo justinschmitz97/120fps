@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { createRequire } from "node:module";
 import { chromium, type Browser, type CDPSession, type Page } from "playwright";
 import { renderTreeHelper, setupApiBlock, setupBlock, wrapImportLine, type HarnessResult } from "./harness.js";
 import {
@@ -102,6 +103,13 @@ export const FRAMEWORK_MANIFEST_UNREADABLE = (root: string): string =>
   `no readable package.json in ${root}, so the component is measured as vanilla; ` +
   `pass --framework react|vue to say what it is.`;
 
+// M72: a project that also ships solid-js is not rejected — mixed repos
+// exist and the React tree is still measurable — but a Solid component
+// inside it will fail to mount, so the run says so up front.
+export const SOLID_AND_REACT_DECLARED = (root: string): string =>
+  `${root} declares both react and solid-js; 120fps only measures the React tree, so a Solid ` +
+  "component here will fail to mount.";
+
 // React wins a tie: a project with both installed is a React project that also
 // ships some Vue, and the React optimization pass is the one with findings.
 function frameworkFrom(names: Set<string>): "react" | "vue" | undefined {
@@ -124,18 +132,26 @@ export function detectFramework(
     onWarning?.(FRAMEWORK_MANIFEST_UNREADABLE(memberRoot));
     return "vanilla";
   }
-  const own = frameworkFrom(declaredPackages(memberRoot));
-  if (own) return own;
   const workspaceRoot = findWorkspaceRoot(memberRoot);
-  const shared = frameworkFrom(declaredPackages(workspaceRoot));
-  if (shared) return shared;
-  if (
-    isPackageAvailable("react", memberRoot, workspaceRoot) ||
-    isPackageAvailable("react-dom", memberRoot, workspaceRoot)
-  ) {
-    return "react";
+  const own = frameworkFrom(declaredPackages(memberRoot));
+  const shared = own ? undefined : frameworkFrom(declaredPackages(workspaceRoot));
+  let resolved: "react" | "vue" | "vanilla" | undefined = own ?? shared;
+  if (!resolved) {
+    if (
+      isPackageAvailable("react", memberRoot, workspaceRoot) ||
+      isPackageAvailable("react-dom", memberRoot, workspaceRoot)
+    ) {
+      resolved = "react";
+    } else {
+      resolved = isPackageAvailable("vue", memberRoot, workspaceRoot) ? "vue" : "vanilla";
+    }
   }
-  return isPackageAvailable("vue", memberRoot, workspaceRoot) ? "vue" : "vanilla";
+  // M72: solid-js alongside react is not rejected here (see runPreflight for
+  // the solid-only rejection); it only warns.
+  if (resolved === "react" && isPackageAvailable("solid-js", memberRoot, workspaceRoot)) {
+    onWarning?.(SOLID_AND_REACT_DECLARED(memberRoot));
+  }
+  return resolved;
 }
 
 export function diffSnapshots(
@@ -558,6 +574,61 @@ export interface ReactAnalysisOptions {
   onWarning?: (warning: string) => void;
 }
 
+export interface ReactDomIdentity {
+  name: string;
+  version: string;
+}
+
+// M72: an npm/pnpm alias (`"react-dom": "npm:preact/compat"`) keeps the
+// `react-dom` folder name on disk, but the package.json inside it belongs to
+// the aliased package. Reading that package.json's own `name` is the only
+// reliable way to tell React and an aliased Preact apart; the specifier
+// alone cannot. `fromDir` is normally `harness.harnessDir`, which
+// `mkdtempSync` creates directly under the project root (`src/harness.ts`),
+// so Node's own upward resolution walk reaches the project's real install.
+export function resolveReactDomIdentity(fromDir: string): ReactDomIdentity | undefined {
+  try {
+    const projectRequire = createRequire(path.join(fromDir, "/"));
+    const pkgPath = projectRequire.resolve("react-dom/package.json");
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8")) as { name?: unknown; version?: unknown };
+    if (typeof pkg.name !== "string" || typeof pkg.version !== "string") return undefined;
+    return { name: pkg.name, version: pkg.version };
+  } catch {
+    return undefined;
+  }
+}
+
+const REACT_DOM_MIN_MAJOR = 16;
+const REACT_DOM_MIN_MINOR = 5;
+const REACT_DOM_MAX_MAJOR = 19;
+
+// Coarse on purpose: PROFILER_HOOK_SCRIPT hardcodes React's internal WorkTag
+// numbers (memo=14, forwardRef=15) for the range 120fps has been tested
+// against. An unparseable version is evidence of nothing, so it passes.
+export function isSupportedReactDomVersion(version: string): boolean {
+  const match = /^(\d+)\.(\d+)/.exec(version);
+  if (!match) return true;
+  const major = Number(match[1]);
+  const minor = Number(match[2]);
+  if (major < REACT_DOM_MIN_MAJOR) return false;
+  if (major === REACT_DOM_MIN_MAJOR && minor < REACT_DOM_MIN_MINOR) return false;
+  return major <= REACT_DOM_MAX_MAJOR;
+}
+
+export const REACT_DOM_NOT_REACT_WARNING = (identity: ReactDomIdentity | undefined): string =>
+  identity
+    ? `react-dom resolves to "${identity.name}", not react-dom (an npm alias such as ` +
+      `"react-dom": "npm:preact/compat" resolves this way); skipping React fiber analysis ` +
+      "(memo bailout, context fan-out, callback identity, render attribution). The component " +
+      "still mounts and is measured normally."
+    : "could not resolve react-dom's package.json to confirm its identity; skipping React fiber " +
+      "analysis (memo bailout, context fan-out, callback identity, render attribution) since it " +
+      "may not be React. The component still mounts and is measured normally.";
+
+export const REACT_DOM_VERSION_RANGE_WARNING = (version: string): string =>
+  `react-dom ${version} is outside 120fps's tested range (16.5-19); the fiber profiler hardcodes ` +
+  "React's internal WorkTag numbers for that range and may misreport render counts or durations.";
+
 const FUNCTION_MARKER = "__120fps_fn__";
 
 function serializeProps(props: PropCombination): Record<string, unknown> {
@@ -629,6 +700,22 @@ export async function runReactAnalysis(
   options: ReactAnalysisOptions,
 ): Promise<Map<number, ReactOptimizations>> {
   const { combos, samples = 3, cpuThrottle = 4, warmupRuns = 1, fnPropNames = [] } = options;
+
+  // M72: the framework was detected as "react" from declared/available
+  // packages (src/react-profiler.ts detectFramework), which an npm alias
+  // (`"react-dom": "npm:preact/compat"`) satisfies without being React. This
+  // pass's every measurement reads React DevTools fiber internals, so a
+  // wrong or unconfirmed identity is skipped entirely rather than reporting
+  // fiction. Mounting itself is unaffected: it happens in harness.ts via
+  // createRoot, which preact/compat implements too.
+  const reactDomIdentity = resolveReactDomIdentity(harness.harnessDir);
+  if (!reactDomIdentity || reactDomIdentity.name !== "react-dom") {
+    options.onWarning?.(REACT_DOM_NOT_REACT_WARNING(reactDomIdentity));
+    return new Map();
+  }
+  if (!isSupportedReactDomVersion(reactDomIdentity.version)) {
+    options.onWarning?.(REACT_DOM_VERSION_RANGE_WARNING(reactDomIdentity.version));
+  }
 
   const probeEntry = generateProbeEntry({
     componentRelative: harness.component.relative,

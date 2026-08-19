@@ -4,9 +4,12 @@ import { builtinModules } from "node:module";
 import ts from "typescript";
 import { projectCompilerOptions } from "./prop-gen.js";
 import { isVueFile, parseSfcScript, type VueSfcCompiler } from "./vue-sfc.js";
+import { detectPnP, findWorkspaceRoot, isPackageAvailable } from "./project-model.js";
 
 // The marker package a server module imports to make the boundary explicit.
-const SERVER_ONLY_PACKAGES = new Set(["server-only", "next/server-only"]);
+// M72: "next/server-only" was never a real module (Next.js re-exports the
+// real "server-only" package unchanged); removed as a dead entry.
+const SERVER_ONLY_PACKAGES = new Set(["server-only"]);
 
 const NODE_BUILTINS = new Set(builtinModules);
 
@@ -17,7 +20,13 @@ export type PreflightKind =
   | "node-builtin"
   // M48: an import whose compilation depends on a project Vite plugin the
   // harness deliberately does not load.
-  | "project-transform";
+  | "project-transform"
+  // M72: the project declares solid-js and neither react nor react-dom, so
+  // the measured tree cannot be a React tree.
+  | "unsupported-framework"
+  // M72: the workspace installs via Yarn Plug'n'Play, which node_modules-
+  // based resolution (this harness's, and Vite's) cannot read.
+  | "yarn-pnp";
 
 // The harness never loads the project's vite.config (M30): its plugins target
 // its own Vite major and its server options are not measurement-safe. That is
@@ -116,6 +125,14 @@ export const PROVIDER_LIBRARIES: Record<string, string> = {
   "react-i18next": "useTranslation",
   "react-redux": "useSelector",
   "@tanstack/react-query": "useQuery",
+  // M72: routing and meta-framework libraries whose hooks throw outside
+  // their router/route context, the same failure shape as the four above.
+  "react-router": "useNavigate",
+  "react-router-dom": "useNavigate",
+  "@remix-run/react": "useLoaderData",
+  gatsby: "useStaticQuery",
+  "@tanstack/react-router": "useRouter",
+  "@tanstack/react-start": "useRouter",
 };
 
 export interface ProviderHit {
@@ -338,6 +355,21 @@ export function runPreflight(options: PreflightOptions): PreflightResult {
     queue.push(abs);
   }
 
+  // M72: environment-level rejections, checked once per run and independent
+  // of the import graph — a PnP install or a Solid-only project cannot be
+  // fixed by walking further, so both fail before that walk starts.
+  const entryChain = [relative(projectRoot, path.resolve(entries[0]))];
+  const workspaceRoot = findWorkspaceRoot(projectRoot);
+  if (detectPnP(workspaceRoot)) {
+    hard.push({ kind: "yarn-pnp", chain: entryChain });
+  }
+  const hasReact =
+    isPackageAvailable("react", projectRoot, workspaceRoot) ||
+    isPackageAvailable("react-dom", projectRoot, workspaceRoot);
+  if (!hasReact && isPackageAvailable("solid-js", projectRoot, workspaceRoot)) {
+    hard.push({ kind: "unsupported-framework", chain: entryChain, specifier: "solid-js" });
+  }
+
   const chainTo = (file: string): string[] => {
     const chain: string[] = [];
     let cursor: string | undefined = file;
@@ -456,13 +488,34 @@ function chainText(hit: PreflightHit): string {
 
 // Only the kinds that can be a hard failure. Node builtins and project
 // transforms are reported, never fatal.
-const HARD_CAUSE: Record<
-  Exclude<PreflightKind, "node-builtin" | "project-transform">,
-  string
-> = {
+type HardKind = Exclude<PreflightKind, "node-builtin" | "project-transform">;
+
+const HARD_CAUSE: Record<HardKind, string> = {
   "server-only": "imports the server-only marker package",
   "use-server": "is a \"use server\" module",
   "async-component": "exports an async function component (a React Server Component)",
+  "unsupported-framework": "is measured in a project that declares solid-js; 120fps does not support Solid",
+  "yarn-pnp": "is installed via Yarn Plug'n'Play, which 120fps cannot resolve modules through",
+};
+
+// M72: the server-boundary remedy ("extract the client part") only makes
+// sense for the three original kinds; Solid and PnP need their own next step.
+const EXTRACT_REMEDY = [
+  "Extract the client part below that boundary, or point 120fps at the client",
+  "child component. Pass --no-preflight to attempt the run anyway.",
+].join("\n");
+
+const HARD_REMEDY: Record<HardKind, string> = {
+  "server-only": EXTRACT_REMEDY,
+  "use-server": EXTRACT_REMEDY,
+  "async-component": EXTRACT_REMEDY,
+  "unsupported-framework":
+    "120fps measures React and Vue components; Solid is not supported. Point it at a React or " +
+    "Vue component, or remove solid-js if this project no longer uses it. Pass --no-preflight " +
+    "to attempt the run anyway.",
+  "yarn-pnp":
+    "Set nodeLinker: node-modules in .yarnrc.yml and reinstall, or use npm/pnpm instead. Pass " +
+    "--no-preflight to attempt the run anyway.",
 };
 
 // The first hit is the one to fix: everything below it is unreachable until
@@ -470,14 +523,13 @@ const HARD_CAUSE: Record<
 export function preflightFailureMessage(hits: PreflightHit[]): string {
   const hit = hits[0];
   const where = hit.chain[hit.chain.length - 1];
-  const cause = HARD_CAUSE[hit.kind as keyof typeof HARD_CAUSE];
+  const kind = hit.kind as HardKind;
   return [
-    `Cannot measure this component in a browser: ${where} ${cause}.`,
+    `Cannot measure this component in a browser: ${where} ${HARD_CAUSE[kind]}.`,
     "",
     `  ${chainText(hit)}`,
     "",
-    "Extract the client part below that boundary, or point 120fps at the client",
-    "child component. Pass --no-preflight to attempt the run anyway.",
+    HARD_REMEDY[kind],
   ].join("\n");
 }
 

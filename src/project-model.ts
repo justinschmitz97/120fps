@@ -146,3 +146,16 @@ export function isPackageAvailable(
   if (isPackageDeclared(pkg, memberRoot, workspaceRoot)) return true;
   return workspaceLevels(memberRoot, workspaceRoot).some((level) => isInstalledAt(level, pkg));
 }
+
+const PNP_MARKERS = [".pnp.cjs", ".pnp.loader.mjs"];
+
+// M72. Yarn PnP replaces node_modules with a virtual filesystem resolved by
+// these two loader files at the workspace root; the harness's Vite server and
+// every createRequire-based lookup in this codebase assume real node_modules,
+// so a PnP install fails deep and confusingly instead of naming the actual
+// cause. process.versions.pnp is set by Yarn's own require hook when 120fps
+// itself runs under PnP, which the marker-file probe alone would miss.
+export function detectPnP(workspaceRoot: string): boolean {
+  if ((process.versions as Record<string, string | undefined>).pnp !== undefined) return true;
+  return PNP_MARKERS.some((name) => fs.existsSync(path.join(workspaceRoot, name)));
+}

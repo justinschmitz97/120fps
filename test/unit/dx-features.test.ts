@@ -265,6 +265,18 @@ describe("provider detection", () => {
     expect(detectProviderImport("./local")).toBeUndefined();
   });
 
+  // M72: routing/meta-framework libraries whose hooks throw outside their
+  // router or route context, the same shape as the four existing entries.
+  it("recognizes routing and meta-framework provider libraries", () => {
+    expect(detectProviderImport("react-router")?.hook).toBe("useNavigate");
+    expect(detectProviderImport("react-router-dom")?.hook).toBe("useNavigate");
+    expect(detectProviderImport("react-router-dom/client")?.source).toBe("react-router-dom");
+    expect(detectProviderImport("@remix-run/react")?.hook).toBe("useLoaderData");
+    expect(detectProviderImport("gatsby")?.hook).toBe("useStaticQuery");
+    expect(detectProviderImport("@tanstack/react-router")?.hook).toBe("useRouter");
+    expect(detectProviderImport("@tanstack/react-start")?.hook).toBe("useRouter");
+  });
+
   it("records a package provider import from the walked graph", () => {
     const result = runPreflight({
       projectRoot: path.resolve("fixtures"),

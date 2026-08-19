@@ -14,6 +14,11 @@ import {
   PROFILER_HOOK_SCRIPT,
   generateProbeEntry,
   generateProbeHtml,
+  resolveReactDomIdentity,
+  isSupportedReactDomVersion,
+  REACT_DOM_NOT_REACT_WARNING,
+  REACT_DOM_VERSION_RANGE_WARNING,
+  SOLID_AND_REACT_DECLARED,
   type ProfilerSnapshot,
   type ProfilerDiff,
   type ReactOptimizations,
@@ -103,6 +108,117 @@ describe("detectFramework", () => {
   it("returns 'vanilla' when package.json is malformed JSON", () => {
     const dir = makeProject("{ not valid json !!");
     expect(detectFramework(dir)).toBe("vanilla");
+  });
+
+  // M72: solid-js alongside react is a mixed repo, not a rejection (that
+  // half lives in runPreflight; see preflight.test.ts "solid-js rejection").
+  it("warns but still returns 'react' when solid-js is declared alongside react", () => {
+    const dir = makeProject(
+      JSON.stringify({ dependencies: { react: "^19.0.0", "solid-js": "^1.8.0" } }),
+    );
+    const warnings: string[] = [];
+    expect(detectFramework(dir, (w) => warnings.push(w))).toBe("react");
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toBe(SOLID_AND_REACT_DECLARED(dir));
+  });
+
+  it("does not warn about solid-js when react is not declared", () => {
+    const dir = makeProject(JSON.stringify({ dependencies: { "solid-js": "^1.8.0" } }));
+    const warnings: string[] = [];
+    expect(detectFramework(dir, (w) => warnings.push(w))).toBe("vanilla");
+    expect(warnings).toEqual([]);
+  });
+});
+
+// ====================================================================
+// resolveReactDomIdentity / isSupportedReactDomVersion
+// ====================================================================
+
+describe("resolveReactDomIdentity", () => {
+  const tmpDirs: string[] = [];
+
+  function installPackage(root: string, name: string, pkg: Record<string, unknown>): void {
+    const dir = path.join(root, "node_modules", ...name.split("/"));
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify(pkg));
+  }
+
+  function makeRoot(): string {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "120fps-react-dom-identity-"));
+    tmpDirs.push(dir);
+    return dir;
+  }
+
+  afterEach(() => {
+    for (const dir of tmpDirs.splice(0)) {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("reads name and version from a genuine react-dom install", () => {
+    const root = makeRoot();
+    installPackage(root, "react-dom", { name: "react-dom", version: "18.2.0" });
+    expect(resolveReactDomIdentity(root)).toEqual({ name: "react-dom", version: "18.2.0" });
+  });
+
+  it("names preact when react-dom is an npm alias to preact/compat", () => {
+    const root = makeRoot();
+    installPackage(root, "react-dom", { name: "preact", version: "10.19.3" });
+    expect(resolveReactDomIdentity(root)).toEqual({ name: "preact", version: "10.19.3" });
+  });
+
+  it("returns undefined when react-dom is not resolvable", () => {
+    const root = makeRoot();
+    expect(resolveReactDomIdentity(root)).toBeUndefined();
+  });
+
+  it("resolves from a directory nested under the install (a harness dir)", () => {
+    const root = makeRoot();
+    installPackage(root, "react-dom", { name: "react-dom", version: "19.0.0" });
+    const harnessDir = path.join(root, ".120fps-harness-abc123");
+    fs.mkdirSync(harnessDir, { recursive: true });
+    expect(resolveReactDomIdentity(harnessDir)).toEqual({ name: "react-dom", version: "19.0.0" });
+  });
+});
+
+describe("isSupportedReactDomVersion", () => {
+  it("accepts versions inside the tested 16.5-19 range", () => {
+    expect(isSupportedReactDomVersion("16.5.0")).toBe(true);
+    expect(isSupportedReactDomVersion("18.2.0")).toBe(true);
+    expect(isSupportedReactDomVersion("19.0.0")).toBe(true);
+    expect(isSupportedReactDomVersion("19.1.5")).toBe(true);
+  });
+
+  it("rejects versions below 16.5", () => {
+    expect(isSupportedReactDomVersion("16.4.9")).toBe(false);
+    expect(isSupportedReactDomVersion("15.6.2")).toBe(false);
+  });
+
+  it("rejects major versions above 19", () => {
+    expect(isSupportedReactDomVersion("20.0.0")).toBe(false);
+  });
+
+  it("does not warn on an unparseable version string", () => {
+    expect(isSupportedReactDomVersion("canary")).toBe(true);
+    expect(isSupportedReactDomVersion("")).toBe(true);
+  });
+});
+
+describe("React DOM identity warnings", () => {
+  it("names the resolved package when it is not react-dom", () => {
+    const message = REACT_DOM_NOT_REACT_WARNING({ name: "preact", version: "10.19.3" });
+    expect(message).toContain("preact");
+    expect(message).toContain("skipping React fiber analysis");
+  });
+
+  it("labels an unresolvable identity as unknown, not preact", () => {
+    const message = REACT_DOM_NOT_REACT_WARNING(undefined);
+    expect(message).not.toContain("preact");
+    expect(message.toLowerCase()).not.toContain('"preact"');
+  });
+
+  it("names the out-of-range version", () => {
+    expect(REACT_DOM_VERSION_RANGE_WARNING("20.0.0")).toContain("20.0.0");
   });
 });
 

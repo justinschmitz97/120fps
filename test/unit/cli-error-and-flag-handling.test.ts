@@ -8,6 +8,8 @@ import {
   isDebugStackEnabled,
   wrapperNotFoundMessage,
   stylesheetNotFoundMessage,
+  nodeVersionError,
+  MIN_NODE_MAJOR,
 } from "../../src/cli.js";
 import { resolveWrapPath, resolveCssFiles } from "../../src/analyze.js";
 
@@ -190,5 +192,36 @@ describe("D8: --wrap / --css error wording matches analyze.ts", () => {
       thrown = err instanceof Error ? err.message : String(err);
     }
     expect(thrown).toBe(stylesheetNotFoundMessage(missing));
+  });
+});
+
+// M72: engines: >=22 in package.json is declarative only; npx only soft-warns
+// below it. main() checks process.version itself, before any other work.
+describe("node version gate", () => {
+  it(`requires Node ${MIN_NODE_MAJOR}+`, () => {
+    expect(MIN_NODE_MAJOR).toBe(22);
+  });
+
+  it("rejects a major version below the floor", () => {
+    const message = nodeVersionError("v18.19.0");
+    expect(message).toBeDefined();
+    expect(message).toContain("Node 22+ required");
+    expect(message).toContain("v18.19.0");
+  });
+
+  it("rejects the last unsupported major", () => {
+    expect(nodeVersionError("v21.7.3")).toBeDefined();
+  });
+
+  it("accepts the floor version", () => {
+    expect(nodeVersionError("v22.0.0")).toBeUndefined();
+  });
+
+  it("accepts a version above the floor", () => {
+    expect(nodeVersionError("v24.15.0")).toBeUndefined();
+  });
+
+  it("does not reject an unparseable version string", () => {
+    expect(nodeVersionError("not-a-version")).toBeUndefined();
   });
 });

@@ -828,7 +828,29 @@ function componentStem(componentPath: string): string {
   return base.replace(/\.[^.]+$/, "");
 }
 
+// M72: engines: >=22 in package.json (see package.json) is declarative only
+// — npx only soft-warns below it. A hard gate at entry turns a confusing
+// syntax/runtime crash deep inside a dependency into one clear message.
+export const MIN_NODE_MAJOR = 22;
+
+function nodeMajorVersion(version: string): number | undefined {
+  const match = /^v?(\d+)\./.exec(version);
+  return match ? Number(match[1]) : undefined;
+}
+
+export function nodeVersionError(version: string): string | undefined {
+  const major = nodeMajorVersion(version);
+  if (major === undefined || major >= MIN_NODE_MAJOR) return undefined;
+  return `Node ${MIN_NODE_MAJOR}+ required, found ${version}`;
+}
+
 async function main(): Promise<void> {
+  const versionError = nodeVersionError(process.version);
+  if (versionError) {
+    process.stderr.write(`Error: ${versionError}\n`);
+    process.exit(2);
+  }
+
   const args = parseArgs(process.argv.slice(2));
 
   if (args.help) {
