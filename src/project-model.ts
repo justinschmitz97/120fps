@@ -64,6 +64,31 @@ export function resolveProjectModel(dir: string): ProjectModel {
   return { memberRoot, workspaceRoot: findWorkspaceRoot(memberRoot) };
 }
 
+const COMPILER_CONFIGS = ["tsconfig.json", "jsconfig.json"];
+
+// M69. One answer to "which config governs this file", shared by alias
+// construction and prop extraction: two searches that disagreed gave a
+// workspace member working prop types and zero aliases. jsconfig.json holds the
+// same JSON shape and the TypeScript config APIs read it, so a JavaScript
+// project is not a separate path. The nearest level wins, and the walk stops
+// after stopDir; without a stopDir it reaches the filesystem root, which is the
+// reach ts.findConfigFile had. Forward slashes, because ts.readConfigFile
+// asserts on a backslash path once it has a diagnostic to report.
+export function findCompilerConfig(startDir: string, stopDir?: string): string | undefined {
+  const stop = stopDir === undefined ? undefined : path.resolve(stopDir);
+  let current = path.resolve(startDir);
+  while (true) {
+    for (const name of COMPILER_CONFIGS) {
+      const candidate = path.join(current, name);
+      if (fs.existsSync(candidate)) return candidate.replace(/\\/g, "/");
+    }
+    if (current === stop) return undefined;
+    const parent = path.dirname(current);
+    if (parent === current) return undefined;
+    current = parent;
+  }
+}
+
 const DEPENDENCY_SECTIONS = ["dependencies", "devDependencies", "peerDependencies"];
 
 export function declaredPackages(root: string): Set<string> {

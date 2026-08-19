@@ -11,6 +11,7 @@ import {
   type VueSfcCompiler,
 } from "./vue-sfc.js";
 import { detectPropPresets, literalValue } from "./prop-presets.js";
+import { findCompilerConfig, findProjectRoot, findWorkspaceRoot } from "./project-model.js";
 
 // M36: a fresh ts.Program per extraction re-parses lib.d.ts and the project's
 // node_modules type graph every time. Between calls only the component file
@@ -1617,10 +1618,14 @@ export function projectCompilerOptions(absolutePath: string): ts.CompilerOptions
 }
 
 function createCompilerOptions(absolutePath: string): ts.CompilerOptions {
-  const tsconfigPath = ts.findConfigFile(
-    path.dirname(absolutePath),
-    ts.sys.fileExists,
-    "tsconfig.json",
+  // M69: the same search the harness builds aliases from, so one config
+  // governs both. The bound is the workspace root; a tree with no package.json
+  // anywhere has no project model, and the walk keeps its old reach.
+  const startDir = path.dirname(absolutePath);
+  const memberRoot = findProjectRoot(startDir);
+  const tsconfigPath = findCompilerConfig(
+    startDir,
+    memberRoot === undefined ? undefined : findWorkspaceRoot(memberRoot),
   );
 
   let compilerOptions: ts.CompilerOptions = {
@@ -1630,6 +1635,9 @@ function createCompilerOptions(absolutePath: string): ts.CompilerOptions {
     jsx: ts.JsxEmit.ReactJSX,
     esModuleInterop: true,
     skipLibCheck: true,
+    // A .jsx target is outside the program without this, so extraction has no
+    // source file to read and reports the component as unparsable.
+    allowJs: true,
   };
 
   if (tsconfigPath) {
@@ -1657,6 +1665,9 @@ function createCompilerOptions(absolutePath: string): ts.CompilerOptions {
         skipLibCheck: true,
         moduleResolution: ts.ModuleResolutionKind.Bundler,
         module: ts.ModuleKind.ESNext,
+        // The measured file is named by the user: a project that excludes
+        // JavaScript from type checking still gets its .jsx component read.
+        allowJs: true,
       };
     }
   }

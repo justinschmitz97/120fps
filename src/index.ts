@@ -182,8 +182,9 @@ export {
 } from "./preflight.js";
 export { targetNotFoundMessage } from "./harness.js";
 export { PROVIDER_HINT_LINE } from "./hints.js";
-export { detectScaleExport, loadTsconfigAliases, findProjectRoot, sweepStaleHarnessDirs, detectComponentExport, createServerPool, SWEEP_DEP_WARNING, type ServerPool } from "./harness.js";
+export { detectScaleExport, loadTsconfigAliases, findProjectRoot, sweepStaleHarnessDirs, detectComponentExport, createServerPool, SWEEP_DEP_WARNING, ALIAS_SHAPE_WARNING, BROKEN_ALIAS_WARNING, fsAllowDirs, type ServerPool } from "./harness.js";
 export {
+  findCompilerConfig,
   findWorkspaceRoot,
   resolveProjectModel,
   declaredPackages,

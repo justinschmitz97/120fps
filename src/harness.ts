@@ -1,4 +1,4 @@
-import { createServer, type ViteDevServer } from "vite";
+import { createServer, searchForWorkspaceRoot, type ViteDevServer } from "vite";
 import ts from "typescript";
 import fs from "node:fs";
 import os from "node:os";
@@ -9,6 +9,7 @@ import type { CompositionTree, CompositionNode, ExportInfo } from "./composition
 import { scanExports, normalizeComponentName } from "./prop-gen.js";
 import { isVueFile, loadVueCompiler, type VueSfcCompiler } from "./vue-sfc.js";
 import {
+  findCompilerConfig,
   findProjectRoot,
   findWorkspaceRoot,
   isPackageAvailable,
@@ -779,7 +780,10 @@ export async function buildAndServe(
   fs.writeFileSync(path.join(harnessDir, entryFile), entryTsx);
   fs.writeFileSync(path.join(harnessDir, "index.html"), indexHtml);
 
-  const tsconfigAliases = loadTsconfigAliases(projectRoot);
+  // M69: alias construction and the scan both report what they could not
+  // resolve, and both feed the same run warnings.
+  const configWarnings: string[] = [];
+  const tsconfigAliases = loadTsconfigAliases(projectRoot, configWarnings);
   const hasNextJs = !options?.noShims && detectNextJs(projectRoot);
   const shimAliases = buildShimAliases(hasNextJs);
   const alias: Array<{ find: RegExp; replacement: string; isShim?: boolean }> = [
@@ -792,9 +796,21 @@ export async function buildAndServe(
   const importedSpecifiers = new Set<string>();
   const externalDeps = [
     ...new Set([
-      ...scanExternalDeps(absoluteComponentPath, projectRoot, alias, importedSpecifiers),
+      ...scanExternalDeps(
+        absoluteComponentPath,
+        projectRoot,
+        alias,
+        importedSpecifiers,
+        configWarnings,
+      ),
       ...(options?.wrapPath
-        ? scanExternalDeps(path.resolve(options.wrapPath), projectRoot, alias, importedSpecifiers)
+        ? scanExternalDeps(
+            path.resolve(options.wrapPath),
+            projectRoot,
+            alias,
+            importedSpecifiers,
+            configWarnings,
+          )
         : []),
     ]),
   ];
@@ -850,6 +866,14 @@ export async function buildAndServe(
     );
   }
 
+  // M69: Vite refuses to serve a file outside its allow list. Undefined for a
+  // project whose alias targets are all inside its own root, which keeps
+  // Vite's defaults everywhere they already worked.
+  // Vite's own default is the one root it searches for; widening never narrows
+  // it, so its answer joins the list whenever the list exists at all.
+  const aliasAllow = fsAllowDirs(projectRoot, findWorkspaceRoot(projectRoot), alias);
+  const fsAllow = aliasAllow && [...new Set([...aliasAllow, searchForWorkspaceRoot(projectRoot)])];
+
   const bootServer = async (): Promise<ViteDevServer> => {
     const created = await createServer({
       root: projectRoot,
@@ -873,6 +897,7 @@ export async function buildAndServe(
         // the first module loads, and a watcher-triggered reload mid-measurement
         // is the failure M30's context retry exists for.
         watch: null,
+        ...(fsAllow ? { fs: { allow: fsAllow } } : {}),
       },
       resolve: {
         alias,
@@ -888,7 +913,7 @@ export async function buildAndServe(
 
   let server: ViteDevServer;
   let ownsServer = true;
-  const buildWarnings: string[] = [...transformWarnings];
+  const buildWarnings: string[] = [...transformWarnings, ...new Set(configWarnings)];
   try {
     if (options?.serverPool) {
       // The tuple that shapes a server; anything else is per-component and
@@ -1042,7 +1067,81 @@ export function sweepStaleTmpDirs(baseDir: string = os.tmpdir()): void {
   }
 }
 
-const EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".mts", ".vue"];
+// Files worth reading for further imports. A .json or an asset is a leaf.
+const SOURCE_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".mts", ".cjs", ".cts", ".vue"];
+const EXTENSIONS = [...SOURCE_EXTENSIONS, ".json"];
+
+function isFile(candidate: string): boolean {
+  try {
+    return fs.statSync(candidate).isFile();
+  } catch {
+    return false;
+  }
+}
+
+// M69: a directory import answers through its manifest before its index file,
+// the way node and Vite resolve it.
+function resolveDirectoryEntry(dir: string): string | undefined {
+  let manifest: unknown;
+  try {
+    manifest = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf-8"));
+  } catch {
+    return undefined;
+  }
+  if (typeof manifest !== "object" || manifest === null || Array.isArray(manifest)) return undefined;
+  const fields = manifest as Record<string, unknown>;
+  const candidates = [
+    conditionalEntry(fields.exports),
+    typeof fields.module === "string" ? fields.module : undefined,
+    typeof fields.main === "string" ? fields.main : undefined,
+  ];
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    const resolved = resolveFileWithExtension(path.resolve(dir, candidate));
+    if (resolved) return resolved;
+  }
+  return undefined;
+}
+
+// The root export of an "exports" map, in the order a bundler reads it. Nested
+// condition objects are followed one level, which covers { ".": { import: ... } }
+// and { ".": { node: { import: ... } } }.
+function conditionalEntry(value: unknown, depth = 0): string | undefined {
+  if (typeof value === "string") return value;
+  if (typeof value !== "object" || value === null || Array.isArray(value) || depth > 2) {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  const root = depth === 0 && "." in record ? record["."] : record;
+  if (typeof root === "string") return root;
+  if (typeof root !== "object" || root === null) return undefined;
+  for (const condition of ["import", "module", "browser", "default", "require"]) {
+    const entry = (root as Record<string, unknown>)[condition];
+    const resolved = conditionalEntry(entry, depth + 1);
+    if (resolved) return resolved;
+  }
+  return undefined;
+}
+
+function resolveFileWithExtension(target: string): string | undefined {
+  if (isFile(target)) return target;
+  for (const ext of EXTENSIONS) {
+    if (isFile(target + ext)) return target + ext;
+  }
+  return undefined;
+}
+
+function resolveTarget(target: string): string | undefined {
+  const direct = resolveFileWithExtension(target);
+  if (direct) return direct;
+  const fromManifest = resolveDirectoryEntry(target);
+  if (fromManifest) return fromManifest;
+  for (const ext of EXTENSIONS) {
+    const indexFile = path.join(target, "index" + ext);
+    if (isFile(indexFile)) return indexFile;
+  }
+  return undefined;
+}
 
 // M62: the alias that resolved a bare specifier matters for shim-usage
 // reporting, not just where it points: a shim alias redirects a real
@@ -1050,41 +1149,71 @@ const EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".mts", ".vue"];
 // even though this function treats the result as local. Returning
 // viaShimAlias lets the caller record it without this function knowing
 // anything about SHIM_MODULES.
+// M69: "no alias matched" and "an alias matched and its target is gone" are
+// different facts. Collapsing them into null pushed a stale alias into
+// optimizeDeps.include as if a package by that name existed.
+type LocalResolution =
+  | { kind: "resolved"; path: string; viaShimAlias: boolean }
+  | { kind: "alias-miss"; target: string; viaShimAlias: boolean }
+  | { kind: "unaliased" };
+
 function resolveLocalImport(
   fromFile: string,
   spec: string,
   projectRoot: string,
   aliases: Array<{ find: RegExp; replacement: string; isShim?: boolean }>,
-): { path: string; viaShimAlias: boolean } | null {
+): LocalResolution {
   let target: string;
   let viaShimAlias = false;
+  let aliased = false;
   if (spec.startsWith(".") || spec.startsWith("/")) {
     target = path.resolve(path.dirname(fromFile), spec);
   } else {
-    let matched = false;
-    let aliasedPath = spec;
+    let aliasedPath: string | undefined;
     for (const { find, replacement, isShim } of aliases) {
       if (find.test(spec)) {
         aliasedPath = spec.replace(find, replacement);
-        matched = true;
         viaShimAlias = isShim === true;
         break;
       }
     }
-    if (!matched) return null;
+    if (aliasedPath === undefined) return { kind: "unaliased" };
+    aliased = true;
     target = path.isAbsolute(aliasedPath) ? aliasedPath : path.resolve(projectRoot, aliasedPath);
   }
 
-  if (fs.existsSync(target) && fs.statSync(target).isFile()) return { path: target, viaShimAlias };
-  for (const ext of EXTENSIONS) {
-    const withExt = target + ext;
-    if (fs.existsSync(withExt)) return { path: withExt, viaShimAlias };
+  const resolved = resolveTarget(target);
+  if (resolved) return { kind: "resolved", path: resolved, viaShimAlias };
+  if (!aliased) return { kind: "unaliased" };
+  return { kind: "alias-miss", target: target.replace(/\\/g, "/"), viaShimAlias };
+}
+
+// Static imports and re-exports, dynamic import(), and require(). String
+// literals only: a template literal or a computed specifier is unknowable
+// without running the code.
+const STATIC_IMPORT_PATTERN =
+  /(?:^|\s)(?:import|export)\s.*?from\s+["']([^"']+)["']|(?:^|\s)import\s+["']([^"']+)["']/gm;
+const DYNAMIC_IMPORT_PATTERN = /\bimport\s*\(\s*["']([^"']+)["']/g;
+const REQUIRE_PATTERN = /\brequire\s*\(\s*["']([^"']+)["']/g;
+
+function readSpecifiers(content: string): string[] {
+  const specifiers: string[] = [];
+  for (const pattern of [STATIC_IMPORT_PATTERN, DYNAMIC_IMPORT_PATTERN, REQUIRE_PATTERN]) {
+    pattern.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = pattern.exec(content)) !== null) {
+      const spec = match[1] ?? match[2];
+      if (spec) specifiers.push(spec);
+    }
   }
-  for (const ext of EXTENSIONS) {
-    const indexFile = path.join(target, "index" + ext);
-    if (fs.existsSync(indexFile)) return { path: indexFile, viaShimAlias };
-  }
-  return null;
+  return specifiers;
+}
+
+export function BROKEN_ALIAS_WARNING(specifier: string, target: string): string {
+  return (
+    `import "${specifier}" matches a configured path alias, but its target ${target} does not exist; ` +
+    "the alias is stale or the file was moved, and the import will not resolve in the harness"
+  );
 }
 
 export function scanExternalDeps(
@@ -1092,9 +1221,11 @@ export function scanExternalDeps(
   projectRoot: string,
   aliases: Array<{ find: RegExp; replacement: string; isShim?: boolean }>,
   specifiersOut?: Set<string>,
+  warningsOut?: string[],
 ): string[] {
   const externalPkgs = new Set<string>();
   const visited = new Set<string>();
+  const reportedBrokenAliases = new Set<string>();
   const queue = [componentPath];
 
   while (queue.length > 0) {
@@ -1110,20 +1241,34 @@ export function scanExternalDeps(
       continue;
     }
 
-    const importRegex = /(?:^|\s)(?:import|export)\s.*?from\s+["']([^"']+)["']|(?:^|\s)import\s+["']([^"']+)["']/gm;
-    let match;
-    while ((match = importRegex.exec(content)) !== null) {
-      const spec = match[1] ?? match[2];
+    for (const raw of readSpecifiers(content)) {
+      // M69: `./icon.svg?url` and `pkg/style.css?inline` never resolved with
+      // the query attached. A "#" survives: it opens a Node subpath import and
+      // a legitimate alias pattern.
+      const spec = raw.split("?")[0];
       if (!spec) continue;
 
       const isBareSpecifier = !spec.startsWith(".") && !spec.startsWith("/");
       const localResolved = resolveLocalImport(normalizedFile, spec, projectRoot, aliases);
-      if (localResolved) {
-        queue.push(localResolved.path);
+      if (localResolved.kind === "resolved") {
+        if (SOURCE_EXTENSIONS.includes(path.extname(localResolved.path))) {
+          queue.push(localResolved.path);
+        }
         // M62: a shim alias redirects the specifier to a local file, but the
         // specifier itself was still imported and must be reported: the
         // resolution stays local (queued above), only the bookkeeping changes.
         if (isBareSpecifier && localResolved.viaShimAlias) specifiersOut?.add(spec);
+      } else if (localResolved.kind === "alias-miss") {
+        // A shim alias whose file is not built yet is this tool's own state,
+        // and the specifier was still imported: M62's report needs it either
+        // way. A project alias pointing nowhere is the project's to fix, and
+        // it is never a package.
+        if (localResolved.viaShimAlias) {
+          specifiersOut?.add(spec);
+        } else if (!reportedBrokenAliases.has(spec)) {
+          reportedBrokenAliases.add(spec);
+          warningsOut?.push(BROKEN_ALIAS_WARNING(spec, localResolved.target));
+        }
       } else if (isBareSpecifier) {
         specifiersOut?.add(spec);
         const pkg = spec.startsWith("@")
@@ -1156,13 +1301,63 @@ export function scanExternalDeps(
   return [...externalPkgs];
 }
 
+// M69: an entry whose two halves disagree about the wildcard produced a regex
+// that could never match, so the alias was absent and nothing said so.
+export function ALIAS_SHAPE_WARNING(pattern: string, target: string): string {
+  return (
+    `tsconfig path alias "${pattern}" -> "${target}": one side has a "*" and the other does not, ` +
+    "so no alias was built and imports matching that pattern will not resolve"
+  );
+}
+
+// M69: the CRA shape. With baseUrl set and no paths, a bare specifier resolves
+// against baseUrl, so every top-level entry there is an alias. A name the
+// project declares or has installed is left alone: node resolution owns it.
+function baseUrlAliases(
+  baseUrl: string,
+  memberRoot: string,
+  workspaceRoot: string,
+): Array<{ find: RegExp; replacement: string }> {
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(baseUrl, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const aliases: Array<{ find: RegExp; replacement: string }> = [];
+  const claimed = new Set<string>();
+  // Files first: a file wins over a directory of the same name, as it does in
+  // node resolution.
+  const ordered = [...entries.filter((e) => e.isFile()), ...entries.filter((e) => e.isDirectory())];
+  for (const entry of ordered) {
+    if (entry.name.startsWith(".") || entry.name === "node_modules") continue;
+    const isDirectory = entry.isDirectory();
+    const extension = path.extname(entry.name);
+    if (!isDirectory && !SOURCE_EXTENSIONS.includes(extension)) continue;
+    const name = isDirectory ? entry.name : entry.name.slice(0, -extension.length);
+    if (!name || claimed.has(name)) continue;
+    if (isPackageAvailable(name, memberRoot, workspaceRoot)) continue;
+    claimed.add(name);
+    aliases.push({
+      // A directory also answers for everything under it; a file answers for
+      // its own name alone.
+      find: new RegExp(`^${escapeRegex(name)}${isDirectory ? "(?=/|$)" : "$"}`),
+      replacement: path.resolve(baseUrl, entry.name).replace(/\\/g, "/"),
+    });
+  }
+  return aliases;
+}
+
 export function loadTsconfigAliases(
   projectRoot: string,
+  warningsOut?: string[],
 ): Array<{ find: RegExp; replacement: string }> {
-  // Forward slashes: ts.readConfigFile asserts on backslash paths when the
-  // config has parse errors (diagnostic fileName is normalized internally).
-  const tsconfigPath = path.join(projectRoot, "tsconfig.json").replace(/\\/g, "/");
-  if (!fs.existsSync(tsconfigPath)) return [];
+  // M69: upward from the member, bounded by the root that governs the install.
+  // A member inheriting the workspace tsconfig used to get no aliases at all.
+  const workspaceRoot = findWorkspaceRoot(projectRoot);
+  const tsconfigPath = findCompilerConfig(projectRoot, workspaceRoot);
+  if (!tsconfigPath) return [];
+  const configDir = path.dirname(tsconfigPath);
 
   let options: ts.CompilerOptions;
   try {
@@ -1178,7 +1373,7 @@ export function loadTsconfigAliases(
     options = ts.parseJsonConfigFileContent(
       configFile.config,
       ts.sys,
-      projectRoot,
+      configDir,
       undefined,
       tsconfigPath,
     ).options;
@@ -1190,15 +1385,15 @@ export function loadTsconfigAliases(
   }
 
   const paths = options.paths;
-  if (!paths) return [];
+  if (!paths) {
+    return options.baseUrl ? baseUrlAliases(options.baseUrl, projectRoot, workspaceRoot) : [];
+  }
 
   // Alias base: resolved baseUrl when set; else the directory of the config
   // that declared "paths" (pathsBasePath, internal but stable), else the
   // tsconfig's own directory.
   const base =
-    options.baseUrl ??
-    (options as { pathsBasePath?: string }).pathsBasePath ??
-    path.dirname(tsconfigPath);
+    options.baseUrl ?? (options as { pathsBasePath?: string }).pathsBasePath ?? configDir;
 
   const aliases: Array<{ find: RegExp; replacement: string }> = [];
   for (const [pattern, targets] of Object.entries(paths)) {
@@ -1209,12 +1404,46 @@ export function loadTsconfigAliases(
       const prefix = pattern.slice(0, -2);
       const dir = path.resolve(base, target.slice(0, -2)).replace(/\\/g, "/");
       aliases.push({ find: new RegExp(`^${escapeRegex(prefix)}/`), replacement: dir + "/" });
+    } else if (pattern.includes("*") || target.includes("*")) {
+      // Any other wildcard shape (one side starred, or a star that is not a
+      // whole trailing segment) has no Vite alias that means the same thing.
+      warningsOut?.push(ALIAS_SHAPE_WARNING(pattern, target));
     } else {
       const resolved = path.resolve(base, target).replace(/\\/g, "/");
       aliases.push({ find: new RegExp(`^${escapeRegex(pattern)}$`), replacement: resolved });
     }
   }
   return aliases;
+}
+
+// M69: Vite serves nothing outside its allow list, and the harness root is the
+// member package. An alias into a sibling package or into a linked install of
+// this tool is outside it. Undefined keeps Vite's own defaults, which is every
+// project whose targets are all inside the member root.
+export function fsAllowDirs(
+  memberRoot: string,
+  workspaceRoot: string,
+  aliases: Array<{ replacement: string }>,
+): string[] | undefined {
+  const forward = (p: string) => path.resolve(p).replace(/\\/g, "/");
+  const targets = aliases.map(({ replacement }) => {
+    const trimmed = replacement.replace(/[\\/]+$/, "");
+    if (!trimmed) return forward(replacement);
+    try {
+      if (fs.statSync(trimmed).isDirectory()) return forward(trimmed);
+    } catch {
+      // A stale alias target: its parent is the directory that would hold it.
+    }
+    return forward(path.dirname(trimmed));
+  });
+
+  const inside = (dir: string) => {
+    const relative = path.relative(memberRoot, dir);
+    return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+  };
+  const outside = targets.filter((dir) => !inside(dir));
+  if (outside.length === 0) return undefined;
+  return [...new Set([forward(memberRoot), forward(workspaceRoot), ...outside])];
 }
 
 export function detectScaleExport(filePath: string): boolean {

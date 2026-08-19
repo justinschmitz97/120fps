@@ -150,6 +150,9 @@ describe("loadTsconfigAliases", () => {
     expect(aliases[0].replacement).toBe(`${fwd(dir)}/src/utils/index.ts`);
   });
 
+  // M69: paths absent AND baseUrl absent. With a baseUrl set, the entries under
+  // it become aliases; test/unit/base-url-import-resolution.test.ts owns that
+  // case.
   it("returns [] when paths is absent", () => {
     const dir = mkProject({
       "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true } }),
