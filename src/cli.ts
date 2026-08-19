@@ -800,8 +800,12 @@ export function resolveReportPaths(
   const seen = new Map<string, number>();
   return componentPaths.map((p) => {
     const base = prefix ? `${prefix}.${componentStem(p)}.json` : defaultJsonPathFor(p);
-    const count = seen.get(base) ?? 0;
-    seen.set(base, count + 1);
+    // Case-folded key: NTFS/APFS cannot tell 120fps-report.Card.json apart
+    // from 120fps-report.card.json, so a same-case-insensitive collision must
+    // take the suffix branch too, even though `base` itself differs by case.
+    const key = base.toLowerCase();
+    const count = seen.get(key) ?? 0;
+    seen.set(key, count + 1);
     return count === 0 ? base : base.replace(/\.json$/, `-${count + 1}.json`);
   });
 }
@@ -1113,8 +1117,13 @@ export function expandComponentPaths(
     if (arg.includes("*")) {
       const re = globToRegExp(arg);
       for (const file of reader.walk(globRoot(arg))) {
-        const posix = file.replace(/\\/g, "/");
-        if (re.test(posix) && isComponentFile(posix)) matches.push(file);
+        // The pattern is written relative to cwd (`src/**/*.tsx`), but
+        // nodePathReader().walk returns absolute paths (path.resolve at
+        // cli.ts:1171). Relativizing against cwd restores the frame the regex
+        // was anchored against; for the relative-path test double this is a
+        // no-op, since path.relative resolves a relative `to` against cwd too.
+        const rel = path.relative(process.cwd(), file).replace(/\\/g, "/");
+        if (re.test(rel) && isComponentFile(rel)) matches.push(file);
       }
     } else if (reader.exists(arg) && reader.isDirectory(arg)) {
       for (const file of reader.walk(arg)) {

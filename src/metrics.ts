@@ -103,7 +103,10 @@ function resolveSource(rawUrl: string): { source: string; category: CostBucket["
     cleaned = cleaned.slice(4);
   }
 
-  const nmIndex = cleaned.indexOf("node_modules/");
+  // Last, not first: pnpm nests the real package under its own node_modules/
+  // inside the store entry (node_modules/.pnpm/pkg@1.2.3/node_modules/pkg/…),
+  // so the first occurrence lands inside ".pnpm" instead of the package.
+  const nmIndex = cleaned.lastIndexOf("node_modules/");
   if (nmIndex !== -1) {
     let pkgPath = cleaned.slice(nmIndex + "node_modules/".length);
     if (pkgPath.startsWith(".vite/deps/")) {

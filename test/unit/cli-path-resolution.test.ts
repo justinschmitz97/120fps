@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import path from "node:path";
 import { expandComponentPaths, isComponentFile, type PathReader } from "../../src/cli.js";
 
 // Injected filesystem so the contract is testable without touching disk.
@@ -136,6 +137,60 @@ describe("path expansion", () => {
   });
 });
 
+// nodePathReader().walk resolves its root with path.resolve before recursing
+// (src/cli.ts:1171), so every path it returns is absolute — unlike the
+// relative-path fixture above. A fake reader built the same way reproduces
+// the production shape and is the only way to exercise M67's fix.
+describe("path expansion against an absolute-path filesystem", () => {
+  function absoluteReader(relativeFiles: string[]): PathReader {
+    const absFiles = relativeFiles.map((f) => path.resolve(f));
+    return {
+      exists: () => false,
+      isDirectory: () => false,
+      walk: (root) => {
+        const absRoot = path.resolve(root);
+        return absFiles.filter((f) => f.startsWith(absRoot + path.sep));
+      },
+    };
+  }
+
+  const FILES = [
+    "src/components/ui/button.tsx",
+    "src/components/ui/card.tsx",
+    "src/main.tsx",
+    "packages/ui/Button.tsx",
+    "packages/ui/Card.tsx",
+  ];
+
+  it("matches a rooted glob against absolutely-walked paths", () => {
+    const result = expandComponentPaths(["src/**/*.tsx"], absoluteReader(FILES));
+    expect(result.error).toBeUndefined();
+    expect(result.paths.slice().sort()).toEqual(
+      ["src/components/ui/button.tsx", "src/components/ui/card.tsx", "src/main.tsx"]
+        .map((p) => path.resolve(p))
+        .sort(),
+    );
+  });
+
+  it("matches a mid-pattern literal glob against absolutely-walked paths", () => {
+    const result = expandComponentPaths(["packages/ui/*.tsx"], absoluteReader(FILES));
+    expect(result.error).toBeUndefined();
+    expect(result.paths).toHaveLength(2);
+  });
+
+  it("keeps matching a leading-wildcard glob against absolutely-walked paths", () => {
+    const result = expandComponentPaths(["**/*.tsx"], absoluteReader(FILES));
+    expect(result.error).toBeUndefined();
+    expect(result.paths).toHaveLength(5);
+  });
+
+  it("matches a Windows-style backslash pattern against absolutely-walked paths", () => {
+    const result = expandComponentPaths(["src\\**\\*.tsx"], absoluteReader(FILES));
+    expect(result.error).toBeUndefined();
+    expect(result.paths).toHaveLength(3);
+  });
+});
+
 import { resolveReportPaths } from "../../src/cli.js";
 
 describe("--json survives expansion into many components", () => {
@@ -157,6 +212,13 @@ describe("--json survives expansion into many components", () => {
   it("disambiguates same-named components from different directories", () => {
     const out = resolveReportPaths(["a/button.tsx", "b/button.tsx"]);
     expect(new Set(out).size).toBe(2);
+  });
+
+  it("disambiguates report names that collide only in case", () => {
+    // 120fps-report.Card.json and 120fps-report.card.json are the same file
+    // on NTFS/APFS; the second write must not silently clobber the first.
+    const out = resolveReportPaths(["src/Card.tsx", "src/legacy/card.tsx"]);
+    expect(new Set(out.map((p) => p.toLowerCase())).size).toBe(2);
   });
 
   it("keeps a directory prefix from the explicit path", () => {

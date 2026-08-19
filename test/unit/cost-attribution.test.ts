@@ -322,6 +322,46 @@ describe("attributeCost", () => {
     }
   });
 
+  it("attributes a pnpm-nested package to the real package, not .pnpm", () => {
+    const events: TraceEvent[] = [
+      makeEvent("FunctionCall", 4000, 1000,
+        "http://localhost:5173/node_modules/.pnpm/motion@11.0.0/node_modules/motion/dist/index.js"),
+    ];
+    const result = attributeCost(events);
+    expect(result.buckets).toHaveLength(1);
+    expect(result.buckets[0].source).toBe("motion");
+    expect(result.buckets[0].category).toBe("package");
+  });
+
+  it("attributes a pnpm-nested scoped package to the real package, not .pnpm", () => {
+    const events: TraceEvent[] = [
+      makeEvent("FunctionCall", 4000, 1000,
+        "http://localhost:5173/node_modules/.pnpm/@radix-ui+react-accordion@1.0.0/node_modules/@radix-ui/react-accordion/dist/index.js"),
+    ];
+    const result = attributeCost(events);
+    expect(result.buckets).toHaveLength(1);
+    expect(result.buckets[0].source).toBe("@radix-ui/react-accordion");
+    expect(result.buckets[0].category).toBe("package");
+  });
+
+  it("keeps flat node_modules attribution unchanged (single node_modules/ segment)", () => {
+    const events: TraceEvent[] = [
+      makeEvent("FunctionCall", 3000, 1000,
+        "http://localhost:5173/node_modules/motion/dist/index.js"),
+    ];
+    const result = attributeCost(events);
+    expect(result.buckets[0].source).toBe("motion");
+  });
+
+  it("keeps .vite/deps/ attribution unchanged (single node_modules/ segment)", () => {
+    const events: TraceEvent[] = [
+      makeEvent("FunctionCall", 3000, 1000,
+        "http://localhost:5173/node_modules/.vite/deps/motion.js?v=abc123"),
+    ];
+    const result = attributeCost(events);
+    expect(result.buckets[0].source).toBe("motion");
+  });
+
   it("sum of bucket durations + unattributed <= total scripting", () => {
     const events: TraceEvent[] = [
       makeEvent("FunctionCall", 6000, 1000,
