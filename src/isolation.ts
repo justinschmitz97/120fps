@@ -13,6 +13,7 @@ import {
   runHarnessSession,
   tryCollectGarbage,
   type BrowserPool,
+  type HarnessSessionOptions,
   type MeasurementPacing,
 } from "./measure.js";
 
@@ -241,6 +242,24 @@ export interface PhaseOptions {
   pacing?: MeasurementPacing;
   // M37: reuse pooled browsers (fresh context per phase session).
   pool?: BrowserPool;
+  // M73: the run's warning sink. Without it every warning a phase session
+  // raises (M70's font settle, the context retry, the frame pump) was dropped.
+  onWarning?: (warning: string) => void;
+}
+
+// One place builds the session options for all three phases: what a phase did
+// not set stays absent, so a session keeps the defaults it has today.
+export function phaseSessionOptions(
+  label: string,
+  options: PhaseOptions,
+): HarnessSessionOptions {
+  return {
+    label,
+    ...(options.cpuThrottle !== undefined ? { cpuThrottle: options.cpuThrottle } : {}),
+    ...(options.pacing ? { pacing: options.pacing } : {}),
+    ...(options.pool ? { pool: options.pool } : {}),
+    ...(options.onWarning ? { onWarning: options.onWarning } : {}),
+  };
 }
 
 // Untimed mount with propsA, then `cycles` traced A→B→A alternations. No GC
@@ -256,7 +275,7 @@ export async function measureChurn(
 
   return runHarnessSession(
     harness,
-    { label: "churn harness", cpuThrottle: options.cpuThrottle, ...(options.pacing ? { pacing: options.pacing } : {}), ...(options.pool ? { pool: options.pool } : {}) },
+    phaseSessionOptions("churn harness", options),
     async (page, cdp) => {
       await mountAndWait(page, propsA);
       for (let w = 0; w < warmupRuns; w++) {
@@ -296,7 +315,7 @@ export async function measureMemory(
 
   return runHarnessSession(
     harness,
-    { label: "memory harness", cpuThrottle: options.cpuThrottle, ...(options.pacing ? { pacing: options.pacing } : {}), ...(options.pool ? { pool: options.pool } : {}) },
+    phaseSessionOptions("memory harness", options),
     async (page, cdp) => {
       for (let w = 0; w < warmupRuns; w++) {
         await mountAndWait(page, props);
@@ -351,7 +370,7 @@ export async function measureStrictMode(
 
   return runHarnessSession(
     harness,
-    { label: "strictmode harness", cpuThrottle: options.cpuThrottle, ...(options.pacing ? { pacing: options.pacing } : {}), ...(options.pool ? { pool: options.pool } : {}) },
+    phaseSessionOptions("strictmode harness", options),
     async (page, cdp, enter) => {
       const normal: number[] = [];
       const strict: number[] = [];
@@ -374,6 +393,8 @@ export interface IsolationRunOptions {
   memoryCycles: number;
   // M37: reuse pooled browsers across all phase sessions.
   pool?: BrowserPool;
+  // M73: the run's warning sink, shared by every phase session.
+  onWarning?: (warning: string) => void;
 }
 
 export interface IsolationRunResult {
@@ -400,6 +421,7 @@ export async function runIsolationPhases(
       warmupRuns: ISOLATION_WARMUP_RUNS,
       combos: [comboA],
       pool: options.pool,
+      ...(options.onWarning ? { onWarning: options.onWarning } : {}),
     });
     if (result) {
       if (phases.includes("mount")) isolation.mount = buildTimingWithCV(result.mount.samples);
@@ -412,9 +434,10 @@ export async function runIsolationPhases(
   // M35: animation status comes from the mount pass; when it did not run, the
   // status is unknown and phases default to driven pacing.
   const rerenderCombos = options.degenerate ? [comboA] : [comboA, comboB];
-  const animatedPhase: Pick<PhaseOptions, "pacing" | "pool"> = {
+  const animatedPhase: Pick<PhaseOptions, "pacing" | "pool" | "onWarning"> = {
     ...(hasAnimation ? { pacing: "vsync" as const } : {}),
     ...(options.pool ? { pool: options.pool } : {}),
+    ...(options.onWarning ? { onWarning: options.onWarning } : {}),
   };
 
   if (phases.includes("rerender")) {
@@ -425,6 +448,7 @@ export async function runIsolationPhases(
       warmupRuns: ISOLATION_WARMUP_RUNS,
       combos: rerenderCombos,
       pool: options.pool,
+      ...(options.onWarning ? { onWarning: options.onWarning } : {}),
       ...(hasAnimation
         ? { animatedComboIndices: rerenderCombos.map((_, i) => i) }
         : {}),

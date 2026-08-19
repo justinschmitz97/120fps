@@ -59,6 +59,8 @@ export {
   scanExternalDeps,
   GLOBAL_CSS_CANDIDATES,
   SHIM_MODULES,
+  unshimmedNextModules,
+  UNSUPPORTED_NEXT_MODULE_WARNING,
   WRAPPER_CANDIDATES,
   type HarnessResult,
   type BuildHarnessOptions,
@@ -207,12 +209,22 @@ export { targetNotFoundMessage } from "./harness.js";
 export { PROVIDER_HINT_LINE } from "./hints.js";
 export { detectScaleExport, loadTsconfigAliases, findProjectRoot, sweepStaleHarnessDirs, detectComponentExport, createServerPool, SWEEP_DEP_WARNING, ALIAS_SHAPE_WARNING, BROKEN_ALIAS_WARNING, fsAllowDirs, type ServerPool } from "./harness.js";
 export {
+  createHarnessDir,
+  HARNESS_DIR_UNWRITABLE,
+  assertReactDomClient,
+  REACT_DOM_CLIENT_MISSING,
+  isOutsideRoot,
+  componentImportPath,
+  resolveWrapper,
+} from "./harness.js";
+export {
   findCompilerConfig,
   findWorkspaceRoot,
   resolveProjectModel,
   declaredPackages,
   isPackageAvailable,
   isPackageDeclared,
+  detectPnP,
   readProjectManifest,
   WORKSPACE_LOCKFILES,
   type ProjectModel,

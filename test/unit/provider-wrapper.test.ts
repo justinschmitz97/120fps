@@ -341,6 +341,19 @@ describe("W2/W3: buildAndServe wrapper handling", () => {
 // ====================================================================
 
 describe("W5: wrapper deps join optimizeDeps.include", () => {
+  // M73: buildAndServe refuses a React project whose react-dom has no client
+  // entry, so a project booting a real server owns a resolvable one.
+  function installReactDom(): void {
+    const pkgDir = path.join(tmpDir, "node_modules", "react-dom");
+    fs.mkdirSync(pkgDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(pkgDir, "package.json"),
+      JSON.stringify({ name: "react-dom", version: "19.0.0", main: "index.js" }),
+    );
+    fs.writeFileSync(path.join(pkgDir, "index.js"), "module.exports = {};");
+    fs.writeFileSync(path.join(pkgDir, "client.js"), "module.exports = {};");
+  }
+
   function writeProject(): { component: string; wrapper: string } {
     fs.writeFileSync(path.join(tmpDir, "package.json"), JSON.stringify({ name: "wrap-scan" }));
     const component = path.join(tmpDir, "Comp.tsx");
@@ -364,6 +377,7 @@ describe("W5: wrapper deps join optimizeDeps.include", () => {
 
   it("includes both sets in the served optimizeDeps config", async () => {
     const { component, wrapper } = writeProject();
+    installReactDom();
     const harness = await buildAndServe(component, { wrapPath: wrapper });
     try {
       const include = harness.server.config.optimizeDeps.include ?? [];
@@ -376,6 +390,7 @@ describe("W5: wrapper deps join optimizeDeps.include", () => {
 
   it("resolves aliased wrapper imports and follows their transitive deps", async () => {
     fs.writeFileSync(path.join(tmpDir, "package.json"), JSON.stringify({ name: "wrap-alias" }));
+    installReactDom();
     fs.writeFileSync(
       path.join(tmpDir, "tsconfig.json"),
       JSON.stringify({ compilerOptions: { baseUrl: ".", paths: { "@ui/*": ["./ui/*"] } } }),

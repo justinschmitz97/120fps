@@ -114,7 +114,7 @@ describe("detectNextJs", () => {
 // --- SHIM_MODULES ---
 
 describe("SHIM_MODULES", () => {
-  it("covers all six specified modules", () => {
+  it("covers every shimmed Next.js runtime module", () => {
     const names = SHIM_MODULES.map((s) => s.module);
     expect(names).toContain("next/image");
     expect(names).toContain("next/dynamic");
@@ -122,7 +122,11 @@ describe("SHIM_MODULES", () => {
     expect(names).toContain("next/navigation");
     expect(names).toContain("next/headers");
     expect(names).toContain("next-video/player");
-    expect(names).toHaveLength(6);
+    expect(names).toContain("next/script");
+    expect(names).toContain("next/head");
+    expect(names).toContain("next/router");
+    expect(names).toContain("next/font/local");
+    expect(names).toHaveLength(10);
   });
 
   it("each entry has a module and a shimFile", () => {
@@ -139,7 +143,7 @@ describe("SHIM_MODULES", () => {
 describe("buildShimAliases", () => {
   it("returns aliases for all modules when hasNextJs is true", () => {
     const aliases = buildShimAliases(true);
-    expect(aliases).toHaveLength(6);
+    expect(aliases).toHaveLength(10);
     for (const alias of aliases) {
       expect(alias.find).toBeInstanceOf(RegExp);
       expect(typeof alias.replacement).toBe("string");

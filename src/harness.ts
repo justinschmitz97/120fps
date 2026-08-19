@@ -53,8 +53,36 @@ export const SHIM_MODULES: ShimEntry[] = [
   { module: "next/link", shimFile: "next-link.js" },
   { module: "next/navigation", shimFile: "next-navigation.js" },
   { module: "next/headers", shimFile: "next-headers.js" },
+  { module: "next/script", shimFile: "next-script.js" },
+  { module: "next/head", shimFile: "next-head.js" },
+  { module: "next/router", shimFile: "next-router.js" },
+  { module: "next/font/local", shimFile: "next-font-local.js" },
   { module: "next-video/player", shimFile: "next-video-player.js" },
 ];
+
+// M73: everything else under `next/` resolves from the project's own Next
+// install, where a module written for the server or for the compiler plugin can
+// fail to load in a plain browser. Named rather than blocked: it may work.
+// `next/font/google` is here permanently, not by omission: each font family is
+// a separate named export, the set is unbounded, and a browser rejects a named
+// import its target module does not provide, so no static shim can answer it.
+export function unshimmedNextModules(specifiers: Iterable<string>): string[] {
+  const shimmed = new Set(SHIM_MODULES.map((entry) => entry.module));
+  const unshimmed = new Set<string>();
+  for (const spec of specifiers) {
+    if (spec.startsWith("next/") && !shimmed.has(spec)) unshimmed.add(spec);
+  }
+  return [...unshimmed].sort();
+}
+
+export function UNSUPPORTED_NEXT_MODULE_WARNING(modules: string[]): string {
+  return (
+    `${modules.join(", ")} ${modules.length === 1 ? "is" : "are"} imported but not shimmed; ` +
+    "120fps replaces the Next.js runtime modules it can render standalone and leaves the rest to " +
+    "resolve from the project, where a module written for the Next.js server or its compiler " +
+    "plugin can fail to load in the harness page"
+  );
+}
 
 export function detectNextJs(projectRoot: string): boolean {
   return isPackageAvailable("next", projectRoot);
@@ -162,6 +190,106 @@ export function SWEEP_DEP_WARNING(missing: string[]): string {
 // can act on (check the harness dir, or the underlying message, for why).
 export function VITE_START_FAILED(harnessDir: string, detail: string): string {
   return `Failed to start Vite dev server in ${harnessDir}: ${detail}`;
+}
+
+// M73: the harness dir is created inside the project root by design (Vite's
+// root is the project root, so the generated entry's root-absolute specifiers,
+// the project's aliases, and its node_modules walk all resolve the way the app
+// resolves them). A root that cannot be written to is therefore a refusal, and
+// the raw EACCES that mkdtempSync throws says none of that.
+export function HARNESS_DIR_UNWRITABLE(projectRoot: string, detail: string): string {
+  return (
+    `Cannot create the harness directory in ${projectRoot}: ${detail}. ` +
+    "120fps writes its generated entry inside the project root so the project's own aliases and " +
+    "node_modules resolve the way the app resolves them. Make that directory writable, or copy " +
+    "the project to a writable location and measure it there."
+  );
+}
+
+// accessSync answers POSIX permission bits; the real mkdtempSync answers
+// everything it cannot see (Windows ACLs, a read-only mount, a root that is a
+// file or does not exist).
+export function createHarnessDir(projectRoot: string): string {
+  const fail = (err: unknown): never => {
+    throw new Error(
+      HARNESS_DIR_UNWRITABLE(projectRoot, err instanceof Error ? err.message : String(err)),
+      { cause: err },
+    );
+  };
+  try {
+    fs.accessSync(projectRoot, fs.constants.W_OK);
+  } catch (err) {
+    return fail(err);
+  }
+  try {
+    return fs.mkdtempSync(path.join(projectRoot, ".120fps-harness-"));
+  } catch (err) {
+    return fail(err);
+  }
+}
+
+// M73: the version is read from the project's own react-dom rather than
+// resolveReactDomIdentity in src/react-profiler.ts, which imports values from
+// this module: the reverse import would close a cycle.
+function readReactDomVersion(projectRoot: string): string | undefined {
+  try {
+    const pkgPath = createRequire(path.join(projectRoot, "/")).resolve("react-dom/package.json");
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8")) as { version?: unknown };
+    return typeof pkg.version === "string" ? pkg.version : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function REACT_DOM_CLIENT_MISSING(projectRoot: string, version: string | undefined): string {
+  return (
+    `React 18+ required${version ? ` (found react-dom v${version})` : ""}: ` +
+    `react-dom/client does not resolve from ${projectRoot}. The harness mounts with createRoot ` +
+    "from react-dom/client, which React 16 and 17 do not provide. Upgrade react-dom in the " +
+    "project, or measure the component from a project on React 18 or newer."
+  );
+}
+
+// Checked before the server boots: react-dom/client is forced into
+// optimizeDeps.include for every React run, and an unresolvable include aborts
+// Vite's optimizer with an esbuild path dump instead of a version diagnosis.
+export function assertReactDomClient(projectRoot: string): void {
+  try {
+    createRequire(path.join(projectRoot, "/")).resolve("react-dom/client");
+  } catch {
+    throw new Error(REACT_DOM_CLIENT_MISSING(projectRoot, readReactDomVersion(projectRoot)));
+  }
+}
+
+// M73: path.win32.relative("C:\\proj", "D:\\x") returns "D:\\x" — two drives
+// have no common ancestor to walk up to, so the result is absolute and carries
+// no "..". A caller reading only the "../" prefix takes another drive for an
+// in-root path. The platform parameter makes the drive-letter behavior
+// observable from a test on any host.
+export function isOutsideRoot(
+  target: string,
+  root: string,
+  platform: path.PlatformPath = path,
+): boolean {
+  const relative = platform.relative(root, target);
+  return (
+    relative === ".." || relative.startsWith(".." + platform.sep) || platform.isAbsolute(relative)
+  );
+}
+
+// The body of the entry's import specifier: the generators embed it as
+// `from "/${componentRelative}"`, so an out-of-root component becomes
+// "/@fs/<posix-absolute>", the same escape hatch cssImportSpecifier already
+// uses for an out-of-root stylesheet.
+export function componentImportPath(
+  componentPath: string,
+  projectRoot: string,
+  platform: path.PlatformPath = path,
+): string {
+  if (isOutsideRoot(componentPath, projectRoot, platform)) {
+    return "@fs/" + componentPath.replace(/\\/g, "/").replace(/^\//, "");
+  }
+  return platform.relative(projectRoot, componentPath).replace(/\\/g, "/");
 }
 
 export interface BuildHarnessOptions {
@@ -1250,13 +1378,15 @@ export const SFC_NO_COMPONENT = (relative: string): string =>
   "Add `export default` to that block, or move the code into a non-empty <script setup> " +
   "(an empty <script setup> counts as absent to the Vue compiler).";
 
-function resolveWrapper(wrapPath: string, projectRoot: string): string {
+export function resolveWrapper(wrapPath: string, projectRoot: string): string {
   const absolute = path.resolve(wrapPath);
   if (!fs.existsSync(absolute)) {
     throw new Error(`Wrapper module not found: ${wrapPath}`);
   }
   const relative = path.relative(projectRoot, absolute).replace(/\\/g, "/");
-  if (relative.startsWith("../")) {
+  // M73: the raw relative path decides, not its forward-slashed form: a wrapper
+  // on another Windows drive has an absolute relative form and no "../" prefix.
+  if (isOutsideRoot(absolute, projectRoot)) {
     throw new Error(
       `Wrapper module ${wrapPath} must live inside the project root ${projectRoot}`,
     );
@@ -1324,16 +1454,18 @@ export async function buildAndServe(
     }
   }
 
+  // M73: react-dom/client is forced into optimizeDeps.include below, and an
+  // unresolvable include aborts Vite's optimizer with an esbuild path dump.
+  if (renderer === "react") assertReactDomClient(projectRoot);
+
   // Crash leftovers from previous runs: best-effort removal (M24 D8)
   sweepStaleHarnessDirs(projectRoot);
 
   // Place harness files inside the target project so Vite resolves aliases
-  const harnessDir = fs.mkdtempSync(
-    path.join(projectRoot, ".120fps-harness-"),
-  );
+  const harnessDir = createHarnessDir(projectRoot);
   const harnessDirName = path.basename(harnessDir);
 
-  const componentRelative = path.relative(projectRoot, absoluteComponentPath).replace(/\\/g, "/");
+  const componentRelative = componentImportPath(absoluteComponentPath, projectRoot);
 
   const cssFiles = [...new Set((options?.cssFiles ?? []).map((f) => path.resolve(f)))];
   const cssImports = cssFiles.map((f) => cssImportSpecifier(f, projectRoot));
@@ -1448,6 +1580,8 @@ export async function buildAndServe(
       (s) => s.module,
     );
     activeShims = shimmed.length > 0 ? shimmed : undefined;
+    const unshimmed = unshimmedNextModules(importedSpecifiers);
+    if (unshimmed.length > 0) configWarnings.push(UNSUPPORTED_NEXT_MODULE_WARNING(unshimmed));
   }
 
   // A Vue project has no react to pre-bundle, and an unresolvable include
@@ -1497,7 +1631,14 @@ export async function buildAndServe(
   // Vite's defaults everywhere they already worked.
   // Vite's own default is the one root it searches for; widening never narrows
   // it, so its answer joins the list whenever the list exists at all.
-  const aliasAllow = fsAllowDirs(projectRoot, workspaceRoot, alias);
+  // M73: Vite serves nothing outside its allow list, so a component reached
+  // through /@fs/ needs its own directory named.
+  const aliasAllow = fsAllowDirs(
+    projectRoot,
+    workspaceRoot,
+    alias,
+    componentRelative.startsWith("@fs/") ? [componentDir] : [],
+  );
   const fsAllow = aliasAllow && [...new Set([...aliasAllow, searchForWorkspaceRoot(projectRoot)])];
 
   // M71: without these the page has no `process` at all, and a component
@@ -2068,10 +2209,14 @@ export function loadTsconfigAliases(
 // member package. An alias into a sibling package or into a linked install of
 // this tool is outside it. Undefined keeps Vite's own defaults, which is every
 // project whose targets are all inside the member root.
+// M73: extraDirs carries directories no alias names — the component's own
+// directory when its import routes through /@fs/. An empty list reproduces the
+// alias-only answer exactly, undefined included.
 export function fsAllowDirs(
   memberRoot: string,
   workspaceRoot: string,
   aliases: Array<{ replacement: string }>,
+  extraDirs: string[] = [],
 ): string[] | undefined {
   const forward = (p: string) => path.resolve(p).replace(/\\/g, "/");
   const targets = aliases.map(({ replacement }) => {
@@ -2089,7 +2234,7 @@ export function fsAllowDirs(
     const relative = path.relative(memberRoot, dir);
     return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
   };
-  const outside = targets.filter((dir) => !inside(dir));
+  const outside = [...targets, ...extraDirs.map(forward)].filter((dir) => !inside(dir));
   if (outside.length === 0) return undefined;
   return [...new Set([forward(memberRoot), forward(workspaceRoot), ...outside])];
 }

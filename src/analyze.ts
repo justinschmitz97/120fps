@@ -779,6 +779,9 @@ async function runIsolationMode(
     cpuThrottle: ctx.cpuThrottle,
     memoryCycles: isolationOptions.memoryCycles ?? DEFAULT_MEMORY_CYCLES,
     pool: ctx.pool,
+    // M73: font-settle and session warnings raised inside a phase reach the
+    // same sink every other phase already uses.
+    onWarning: ctx.onWarning,
   });
 
   // Discovery does not run in isolation mode, so there is no portal signal.
