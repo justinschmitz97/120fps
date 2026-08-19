@@ -1,6 +1,6 @@
 {
   "name": "120fps",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "type": "module",
   "description": "Zero-config UI component performance profiler. Real browser, real metrics.",
   "license": "MIT",

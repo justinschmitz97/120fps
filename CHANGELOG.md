@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.5.0
+
+Portability release: 120fps now works on repos that don't look like the ones it was built against.
+
+**Upgrading:** in workspace repos, baselines re-record once (the workspace lockfile now participates in the source fingerprint). Single-package repos are unaffected.
+
+- Workspace-aware project model: monorepos (pnpm/yarn/npm workspaces, Turborepo) get correct tooling detection — root-declared Tailwind, Next, React Compiler, and `@vitejs/plugin-vue` are found (previously `.vue` files in a monorepo didn't mount at all). `--compare` links `node_modules` at every workspace level.
+- Config resolution: tsconfig found by upward search (`extends` chains resolve), `jsconfig.json` and `baseUrl`-only projects get aliases, JS components extract props. Broken or shape-mismatched `paths` aliases warn instead of silently dying.
+- Import scanning: dynamic `import()` / `require`, `?url`/`?raw` suffixes, `.json`/`.cjs`, and directory `exports`/`main` all resolve; a missing alias target warns instead of polluting the dep optimizer.
+- CSS discovery reads your entry's real imports (index.html chain, Next `layout`/`_app`) before falling back to known names, then the largest stylesheet — each layer validated and disclosed. Tailwind loads independently of CSS discovery. Literal `resolve.alias` / `publicDir` are recovered from `vite.config` without executing it; `process.env.NEXT_PUBLIC_*` / `VITE_*` come from your `.env` (secrets excluded). UnoCSS/Linaria/Panda setups warn instead of measuring unstyled.
+- Failures name their cause: CSS and font 404s are captured (was: a bare 30s timeout), failed font loads warn, read-only project roots and React <18 get purpose-built errors, Solid and Yarn PnP are rejected upfront with remedies, Preact behind a `react` alias skips the fiber profiler with a warning, Node <22 exits cleanly, provider hints cover react-router/Remix/Gatsby/TanStack, `.wasm`/shader imports get "needs plugin X" preflight notes, and a hint suggests `.gitignore` patterns for report artifacts.
+- Next shims: `next/script`, `next/head`, `next/router`, `next/font/local` added (10 total); any other `next/*` import warns as unsupported.
+- Fixed: `--compare` on Windows deleted files from your real `node_modules` during worktree cleanup (`git worktree remove --force` recurses through junctions; present since `--compare` shipped in 0.3.0).
+- Fixed: rooted and absolute glob patterns match again; case-colliding report filenames no longer overwrite each other on NTFS/APFS; pnpm cost attribution names the real package instead of `.pnpm`.
+
 ## 0.4.0
 
 - Prop extraction binds to the exported/target component: internal helpers can no longer hijack the schema. `#ExportName` targets a specific export.
