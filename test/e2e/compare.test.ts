@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { execFileSync } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
 import { compareAgainstRef } from "../../src/compare.js";
 
 function gitClean(): boolean {
@@ -87,9 +89,21 @@ describe("interleaved compare against a git ref", () => {
   it.skipIf(!COMPARABLE)(
     "reports a component that does not exist at the ref",
     async () => {
-      await expect(
-        compareAgainstRef("./fixtures/m47-stable-tree.tsx", "HEAD", { samples: 1 }),
-      ).rejects.toThrow(/does not exist at HEAD/);
+      // A tracked fixture would exist in the ref's worktree checkout too, so
+      // testing absence at the ref needs a component real in the working tree
+      // but never committed. mkdtemp under fixtures/ keeps it inside the repo
+      // (compareAgainstRef resolves repoRoot from the component's path) while
+      // staying untracked by construction, mirroring compiler.test.ts.
+      const dir = fs.mkdtempSync(path.resolve("fixtures", "compare-ref-absent-"));
+      const componentPath = path.join(dir, "component.tsx");
+      fs.writeFileSync(componentPath, "export default function Untracked() { return null; }\n");
+      try {
+        await expect(
+          compareAgainstRef(componentPath, "HEAD", { samples: 1 }),
+        ).rejects.toThrow(/does not exist at HEAD/);
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
     },
     120000,
   );
