@@ -117,8 +117,15 @@ describe("the largest-stylesheet fallback", () => {
   it("injects the pick and says it guessed", () => {
     const only = write("src/theme/tokens.css", ".b{}");
     const warnings: string[] = [];
-    expect(discoverGlobalCss(tmpDir, warnings)).toEqual({ files: [only], source: "fallback" });
-    expect(warnings).toEqual([CSS_FALLBACK_WARNING("src/theme/tokens.css")]);
+    expect(discoverGlobalCss(tmpDir, warnings)).toEqual({
+      files: [only],
+      source: "fallback",
+      onlyCandidate: true,
+      noEntryInPackage: true,
+    });
+    expect(warnings).toEqual([
+      CSS_FALLBACK_WARNING("src/theme/tokens.css", { onlyCandidate: true, noEntryInPackage: true }),
+    ]);
   });
 
   it("reports nothing found when the project has no stylesheet", () => {
@@ -153,14 +160,20 @@ describe("auto-detection through resolveCssFiles", () => {
     const theme = write("src/theme.css", ":root{}");
     write("index.html", '<script type="module" src="/src/main.tsx"></script>');
     write("src/main.tsx", 'import "./reset.css";\nimport "./theme.css";');
-    expect(resolveCssFiles({}, tmpDir)).toEqual({ files: [reset, theme], autoDetected: true });
+    expect(resolveCssFiles({}, tmpDir)).toEqual({
+      files: [reset, theme],
+      autoDetected: true,
+      layer: "entry-chain",
+    });
   });
 
   it("forwards a discovery warning to the caller's sink", () => {
     const only = write("src/theme/tokens.css", ".b{}");
     const warnings: string[] = [];
     expect(resolveCssFiles({}, tmpDir, warnings).files).toEqual([only]);
-    expect(warnings).toEqual([CSS_FALLBACK_WARNING("src/theme/tokens.css")]);
+    expect(warnings).toEqual([
+      CSS_FALLBACK_WARNING("src/theme/tokens.css", { onlyCandidate: true, noEntryInPackage: true }),
+    ]);
   });
 
   it("stays silent about discovery when --no-css was given", () => {
@@ -169,6 +182,7 @@ describe("auto-detection through resolveCssFiles", () => {
     expect(resolveCssFiles({ noCss: true }, tmpDir, warnings)).toEqual({
       files: [],
       autoDetected: false,
+      layer: "disabled",
     });
     expect(warnings).toEqual([]);
   });
@@ -180,6 +194,7 @@ describe("auto-detection through resolveCssFiles", () => {
     expect(resolveCssFiles({ cssFiles: [explicit] }, tmpDir, warnings)).toEqual({
       files: [explicit],
       autoDetected: false,
+      layer: "explicit",
     });
     expect(warnings).toEqual([]);
   });

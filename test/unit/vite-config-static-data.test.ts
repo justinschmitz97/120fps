@@ -28,7 +28,13 @@ function mkdir(relative: string): string {
 
 describe("reading a project's vite.config without executing it", () => {
   it("reports nothing for a project with no config file", () => {
-    expect(readViteConfigData(tmpDir)).toEqual({ aliases: [], ignoredKeys: [] });
+    // M76: ViteConfigData gains `conditions` and `warnings`, always present.
+    expect(readViteConfigData(tmpDir)).toEqual({
+      aliases: [],
+      ignoredKeys: [],
+      conditions: [],
+      warnings: [],
+    });
   });
 
   it("names the config file it read", () => {

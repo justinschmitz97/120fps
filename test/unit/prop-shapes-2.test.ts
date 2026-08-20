@@ -117,24 +117,24 @@ describe("H17: multiple components", () => {
   });
 });
 
-// H18: Extends HTMLAttributes: massive DOM props
+// H18: Extends HTMLAttributes: massive DOM props. M81 section 2: the
+// inherited DOM surface is now ranked and capped at MAX_PROPS instead of
+// being silently erased before the count is even taken, so both the schema
+// size and the resulting combo count grow accordingly.
 describe("H18: extends HTMLAttributes", () => {
-  it("extracts only user-defined props, filtering inherited DOM attributes", async () => {
+  it("keeps user-defined props and ranks the inherited DOM surface up to the 32-prop cap", async () => {
     const schema = await extractProps("./fixtures/html-attrs.tsx");
-    expect(schema.length).toBeGreaterThanOrEqual(2);
+    expect(schema.length).toBe(32);
     const padding = schema.find((s) => s.name === "padding");
     const elevation = schema.find((s) => s.name === "elevation");
     expect(padding).toBeDefined();
     expect(elevation).toBeDefined();
-    const onClick = schema.find((s) => s.name === "onClick");
-    expect(onClick).toBeUndefined();
   });
 
-  it("combination count is small for HTMLAttributes component", async () => {
+  it("combination count is capped at MAX_COMBINATIONS once inherited DOM attributes are included", async () => {
     const schema = await extractProps("./fixtures/html-attrs.tsx");
     const combos = generateCombinations(schema);
-    expect(combos.length).toBeLessThanOrEqual(64);
-    expect(combos.length).toBeLessThan(20);
+    expect(combos.length).toBe(64);
   });
 });
 

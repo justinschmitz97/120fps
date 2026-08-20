@@ -1,5 +1,6 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import {
   parseArgs,
@@ -16,8 +17,9 @@ import {
   runPreflight,
   detectProviderImport,
   providerCandidateLabels,
+  HARD_REMEDY,
 } from "../../src/preflight.js";
-import { detectComponentExport } from "../../src/harness.js";
+import { detectComponentExport, BUNDLER_PREACT_ALIAS_WARNING } from "../../src/harness.js";
 import { extractPropsDetailed } from "../../src/prop-gen.js";
 import { formatHints } from "../../src/hints.js";
 import type { Report } from "../../src/report.js";
@@ -198,6 +200,203 @@ describe("--explain-props", () => {
   });
 });
 
+// M78: --explain-props ran no preflight gate at all, exiting 0 on a Solid or
+// PnP project the default path rejects in ~1s (solid-ui-F1, pnp-app-F2). The
+// comment at this call's cli.ts site has always promised "before every check
+// that exists to protect a measurement" — these tests are that promise, kept.
+describe("--explain-props gate parity", () => {
+  const tmpDirs: string[] = [];
+
+  afterEach(() => {
+    for (const dir of tmpDirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  function isolatedProject(prefix: string, files: Record<string, string>): { root: string; entry: string } {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+    tmpDirs.push(root);
+    for (const [rel, content] of Object.entries(files)) {
+      const abs = path.join(root, rel);
+      fs.mkdirSync(path.dirname(abs), { recursive: true });
+      fs.writeFileSync(abs, content);
+    }
+    fs.mkdirSync(path.join(root, "node_modules"), { recursive: true });
+    return { root, entry: path.join(root, "Card.tsx") };
+  }
+
+  it("rejects a Solid project the same way the default path does", async () => {
+    const { entry } = isolatedProject("120fps-explain-solid-", {
+      "package.json": JSON.stringify({ dependencies: { "solid-js": "^1.8.0" } }),
+      "Card.tsx": "export function Card() { return null; }\n",
+    });
+    await expect(explainProps(entry)).rejects.toThrow(/Solid/);
+  });
+
+  // async-component is a hard preflight kind with nothing to do with
+  // react-dom resolution, so a bypass here reaches extraction successfully:
+  // unlike the Solid/PnP cases below, assertReactDomClient's independent
+  // taxonomy does not also reject this project.
+  it("downgrades to a warning and still extracts under --no-preflight (noPreflight: true)", async () => {
+    const { root, entry } = isolatedProject("120fps-explain-async-bypass-", {
+      "package.json": JSON.stringify({ dependencies: { react: "^18.2.0", "react-dom": "^18.2.0" } }),
+      "Card.tsx": "export async function Card() { return null; }\n",
+    });
+    const pkgDir = path.join(root, "node_modules", "react-dom");
+    fs.mkdirSync(pkgDir, { recursive: true });
+    fs.writeFileSync(path.join(pkgDir, "package.json"), JSON.stringify({ name: "react-dom", version: "18.2.0", main: "index.js" }));
+    fs.writeFileSync(path.join(pkgDir, "index.js"), "module.exports = {};\n");
+    fs.writeFileSync(path.join(pkgDir, "client.js"), "module.exports = {};\n");
+
+    const explained = await explainProps(entry, { noPreflight: true });
+    expect(explained.warnings.some((w) => w.includes("--no-preflight"))).toBe(true);
+  });
+
+  // solid-ui-F3 / pnp-app-F3: --no-preflight downgrades the graph-walk hard
+  // hit to a warning, but assertReactDomClient is a separate, unconditional
+  // gate — for a Solid-only project it independently reaches the same
+  // conclusion runPreflight already did, so the final error still names
+  // Solid, never a fabricated react-dom-version claim.
+  it("still fails under --no-preflight for a Solid project, naming Solid, not a fabricated react-dom version", async () => {
+    const { entry } = isolatedProject("120fps-explain-solid-bypass-backstop-", {
+      "package.json": JSON.stringify({ dependencies: { "solid-js": "^1.8.0" } }),
+      "Card.tsx": "export function Card() { return null; }\n",
+    });
+    let thrown: unknown;
+    try {
+      await explainProps(entry, { noPreflight: true });
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(Error);
+    const message = (thrown as Error).message;
+    expect(message).not.toContain("React 18+ required");
+    expect(message).toContain("solid-js");
+    expect(message).toContain(HARD_REMEDY["unsupported-framework"]);
+  });
+
+  it("rejects a Yarn PnP project the same way the default path does", async () => {
+    const { root, entry } = isolatedProject("120fps-explain-pnp-", {
+      "package.json": "{}",
+      "Card.tsx": "export function Card() { return null; }\n",
+    });
+    fs.writeFileSync(path.join(root, ".pnp.cjs"), "");
+    await expect(explainProps(entry)).rejects.toThrow(/Plug'n'Play/);
+  });
+
+  // Reached only after preflight's own hard checks pass: the react-dom
+  // version gate was never called by --explain-props before this milestone,
+  // so a Solid/PnP project was not the only thing it measured silently.
+  it("rejects a project on react-dom 17 the same way the default path does (no regression on the outdated case)", async () => {
+    const { root, entry } = isolatedProject("120fps-explain-react17-", {
+      "package.json": JSON.stringify({ dependencies: { react: "^17.0.2", "react-dom": "^17.0.2" } }),
+      "Card.tsx": "export function Card() { return null; }\n",
+    });
+    const pkgDir = path.join(root, "node_modules", "react-dom");
+    fs.mkdirSync(pkgDir, { recursive: true });
+    fs.writeFileSync(path.join(pkgDir, "package.json"), JSON.stringify({ name: "react-dom", version: "17.0.2", main: "index.js" }));
+    fs.writeFileSync(path.join(pkgDir, "index.js"), "module.exports = {};\n");
+    await expect(explainProps(entry)).rejects.toThrow(/React 18\+ required/);
+  });
+
+  it("does not run the react-dom gate for a .vue target", async () => {
+    // Regression lock: rendererFor gates assertReactDomClient the same way
+    // buildAndServe does, so a Vue project with no react-dom at all is not
+    // rejected for a React-only reason.
+    const explained = await explainProps(fixture("vue-project/Button.vue"));
+    expect(explained.componentName).toBe("Button");
+  });
+});
+
+// M78 (excalidraw-F4, reclassified from M81): the wrong-schema finding's real
+// cause is that the repository had no node_modules at all, so forwardRef's
+// contextual typing had nothing to resolve against. The fix is not a
+// prop-extraction change (M81 found the extractor itself correct against a
+// real TS 5.9.3 + @types/react); it is that the missing-install gate must
+// fire before extraction ever runs, so a user is never handed a confidently
+// wrong schema instead of a plain "nothing is installed" message.
+describe("excalidraw-F4: missing ambient types caught by the not-installed gate", () => {
+  const tmpDirs: string[] = [];
+
+  afterEach(() => {
+    for (const dir of tmpDirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("rejects a forwardRef component (excalidraw's FilledButton shape) before extracting a schema", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "120fps-excalidraw-f4-"));
+    tmpDirs.push(root);
+    fs.writeFileSync(
+      path.join(root, "package.json"),
+      JSON.stringify({ dependencies: { react: "^18.2.0", "react-dom": "^18.2.0" } }),
+    );
+    // No node_modules anywhere: no react-dom, no @types/react.
+    fs.writeFileSync(
+      path.join(root, "FilledButton.tsx"),
+      [
+        'import { forwardRef } from "react";',
+        "export const FilledButton = forwardRef(({ label, disabled, onClick }, ref) => {",
+        "  return null;",
+        "});",
+        "",
+      ].join("\n"),
+    );
+
+    let thrown: unknown;
+    try {
+      await explainProps(path.join(root, "FilledButton.tsx"));
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(Error);
+    const message = (thrown as Error).message;
+    expect(message).toContain("no installed dependencies");
+    expect(message).toContain(HARD_REMEDY["not-installed"]);
+  });
+});
+
+// M78 (preact-app-F3, webpack/Next.js shape): a disclosure gap, not a silent
+// mismeasurement (120fps genuinely mounts real react-dom for this shape).
+// Reached via the same runPreflight-adjacent call added for gate parity, so
+// the disclosure is present on every entry path.
+describe("--explain-props Preact bundler-alias disclosure", () => {
+  const tmpDirs: string[] = [];
+
+  afterEach(() => {
+    for (const dir of tmpDirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("warns when the project's next.config.js aliases react-dom to preact/compat", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "120fps-explain-bundler-alias-"));
+    tmpDirs.push(root);
+    fs.writeFileSync(
+      path.join(root, "package.json"),
+      JSON.stringify({ dependencies: { react: "^18.2.0", "react-dom": "^18.2.0", preact: "^10.19.0" } }),
+    );
+    fs.writeFileSync(
+      path.join(root, "next.config.js"),
+      [
+        "module.exports = {",
+        "  webpack: (config, { dev, isServer }) => {",
+        "    if (!dev && !isServer) {",
+        "      Object.assign(config.resolve.alias, { react: 'preact/compat', 'react-dom': 'preact/compat' });",
+        "    }",
+        "    return config;",
+        "  },",
+        "};",
+        "",
+      ].join("\n"),
+    );
+    const pkgDir = path.join(root, "node_modules", "react-dom");
+    fs.mkdirSync(pkgDir, { recursive: true });
+    fs.writeFileSync(path.join(pkgDir, "package.json"), JSON.stringify({ name: "react-dom", version: "18.2.0", main: "index.js" }));
+    fs.writeFileSync(path.join(pkgDir, "index.js"), "module.exports = {};\n");
+    fs.writeFileSync(path.join(pkgDir, "client.js"), "module.exports = {};\n");
+    fs.writeFileSync(path.join(root, "Card.tsx"), "export function Card() { return null; }\n");
+
+    const explained = await explainProps(path.join(root, "Card.tsx"));
+    const configFile = path.join(root, "next.config.js");
+    expect(explained.warnings).toContain(BUNDLER_PREACT_ALIAS_WARNING(configFile, "preact/compat"));
+  });
+});
+
 // --- C2: progress heartbeat ---
 
 describe("progress heartbeat", () => {
@@ -305,8 +504,10 @@ describe("provider detection", () => {
   });
 
   it("names the candidates in the render-error hint", () => {
+    // M79 (4a): the provider hint is gated on a captured page-error message
+    // that actually looks provider/context-shaped.
     const report = {
-      combos: [],
+      combos: [{ pageErrors: ["useTranslations must be used within a NextIntlClientProvider"] }],
       providerCandidates: ["next-intl (useTranslations)"],
     } as unknown as Report;
     const text = formatHints(["renderError"], report);

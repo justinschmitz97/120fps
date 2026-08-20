@@ -1,4 +1,5 @@
 import path from "node:path";
+import { isVueFile } from "./vue-sfc.js";
 import type { InteractionType } from "./discovery.js";
 import {
   computeScalingCurve,
@@ -164,6 +165,12 @@ export interface ComboReport {
   // pass. "empty" = nothing rendered and nothing threw, which is legal.
   // Absent whenever the combo rendered at least one node.
   renderHealth?: "error" | "empty";
+  // M80: the combo rendered something, but not the whole component: either a
+  // compound Root's declared sibling parts never composed in ("uncomposed"),
+  // or a Vue SFC's props were excluded by ADR 0002's TypeScript-only scope
+  // ("propsExcluded"). Absent whenever renderHealth already fully discloses
+  // the combo, and absent whenever no known-excluded shape was hit.
+  disclosureReason?: "uncomposed" | "propsExcluded";
   // Interaction to Next Paint, in ms: the worst input-to-paint gap across
   // this combo's explored interactions. Absent when exploration produced no
   // interaction traces for the combo.
@@ -211,6 +218,19 @@ export interface ScalingCurveReport {
   // Present exactly when the curve verdict is `fail`: what was violated and
   // where, so the reader does not diff each N row against the budget by hand.
   violation?: CurveViolation;
+  // M79 gap (chakra-ui-F1): a structural counterpart to
+  // CURVE_RENDER_ERROR_WARNING's formatted string in report.warnings, so a
+  // consumer (hintsForReport, formatCurveOutput) can detect a broken scale
+  // point without matching a "scale point N=" prose convention. Populated in
+  // runCurveMode at the same point the warning is pushed, so the two never
+  // drift. Absent when every scale point rendered.
+  renderErrorPoints?: CurveRenderErrorPoint[];
+}
+
+export interface CurveRenderErrorPoint {
+  // The scale-point N value (not a combo index: curve mode has no combos).
+  n: number;
+  pageErrors: string[];
 }
 
 export interface CurveViolation {
@@ -317,6 +337,25 @@ export interface WrapperReport {
 export interface CssReport {
   files: string[];
   autoDetected: boolean;
+  // M82: which discovery layer decided, so the outcome (including "none") is
+  // always disclosed, never just implied by an omitted key.
+  layer:
+    | "explicit"
+    | "entry-chain"
+    | "known-name"
+    | "largest-fallback"
+    | "runtime"
+    | "disabled"
+    | "none";
+  // One entry per file in `files`, same order. Computed regardless of layer,
+  // so a near-empty stylesheet is distinguishable from a real one even when
+  // named explicitly via --css.
+  details?: Array<{ file: string; bytes: number; rules: number }>;
+  // present only when layer === "runtime"
+  runtimeEngines?: string[];
+  // present only when layer === "largest-fallback"
+  onlyCandidate?: boolean;
+  noEntryInPackage?: boolean;
 }
 
 // `detected` is the package check, `active` is what actually ran; they diverge
@@ -503,6 +542,49 @@ export function computeVerdict(
   return "pass";
 }
 
+// M82: the outcome is always disclosed, including "none" — wording keyed on
+// which discovery layer decided. `layer` may be absent on a pre-M82 report or
+// baseline (the type is required going forward, but reading an old `css`
+// object at runtime is not type-checked), so the default branch falls back to
+// the old rendering rather than mislabeling a legacy auto-detected pick as
+// "none found".
+function formatStylesheetsLine(css: CssReport): string {
+  switch (css.layer) {
+    case "explicit":
+      return `Stylesheets: ${css.files.join(", ")} (explicit --css)`;
+    case "entry-chain":
+      return `Stylesheets: ${css.files.join(", ")} (found in the project entry's own imports)`;
+    case "known-name":
+      return `Stylesheets: ${css.files.join(", ")} (matched a conventional filename)`;
+    case "largest-fallback":
+      return (
+        `Stylesheets: ${css.files.join(", ")} (largest-stylesheet fallback, low confidence — ` +
+        "verify with --css)"
+      );
+    case "runtime":
+      return (
+        `Stylesheets: none — styling is generated at runtime by ${(css.runtimeEngines ?? []).join(", ")}; ` +
+        "no stylesheet was needed"
+      );
+    case "disabled":
+      return "Stylesheets: none (--no-css)";
+    case "none":
+      return (
+        "Stylesheets: none found (checked the project entry, conventional filenames, and the " +
+        "largest stylesheet under the project)"
+      );
+    default:
+      if (css.files.length > 0) {
+        const auto = css.autoDetected ? " (auto-detected)" : "";
+        return `Stylesheets: ${css.files.join(", ")}${auto}`;
+      }
+      return (
+        "Stylesheets: none found (checked the project entry, conventional filenames, and the " +
+        "largest stylesheet under the project)"
+      );
+  }
+}
+
 export function formatTable(report: Report): string {
   const lines: string[] = [];
 
@@ -526,9 +608,8 @@ export function formatTable(report: Report): string {
       `Wrapper: ${report.wrapper.path}${auto}, +${report.wrapper.overheadMs.toFixed(2)}ms mount overhead`,
     );
   }
-  if (report.css && report.css.files.length > 0) {
-    const auto = report.css.autoDetected ? " (auto-detected)" : "";
-    lines.push(`Stylesheets: ${report.css.files.join(", ")}${auto}`);
+  if (report.css) {
+    lines.push(formatStylesheetsLine(report.css));
   }
   if (report.reactCompiler?.active) {
     const version = report.reactCompiler.version
@@ -714,7 +795,11 @@ export function formatTable(report: Report): string {
   if (totalInteractions === 0 && !report.fixturePath && !hasRenderError) {
     const stem = path.basename(report.componentPath, path.extname(report.componentPath));
     const dir = path.dirname(report.componentPath);
-    const hint = path.join(dir, `${stem}.fixture.tsx`);
+    // M83 #8 (primevue-Minor1): detectFixture only ever accepts
+    // `${stem}.fixture.vue` for a Vue target (never `.fixture.tsx`) — the
+    // suggestion must name a file the loader will actually find.
+    const suggestedExt = isVueFile(report.componentPath) ? "vue" : "tsx";
+    const hint = path.join(dir, `${stem}.fixture.${suggestedExt}`);
     lines.push(`0 interactions found. Consider creating ${hint} with composed children.`);
   }
 
@@ -734,6 +819,8 @@ function renderHealthMarks(combo: ComboReport): string {
   const marks: string[] = [];
   if (combo.renderHealth === "error") marks.push("render error");
   else if (combo.renderHealth === "empty") marks.push("no DOM");
+  else if (combo.disclosureReason === "uncomposed") marks.push("uncomposed");
+  else if (combo.disclosureReason === "propsExcluded") marks.push("props excluded");
   const count = combo.pageErrors?.length ?? 0;
   if (count > 0 && combo.renderHealth !== "error") {
     marks.push(`${count} page error${count === 1 ? "" : "s"}`);
@@ -760,11 +847,46 @@ function appendPageErrors(lines: string[], report: Report): void {
   }
 }
 
+// M83 #1 (element-plus-F2): a combo marked "renderHealth: empty" and a
+// sibling in the same `combos` array (a discrete prop combo or an M61
+// scale-probe row) that measured a nonzero DOM count are not two different
+// facts to reconcile — they come from the exact same `countComponentNodes`
+// computation, so a disagreement between them is a same-run inconsistency,
+// not proof the component renders nothing. Detection only: this never
+// decides *why* they disagree.
+export function detectRenderHealthInconsistency(combos: ComboReport[]): string | undefined {
+  const emptyIndices = combos
+    .filter((c) => c.renderHealth === "empty")
+    .map((c) => c.comboIndex);
+  if (emptyIndices.length === 0) return undefined;
+  const nonEmptyIndices = combos
+    .filter((c) => c.domNodeCount > 0)
+    .map((c) => c.comboIndex);
+  if (nonEmptyIndices.length === 0) return undefined;
+  return RENDER_HEALTH_INCONSISTENT_WARNING(emptyIndices, nonEmptyIndices);
+}
+
+export const RENDER_HEALTH_INCONSISTENT_WARNING = (
+  emptyIndices: number[],
+  nonEmptyIndices: number[],
+): string =>
+  `combo(s) #${emptyIndices.join(", #")} rendered 0 DOM nodes while combo(s) #${nonEmptyIndices.join(", #")} ` +
+  "rendered a nonzero count in the same run: this disagreement was not resolved, so it is reported " +
+  "rather than asserted as 'the component renders nothing'.";
+
 // M59: rendering null is legal, and saying so is cheaper than leaving the
 // reader to infer it from a 0 in the DOM column.
 function appendEmptyRenderNote(lines: string[], report: Report): void {
   const empty = report.combos.filter((c) => c.renderHealth === "empty");
   if (empty.length === 0) return;
+  // M83 #1: a sibling combo in the same run that measured a nonzero count
+  // contradicts the categorical claim below, so the disagreement is stated
+  // instead of asserted away.
+  const inconsistency = detectRenderHealthInconsistency(report.combos);
+  if (inconsistency) {
+    lines.push(inconsistency);
+    return;
+  }
   const list = empty.map((c) => `#${c.comboIndex}`).join(", ");
   lines.push(
     `Combo ${list} rendered no DOM nodes and the page stayed quiet: ` +
@@ -969,10 +1091,16 @@ function formatCurveOutput(lines: string[], report: Report): string {
   lines.push(header);
   lines.push("-".repeat(header.length));
 
+  // M79 gap: a scale point the page threw on stops printing a bare Growth
+  // cell — mirrors renderHealthMarks's bracket convention exactly, so the
+  // table never reads as a healthy curve that merely fit a class the reader
+  // cannot cross-check.
+  const brokenNs = new Set((cr.renderErrorPoints ?? []).map((p) => p.n));
   for (let i = 0; i < cr.points.length; i++) {
     const p = cr.points[i];
     const isLast = i === cr.points.length - 1;
-    const growth = isLast ? cr.mountCurve.growthClass : "";
+    let growth = isLast ? cr.mountCurve.growthClass : "";
+    if (brokenNs.has(p.n)) growth += " [render error]";
     lines.push(
       padCurveRow([
         String(p.n),
@@ -992,7 +1120,8 @@ function formatCurveOutput(lines: string[], report: Report): string {
   lines.push(`Growth: mount ${cr.mountCurve.growthClass}, rerender ${cr.rerenderCurve.growthClass}`);
 
   lines.push("");
-  lines.push(report.pass ? "Result: PASS" : "Result: FAIL");
+  const resultMark = brokenNs.size > 0 ? " [render error]" : "";
+  lines.push((report.pass ? "Result: PASS" : "Result: FAIL") + resultMark);
   if (!report.pass && cr.violation) {
     lines.push(`  ${formatCurveViolation(cr.violation)}`);
   }

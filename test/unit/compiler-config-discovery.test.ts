@@ -90,7 +90,15 @@ describe("aliases inherited from an ancestor config", () => {
     expect(aliases[0].replacement).toBe(`${fwd(dir)}/repo/packages/ui/src/`);
   });
 
-  it("the member's own config wins over the workspace root config", () => {
+  // M76 (was "the member's own config wins over the workspace root config",
+  // and asserted the root's differently-named pattern was absent entirely).
+  // M69's nearest-wins contract for a NAME the member itself declares is
+  // unchanged and still covered below; but a member having its own tsconfig
+  // no longer blocks a workspace-root pattern the member's config never
+  // mentions at all — that pattern is now an additive fallback layer, not
+  // climbed past. See specs/milestones/m76-layered-alias-resolution.md
+  // ("Changed contracts").
+  it("the member's own config wins for a pattern it declares; the workspace root's differently-named pattern is layered in as a fallback", () => {
     const dir = mkWorkspace({
       "repo/tsconfig.json": JSON.stringify({
         compilerOptions: { paths: { "@root/*": ["./shared/*"] } },
@@ -98,14 +106,36 @@ describe("aliases inherited from an ancestor config", () => {
       "repo/packages/ui/tsconfig.json": JSON.stringify({
         compilerOptions: { paths: { "@own/*": ["./src/*"] } },
       }),
+      "repo/shared/x.ts": "export const x = 1;",
+    });
+    const member = path.join(dir, "repo", "packages", "ui");
+
+    const aliases = loadTsconfigAliases(member);
+
+    expect(aliases).toHaveLength(2);
+    expect(aliases[0].find.test("@own/Button")).toBe(true);
+    expect(aliases[0].fromWorkspaceRoot).toBeUndefined();
+    expect(aliases[1].find.test("@root/Button")).toBe(true);
+    expect(aliases[1].fromWorkspaceRoot?.pattern).toBe("@root/*");
+  });
+
+  it("a workspace-root pattern the member's own config also declares is not layered in, even unresolved", () => {
+    const dir = mkWorkspace({
+      "repo/tsconfig.json": JSON.stringify({
+        compilerOptions: { paths: { "@shared/*": ["./shared/*"] } },
+      }),
+      "repo/shared/x.ts": "export const x = 1;",
+      "repo/packages/ui/tsconfig.json": JSON.stringify({
+        compilerOptions: { paths: { "@shared/*": ["./missing/*"] } },
+      }),
     });
     const member = path.join(dir, "repo", "packages", "ui");
 
     const aliases = loadTsconfigAliases(member);
 
     expect(aliases).toHaveLength(1);
-    expect(aliases[0].find.test("@own/Button")).toBe(true);
-    expect(aliases[0].find.test("@root/Button")).toBe(false);
+    expect(aliases[0].fromWorkspaceRoot).toBeUndefined();
+    expect(aliases[0].replacement).toBe(`${fwd(dir)}/repo/packages/ui/missing/`);
   });
 
   it("does not walk past the workspace root", () => {

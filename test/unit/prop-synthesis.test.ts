@@ -212,13 +212,23 @@ describe("computed props types", () => {
     expect(get(schemas, "port").kind).toBe("number");
   });
 
-  it("still drops the DOM surface of a primitive's ComponentProps", async () => {
+  // M81 section 2: the DOM surface of a primitive's ComponentProps is now
+  // ranked and capped instead of silently erased. The primitive's own props
+  // (checked: boolean -> Tier 1; orientation: literal union -> Tier 1;
+  // onCheckedChange: locally declared -> Tier 2) all still survive, alongside
+  // the inherited surface up to the 32-prop cap, with an honest warning
+  // naming the true (uncapped) total.
+  it("ranks and caps the DOM surface of a primitive's ComponentProps instead of dropping it", async () => {
+    const stderr = captureStderr();
     const schemas = await extractProps(fixture("component-props.tsx"));
-    expect(schemas.map((s) => s.name).sort()).toEqual([
-      "checked",
-      "onCheckedChange",
-      "orientation",
-    ]);
+    const names = schemas.map((s) => s.name);
+    expect(schemas.length).toBe(32);
+    expect(names).toContain("checked");
+    expect(names).toContain("orientation");
+    expect(names).toContain("onCheckedChange");
+    const warning = stderr.lines().find((l) => l.includes("props were extracted"));
+    expect(warning).toBeDefined();
+    expect(warning).toContain("238 props were extracted");
   });
 
   it("warns naming the annotation when nothing can be enumerated", async () => {

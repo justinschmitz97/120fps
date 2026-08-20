@@ -322,3 +322,75 @@ describe("H18b: automatic JSX runtime is declared", () => {
     expect(includeBlock).toContain("include: stableInclude");
   });
 });
+
+// M83 #3 (element-plus-F4): report.pass must not be computed before
+// report.noise exists in the same function — a hostile machine's noise
+// classification has to be available to the verdict, not seventeen lines
+// too late.
+describe("M83 #3: computeIsolationVerdict respects the noise classification", () => {
+  it("suppresses a leak-only FAIL when the run's own noise sentinel says hostile", () => {
+    const leaking = { memory: { leakSuspected: true, heapGrowth: 1, heapGrowthPerCycle: 1, gcPressure: 0 } };
+    expect(computeIsolationVerdict(leaking, undefined, "hostile")).toBe(true);
+  });
+
+  it("still fails a leak-only run under noisy (only hostile suppresses)", () => {
+    const leaking = { memory: { leakSuspected: true, heapGrowth: 1, heapGrowthPerCycle: 1, gcPressure: 0 } };
+    expect(computeIsolationVerdict(leaking, undefined, "noisy")).toBe(false);
+  });
+
+  it("still fails a leak-only run under quiet", () => {
+    const leaking = { memory: { leakSuspected: true, heapGrowth: 1, heapGrowthPerCycle: 1, gcPressure: 0 } };
+    expect(computeIsolationVerdict(leaking, undefined, "quiet")).toBe(false);
+  });
+
+  it("still fails a leak-only run when no noise level is supplied at all (backward compatible)", () => {
+    const leaking = { memory: { leakSuspected: true, heapGrowth: 1, heapGrowthPerCycle: 1, gcPressure: 0 } };
+    expect(computeIsolationVerdict(leaking, undefined)).toBe(false);
+  });
+
+  it("a hostile classification does not rescue a mount-budget failure", () => {
+    expect(computeIsolationVerdict({ mount: timing(15) }, 14, "hostile")).toBe(false);
+  });
+
+  it("a hostile classification does not rescue a churn-degradation failure", () => {
+    const churning = { rerender: { stable: timing(1), churnDegradation: 3 } };
+    expect(computeIsolationVerdict(churning as any, undefined, "hostile")).toBe(false);
+  });
+
+  it("a healthy run stays true regardless of noise level", () => {
+    expect(computeIsolationVerdict({}, undefined, "hostile")).toBe(true);
+  });
+});
+
+describe("M83 #3: runIsolationMode computes report.pass after report.noise exists", () => {
+  it("calls attachHarnessContext before assigning report.pass from computeIsolationVerdict", () => {
+    const analyzeSrc = src("analyze.ts");
+    const branch = analyzeSrc.slice(
+      analyzeSrc.indexOf("async function runIsolationMode("),
+      analyzeSrc.indexOf("function writeReportJson("),
+    );
+    const attachIdx = branch.indexOf("ctx.attachHarnessContext(report)");
+    const passIdx = branch.indexOf("report.pass = computeIsolationVerdict(");
+    expect(attachIdx).toBeGreaterThan(-1);
+    expect(passIdx).toBeGreaterThan(-1);
+    expect(attachIdx).toBeLessThan(passIdx);
+  });
+
+  it("passes report.noise?.level into computeIsolationVerdict", () => {
+    const analyzeSrc = src("analyze.ts");
+    const branch = analyzeSrc.slice(
+      analyzeSrc.indexOf("async function runIsolationMode("),
+      analyzeSrc.indexOf("function writeReportJson("),
+    );
+    expect(branch).toMatch(/report\.pass = computeIsolationVerdict\([^)]*report\.noise\?\.level/s);
+  });
+
+  it("names the noise-qualified suppression in report.warnings when it applies", () => {
+    const analyzeSrc = src("analyze.ts");
+    const branch = analyzeSrc.slice(
+      analyzeSrc.indexOf("async function runIsolationMode("),
+      analyzeSrc.indexOf("function writeReportJson("),
+    );
+    expect(branch).toContain("LEAK_VERDICT_NOISE_QUALIFIED_WARNING");
+  });
+});

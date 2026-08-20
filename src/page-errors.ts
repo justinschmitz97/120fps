@@ -12,10 +12,26 @@ export interface PageErrorDrain {
   dropped: number;
 }
 
+// M79 gap 3b: a fatal (uncaught page exception) is unambiguous evidence the
+// harness will never become ready — unlike a console.error, which stays
+// bucket-only and non-fatal. `stack` is captured here specifically, even
+// though `record()`'s bucket stays message-keyed (dedup/cap behavior at
+// `createBucket` is untouched): only the fail-fast path needs it, to
+// best-effort name the throwing module.
+export interface FatalPageError {
+  message: string;
+  stack?: string;
+}
+
 export interface PageErrorCapture {
   errors: string[];
   summary(): string;
   drain(): PageErrorDrain;
+  // Resolves on the next pageerror event after this call — first hit wins,
+  // matching this codebase's existing precedent (harness.ts, project-model.ts).
+  // A caller races this against its own readiness wait; a healthy run simply
+  // never resolves it.
+  waitForFatal(): Promise<FatalPageError>;
 }
 
 // Retention is by distinct message: repeats of one noisy message must not
@@ -62,7 +78,29 @@ function createBucket(): Bucket {
   };
 }
 
-export function attachPageErrorCapture(page: Page): PageErrorCapture {
+// M83 #2 (element-plus-F3): a synthesized string placeholder ("test",
+// src/prop-gen-values.ts) landed in a plain `<img src>` relative-resolves
+// against the page's own URL, which *is* the harness's Vite-served root —
+// producing a same-origin, bare, extension-less 404 the harness caused, not
+// the component. Deliberately narrow: every legitimate asset the harness
+// serves (the component's own source, Vite's own paths, a real CSS/JS/image
+// import) carries either a file extension or a directory prefix, so a
+// genuine CSS-import 404 (what M70 added these listeners to catch) is never
+// excluded by this rule.
+export function isHarnessInternalNoise(url: string, harnessDirName: string): boolean {
+  let pathname: string;
+  try {
+    pathname = new URL(url).pathname;
+  } catch {
+    return false;
+  }
+  const escapedDir = harnessDirName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = pathname.match(new RegExp(`^/${escapedDir}/([^/]+)$`));
+  if (!match) return false;
+  return !match[1].includes(".");
+}
+
+export function attachPageErrorCapture(page: Page, harnessDirName?: string): PageErrorCapture {
   // Two buckets over one event stream. The session bucket feeds
   // `enrichTimeoutError` and spans the whole run; the segment bucket is reset
   // on every drain so each combo gets its own dedupe and its own cap, and a
@@ -70,11 +108,21 @@ export function attachPageErrorCapture(page: Page): PageErrorCapture {
   const session = createBucket();
   const segment = createBucket();
   let segmentFatal = false;
+  // M79 gap 3b: fresh per `waitForFatal()` call, so a caller that already
+  // missed one fatal event (e.g. from an earlier phase) only ever gets
+  // notified of the NEXT one, never a stale replay.
+  let fatalWaiters: Array<(fatal: FatalPageError) => void> = [];
 
   page.on("pageerror", (err) => {
     session.record(err.message);
     segment.record(err.message);
     segmentFatal = true;
+    if (fatalWaiters.length > 0) {
+      const waiters = fatalWaiters;
+      fatalWaiters = [];
+      const fatal: FatalPageError = { message: err.message, ...(err.stack ? { stack: err.stack } : {}) };
+      for (const resolve of waiters) resolve(fatal);
+    }
   });
   page.on("console", (msg) => {
     if (msg.type() !== "error") return;
@@ -86,15 +134,19 @@ export function attachPageErrorCapture(page: Page): PageErrorCapture {
   // resolves. Neither case is proof a render crashed, so neither sets `fatal`,
   // matching console.error's dev-warning noise.
   page.on("requestfailed", (request) => {
+    const url = request.url();
+    if (harnessDirName && isHarnessInternalNoise(url, harnessDirName)) return;
     const failure = request.failure();
     const detail = failure?.errorText ? ` (${failure.errorText})` : "";
-    const message = `request failed: ${request.method()} ${request.url()}${detail}`;
+    const message = `request failed: ${request.method()} ${url}${detail}`;
     session.record(message);
     segment.record(message);
   });
   page.on("response", (response) => {
     if (response.status() < 400) return;
-    const message = `response ${response.status()}: ${response.request().method()} ${response.url()}`;
+    const url = response.url();
+    if (harnessDirName && isHarnessInternalNoise(url, harnessDirName)) return;
+    const message = `response ${response.status()}: ${response.request().method()} ${url}`;
     session.record(message);
     segment.record(message);
   });
@@ -118,6 +170,11 @@ export function attachPageErrorCapture(page: Page): PageErrorCapture {
       segment.reset();
       segmentFatal = false;
       return result;
+    },
+    waitForFatal() {
+      return new Promise<FatalPageError>((resolve) => {
+        fatalWaiters.push(resolve);
+      });
     },
   };
 }
@@ -159,6 +216,16 @@ export function renderDrain(drain: PageErrorDrain): string[] {
     : [...drain.messages];
 }
 
+// Shared by enrichTimeoutError and buildFatalPageErrorMessage below: the same
+// capture.summary() text under two different lead sentences, so a genuine
+// hang (nothing captured, timeout fires) and an early fatal throw (something
+// captured almost instantly) read as two different failures, which they are.
+function errorDetailBlock(capture: PageErrorCapture): string {
+  return capture.errors.length > 0
+    ? ` Page errors:\n${capture.summary()}`
+    : " No page errors were captured.";
+}
+
 export function enrichTimeoutError(
   err: unknown,
   capture: PageErrorCapture,
@@ -168,10 +235,70 @@ export function enrichTimeoutError(
   const isTimeout = base.name === "TimeoutError" || base.message.includes("Timeout");
   if (!isTimeout) return base;
 
-  const detail = capture.errors.length > 0
-    ? ` Page errors:\n${capture.summary()}`
-    : " No page errors were captured.";
-  return new Error(`${context} did not become ready within timeout.${detail}`, { cause: err });
+  return new Error(`${context} did not become ready within timeout.${errorDetailBlock(capture)}`, { cause: err });
+}
+
+// M79 gap 3b: a file with a JS/TS/Vue extension, the first such frame in the
+// stack (the message line itself is skipped naturally: it does not carry a
+// `:line:col` suffix). Best-effort suspect-naming in the same spirit as
+// `detectLocalProviderModule` (preflight.ts) — "the point is to name a
+// suspect, not to prove it": a minified or source-mapless stack yields no
+// module name, and the caller falls back to the page-error text alone.
+const SOURCE_FRAME_PATTERN = /([^\s()]+\.(?:tsx?|jsx?|mjs|cjs|vue))(?=:\d+(?::\d+)?|\)|$)/;
+
+export function extractThrowingModule(stack: string | undefined): string | undefined {
+  if (!stack) return undefined;
+  for (const line of stack.split("\n")) {
+    const match = line.match(SOURCE_FRAME_PATTERN);
+    if (!match) continue;
+    const segments = match[1].split(/[/\\]/);
+    const name = segments[segments.length - 1];
+    if (name) return name;
+  }
+  return undefined;
+}
+
+// The fail-fast counterpart to enrichTimeoutError: leads with the page error
+// itself instead of "did not become ready within timeout" — a perf-sounding
+// headline for a cause that is not a perf issue.
+export function buildFatalPageErrorMessage(
+  fatal: FatalPageError,
+  capture: PageErrorCapture,
+  context: string,
+  envRemedyLine?: string,
+): Error {
+  const moduleName = extractThrowingModule(fatal.stack);
+  const modulePrefix = moduleName ? `${moduleName}: ` : "";
+  const remedy = envRemedyLine ? `\n${envRemedyLine}` : "";
+  return new Error(
+    `${context} failed before it became ready: ${modulePrefix}${fatal.message}.${errorDetailBlock(capture)}${remedy}`,
+  );
+}
+
+// M79 gap 3b (taxonomy-F1): races a caller's own readiness wait against the
+// fatal signal. When the fatal signal wins, throws immediately instead of
+// waiting out the remaining timeout; when readiness itself rejects (a genuine
+// hang) with no fatal signal, falls back to enrichTimeoutError unchanged.
+// `buildEnvRemedyLine` is called lazily, only once a fatal signal has
+// actually won the race — never on the healthy path or a plain timeout.
+export async function waitForReadyOrFatal(
+  waitForReady: () => Promise<unknown>,
+  capture: PageErrorCapture,
+  context: string,
+  buildEnvRemedyLine?: () => string | undefined,
+): Promise<void> {
+  let fatal: FatalPageError | undefined;
+  const fatalSignal = capture.waitForFatal().then((f) => {
+    fatal = f;
+  });
+  try {
+    await Promise.race([waitForReady(), fatalSignal]);
+  } catch (err) {
+    throw enrichTimeoutError(err, capture, context);
+  }
+  if (fatal) {
+    throw buildFatalPageErrorMessage(fatal, capture, context, buildEnvRemedyLine?.());
+  }
 }
 
 // Structural subset of Page, so the wrapper is testable without a browser.

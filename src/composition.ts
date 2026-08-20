@@ -1,3 +1,5 @@
+import ts from "typescript";
+import path from "node:path";
 import type { PropSchema } from "./prop-gen.js";
 import type { PropCombination } from "./prop-gen-values.js";
 
@@ -25,7 +27,7 @@ export interface CompositionTree {
 
 export type CompositionTemplate = "item-based" | "list-based" | "portal-based" | "flat";
 
-type SuffixRole =
+export type SuffixRole =
   | "item"
   | "trigger"
   | "content"
@@ -60,6 +62,30 @@ const SUFFIX_MAP: [RegExp, SuffixRole][] = [
 
 function classifySuffix(name: string, rootName: string): SuffixRole {
   const suffix = name.slice(rootName.length);
+  if (!suffix) return "unknown";
+  for (const [pattern, role] of SUFFIX_MAP) {
+    if (pattern.test(suffix)) return role;
+  }
+  return "unknown";
+}
+
+// M80: `classifySuffix` assumes `name` starts with `rootName` (a fixed-length
+// slice), which silently misclassifies a bare Radix-convention alias (`List`
+// vs root `Tabs`: `"List".slice(4)` is `""`, so it reads as "unknown" even
+// though "List" plainly means `list`). Stemming by longest common
+// case-insensitive prefix instead classifies correctly whether the candidate
+// shares a literal prefix with the root (`TabsList` vs `Tabs`), shares none
+// at all (`List` vs `Tabs`), or the root itself carries a suffix the
+// candidate does not (`TabsPanel` vs `TabsRoot`, common stem `Tabs`).
+// Disclosure-only: `inferComposition` and `classifySuffix` are not called
+// from here and are not changed by it.
+function classifyByStem(name: string, rootName: string): SuffixRole {
+  const lowerName = name.toLowerCase();
+  const lowerRoot = rootName.toLowerCase();
+  const max = Math.min(lowerName.length, lowerRoot.length);
+  let stemLength = 0;
+  while (stemLength < max && lowerName[stemLength] === lowerRoot[stemLength]) stemLength++;
+  const suffix = name.slice(stemLength);
   if (!suffix) return "unknown";
   for (const [pattern, role] of SUFFIX_MAP) {
     if (pattern.test(suffix)) return role;
@@ -364,6 +390,81 @@ export function shouldRollbackComposition(trial: CompositionTrial): boolean {
 export const COMPOSITION_EMPTY_WARNING = (rootName: string): string =>
   `auto-composed scene for ${rootName} rendered no elements; measured the bare export instead. ` +
   `Write a fixture that renders the real composition and pass --fixture <path>.`;
+
+// M80: a sibling part declared by the measured file itself (a same-file
+// export, or — base-ui's shape — a same-file type-only relative import) that
+// the run never actually composed in.
+export interface DeclaredSibling {
+  name: string;
+  role: SuffixRole;
+}
+
+// Fires precisely when: composition was not applied for this run, and the
+// file's own exports or same-file type-only relative imports still name at
+// least one part the existing SUFFIX_MAP taxonomy recognizes. Deduplicated by
+// role, not by name, so radix's prefixed/bare-alias pairs (TabsList and List)
+// count once — the first name encountered for a role wins.
+export function declaredCompositionSiblings(
+  rootName: string,
+  siblingExports: ExportInfo[], // same-file exports, resolved root excluded
+  typeImportNames: string[], // same-file relative type-only imports
+): DeclaredSibling[] {
+  const seenRoles = new Set<SuffixRole>();
+  const siblings: DeclaredSibling[] = [];
+  const candidateNames = [
+    ...siblingExports.map((e) => e.name),
+    ...typeImportNames,
+  ];
+  for (const name of candidateNames) {
+    if (name === rootName) continue;
+    const role = classifyByStem(name, rootName);
+    if (role === "unknown" || seenRoles.has(role)) continue;
+    seenRoles.add(role);
+    siblings.push({ name, role });
+  }
+  return siblings;
+}
+
+export const UNCOMPOSED_SIBLINGS_WARNING = (root: string, siblings: string[]): string =>
+  `${root} declares sibling parts (${siblings.join(", ")}) recognized by auto-composition, but ` +
+  `none were composed in: every combo measured the bare ${root} export alone. Try --init-fixture ` +
+  `to scaffold a fixture, or compose them yourself and pass --fixture.`;
+
+// M80: covers base-ui's shape, where the sibling parts a compound Root
+// declares live in adjacent files and never appear as same-file exports —
+// only as same-file type-only relative imports (`TabsRoot.tsx`'s `import
+// type { TabsTab } from '../tab/TabsTab'`). Collects the local name of every
+// `import type { X }` or `import { type X }` specifier whose module
+// specifier starts with `.`. Reads the same file `scanExports`-equivalent
+// export extraction already opens: no directory walk.
+export function scanRelativeTypeImports(sourceText: string, fileName: string): string[] {
+  const sourceFile = ts.createSourceFile(fileName, sourceText, ts.ScriptTarget.Latest, false);
+  const names: string[] = [];
+
+  ts.forEachChild(sourceFile, (node) => {
+    if (!ts.isImportDeclaration(node)) return;
+    if (!ts.isStringLiteral(node.moduleSpecifier)) return;
+    if (!node.moduleSpecifier.text.startsWith(".")) return;
+
+    const clause = node.importClause;
+    if (!clause || !clause.namedBindings || !ts.isNamedImports(clause.namedBindings)) return;
+
+    for (const element of clause.namedBindings.elements) {
+      if (clause.isTypeOnly || element.isTypeOnly) {
+        names.push(element.name.text);
+      }
+    }
+  });
+
+  return names;
+}
+
+export async function extractRelativeTypeImports(filePath: string): Promise<string[]> {
+  const absolutePath = path.resolve(filePath);
+  const sourceText = ts.sys.readFile(absolutePath);
+  if (sourceText === undefined) return [];
+  return scanRelativeTypeImports(sourceText, absolutePath);
+}
 
 // --- M32 D2: fixture scaffolding ---
 

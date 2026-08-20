@@ -3,6 +3,7 @@ import type { HarnessResult } from "./harness.js";
 import type { PropCombination } from "./prop-gen-values.js";
 import type { BaselineMetrics } from "./budget.js";
 import { buildTimingWithCV, type ComponentTier, type TimingWithCV } from "./report.js";
+import type { NoiseLevel } from "./noise.js";
 import { isVueFile } from "./vue-sfc.js";
 import {
   measureMount,
@@ -478,14 +479,23 @@ export async function runIsolationPhases(
 
 // StrictMode double-invoke overhead is a development-mode property, so it warns
 // through `doubleInvokeClean` and never fails the run.
+//
+// M83 #3 (element-plus-F4): `noiseLevel` lets a caller withhold the memory
+// branch's FAIL when the run's own noise sentinel already called the machine
+// hostile — mirroring M46's precedent that a hostile run skips baseline
+// comparison entirely. Only "hostile" suppresses the flip: "noisy" still
+// fails, matching M46's two-tier split (noisy warns and still compares; only
+// hostile skips outright). The mount-budget and churn-degradation checks are
+// unaffected by noise: they are unconditional and unchanged.
 export function computeIsolationVerdict(
   isolation: IsolationReport,
   mountBudgetMs: number | undefined,
+  noiseLevel?: NoiseLevel,
 ): boolean {
   if (isolation.mount && mountBudgetMs !== undefined && isolation.mount.median > mountBudgetMs) {
     return false;
   }
-  if (isolation.memory?.leakSuspected) return false;
+  if (isolation.memory?.leakSuspected && noiseLevel !== "hostile") return false;
   if (isolation.rerender && isolation.rerender.churnDegradation > CHURN_DEGRADATION_LIMIT) {
     return false;
   }

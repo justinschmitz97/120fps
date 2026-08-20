@@ -1,6 +1,9 @@
 import { describe, it, expect } from "vitest";
 import {
   inferComposition,
+  declaredCompositionSiblings,
+  scanRelativeTypeImports,
+  UNCOMPOSED_SIBLINGS_WARNING,
   type ExportInfo,
   type CompositionTree,
 } from "../../src/composition.js";
@@ -349,6 +352,113 @@ describe("props from schemas", () => {
     for (let i = 0; i < triggers.length; i++) {
       expect(triggers[i].props.value).toBe(String(i));
     }
+  });
+});
+
+// ─── M80: declared composition siblings (disclosure signal) ───
+
+describe("declaredCompositionSiblings: radix shape (same-file bare aliases)", () => {
+  it("finds sibling roles from prefixed exports and bare Radix aliases, deduped by role", () => {
+    // radix's tabs.tsx: `Tabs` binds as the root (per detectComponentExport's
+    // stem match); the file also exports the prefixed family AND bare
+    // Radix-convention aliases of the same values from the same export block.
+    const siblingExports: ExportInfo[] = [
+      { name: "TabsList", isDefault: false },
+      { name: "TabsTrigger", isDefault: false },
+      { name: "TabsContent", isDefault: false },
+      { name: "Root", isDefault: false },
+      { name: "List", isDefault: false },
+      { name: "Trigger", isDefault: false },
+      { name: "Content", isDefault: false },
+    ];
+    const siblings = declaredCompositionSiblings("Tabs", siblingExports, []);
+    const roles = siblings.map((s) => s.role).sort();
+    expect(roles).toEqual(["content", "list", "trigger"]);
+    // First-seen name wins per role: the prefixed export precedes its bare
+    // alias in the export list, so it is what gets named in the warning.
+    expect(siblings.find((s) => s.role === "list")?.name).toBe("TabsList");
+    expect(siblings.find((s) => s.role === "trigger")?.name).toBe("TabsTrigger");
+    expect(siblings.find((s) => s.role === "content")?.name).toBe("TabsContent");
+    // "Root" is a bare alias of Tabs itself, not a sibling part: it shares no
+    // stem-derived suffix recognized by SUFFIX_MAP and must not appear.
+    expect(siblings.find((s) => s.name === "Root")).toBeUndefined();
+  });
+
+  it("classifies a bare alias by its own name even with zero shared prefix with the root", () => {
+    // classifySuffix's fixed-length slice would misread "List" against a
+    // 4-char root as "" -> unknown; the stem function must not.
+    const siblings = declaredCompositionSiblings("Tabs", [{ name: "List", isDefault: false }], []);
+    expect(siblings).toEqual([{ name: "List", role: "list" }]);
+  });
+});
+
+describe("declaredCompositionSiblings: base-ui shape (single export, parts in adjacent files)", () => {
+  it("surfaces sibling roles from same-file type-only relative imports alone", () => {
+    // base-ui's TabsRoot.tsx exports exactly one component (TabsRoot); no
+    // sibling export exists in the file. TabsTab/TabsPanel are only named via
+    // same-file type-only relative imports, which this milestone treats as
+    // the same kind of evidence a same-file export would be. "Tab" is not a
+    // SUFFIX_MAP suffix (only "Panel" is), so TabsTab stays unclassified and
+    // TabsPanel (stem "Tabs", suffix "Panel") is the one entry that surfaces
+    // -- still a nonempty result, which is what the disclosure gate checks.
+    const siblings = declaredCompositionSiblings("TabsRoot", [], ["TabsTab", "TabsPanel"]);
+    expect(siblings).toEqual([{ name: "TabsPanel", role: "content" }]);
+    expect(siblings.find((s) => s.name === "TabsTab")).toBeUndefined();
+  });
+
+  it("never names TabsList or TabsIndicator: they are not imported even for their types", () => {
+    // Does NOT include: cross-file sibling discovery beyond a same-file
+    // relative type-only import. TabsRoot.tsx never imports TabsList or
+    // TabsIndicator, so the signal must not name them.
+    const siblings = declaredCompositionSiblings("TabsRoot", [], ["TabsTab", "TabsPanel"]);
+    expect(siblings.map((s) => s.name)).not.toContain("TabsList");
+    expect(siblings.map((s) => s.name)).not.toContain("TabsIndicator");
+  });
+});
+
+describe("declaredCompositionSiblings: control case (single-part leaf)", () => {
+  it("returns [] for radix's separator.tsx shape: Root classifies as unknown, same as classifySuffix", () => {
+    // separator.tsx exports only Separator/Root; Root shares no recognized
+    // SUFFIX_MAP suffix against either name, exactly as classifySuffix
+    // already treats it today.
+    const siblings = declaredCompositionSiblings("Separator", [{ name: "Root", isDefault: false }], []);
+    expect(siblings).toEqual([]);
+  });
+});
+
+describe("scanRelativeTypeImports", () => {
+  it("collects local names from `import type { X }` with a relative specifier", () => {
+    const source = `
+      import type { TabsTab } from '../tab/TabsTab';
+      import type { TabsPanel } from '../panel/TabsPanel';
+      export function TabsRoot() { return null; }
+    `;
+    expect(scanRelativeTypeImports(source, "TabsRoot.tsx")).toEqual(["TabsTab", "TabsPanel"]);
+  });
+
+  it("collects local names from `import { type X }` inline type specifiers", () => {
+    const source = `import { type Foo, Bar } from './sibling';`;
+    expect(scanRelativeTypeImports(source, "x.tsx")).toEqual(["Foo"]);
+  });
+
+  it("ignores type imports from bare (non-relative) module specifiers", () => {
+    const source = `import type { ReactNode } from 'react';`;
+    expect(scanRelativeTypeImports(source, "x.tsx")).toEqual([]);
+  });
+
+  it("ignores value (non-type) relative imports", () => {
+    const source = `import { Foo } from './sibling';`;
+    expect(scanRelativeTypeImports(source, "x.tsx")).toEqual([]);
+  });
+});
+
+describe("UNCOMPOSED_SIBLINGS_WARNING", () => {
+  it("names the root, its siblings, and points at --init-fixture and --fixture", () => {
+    const warning = UNCOMPOSED_SIBLINGS_WARNING("Tabs", ["TabsList", "TabsTrigger", "TabsContent"]);
+    expect(warning).toContain("Tabs");
+    expect(warning).toContain("TabsList, TabsTrigger, TabsContent");
+    expect(warning).toContain("--init-fixture");
+    expect(warning).toContain("--fixture");
   });
 });
 

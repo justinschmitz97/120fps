@@ -1,3 +1,4 @@
+import ts from "typescript";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
@@ -95,6 +96,78 @@ export function parseSfcScript(
     content: block.content,
     lang: typeof block.lang === "string" ? block.lang : "js",
   };
+}
+
+// M80 scope 2: distinguishes "genuinely no props" from "props declared in a
+// form ADR 0002 excludes" (Options-API `props: {}`, `extends: BaseX`,
+// `mixins: [...]`) for a `.vue` file with no `<script setup>` to serve.
+// Shallow by design: inspects only the top-level default-exported object
+// literal's own property names, not a full evaluation of the Options API
+// object -- an indirect `const X = {...}; export default X;` is out of reach,
+// same tradeoff `scanExports`/`scanRelativeTypeImports` (src/prop-gen.ts)
+// already accept for a same-file, parse-only scan. Priority props > extends >
+// mixins when more than one key is present: a component's own runtime props
+// object is the most direct evidence, inheritance the fallback signal.
+export function detectOptionsApiProps(
+  source: string,
+  filename: string,
+  compiler: VueSfcCompiler,
+): "props" | "extends" | "mixins" | undefined {
+  let descriptor;
+  try {
+    descriptor = compiler.parse(source, { filename }).descriptor;
+  } catch {
+    // A malformed SFC is the plugin's error to report, with real positions.
+    return undefined;
+  }
+  const block = descriptor?.script;
+  if (!block || typeof block.content !== "string" || block.content.trim() === "") return undefined;
+
+  const scriptFile = ts.createSourceFile(filename, block.content, ts.ScriptTarget.Latest, false);
+  const literal = defaultExportObjectLiteral(scriptFile);
+  if (!literal) return undefined;
+
+  const keys = new Set<string>();
+  for (const property of literal.properties) {
+    const name = objectLiteralPropertyName(property);
+    if (name) keys.add(name);
+  }
+
+  if (keys.has("props")) return "props";
+  if (keys.has("extends")) return "extends";
+  if (keys.has("mixins")) return "mixins";
+  return undefined;
+}
+
+function objectLiteralPropertyName(property: ts.ObjectLiteralElementLike): string | undefined {
+  if (
+    !ts.isPropertyAssignment(property) &&
+    !ts.isShorthandPropertyAssignment(property) &&
+    !ts.isMethodDeclaration(property)
+  ) {
+    return undefined;
+  }
+  const name = property.name;
+  if (ts.isIdentifier(name) || ts.isStringLiteral(name)) return name.text;
+  return undefined;
+}
+
+// `export default {...}` directly, or a one-argument wrapper call around the
+// same shape (`defineComponent({...})`, `Vue.extend({...})`): the wrapper
+// call itself declares nothing, so only its first argument is inspected.
+function defaultExportObjectLiteral(
+  sourceFile: ts.SourceFile,
+): ts.ObjectLiteralExpression | undefined {
+  for (const statement of sourceFile.statements) {
+    if (!ts.isExportAssignment(statement) || statement.isExportEquals) continue;
+    const expression = statement.expression;
+    if (ts.isObjectLiteralExpression(expression)) return expression;
+    if (ts.isCallExpression(expression) && expression.arguments.length > 0) {
+      const first = expression.arguments[0];
+      if (ts.isObjectLiteralExpression(first)) return first;
+    }
+  }
+  return undefined;
 }
 
 // The virtual module the script block is type-checked as. Named `<sfc>.ts` in

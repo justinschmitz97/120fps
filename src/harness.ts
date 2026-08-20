@@ -1,4 +1,4 @@
-import { createServer, searchForWorkspaceRoot, type ViteDevServer } from "vite";
+import { createServer, searchForWorkspaceRoot, transformWithEsbuild, type ViteDevServer } from "vite";
 import ts from "typescript";
 import fs from "node:fs";
 import os from "node:os";
@@ -9,13 +9,17 @@ import type { CompositionTree, CompositionNode, ExportInfo } from "./composition
 import { scanExports, normalizeComponentName } from "./prop-gen.js";
 import { isVueFile, loadVueCompiler, type VueSfcCompiler } from "./vue-sfc.js";
 import {
+  detectPnP,
   findCompilerConfig,
   findProjectRoot,
   findWorkspaceRoot,
+  installedPackageDir,
   isPackageAvailable,
   isPackageDeclared,
+  readProjectManifest,
   workspaceLevels,
 } from "./project-model.js";
+import { detectMissingInstall, HARD_REMEDY } from "./preflight.js";
 
 export { findProjectRoot };
 
@@ -121,6 +125,11 @@ export interface HarnessResult {
   wrapRelative?: string;
   cssFiles?: string[];
   reactCompiler?: ReactCompilerState;
+  // M78: the project's own vite.config resolve.alias entries, already merged
+  // into this harness's own alias list (M71/M76) — so an alias that matches
+  // "react-dom" genuinely changes what this server mounts, not just what a
+  // manifest claims. resolveReactDomIdentity's second parameter reads this.
+  viteAliases?: Array<{ find: RegExp; replacement: string }>;
   // M38: build-time advisories (e.g. a shared server whose frozen dep list
   // misses this component's scan). analyze() forwards them to the report.
   warnings?: string[];
@@ -206,6 +215,44 @@ export function HARNESS_DIR_UNWRITABLE(projectRoot: string, detail: string): str
   );
 }
 
+// M83 #7: harness directories created but not yet cleaned up. `cleanup`
+// (the success path) and the bootServer catch's own rmSync (the common
+// caught-and-rethrown failure path) both remove their entry as soon as they
+// remove the directory. What is left in the set when the process actually
+// exits is exactly the leftover a crash produces: `sweepStaleHarnessDirs` is
+// age-gated at one hour, so it can never cover a directory the current run
+// just abandoned, and a raw, unhandled exception (ant-design-F1's shape)
+// bypasses every try/catch in this file entirely — the `process.on("exit")`
+// handler below is the layer that still catches it, since Node's "exit"
+// event fires after an uncaught exception terminates the process, not only
+// on a graceful return.
+const activeHarnessDirs = new Set<string>();
+
+// The body the `process.on("exit")` handler below runs. Exported so the
+// mechanism is testable without triggering a real process exit — a test can
+// call this directly (or synthesize the event via `process.emit("exit")`,
+// which Node runs its listeners for exactly as a real exit would, since
+// listeners cannot tell the two apart).
+export function sweepActiveHarnessDirs(): void {
+  for (const dir of activeHarnessDirs) {
+    try {
+      // "exit" only permits synchronous work; fs.rmSync already is.
+      fs.rmSync(dir, { recursive: true, force: true });
+    } catch {
+      // Best-effort: the process is already on its way out.
+    }
+  }
+  activeHarnessDirs.clear();
+}
+
+let exitSweepRegistered = false;
+function registerHarnessDirExitSweep(): void {
+  if (exitSweepRegistered) return;
+  exitSweepRegistered = true;
+  process.on("exit", sweepActiveHarnessDirs);
+}
+registerHarnessDirExitSweep();
+
 // accessSync answers POSIX permission bits; the real mkdtempSync answers
 // everything it cannot see (Windows ACLs, a read-only mount, a root that is a
 // file or does not exist).
@@ -222,7 +269,13 @@ export function createHarnessDir(projectRoot: string): string {
     return fail(err);
   }
   try {
-    return fs.mkdtempSync(path.join(projectRoot, ".120fps-harness-"));
+    const dir = fs.mkdtempSync(path.join(projectRoot, ".120fps-harness-"));
+    // M83 #7: tracked from the moment it exists, regardless of what happens
+    // next — `cleanup()` and the bootServer catch's own rmSync both remove
+    // it as soon as they remove the directory; anything left when the
+    // process exits is a leftover the exit sweep above still has to catch.
+    activeHarnessDirs.add(dir);
+    return dir;
   } catch (err) {
     return fail(err);
   }
@@ -250,6 +303,98 @@ export function REACT_DOM_CLIENT_MISSING(projectRoot: string, version: string | 
   );
 }
 
+// M78: four field-tested repos hit this catch for four different real
+// causes, and the old bare catch treated every one of them as "version too
+// old" because readReactDomVersion fails the same way for all of them. The
+// order matters: a package that genuinely resolves on disk with a real (too
+// old) version is a version problem regardless of whether the project's own
+// package.json happens to list it, so readReactDomVersion is checked before
+// isPackageDeclared, not after.
+type ReactDomResolutionCause =
+  | "pnp"
+  | "not-installed"
+  | "not-declared"
+  | "not-linked"
+  | "outdated"
+  | "unknown";
+
+function diagnoseReactDomResolutionFailure(
+  projectRoot: string,
+): { cause: ReactDomResolutionCause; version?: string } {
+  const workspaceRoot = findWorkspaceRoot(projectRoot);
+  if (detectPnP(workspaceRoot)) return { cause: "pnp" };
+  if (detectMissingInstall(projectRoot, workspaceRoot)) return { cause: "not-installed" };
+  const version = readReactDomVersion(projectRoot);
+  if (version !== undefined) return { cause: "outdated", version };
+  if (isPackageDeclared("react-dom", projectRoot, workspaceRoot)) return { cause: "not-linked" };
+  return { cause: "not-declared" };
+}
+
+function reactDomNotDeclaredMessage(projectRoot: string, workspaceRoot: string): string {
+  if (
+    !isPackageDeclared("react", projectRoot, workspaceRoot) &&
+    !isPackageDeclared("react-dom", projectRoot, workspaceRoot) &&
+    isPackageDeclared("solid-js", projectRoot, workspaceRoot)
+  ) {
+    return (
+      `react-dom/client does not resolve from ${projectRoot}: this project declares solid-js, ` +
+      "not react or react-dom.\n\n" +
+      HARD_REMEDY["unsupported-framework"]
+    );
+  }
+  const workspaceClause =
+    workspaceRoot !== projectRoot ? ` and workspace root ${workspaceRoot}` : "";
+  return (
+    `react-dom is not a dependency of this project (checked package.json at ${projectRoot}` +
+    `${workspaceClause}); point 120fps at a project that declares it, or install it here.`
+  );
+}
+
+function reactDomResolutionMessage(
+  projectRoot: string,
+  diagnosis: { cause: ReactDomResolutionCause; version?: string },
+): string {
+  const workspaceRoot = findWorkspaceRoot(projectRoot);
+  switch (diagnosis.cause) {
+    case "pnp":
+      return (
+        `react-dom/client does not resolve from ${projectRoot}: this workspace installs via ` +
+        "Yarn Plug'n'Play, which 120fps cannot resolve modules through.\n\n" +
+        HARD_REMEDY["yarn-pnp"]
+      );
+    case "not-installed":
+      return (
+        `react-dom/client does not resolve from ${projectRoot}: this project has no installed ` +
+        "dependencies (no node_modules under it or its workspace root).\n\n" +
+        HARD_REMEDY["not-installed"]
+      );
+    case "not-declared":
+      return reactDomNotDeclaredMessage(projectRoot, workspaceRoot);
+    case "not-linked":
+      return (
+        `react-dom is declared in package.json but was not found installed under node_modules ` +
+        `from ${projectRoot} up through ${workspaceRoot}; the install may be incomplete, or this ` +
+        "workspace member is not linked to it. Reinstall dependencies."
+      );
+    case "outdated": {
+      let message = REACT_DOM_CLIENT_MISSING(projectRoot, diagnosis.version);
+      if (isPackageDeclared("preact", projectRoot, workspaceRoot)) {
+        message +=
+          " This project also declares preact; its preact/compat/client.js already implements " +
+          "a createRoot/hydrateRoot shim, but 120fps has no flag to mount through it, so " +
+          "upgrading react-dom is still the only supported path.";
+      }
+      return message;
+    }
+    case "unknown":
+    default:
+      return (
+        `react-dom/client does not resolve from ${projectRoot}, and 120fps could not determine ` +
+        "why: react-dom appears to be installed but its version could not be read."
+      );
+  }
+}
+
 // Checked before the server boots: react-dom/client is forced into
 // optimizeDeps.include for every React run, and an unresolvable include aborts
 // Vite's optimizer with an esbuild path dump instead of a version diagnosis.
@@ -257,7 +402,7 @@ export function assertReactDomClient(projectRoot: string): void {
   try {
     createRequire(path.join(projectRoot, "/")).resolve("react-dom/client");
   } catch {
-    throw new Error(REACT_DOM_CLIENT_MISSING(projectRoot, readReactDomVersion(projectRoot)));
+    throw new Error(reactDomResolutionMessage(projectRoot, diagnoseReactDomResolutionFailure(projectRoot)));
   }
 }
 
@@ -369,6 +514,44 @@ function isCssModule(file: string): boolean {
   return /\.module\.[^.]+$/i.test(path.basename(file));
 }
 
+// M82: a reset/normalize library's own convention. Opt-in everywhere it
+// appears, so the name alone disqualifies it from the largest-stylesheet
+// fallback regardless of rule count.
+export const RESET_STYLESHEET_STEMS = ["reset", "normalize", "preflight", "sanitize"];
+
+export function isOptInResetName(file: string): boolean {
+  const stem = path.basename(file, path.extname(file)).toLowerCase();
+  return RESET_STYLESHEET_STEMS.includes(stem);
+}
+
+// M82: text-only heuristic, matching the "text only, nothing executed"
+// invariant M71 set for readViteConfigData. Strips comments and
+// @import/@charset/@use statements, then counts remaining `{` occurrences.
+// Zero means the file is a pure passthrough: nothing was ever built into it.
+const STYLESHEET_RULE_COUNT_MAX_BYTES = 2 * 1024 * 1024;
+
+export function stylesheetRuleCount(file: string): number {
+  let size: number;
+  try {
+    size = fs.statSync(file).size;
+  } catch {
+    return 0;
+  }
+  // Too large to be worth reading this early in the pipeline; a file this big
+  // is not an unbuilt placeholder, so it is treated as plausible.
+  if (size > STYLESHEET_RULE_COUNT_MAX_BYTES) return 1;
+  let text: string;
+  try {
+    text = fs.readFileSync(file, "utf-8");
+  } catch {
+    return 0;
+  }
+  const stripped = text
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/@(?:import|charset|use)\b[^;]*;/gi, "");
+  return (stripped.match(/\{/g) ?? []).length;
+}
+
 function preprocessorFor(file: string, memberRoot: string, workspaceRoot: string): string | undefined {
   const packages = PREPROCESSOR_PACKAGES[path.extname(file).toLowerCase()];
   if (!packages) return undefined;
@@ -390,10 +573,39 @@ export function CSS_PREPROCESSOR_MISSING_WARNING(file: string, pkg: string): str
   );
 }
 
-export function CSS_FALLBACK_WARNING(relative: string): string {
+export function CSS_FALLBACK_WARNING(
+  relative: string,
+  opts: { onlyCandidate: boolean; noEntryInPackage: boolean },
+): string {
+  const scope = opts.onlyCandidate
+    ? "the only stylesheet found under this project"
+    : "the largest stylesheet found under this project";
+  const entryNote = opts.noEntryInPackage
+    ? "; this package has no application entry (index.html or Next.js app/pages stem) of its " +
+      "own, so the pick has no import evidence behind it at all"
+    : "";
   return (
-    `no entry stylesheet import and no conventional global stylesheet were found, so ${relative} was ` +
-    "injected because it is the largest stylesheet in the project; pass --css to name the right one"
+    `no entry stylesheet import and no conventional global stylesheet were found, so ${relative} ` +
+    `was injected because it is ${scope}${entryNote}; pass --css to name the right one`
+  );
+}
+
+// M82: a fallback candidate that is a pure passthrough import (rule count 0)
+// was never built into anything the project would load as-is.
+export function CSS_PLACEHOLDER_SKIPPED_WARNING(relative: string): string {
+  return (
+    `${relative} contains no rules of its own (only comments and imports), so it was not used as the ` +
+    "stylesheet fallback: an unbuilt passthrough is not something the project would load as-is"
+  );
+}
+
+// M82: a reset/normalize stylesheet is conventionally opt-in; a project that
+// imports it deliberately reaches it through the entry layer and never falls
+// this far.
+export function CSS_RESET_SKIPPED_WARNING(relative: string): string {
+  return (
+    `${relative} looks like an opt-in reset/normalize stylesheet (by filename), so it was not used as ` +
+    "the stylesheet fallback: those are conventionally imported deliberately, not auto-injected"
   );
 }
 
@@ -527,10 +739,11 @@ const STYLESHEET_SCAN_SKIP_DIRS = new Set([
 const STYLESHEET_SCAN_MAX_DEPTH = 8;
 const STYLESHEET_SCAN_MAX_ENTRIES = 4000;
 
-// Last resort, and bounded: a repository is big and this runs before anything is
-// measured. Ties break on path so one project always yields one answer.
-export function largestStylesheet(projectRoot: string): string | undefined {
-  let best: { file: string; size: number } | undefined;
+// Bounded walk shared by the largest-stylesheet fallback and the ranked
+// candidate list: a repository is big and this runs before anything is
+// measured.
+export function rankedStylesheets(projectRoot: string): Array<{ file: string; size: number }> {
+  const found: Array<{ file: string; size: number }> = [];
   let visited = 0;
 
   const walk = (dir: string, depth: number): void => {
@@ -557,24 +770,39 @@ export function largestStylesheet(projectRoot: string): string | undefined {
       } catch {
         continue;
       }
-      if (!best || size > best.size || (size === best.size && full < best.file)) {
-        best = { file: full, size };
-      }
+      found.push({ file: full, size });
     }
   };
 
   walk(projectRoot, 0);
-  return best?.file;
+  // Descending by size; ties break on path so one project always yields one
+  // answer regardless of directory-traversal order.
+  return found.sort((a, b) => b.size - a.size || (a.file < b.file ? -1 : a.file > b.file ? 1 : 0));
+}
+
+// Last resort. Ties break on path so one project always yields one answer.
+export function largestStylesheet(projectRoot: string): string | undefined {
+  return rankedStylesheets(projectRoot)[0]?.file;
 }
 
 export interface CssDiscovery {
   files: string[];
-  source: "entry" | "candidate" | "fallback" | "none";
+  source: "entry" | "candidate" | "fallback" | "runtime" | "none";
+  // present only when source === "fallback"
+  onlyCandidate?: boolean;
+  noEntryInPackage?: boolean;
+  // present only when source === "runtime"
+  runtimeEngines?: string[];
 }
 
 // M71: evidence before convention. What the project's own entry imports is what
 // the project loads; a filename list is a guess, and the largest stylesheet in
 // the tree is a guess that says so.
+// M82: the largest-stylesheet fallback distrusts itself before it fires (an
+// unbuilt placeholder or an opt-in reset by name is skipped and warned about),
+// and when nothing survives that walk, runtime CSS-in-JS is checked as a
+// first-class "no static stylesheet was ever going to exist" outcome before
+// falling all the way to "none".
 export function discoverGlobalCss(projectRoot: string, warningsOut?: string[]): CssDiscovery {
   const workspaceRoot = findWorkspaceRoot(projectRoot);
 
@@ -600,13 +828,57 @@ export function discoverGlobalCss(projectRoot: string, warningsOut?: string[]): 
     return { files: [full], source: "candidate" };
   }
 
-  const largest = largestStylesheet(projectRoot);
-  if (largest && !preprocessorFor(largest, projectRoot, workspaceRoot)) {
-    warningsOut?.push(CSS_FALLBACK_WARNING(path.relative(projectRoot, largest).replace(/\\/g, "/")));
-    return { files: [largest], source: "fallback" };
+  const ranked = rankedStylesheets(projectRoot);
+  let survivor: { file: string; size: number } | undefined;
+  for (const candidate of ranked) {
+    const relative = path.relative(projectRoot, candidate.file).replace(/\\/g, "/");
+    if (stylesheetRuleCount(candidate.file) === 0) {
+      warningsOut?.push(CSS_PLACEHOLDER_SKIPPED_WARNING(relative));
+      continue;
+    }
+    if (isOptInResetName(candidate.file)) {
+      warningsOut?.push(CSS_RESET_SKIPPED_WARNING(relative));
+      continue;
+    }
+    // Preprocessor-missing is not one of the two disqualification checks: it
+    // stops the walk (matching the pre-M82 single-candidate behavior) rather
+    // than skipping to the next-ranked candidate.
+    if (!preprocessorFor(candidate.file, projectRoot, workspaceRoot)) survivor = candidate;
+    break;
   }
 
+  if (survivor) {
+    const relative = path.relative(projectRoot, survivor.file).replace(/\\/g, "/");
+    const onlyCandidate = ranked.length === 1;
+    const noEntryInPackage = !entry;
+    warningsOut?.push(CSS_FALLBACK_WARNING(relative, { onlyCandidate, noEntryInPackage }));
+    return { files: [survivor.file], source: "fallback", onlyCandidate, noEntryInPackage };
+  }
+
+  const runtimeEngines = detectRuntimeStyleEngines(projectRoot, workspaceRoot);
+  if (runtimeEngines.length > 0) return { files: [], source: "runtime", runtimeEngines };
+
   return { files: [], source: "none" };
+}
+
+// M82: styling generated live in the browser, so no static stylesheet was
+// ever going to exist. Checked only once the fallback layer's ranked walk has
+// no survivor — never before layers 1-3, and never as a reason to skip a real
+// find.
+export const RUNTIME_STYLE_ENGINES = [
+  "@ant-design/cssinjs",
+  "@emotion/react",
+  "@emotion/styled",
+  "@emotion/css",
+  "styled-components",
+  "primevue",
+];
+
+export function detectRuntimeStyleEngines(
+  projectRoot: string,
+  workspaceRoot: string = findWorkspaceRoot(projectRoot),
+): string[] {
+  return RUNTIME_STYLE_ENGINES.filter((pkg) => isPackageAvailable(pkg, projectRoot, workspaceRoot));
 }
 
 // Vite's root is projectRoot, so an in-root stylesheet uses the same
@@ -660,13 +932,19 @@ export const UNSUPPORTED_STYLE_ENGINES = [
   "@pandacss/dev",
 ];
 
+// M83 #6 (twenty-F5): package/resolution-chain availability alone used to be
+// sufficient — a workspace member could declare @linaria/core and get the
+// warning on every component in it, including one whose own import graph
+// never touches it. `importedPackages` is the same `externalDeps` list the
+// harness already builds from the measured component's (and wrapper's)
+// resolved imports; membership there, not manifest/resolution-chain
+// availability, is what earns this warning now.
 export function detectUnsupportedStyleEngines(
-  projectRoot: string,
-  workspaceRoot: string = findWorkspaceRoot(projectRoot),
+  _projectRoot: string,
+  _workspaceRoot: string,
+  importedPackages: readonly string[],
 ): string[] {
-  return UNSUPPORTED_STYLE_ENGINES.filter((pkg) =>
-    isPackageAvailable(pkg, projectRoot, workspaceRoot),
-  );
+  return UNSUPPORTED_STYLE_ENGINES.filter((pkg) => importedPackages.includes(pkg));
 }
 
 export function UNSUPPORTED_STYLE_ENGINE_WARNING(packages: string[]): string {
@@ -728,8 +1006,9 @@ export interface StyleTooling {
 export function resolveStyleTooling(
   projectRoot: string,
   workspaceRoot: string = findWorkspaceRoot(projectRoot),
+  importedPackages: readonly string[] = [],
 ): StyleTooling {
-  const unsupportedEngines = detectUnsupportedStyleEngines(projectRoot, workspaceRoot);
+  const unsupportedEngines = detectUnsupportedStyleEngines(projectRoot, workspaceRoot, importedPackages);
   const postcssConfigDir = findPostcssConfigAbove(projectRoot, workspaceRoot);
   return {
     tailwind: detectTailwindVite(projectRoot),
@@ -765,6 +1044,13 @@ export interface ViteConfigData {
   publicDir?: string;
   aliases: Array<{ find: RegExp; replacement: string }>;
   ignoredKeys: string[];
+  // M76: resolve.conditions read from the member layer, or the workspace
+  // root's when the member declares none.
+  conditions: string[];
+  // M76: workspace-root-sourced merges, disclosed eagerly at merge time (a
+  // hand-written resolve.alias/resolve.conditions object is a short,
+  // deliberately curated list, unlike a generated tsconfig `paths` map).
+  warnings: string[];
 }
 
 export function VITE_CONFIG_IGNORED_WARNING(configFile: string, keys: string[]): string {
@@ -775,6 +1061,28 @@ export function VITE_CONFIG_IGNORED_WARNING(configFile: string, keys: string[]):
     ? `${base}; preprocessor globals (additionalData) are not replicated, so Sass or Less variables ` +
         "injected there are missing"
     : base;
+}
+
+export function VITE_CONFIG_WORKSPACE_ROOT_ALIAS_WARNING(
+  key: string,
+  replacement: string,
+  configFile: string,
+): string {
+  return (
+    `resolve.alias "${key}" -> "${replacement}" came from the workspace root's ${configFile}, ` +
+    "not the project's own vite.config"
+  );
+}
+
+export function VITE_CONFIG_WORKSPACE_ROOT_CONDITIONS_WARNING(
+  conditions: string[],
+  configFile: string,
+): string {
+  return (
+    `resolve.conditions [${conditions.join(", ")}] came from the workspace root's ${configFile}, ` +
+    "not the project's own vite.config, and changes which package export is served for every bare " +
+    "import in this run"
+  );
 }
 
 function literalPropertyName(property: ts.ObjectLiteralElementLike): string | undefined {
@@ -830,38 +1138,44 @@ function findViteConfigObject(source: ts.SourceFile): ts.ObjectLiteralExpression
   return undefined;
 }
 
-// M71: the config is read as text and parsed as a source file. It is never
-// imported, so its plugins never load into this Vite and the invariant holds.
-export function readViteConfigData(projectRoot: string): ViteConfigData {
-  const data: ViteConfigData = { aliases: [], ignoredKeys: [] };
-
-  let configFile: string | undefined;
+function findViteConfigFile(dir: string): string | undefined {
   for (const name of VITE_CONFIG_FILES) {
-    const candidate = path.join(projectRoot, name);
-    if (isFile(candidate)) {
-      configFile = candidate;
-      break;
-    }
+    const candidate = path.join(dir, name);
+    if (isFile(candidate)) return candidate;
   }
-  if (!configFile) return data;
-  data.configFile = configFile;
+  return undefined;
+}
 
+interface ParsedViteConfig {
+  publicDir?: string;
+  aliasEntries: Array<{ find: string; replacement: string }>;
+  conditions: string[];
+  ignored: Set<string>;
+}
+
+// One config file's text, read and parsed the same way regardless of which
+// layer (member or workspace root, M76) is asking. Never imported: this stays
+// inside M71's contract that a project's vite.config is never executed.
+function parseViteConfigFile(configFile: string): ParsedViteConfig | undefined {
   let text: string;
   try {
     text = fs.readFileSync(configFile, "utf-8");
   } catch {
-    return data;
+    return undefined;
   }
 
+  const ignored = new Set<string>();
   const source = ts.createSourceFile(configFile, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   const config = findViteConfigObject(source);
   if (!config) {
-    data.ignoredKeys.push("a computed config object");
-    return data;
+    ignored.add("a computed config object");
+    return { aliasEntries: [], conditions: [], ignored };
   }
 
   const configDir = path.dirname(configFile);
-  const ignored = new Set<string>();
+  const aliasEntries: Array<{ find: string; replacement: string }> = [];
+  let conditions: string[] = [];
+  let publicDir: string | undefined;
 
   for (const property of config.properties) {
     if (!ts.isPropertyAssignment(property)) continue;
@@ -870,38 +1184,46 @@ export function readViteConfigData(projectRoot: string): ViteConfigData {
     if (name === "publicDir") {
       const literal = stringLiteralValue(property.initializer);
       const resolved = literal === undefined ? undefined : path.resolve(configDir, literal);
-      if (resolved && isDirectory(resolved)) data.publicDir = resolved;
+      if (resolved && isDirectory(resolved)) publicDir = resolved;
       else ignored.add("publicDir");
       continue;
     }
 
     if (name === "resolve" && ts.isObjectLiteralExpression(property.initializer)) {
       for (const inner of property.initializer.properties) {
-        if (!ts.isPropertyAssignment(inner) || literalPropertyName(inner) !== "alias") continue;
-        if (!ts.isObjectLiteralExpression(inner.initializer)) {
-          ignored.add("resolve.alias");
+        if (!ts.isPropertyAssignment(inner)) continue;
+        const innerName = literalPropertyName(inner);
+
+        if (innerName === "alias") {
+          if (!ts.isObjectLiteralExpression(inner.initializer)) {
+            ignored.add("resolve.alias");
+            continue;
+          }
+          for (const entry of inner.initializer.properties) {
+            const find = ts.isPropertyAssignment(entry) ? literalPropertyName(entry) : undefined;
+            const target = ts.isPropertyAssignment(entry)
+              ? stringLiteralValue(entry.initializer)
+              : undefined;
+            if (!find || target === undefined) {
+              ignored.add("resolve.alias");
+              continue;
+            }
+            const replacement = path.resolve(configDir, target);
+            if (!fs.existsSync(replacement)) {
+              ignored.add("resolve.alias");
+              continue;
+            }
+            aliasEntries.push({ find, replacement: replacement.replace(/\\/g, "/") });
+          }
           continue;
         }
-        for (const entry of inner.initializer.properties) {
-          const find = ts.isPropertyAssignment(entry) ? literalPropertyName(entry) : undefined;
-          const target = ts.isPropertyAssignment(entry)
-            ? stringLiteralValue(entry.initializer)
-            : undefined;
-          if (!find || target === undefined) {
-            ignored.add("resolve.alias");
-            continue;
-          }
-          const replacement = path.resolve(configDir, target);
-          if (!fs.existsSync(replacement)) {
-            ignored.add("resolve.alias");
-            continue;
-          }
-          data.aliases.push({
-            // Vite's object form matches a whole leading segment, the rule
-            // @rollup/plugin-alias applies to a string `find`.
-            find: new RegExp(`^${escapeRegex(find)}(?=/|$)`),
-            replacement: replacement.replace(/\\/g, "/"),
-          });
+
+        if (
+          innerName === "conditions" &&
+          ts.isArrayLiteralExpression(inner.initializer) &&
+          inner.initializer.elements.every((el) => ts.isStringLiteral(el))
+        ) {
+          conditions = inner.initializer.elements.map((el) => (el as ts.StringLiteral).text);
         }
       }
       continue;
@@ -923,8 +1245,134 @@ export function readViteConfigData(projectRoot: string): ViteConfigData {
     }
   }
 
-  data.ignoredKeys = IGNORED_KEY_ORDER.filter((key) => ignored.has(key));
+  return { publicDir, aliasEntries, conditions, ignored };
+}
+
+function toAliasRegex(entry: { find: string; replacement: string }): { find: RegExp; replacement: string } {
+  // Vite's object form matches a whole leading segment, the rule
+  // @rollup/plugin-alias applies to a string `find`.
+  return { find: new RegExp(`^${escapeRegex(entry.find)}(?=/|$)`), replacement: entry.replacement };
+}
+
+// M71: the config is read as text and parsed as a source file. It is never
+// imported, so its plugins never load into this Vite and the invariant holds.
+// M76: a second, additive read of workspaceRoot's own vite.config.* — skipped
+// entirely when workspaceRoot === projectRoot, so a single-package project's
+// output is byte-identical to before this milestone. Only resolve.alias and
+// resolve.conditions are layered; publicDir and ignoredKeys stay member-only.
+export function readViteConfigData(
+  projectRoot: string,
+  workspaceRoot: string = findWorkspaceRoot(projectRoot),
+): ViteConfigData {
+  const data: ViteConfigData = { aliases: [], ignoredKeys: [], conditions: [], warnings: [] };
+
+  const configFile = findViteConfigFile(projectRoot);
+  let parsed: ParsedViteConfig | undefined;
+  if (configFile) {
+    data.configFile = configFile;
+    parsed = parseViteConfigFile(configFile);
+    if (parsed) {
+      if (parsed.publicDir) data.publicDir = parsed.publicDir;
+      data.aliases = parsed.aliasEntries.map(toAliasRegex);
+      data.conditions = parsed.conditions;
+      data.ignoredKeys = IGNORED_KEY_ORDER.filter((key) => parsed!.ignored.has(key));
+    }
+  }
+
+  if (workspaceRoot !== projectRoot) {
+    const rootConfigFile = findViteConfigFile(workspaceRoot);
+    if (rootConfigFile && rootConfigFile !== configFile) {
+      const rootParsed = parseViteConfigFile(rootConfigFile);
+      if (rootParsed) {
+        const forwardRootConfigFile = rootConfigFile.replace(/\\/g, "/");
+        const memberKeys = new Set((parsed?.aliasEntries ?? []).map((e) => e.find));
+        for (const entry of rootParsed.aliasEntries) {
+          if (memberKeys.has(entry.find)) continue;
+          data.aliases.push(toAliasRegex(entry));
+          data.warnings.push(
+            VITE_CONFIG_WORKSPACE_ROOT_ALIAS_WARNING(entry.find, entry.replacement, forwardRootConfigFile),
+          );
+        }
+        if (data.conditions.length === 0 && rootParsed.conditions.length > 0) {
+          data.conditions = rootParsed.conditions;
+          data.warnings.push(
+            VITE_CONFIG_WORKSPACE_ROOT_CONDITIONS_WARNING(rootParsed.conditions, forwardRootConfigFile),
+          );
+        }
+      }
+    }
+  }
+
   return data;
+}
+
+// M78 (preact-app-F3, the webpack/Next.js shape). A bare-specifier bundler
+// alias ("react-dom": "preact/compat") is dropped by readViteConfigData's own
+// fs.existsSync requirement above, and no reader exists at all for
+// next.config/webpack.config: 120fps applies neither shape to its own mount
+// (see the milestone's "Does NOT include"), so this is a disclosure gap, not
+// a silent-wrong-analysis risk the way the Vite literal-alias shape is. Same
+// invariant as readViteConfigData: text-parsed, never imported, never run.
+const BUNDLER_CONFIG_FILES = [
+  "next.config.js",
+  "next.config.mjs",
+  "next.config.cjs",
+  "next.config.ts",
+  "webpack.config.js",
+  "webpack.config.mjs",
+  "webpack.config.cjs",
+  "webpack.config.ts",
+];
+
+// Walks every node in the file, not just a recognized resolve.alias shape:
+// the field-tested pattern is `Object.assign(config.resolve.alias, {...})`
+// inside a `webpack:` customizer, so the react-dom key can appear inside a
+// plain object literal, a call argument, or an assignment target alike.
+function findReactDomPreactAlias(source: ts.SourceFile): string | undefined {
+  let found: string | undefined;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    if (ts.isPropertyAssignment(node)) {
+      const name = literalPropertyName(node);
+      if (name === "react-dom") {
+        const value = stringLiteralValue(node.initializer);
+        if (value && value.includes("preact")) {
+          found = value;
+          return;
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return found;
+}
+
+export function detectBundlerReactDomAlias(
+  projectRoot: string,
+): { configFile: string; target: string } | undefined {
+  for (const name of BUNDLER_CONFIG_FILES) {
+    const candidate = path.join(projectRoot, name);
+    if (!isFile(candidate)) continue;
+    let text: string;
+    try {
+      text = fs.readFileSync(candidate, "utf-8");
+    } catch {
+      continue;
+    }
+    const source = ts.createSourceFile(candidate, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+    const target = findReactDomPreactAlias(source);
+    if (target) return { configFile: candidate, target };
+  }
+  return undefined;
+}
+
+export function BUNDLER_PREACT_ALIAS_WARNING(configFile: string, target: string): string {
+  return (
+    `${configFile} aliases react-dom to "${target}" for at least one build target 120fps cannot ` +
+    "evaluate (the harness never executes your bundler config); if that alias is active in " +
+    "production, this measurement runs the real react-dom, not what your app ships."
+  );
 }
 
 export const ENV_DEFINE_PREFIXES = ["NEXT_PUBLIC_", "VITE_"];
@@ -988,6 +1436,36 @@ export function readEnvDefines(
   }
   return defines;
 }
+
+// M79 gap 3b: readEnvDefines reads .env/.env.local at the workspace and
+// member levels and forwards only NEXT_PUBLIC_*/VITE_*-prefixed keys as Vite
+// defines — process.env itself is defined as `{}`, so nothing from the
+// invoking shell's own environment ever reaches the page. A fatal page error
+// whose real cause is a missing env var (taxonomy-F1's env-validation throw)
+// needs to know whether that remedy even applies here: this answers "does
+// any env file exist at all", independent of whether it defined a
+// page-visible key.
+export function hasAnyEnvFile(
+  memberRoot: string,
+  workspaceRoot: string = findWorkspaceRoot(memberRoot),
+): boolean {
+  const levels =
+    path.resolve(workspaceRoot) === path.resolve(memberRoot)
+      ? [memberRoot]
+      : [workspaceRoot, memberRoot];
+  for (const level of levels) {
+    for (const name of ENV_FILES) {
+      if (isFile(path.join(level, name))) return true;
+    }
+  }
+  return false;
+}
+
+export const NO_ENV_FILE_REMEDY_NOTE =
+  "No .env or .env.local found: 120fps carries a working .env/.env.local injection mechanism, but " +
+  `only ${ENV_DEFINE_PREFIXES.join("/")}-prefixed keys reach the page, and the invoking shell's own ` +
+  "environment is never read. If this failure is a missing environment variable, add it to a .env " +
+  "file at the project or workspace root.";
 
 export const REACT_COMPILER_PACKAGE = "babel-plugin-react-compiler";
 
@@ -1188,12 +1666,30 @@ export function resolvePluginFactory(
     | undefined;
 }
 
-export function detectProjectTransforms(projectRoot: string): TransformPlugin[] {
-  const workspaceRoot = findWorkspaceRoot(projectRoot);
-  return SUPPORTED_TRANSFORM_PLUGINS.filter((entry) =>
+// M83 #8 (primevue-Probe1): resolution via the hoisted-transitive-copy
+// fallback (isInstalledOnResolutionChain, inside isPackageAvailable) is
+// correct and by design per M75 — only the disclosure was missing. A plugin
+// found only that way, not declared in this project's own package.json, gets
+// named so a stricter installer (no hoisting) is not a surprise later.
+export function detectProjectTransforms(
+  projectRoot: string,
+  workspaceRoot: string = findWorkspaceRoot(projectRoot),
+  onWarning?: (warning: string) => void,
+): TransformPlugin[] {
+  const matched = SUPPORTED_TRANSFORM_PLUGINS.filter((entry) =>
     isPackageAvailable(entry.packageName, projectRoot, workspaceRoot),
   );
+  for (const entry of matched) {
+    if (!isPackageDeclared(entry.packageName, projectRoot, workspaceRoot)) {
+      onWarning?.(HOISTED_TRANSFORM_WARNING(entry.packageName));
+    }
+  }
+  return matched;
 }
+
+export const HOISTED_TRANSFORM_WARNING = (packageName: string): string =>
+  `${packageName} was found via a hoisted transitive install, not declared in this project's own ` +
+  "package.json; a stricter installer (no hoisting) would not resolve it.";
 
 // Server and HMR hooks are stripped: the harness owns the server's lifecycle,
 // and a project plugin reaching into it is the class of failure M30 documented.
@@ -1410,6 +1906,99 @@ export function resolveWrapper(wrapPath: string, projectRoot: string): string {
   return relative;
 }
 
+// M77: Vite's own esbuild transform plugin (`vite:esbuild`) applies ONE
+// loader to every file its filter matches; its default filter excludes plain
+// `.js`, so a `.js` file with literal JSX (MUI's own authoring convention)
+// fails Vite's transform even once the CLI gate accepts it. Widening that
+// filter and forcing `loader: "jsx"` was considered and rejected: the loader
+// is shared by every matched file, so a widened filter also routes typed
+// `.ts`/`.tsx` files through the "jsx" loader, and esbuild's "jsx" loader
+// rejects TypeScript-only syntax outright (verified against the installed
+// esbuild: `transformSync("interface X{}", { loader: "jsx" })` throws). This
+// standalone plugin, run ahead of Vite's own (`enforce: "pre"`), instead
+// transforms only `.js` outside `node_modules` with esbuild's "jsx" loader
+// directly; by the time Vite's own `vite:esbuild` plugin looks at the file,
+// its default filter already excludes `.js`, so nothing there re-transforms
+// it. Vendored `.js` under node_modules, and every `.ts`/`.tsx` file, never
+// reach this plugin at all.
+export function jsxInJsPlugin(): {
+  name: string;
+  enforce: "pre";
+  transform(code: string, id: string): Promise<{ code: string; map: unknown } | null>;
+} {
+  return {
+    name: "120fps-jsx-in-js",
+    enforce: "pre",
+    async transform(code, id) {
+      const file = id.split("?")[0];
+      if (!file.endsWith(".js")) return null;
+      if (/[\\/]node_modules[\\/]/.test(file)) return null;
+      const result = await transformWithEsbuild(code, id, { loader: "jsx" });
+      return { code: result.code, map: result.map };
+    },
+  };
+}
+
+const RESOLVE_ENTRY_FAILURE = /Failed to resolve entry for package "([^"]+)"/;
+
+// Vite/esbuild's own manifest fields to probe, in the order Node's own
+// exports resolution would prefer them for a "." conditional export.
+function resolveManifestEntry(manifest: Record<string, unknown>): string | undefined {
+  const exportsField = manifest.exports;
+  if (typeof exportsField === "string") return exportsField;
+  if (exportsField && typeof exportsField === "object" && !Array.isArray(exportsField)) {
+    const dot = (exportsField as Record<string, unknown>)["."];
+    if (typeof dot === "string") return dot;
+    if (dot && typeof dot === "object" && !Array.isArray(dot)) {
+      for (const condition of ["default", "import", "require"]) {
+        const value = (dot as Record<string, unknown>)[condition];
+        if (typeof value === "string") return value;
+      }
+    }
+  }
+  if (typeof manifest.module === "string") return manifest.module;
+  if (typeof manifest.main === "string") return manifest.main;
+  return undefined;
+}
+
+export const UNBUILT_WORKSPACE_PACKAGE_WARNING = (pkg: string, entryRelative: string): string =>
+  `${pkg} is a workspace package whose package.json points at ${entryRelative}, which does not ` +
+  "exist on disk: it needs a build step (its dist/ output was never produced), not a " +
+  "package.json fix. Run this workspace's build for that package, then measure again.";
+
+// M79 (3a). Vite's own "Failed to resolve entry for package" message blames a
+// workspace-internal package's package.json fields when those fields are
+// correct and the real problem is that the package was never built (its
+// dist/ is gitignored and produced by a target this harness never runs).
+// Returns undefined — falling through to the unchanged VITE_START_FAILED
+// message — for anything that is not exactly this shape: a genuinely broken
+// external dependency, or a workspace package whose entry does resolve.
+function diagnoseUnbuiltWorkspacePackage(viteMessage: string, projectRoot: string): string | undefined {
+  const match = RESOLVE_ENTRY_FAILURE.exec(viteMessage);
+  if (!match) return undefined;
+  const pkg = match[1];
+  const pkgDir = installedPackageDir(pkg, projectRoot);
+  if (!pkgDir) return undefined;
+  let real: string;
+  try {
+    real = fs.realpathSync(pkgDir);
+  } catch {
+    return undefined;
+  }
+  // A workspace-linked package's real path sits outside every node_modules
+  // segment; an ordinary third-party dependency's real path always has one.
+  // This is the discriminator between "internal, possibly-unbuilt package"
+  // and "a genuinely broken external dependency".
+  if (/[\\/]node_modules[\\/]/.test(real)) return undefined;
+  const manifest = readProjectManifest(real);
+  if (!manifest) return undefined;
+  const entry = resolveManifestEntry(manifest);
+  if (entry === undefined) return undefined;
+  const entryPath = path.resolve(real, entry);
+  if (fs.existsSync(entryPath)) return undefined;
+  return UNBUILT_WORKSPACE_PACKAGE_WARNING(pkg, path.relative(real, entryPath).replace(/\\/g, "/"));
+}
+
 export async function buildAndServe(
   componentPath: string,
   options?: BuildHarnessOptions,
@@ -1462,6 +2051,7 @@ export async function buildAndServe(
   sweepStaleHarnessDirs(projectRoot);
 
   // Place harness files inside the target project so Vite resolves aliases
+  // (createHarnessDir adds it to activeHarnessDirs itself).
   const harnessDir = createHarnessDir(projectRoot);
   const harnessDirName = path.basename(harnessDir);
 
@@ -1535,17 +2125,19 @@ export async function buildAndServe(
   // M71: what the project's own vite.config says, read as text. Its aliases sit
   // below the tsconfig paths, which is the precedence a TypeScript project
   // already assumes, and above the shims, which answer for one module each.
-  const viteConfig = readViteConfigData(projectRoot);
+  const viteConfig = readViteConfigData(projectRoot, workspaceRoot);
   if (viteConfig.configFile && viteConfig.ignoredKeys.length > 0) {
     configWarnings.push(
       VITE_CONFIG_IGNORED_WARNING(path.basename(viteConfig.configFile), viteConfig.ignoredKeys),
     );
   }
-  const alias: Array<{ find: RegExp; replacement: string; isShim?: boolean }> = [
-    ...tsconfigAliases,
-    ...viteConfig.aliases,
-    ...shimAliases,
-  ];
+  configWarnings.push(...viteConfig.warnings);
+  const alias: Array<{
+    find: RegExp;
+    replacement: string;
+    isShim?: boolean;
+    fromWorkspaceRoot?: WorkspaceRootAliasSource;
+  }> = [...tsconfigAliases, ...viteConfig.aliases, ...shimAliases];
 
   // The wrapper is imported by the entry, so its packages must be pre-bundled
   // too: otherwise the first mount pays Vite's on-demand optimize cost.
@@ -1558,6 +2150,7 @@ export async function buildAndServe(
         alias,
         importedSpecifiers,
         configWarnings,
+        workspaceRoot,
       ),
       ...(options?.wrapPath
         ? scanExternalDeps(
@@ -1566,6 +2159,7 @@ export async function buildAndServe(
             alias,
             importedSpecifiers,
             configWarnings,
+            workspaceRoot,
           )
         : []),
     ]),
@@ -1604,11 +2198,16 @@ export async function buildAndServe(
   // M71: the Tailwind plugin is decided by the project's dependency alone. A
   // component using utility classes needs it whether or not a global stylesheet
   // was found, and the styling engines nothing here can replicate say so once.
-  const styleTooling = resolveStyleTooling(projectRoot, workspaceRoot);
+  const styleTooling = resolveStyleTooling(projectRoot, workspaceRoot, externalDeps);
   configWarnings.push(...styleTooling.warnings);
   const plugins: unknown[] = styleTooling.tailwind
     ? await loadTailwindVitePlugin(projectRoot)
     : [];
+  // M77: unconditional and cheap (a no-op for every file outside a
+  // non-node_modules `.js`); array position does not matter for ordering
+  // relative to Vite's own esbuild plugin, since `enforce: "pre"` alone
+  // decides that.
+  plugins.push(jsxInJsPlugin());
   // Appended, never substituted: the Tailwind entries above must survive.
   if (reactCompiler.active) {
     plugins.push(...(await loadReactCompilerPlugin(reactCompiler.pluginPath!)));
@@ -1617,7 +2216,9 @@ export async function buildAndServe(
   // M48: the project's own transforms, resolved from its own node_modules with
   // server hooks stripped. Load failure warns and continues.
   const transformWarnings: string[] = [];
-  const transformEntries = options?.noTransforms ? [] : detectProjectTransforms(projectRoot);
+  const transformEntries = options?.noTransforms
+    ? []
+    : detectProjectTransforms(projectRoot, workspaceRoot, (w) => transformWarnings.push(w));
   if (transformEntries.length > 0) {
     plugins.push(
       ...(await loadProjectTransformPlugins(projectRoot, transformEntries, (warning) =>
@@ -1683,6 +2284,8 @@ export async function buildAndServe(
       resolve: {
         alias,
         dedupe: renderer === "vue" ? ["vue"] : ["react", "react-dom"],
+        // M76: a pass-through to Vite's own condition-aware exports resolver.
+        ...(viteConfig.conditions.length > 0 ? { conditions: viteConfig.conditions } : {}),
       },
       optimizeDeps: {
         include: stableInclude,
@@ -1717,10 +2320,26 @@ export async function buildAndServe(
       server = await bootServer();
     }
   } catch (err) {
-    throw new Error(
-      VITE_START_FAILED(harnessDir, err instanceof Error ? err.message : String(err)),
-      { cause: err },
-    );
+    const message = err instanceof Error ? err.message : String(err);
+    // M79 (3a): Vite/esbuild's own message blames a workspace-internal
+    // package's package.json fields when those fields are correct and the
+    // real problem is that the package was never built. Falls through to the
+    // unchanged message for anything that is not exactly this shape.
+    const detail = diagnoseUnbuiltWorkspacePackage(message, projectRoot) ?? message;
+    // M83 #7: the common, caught-and-rethrown failure shape (nuxt-ui F1/F2,
+    // mantine F1, dub F1, chakra-ui F3/F4). cleanup() is only ever
+    // constructed on the success path, so this catch is the one place the
+    // directory would otherwise leak on every one of these.
+    fs.rmSync(harnessDir, { recursive: true, force: true });
+    activeHarnessDirs.delete(harnessDir);
+    // M79 (1a): everything buildWarnings would have carried on the success
+    // path travels with the thrown error too, so a crash after a computed
+    // warning (VITE_CONFIG_IGNORED_WARNING, an unreplicated style engine, a
+    // transform-load failure) does not silently drop it.
+    throw Object.assign(new Error(VITE_START_FAILED(harnessDir, detail)), {
+      cause: err,
+      warnings: buildWarnings,
+    });
   }
 
   const address = server.httpServer?.address();
@@ -1728,12 +2347,16 @@ export async function buildAndServe(
   if (address && typeof address === "object") {
     url = `http://localhost:${address.port}/${harnessDirName}/`;
   } else {
-    throw new Error(VITE_START_FAILED(harnessDir, "no listening address was returned"));
+    throw Object.assign(
+      new Error(VITE_START_FAILED(harnessDir, "no listening address was returned")),
+      { warnings: buildWarnings },
+    );
   }
 
   const cleanup = async () => {
     if (ownsServer) await server.close();
     fs.rmSync(harnessDir, { recursive: true, force: true });
+    activeHarnessDirs.delete(harnessDir);
   };
 
   return {
@@ -1749,6 +2372,7 @@ export async function buildAndServe(
       ? { wrapPath: path.resolve(options!.wrapPath!), wrapRelative }
       : {}),
     ...(cssFiles.length > 0 ? { cssFiles } : {}),
+    ...(viteConfig.aliases.length > 0 ? { viteAliases: viteConfig.aliases } : {}),
     ...(buildWarnings.length > 0 ? { warnings: buildWarnings } : {}),
   };
 }
@@ -1942,27 +2566,44 @@ function resolveTarget(target: string): string | undefined {
 // different facts. Collapsing them into null pushed a stale alias into
 // optimizeDeps.include as if a package by that name existed.
 type LocalResolution =
-  | { kind: "resolved"; path: string; viaShimAlias: boolean }
-  | { kind: "alias-miss"; target: string; viaShimAlias: boolean }
+  | {
+      kind: "resolved";
+      path: string;
+      viaShimAlias: boolean;
+      viaWorkspaceRootAlias?: WorkspaceRootAliasSource;
+    }
+  | {
+      kind: "alias-miss";
+      target: string;
+      viaShimAlias: boolean;
+      viaWorkspaceRootAlias?: WorkspaceRootAliasSource;
+    }
   | { kind: "unaliased" };
 
 function resolveLocalImport(
   fromFile: string,
   spec: string,
   projectRoot: string,
-  aliases: Array<{ find: RegExp; replacement: string; isShim?: boolean }>,
+  aliases: Array<{
+    find: RegExp;
+    replacement: string;
+    isShim?: boolean;
+    fromWorkspaceRoot?: WorkspaceRootAliasSource;
+  }>,
 ): LocalResolution {
   let target: string;
   let viaShimAlias = false;
+  let viaWorkspaceRootAlias: WorkspaceRootAliasSource | undefined;
   let aliased = false;
   if (spec.startsWith(".") || spec.startsWith("/")) {
     target = path.resolve(path.dirname(fromFile), spec);
   } else {
     let aliasedPath: string | undefined;
-    for (const { find, replacement, isShim } of aliases) {
+    for (const { find, replacement, isShim, fromWorkspaceRoot } of aliases) {
       if (find.test(spec)) {
         aliasedPath = spec.replace(find, replacement);
         viaShimAlias = isShim === true;
+        viaWorkspaceRootAlias = fromWorkspaceRoot;
         break;
       }
     }
@@ -1972,16 +2613,25 @@ function resolveLocalImport(
   }
 
   const resolved = resolveTarget(target);
-  if (resolved) return { kind: "resolved", path: resolved, viaShimAlias };
+  if (resolved) return { kind: "resolved", path: resolved, viaShimAlias, viaWorkspaceRootAlias };
   if (!aliased) return { kind: "unaliased" };
-  return { kind: "alias-miss", target: target.replace(/\\/g, "/"), viaShimAlias };
+  return {
+    kind: "alias-miss",
+    target: target.replace(/\\/g, "/"),
+    viaShimAlias,
+    viaWorkspaceRootAlias,
+  };
 }
 
 // Static imports and re-exports, dynamic import(), and require(). String
 // literals only: a template literal or a computed specifier is unknowable
 // without running the code.
+// M77: the negative lookahead excludes a whole-clause `import type`/`export
+// type` from-specifier: type-space, never loaded at runtime. A mixed clause
+// (`import { type A, b } from "x"`) still matches, because `b` is a real
+// value import and "x" genuinely needs runtime resolution.
 const STATIC_IMPORT_PATTERN =
-  /(?:^|\s)(?:import|export)\s.*?from\s+["']([^"']+)["']|(?:^|\s)import\s+["']([^"']+)["']/gm;
+  /(?:^|\s)(?:import|export)\s+(?!type\s).*?from\s+["']([^"']+)["']|(?:^|\s)import\s+["']([^"']+)["']/gm;
 const DYNAMIC_IMPORT_PATTERN = /\bimport\s*\(\s*["']([^"']+)["']/g;
 const REQUIRE_PATTERN = /\brequire\s*\(\s*["']([^"']+)["']/g;
 
@@ -2005,16 +2655,67 @@ export function BROKEN_ALIAS_WARNING(specifier: string, target: string): string 
   );
 }
 
+// M77: proven, not guessed — the package resolves to an installed directory
+// whose own package.json has no main/module/exports and no index file, the
+// same "no loadable entry" primitive the types-only paths-alias check (1)
+// uses.
+export function TYPE_ONLY_PACKAGE_WARNING(pkg: string): string {
+  return (
+    `import "${pkg}" resolved to an installed package with no runtime entry ` +
+    "(no package.json main/module/exports, no index file); the import is almost certainly " +
+    "type-only and was excluded from the pre-bundle instead of aborting the harness"
+  );
+}
+
+// M76: resolvePackageDir walks the node_modules resolution chain the same way
+// isInstalledOnResolutionChain (project-model.ts) does, but returns where a
+// package lives instead of whether it does.
+function resolvePackageDir(pkg: string, fromDir: string): string | undefined {
+  let current = path.resolve(fromDir);
+  while (true) {
+    if (path.basename(current) !== "node_modules") {
+      const candidate = path.join(current, "node_modules", ...pkg.split("/"));
+      if (isFile(path.join(candidate, "package.json"))) return candidate;
+    }
+    const parent = path.dirname(current);
+    if (parent === current) return undefined;
+    current = parent;
+  }
+}
+
+// M76: true when an installed package's realpath sits inside workspaceRoot
+// with no node_modules segment between them — the standard signal that an
+// install is a symlink back into the monorepo's own source tree, not a
+// hoisted external copy.
+function isWorkspaceSibling(pkgDir: string, workspaceRoot: string): boolean {
+  let real: string;
+  try {
+    real = fs.realpathSync(pkgDir);
+  } catch {
+    return false;
+  }
+  const relative = path.relative(path.resolve(workspaceRoot), real).replace(/\\/g, "/");
+  if (relative === "" || relative.startsWith("..") || path.isAbsolute(relative)) return false;
+  return !relative.split("/").includes("node_modules");
+}
+
 export function scanExternalDeps(
   componentPath: string,
   projectRoot: string,
-  aliases: Array<{ find: RegExp; replacement: string; isShim?: boolean }>,
+  aliases: Array<{
+    find: RegExp;
+    replacement: string;
+    isShim?: boolean;
+    fromWorkspaceRoot?: WorkspaceRootAliasSource;
+  }>,
   specifiersOut?: Set<string>,
   warningsOut?: string[],
+  workspaceRoot: string = findWorkspaceRoot(projectRoot),
 ): string[] {
   const externalPkgs = new Set<string>();
   const visited = new Set<string>();
   const reportedBrokenAliases = new Set<string>();
+  const reportedWorkspaceRootAliases = new Set<string>();
   const queue = [componentPath];
 
   while (queue.length > 0) {
@@ -2047,6 +2748,19 @@ export function scanExternalDeps(
         // specifier itself was still imported and must be reported: the
         // resolution stays local (queued above), only the bookkeeping changes.
         if (isBareSpecifier && localResolved.viaShimAlias) specifiersOut?.add(spec);
+        // M76: same idea for a workspace-root-sourced alias — usage-triggered
+        // and deduped per specifier, so a root config with many patterns for
+        // packages this component never touches does not bury the one that
+        // actually mattered.
+        if (
+          isBareSpecifier &&
+          localResolved.viaWorkspaceRootAlias &&
+          !reportedWorkspaceRootAliases.has(spec)
+        ) {
+          reportedWorkspaceRootAliases.add(spec);
+          const tag = localResolved.viaWorkspaceRootAlias;
+          warningsOut?.push(WORKSPACE_ROOT_ALIAS_WARNING(spec, tag.pattern, tag.target, tag.configFile));
+        }
       } else if (localResolved.kind === "alias-miss") {
         // A shim alias whose file is not built yet is this tool's own state,
         // and the specifier was still imported: M62's report needs it either
@@ -2063,7 +2777,28 @@ export function scanExternalDeps(
         const pkg = spec.startsWith("@")
           ? spec.split("/").slice(0, 2).join("/")
           : spec.split("/")[0];
-        externalPkgs.add(pkg);
+        if (spec === pkg) {
+          // The specifier was already the bare root: unchanged, covers every
+          // ordinary dependency including subpath-only ones like swiper.
+          externalPkgs.add(pkg);
+        } else {
+          // M76: a subpath specifier. Collapsing it to `pkg` unconditionally
+          // manufactures an optimizeDeps entry nothing in the source wrote
+          // when `pkg` is a workspace sibling whose own root has no
+          // resolvable entry (an `exports` map with only subpath keys, no
+          // `main`) — calcom-F1. Substitute the literal subpath instead, once
+          // per distinct subpath; every other package keeps collapsing.
+          const pkgDir = resolvePackageDir(pkg, path.dirname(normalizedFile));
+          if (
+            pkgDir &&
+            isWorkspaceSibling(pkgDir, workspaceRoot) &&
+            resolveDirectoryEntry(pkgDir) === undefined
+          ) {
+            externalPkgs.add(spec);
+          } else {
+            externalPkgs.add(pkg);
+          }
+        }
       }
     }
   }
@@ -2081,9 +2816,28 @@ export function scanExternalDeps(
     "sass", "less", "stylus", "lightningcss", "sugarss",
   ]);
 
-  for (const pkg of externalPkgs) {
+  // M76: an entry may now be a subpath string rather than a bare name, so the
+  // blocklist's membership and prefix checks apply to the package-name
+  // portion re-derived from each entry, not to the raw entry text.
+  for (const entry of externalPkgs) {
+    const pkg = entry.startsWith("@") ? entry.split("/").slice(0, 2).join("/") : entry.split("/")[0];
     if (BLOCKED.has(pkg) || pkg.startsWith("@next/") || pkg.startsWith("@vercel/turbopack")) {
+      externalPkgs.delete(entry);
+    }
+  }
+
+  // M77: a bare specifier that resolves to an installed package with no
+  // runtime entry (no package.json main/module/exports, no index file) is
+  // almost certainly type-only — the regex scanner cannot see that an import
+  // is structurally type-only (`import * as CSS from 'csstype'`), so
+  // correctness depends on this proof, not on syntax. A package this walk
+  // cannot find at all is left alone: this only skips packages it has
+  // proven lack a runtime entry, never ones it merely failed to locate.
+  for (const pkg of externalPkgs) {
+    const dir = installedPackageDir(pkg, projectRoot);
+    if (dir !== undefined && resolveTarget(dir) === undefined) {
       externalPkgs.delete(pkg);
+      warningsOut?.push(TYPE_ONLY_PACKAGE_WARNING(pkg));
     }
   }
 
@@ -2137,72 +2891,184 @@ function baseUrlAliases(
   return aliases;
 }
 
-export function loadTsconfigAliases(
-  projectRoot: string,
-  warningsOut?: string[],
-): Array<{ find: RegExp; replacement: string }> {
-  // M69: upward from the member, bounded by the root that governs the install.
-  // A member inheriting the workspace tsconfig used to get no aliases at all.
-  const workspaceRoot = findWorkspaceRoot(projectRoot);
-  const tsconfigPath = findCompilerConfig(projectRoot, workspaceRoot);
-  if (!tsconfigPath) return [];
-  const configDir = path.dirname(tsconfigPath);
+// M76. Tags a tsconfig-`paths` alias built from the workspace root's own
+// config rather than the member's: the same "attributable, not just working"
+// contract WORKSPACE_ROOT_ALIAS_WARNING discloses on first use.
+export interface WorkspaceRootAliasSource {
+  pattern: string;
+  target: string;
+  configFile: string;
+}
 
-  let options: ts.CompilerOptions;
+export function WORKSPACE_ROOT_ALIAS_WARNING(
+  specifier: string,
+  pattern: string,
+  target: string,
+  configFile: string,
+): string {
+  return (
+    `import "${specifier}" resolved through the workspace root's tsconfig path alias "${pattern}" -> ` +
+    `"${target}" (${configFile}), which the component's own package does not declare`
+  );
+}
+
+// M77: a non-wildcard `paths` target that TypeScript resolves but that has no
+// runtime entry (an @types/* stub, a .d.ts-only package) previously became an
+// inert-but-present alias that crashed the harness the moment something
+// imported it.
+export function TYPES_ONLY_ALIAS_WARNING(pattern: string, target: string): string {
+  return (
+    `tsconfig path alias "${pattern}" -> "${target}" resolves to a location with no runtime entry ` +
+    "(no package.json main/module/exports, no index file); the alias was skipped and " +
+    `"${pattern}" resolves through normal node resolution instead`
+  );
+}
+
+// The per-entry logic shared by the member's own `paths` and, additively, the
+// workspace root's (M76). M77 adds the loadable-entry check to the exact-match
+// branch only: a `@/*`-style prefix aliases a directory Vite resolves per
+// request, never as a single module load, so there is nothing to check there.
+function buildPathAliasEntry(
+  pattern: string,
+  targets: readonly string[],
+  base: string,
+  warningsOut?: string[],
+): { find: RegExp; replacement: string } | undefined {
+  if (!targets.length) return undefined;
+  // First target only: Vite aliases support a single replacement.
+  const target = targets[0];
+  if (pattern.endsWith("/*") && target.endsWith("/*")) {
+    const prefix = pattern.slice(0, -2);
+    const dir = path.resolve(base, target.slice(0, -2)).replace(/\\/g, "/");
+    return { find: new RegExp(`^${escapeRegex(prefix)}/`), replacement: dir + "/" };
+  }
+  if (pattern.includes("*") || target.includes("*")) {
+    // Any other wildcard shape (one side starred, or a star that is not a
+    // whole trailing segment) has no Vite alias that means the same thing.
+    warningsOut?.push(ALIAS_SHAPE_WARNING(pattern, target));
+    return undefined;
+  }
+  const resolved = path.resolve(base, target).replace(/\\/g, "/");
+  // M77: TypeScript's own module graph includes @types/* stubs and .d.ts-only
+  // packages that resolve fine for the type checker but have no runtime
+  // entry a bundler can load. No separate @types/ substring check is needed:
+  // such a package declares none of exports/module/main and ships only
+  // .d.ts files, which resolveTarget already treats as unresolvable.
+  if (resolveTarget(resolved) === undefined) {
+    warningsOut?.push(TYPES_ONLY_ALIAS_WARNING(pattern, target));
+    return undefined;
+  }
+  return { find: new RegExp(`^${escapeRegex(pattern)}$`), replacement: resolved };
+}
+
+interface ParsedTsconfigPaths {
+  paths?: ts.MapLike<string[]>;
+  baseUrl?: string;
+  base: string;
+}
+
+// Reads and resolves one tsconfig/jsconfig's `paths`/`baseUrl`, independent of
+// which layer (member or workspace root) is asking. Returns undefined on a
+// read/parse failure, after warning to stderr exactly as before M76.
+function parseTsconfigPathsConfig(tsconfigPath: string): ParsedTsconfigPaths | undefined {
+  const configDir = path.dirname(tsconfigPath);
   try {
     const configFile = ts.readConfigFile(tsconfigPath, ts.sys.readFile);
     if (configFile.error) {
       process.stderr.write(
         `Warning: could not parse tsconfig at ${tsconfigPath}: ${ts.flattenDiagnosticMessageText(configFile.error.messageText, " ")}\n`,
       );
-      return [];
+      return undefined;
     }
     // parseJsonConfigFileContent resolves extends (string and array), JSONC,
     // and trailing commas; baseUrl comes back absolute.
-    options = ts.parseJsonConfigFileContent(
+    const options = ts.parseJsonConfigFileContent(
       configFile.config,
       ts.sys,
       configDir,
       undefined,
       tsconfigPath,
     ).options;
+    // Alias base: resolved baseUrl when set; else the directory of the config
+    // that declared "paths" (pathsBasePath, internal but stable), else the
+    // tsconfig's own directory.
+    const base =
+      options.baseUrl ?? (options as { pathsBasePath?: string }).pathsBasePath ?? configDir;
+    return { paths: options.paths, baseUrl: options.baseUrl, base };
   } catch (err) {
     process.stderr.write(
       `Warning: could not parse tsconfig at ${tsconfigPath}: ${err instanceof Error ? err.message : String(err)}\n`,
     );
-    return [];
+    return undefined;
   }
+}
 
-  const paths = options.paths;
-  if (!paths) {
-    return options.baseUrl ? baseUrlAliases(options.baseUrl, projectRoot, workspaceRoot) : [];
-  }
+export function loadTsconfigAliases(
+  projectRoot: string,
+  warningsOut?: string[],
+): Array<{ find: RegExp; replacement: string; fromWorkspaceRoot?: WorkspaceRootAliasSource }> {
+  // M69: upward from the member, bounded by the root that governs the install.
+  // A member inheriting the workspace tsconfig used to get no aliases at all.
+  const workspaceRoot = findWorkspaceRoot(projectRoot);
+  const tsconfigPath = findCompilerConfig(projectRoot, workspaceRoot);
 
-  // Alias base: resolved baseUrl when set; else the directory of the config
-  // that declared "paths" (pathsBasePath, internal but stable), else the
-  // tsconfig's own directory.
-  const base =
-    options.baseUrl ?? (options as { pathsBasePath?: string }).pathsBasePath ?? configDir;
+  let memberAliases: Array<{ find: RegExp; replacement: string }> = [];
+  let memberPatterns = new Set<string>();
+  // Correction: an empty memberPatterns set means two different things — "the
+  // member declared no usable config at all" (still gets the fallback) and
+  // "the member declared baseUrl and deliberately no paths" (must not:
+  // baseUrl-only workspace-root fallback is explicitly out of scope, "Does
+  // NOT include" in the M76 spec — no finding is shaped this way, and
+  // extending it without evidence would be guessing). Only the second case
+  // sets this flag.
+  let memberDeclaredBaseUrlOnly = false;
 
-  const aliases: Array<{ find: RegExp; replacement: string }> = [];
-  for (const [pattern, targets] of Object.entries(paths)) {
-    if (!targets.length) continue;
-    // First target only: Vite aliases support a single replacement.
-    const target = targets[0];
-    if (pattern.endsWith("/*") && target.endsWith("/*")) {
-      const prefix = pattern.slice(0, -2);
-      const dir = path.resolve(base, target.slice(0, -2)).replace(/\\/g, "/");
-      aliases.push({ find: new RegExp(`^${escapeRegex(prefix)}/`), replacement: dir + "/" });
-    } else if (pattern.includes("*") || target.includes("*")) {
-      // Any other wildcard shape (one side starred, or a star that is not a
-      // whole trailing segment) has no Vite alias that means the same thing.
-      warningsOut?.push(ALIAS_SHAPE_WARNING(pattern, target));
-    } else {
-      const resolved = path.resolve(base, target).replace(/\\/g, "/");
-      aliases.push({ find: new RegExp(`^${escapeRegex(pattern)}$`), replacement: resolved });
+  if (tsconfigPath) {
+    const parsed = parseTsconfigPathsConfig(tsconfigPath);
+    // A malformed member config already warned to stderr above: give up
+    // entirely, same as before M76, rather than guess whether a root layer
+    // should still apply.
+    if (parsed === undefined) return [];
+    if (parsed.paths) {
+      // The member's own declared pattern names, regardless of whether its
+      // own target resolves: the member deliberately owns any name it lists.
+      memberPatterns = new Set(Object.keys(parsed.paths));
+      for (const [pattern, targets] of Object.entries(parsed.paths)) {
+        const entry = buildPathAliasEntry(pattern, targets, parsed.base, warningsOut);
+        if (entry) memberAliases.push(entry);
+      }
+    } else if (parsed.baseUrl) {
+      memberAliases = baseUrlAliases(parsed.baseUrl, projectRoot, workspaceRoot);
+      memberDeclaredBaseUrlOnly = true;
     }
   }
-  return aliases;
+
+  // M76: a second, additive layer. A single-directory probe of workspaceRoot
+  // itself, not a walk (findCompilerConfig(workspaceRoot, workspaceRoot) stops
+  // after one iteration either way), and only for patterns the member's own
+  // config does not declare.
+  const rootConfigPath = findCompilerConfig(workspaceRoot, workspaceRoot);
+  const workspaceRootAliases: Array<{
+    find: RegExp;
+    replacement: string;
+    fromWorkspaceRoot: WorkspaceRootAliasSource;
+  }> = [];
+  if (!memberDeclaredBaseUrlOnly && rootConfigPath && rootConfigPath !== tsconfigPath) {
+    const rootParsed = parseTsconfigPathsConfig(rootConfigPath);
+    if (rootParsed?.paths) {
+      for (const [pattern, targets] of Object.entries(rootParsed.paths)) {
+        if (memberPatterns.has(pattern) || !targets.length) continue;
+        const entry = buildPathAliasEntry(pattern, targets, rootParsed.base, warningsOut);
+        if (!entry) continue;
+        workspaceRootAliases.push({
+          ...entry,
+          fromWorkspaceRoot: { pattern, target: targets[0], configFile: rootConfigPath },
+        });
+      }
+    }
+  }
+
+  return [...memberAliases, ...workspaceRootAliases];
 }
 
 // M69: Vite serves nothing outside its allow list, and the harness root is the

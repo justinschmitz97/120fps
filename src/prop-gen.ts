@@ -7,6 +7,7 @@ import {
   loadVueCompiler,
   parseSfcScript,
   virtualScriptPath,
+  detectOptionsApiProps,
   type SfcScript,
   type VueSfcCompiler,
 } from "./vue-sfc.js";
@@ -249,15 +250,35 @@ export async function extractPropsDetailed(
     throw new Error(`Could not parse ${filePath}`);
   }
 
-  const binding = findComponentPropsType(
-    sourceFile,
-    checker,
-    options?.target,
-    collecting ? sink : undefined,
-  );
-  const schemas = binding.type ? typeToSchema(binding.type, checker, absolutePath) : [];
+  // M81 section 6: the classification loop's own try/catch (inside
+  // `typeToSchema`) covers a recursion that surfaces per-prop; this outer
+  // guard covers one that surfaces resolving the target's props type itself,
+  // before or during that loop, so a self-referential generic never reaches
+  // the CLI as a bare, unattributed crash.
+  let binding: PropsBinding = {};
+  let schemas: PropSchema[] = [];
+  let recursed = false;
+  try {
+    binding = findComponentPropsType(
+      sourceFile,
+      checker,
+      options?.target,
+      collecting ? sink : undefined,
+    );
+    schemas = binding.type
+      ? typeToSchema(binding.type, checker, absolutePath, collecting ? sink : undefined)
+      : [];
+  } catch (error) {
+    if (!(error instanceof RangeError)) throw error;
+    recursed = true;
+    warnRecursiveType(
+      absolutePath,
+      binding.targetName ?? path.basename(absolutePath),
+      collecting ? sink : undefined,
+    );
+  }
 
-  if (schemas.length === 0 && binding.computedAnnotation && binding.targetName) {
+  if (!recursed && schemas.length === 0 && binding.computedAnnotation && binding.targetName) {
     warnUnenumerableProps(
       absolutePath,
       binding.targetName,
@@ -265,7 +286,9 @@ export async function extractPropsDetailed(
       collecting ? sink : undefined,
     );
   }
-  warnDegenerateProps(absolutePath, schemas, collecting ? sink : undefined);
+  if (!recursed) {
+    warnDegenerateProps(absolutePath, schemas, collecting ? sink : undefined);
+  }
 
   return {
     schemas,
@@ -400,6 +423,29 @@ function createVueScripts(compiler: VueSfcCompiler): VirtualScripts {
   };
 }
 
+// M80 scope 2: names the excluded declaration form so the warning states what
+// IS true (props exist, in a form ADR 0002 deliberately does not read)
+// instead of implying extraction failed or the component is broken. Same
+// arrow-function shape and call convention as UNCOMPOSED_SIBLINGS_WARNING
+// (src/composition.ts): a pure `(args) => string`, pushed straight through
+// `sink?.()`, not routed through `emit`/`warnOnce`'s stderr-dedup path.
+const OPTIONS_API_WARNING_MARK = "Vue's Options API";
+
+export const VUE_OPTIONS_API_PROPS_WARNING = (
+  absolutePath: string,
+  form: "props" | "extends" | "mixins",
+): string =>
+  `${absolutePath} declares props through ${OPTIONS_API_WARNING_MARK} ("${form}"), a runtime form ` +
+  `ADR 0002 deliberately does not read: extraction did not fail and the component is not broken. Add ` +
+  `${presetFileName(absolutePath)} next to it to supply typed values for measurement.`;
+
+// Lets extractSchemas (src/analyze.ts) recognize this specific warning among
+// everything else onWarning may report, without parsing prose or duplicating
+// the message text.
+export function isVueOptionsApiPropsWarning(message: string): boolean {
+  return message.includes(OPTIONS_API_WARNING_MARK);
+}
+
 // Per ADR 0002 this stays TypeScript-only: the runtime object form
 // (`defineProps({ label: String })`) carries no types and yields no schemas,
 // exactly as an untyped React component does.
@@ -419,7 +465,21 @@ async function extractVueProps(
   if (!sourceFile) return [];
 
   const call = findDefineProps(sourceFile);
-  if (!call?.typeNode) return [];
+  if (!call?.typeNode) {
+    // M80 scope 2: this branch is also where a `.vue` file with NO <script
+    // setup> at all lands (an empty virtual entry parses to zero calls), and
+    // where a <script setup> runtime `defineProps({...})` call lands (call is
+    // defined but carries no type argument, ADR 0002:26's own Vue case,
+    // e.g. fixtures/vue-project/RuntimeProps.vue). Only the first is in this
+    // milestone's scope: detectOptionsApiProps reads a plain <script> block,
+    // so it is consulted only when there was no <script setup> to read from.
+    const source = ts.sys.readFile(absolutePath);
+    if (source !== undefined && parseSfcScript(source, absolutePath, compiler) === undefined) {
+      const form = detectOptionsApiProps(source, absolutePath, compiler);
+      if (form) sink?.(VUE_OPTIONS_API_PROPS_WARNING(absolutePath, form));
+    }
+    return [];
+  }
 
   const checker = program.getTypeChecker();
   const propsType = checker.getTypeFromTypeNode(call.typeNode);
@@ -818,6 +878,37 @@ function warnUnenumerableProps(
   );
 }
 
+// M81 section 6: a self-referential generic member can make a single checker
+// call recurse arbitrarily deep inside TypeScript's own instantiation
+// machinery. Named and excluded, the same register as an unenumerable
+// computed type, instead of a bare "Maximum call stack size exceeded"
+// reaching the CLI's top-level handler with no attribution.
+function warnRecursiveProp(
+  fileName: string,
+  propName: string,
+  sink?: (message: string) => void,
+): void {
+  emit(
+    `${path.resolve(fileName)}::recursive::${propName}`,
+    `Warning: prop "${propName}" in ${fileName} could not be classified: TypeScript's type resolution ` +
+      `recursed too deeply -- likely a self-referential generic type. Excluded from the schema.\n`,
+    sink,
+  );
+}
+
+function warnRecursiveType(
+  fileName: string,
+  targetName: string,
+  sink?: (message: string) => void,
+): void {
+  emit(
+    `${path.resolve(fileName)}::recursive-type::${targetName}`,
+    `Warning: props could not be resolved for ${targetName} in ${fileName}: TypeScript's type resolution ` +
+      `recursed too deeply -- likely a self-referential generic type.\n`,
+    sink,
+  );
+}
+
 interface PropsBinding {
   type?: ts.Type;
   targetName?: string;
@@ -988,25 +1079,105 @@ function isLocalDeclaration(decl: ts.Declaration): boolean {
   return !NODE_MODULES.test(decl.getSourceFile().fileName);
 }
 
+// M81: `isNoiseProp` still fully filters ambient (default-lib/@types-react)
+// declarations for NESTED object-value synthesis (`synthesizeValue`), where an
+// unbounded width would balloon a synthesized object with ~300 DOM/ARIA
+// members no one asked for. The top-level prop schema no longer uses it: an
+// ambient declaration site does not mean the member is noise (`onClick`,
+// `disabled`, `children` are declared there exactly like `aria-activedescendant`
+// is), so `typeToSchema` only applies the hard, silent `aria-`/`data-` filter
+// and ranks everything else instead of erasing it pre-cap.
+function isNoiseName(name: string): boolean {
+  return NOISE_PROP_NAME.test(name);
+}
+
 function isNoiseProp(prop: ts.Symbol): boolean {
-  if (NOISE_PROP_NAME.test(prop.getName())) return true;
+  if (isNoiseName(prop.getName())) return true;
   const decls = prop.getDeclarations();
   if (!decls || decls.length === 0) return false;
   return decls.every(isAmbientNoiseDeclaration);
+}
+
+// M81 section 1: a prop named `/^on[A-Z]/` whose type carries a call
+// signature (an event handler), or named exactly `children`, is locally
+// meaningful regardless of where it is declared.
+const EVENT_HANDLER_NAME = /^on[A-Z]/;
+
+// Non-`undefined`/`null`/`void` members of a (possibly union) type: the same
+// filter `classifyType` applies before its own literal-union/boolean tests.
+function nonUndefinedMembers(type: ts.Type): ts.Type[] {
+  return type.isUnion()
+    ? type.types.filter(
+        (t) => !(t.flags & (ts.TypeFlags.Undefined | ts.TypeFlags.Null | ts.TypeFlags.Void)),
+      )
+    : [type];
+}
+
+// M81 section 1: three-tier rank computed over `kept`, before the `MAX_PROPS`
+// cap, stable within each tier.
+// Tier 1 - variant surface: a plain boolean or finite literal union on the
+//          prop's own type - reuses the same cheap type-flag tests
+//          `classifyType` uses later, so it is affordable to run over every
+//          kept prop, not just the 32 survivors.
+// Tier 2 - locally meaningful: `declaredHere` today, a computed/mapped-type
+//          member with zero declarations (there is no declaration site to be
+//          third-party at), or an event-handler/`children` name reached only
+//          through an ambient declaration.
+// Tier 3 - everything else: declared exclusively in node_modules, not
+//          variant-shaped - today's tail behavior, unchanged.
+function propRank(prop: ts.Symbol, checker: ts.TypeChecker): 1 | 2 | 3 {
+  const decls = prop.getDeclarations();
+  const decl = decls?.[0];
+  const type = decl ? checker.getTypeOfSymbolAtLocation(prop, decl) : checker.getTypeOfSymbol(prop);
+  const nonUndefined = nonUndefinedMembers(type);
+  const target = nonUndefined.length === 1 ? nonUndefined[0] : type;
+
+  const isVariantSurface =
+    !!(target.flags & ts.TypeFlags.BooleanLike) ||
+    isBooleanUnion(nonUndefined) ||
+    (nonUndefined.length > 1 &&
+      nonUndefined.every((m) => m.isStringLiteral() || !!(m.flags & ts.TypeFlags.StringLiteral))) ||
+    (nonUndefined.length > 1 &&
+      nonUndefined.every((m) => m.isNumberLiteral() || !!(m.flags & ts.TypeFlags.NumberLiteral)));
+  if (isVariantSurface) return 1;
+
+  const locallyMeaningful = !decls || decls.length === 0 || decls.some(isLocalDeclaration);
+  if (locallyMeaningful) return 2;
+
+  const name = prop.getName();
+  const isHandlerOrChildren =
+    name === "children" ||
+    (EVENT_HANDLER_NAME.test(name) && nonUndefined.some((t) => t.getCallSignatures().length > 0));
+  if (isHandlerOrChildren) return 2;
+
+  return 3;
 }
 
 function typeToSchema(
   type: ts.Type,
   checker: ts.TypeChecker,
   fileName?: string,
+  sink?: (message: string) => void,
 ): PropSchema[] {
-  const kept = type.getProperties().filter((prop) => !isNoiseProp(prop));
+  const kept = type.getProperties().filter((prop) => !isNoiseName(prop.getName()));
 
-  // A component's own props answer the question; inherited third-party ones are
-  // context. Ordering by that keeps the cap from spending itself on context.
-  const declaredHere = (prop: ts.Symbol): boolean =>
-    prop.getDeclarations()?.some(isLocalDeclaration) ?? false;
-  const ordered = [...kept.filter(declaredHere), ...kept.filter((p) => !declaredHere(p))];
+  // A single checker call (`getTypeOfSymbolAtLocation`) can recurse arbitrarily
+  // deep inside TypeScript's own instantiation machinery for a self-referential
+  // generic member (M81 section 6); ranking runs this over every kept prop, not
+  // just the 32 survivors, so it needs the same guard as classification below.
+  const ranked: { prop: ts.Symbol; rank: 1 | 2 | 3 }[] = [];
+  for (const prop of kept) {
+    try {
+      ranked.push({ prop, rank: propRank(prop, checker) });
+    } catch (error) {
+      if (!(error instanceof RangeError)) throw error;
+      if (fileName) warnRecursiveProp(fileName, prop.getName(), sink);
+    }
+  }
+  const ordered = ranked
+    .map((r, index) => ({ ...r, index }))
+    .sort((a, b) => a.rank - b.rank || a.index - b.index)
+    .map((r) => r.prop);
 
   if (ordered.length > MAX_PROPS && fileName) {
     warnPropCap(fileName, ordered.length);
@@ -1014,13 +1185,18 @@ function typeToSchema(
 
   const schemas: PropSchema[] = [];
   for (const prop of ordered.slice(0, MAX_PROPS)) {
-    const decl = prop.getDeclarations()?.[0];
-    const propType = decl
-      ? checker.getTypeOfSymbolAtLocation(prop, decl)
-      : checker.getTypeOfSymbol(prop);
-    const required = !(prop.flags & ts.SymbolFlags.Optional);
+    try {
+      const decl = prop.getDeclarations()?.[0];
+      const propType = decl
+        ? checker.getTypeOfSymbolAtLocation(prop, decl)
+        : checker.getTypeOfSymbol(prop);
+      const required = !(prop.flags & ts.SymbolFlags.Optional);
 
-    schemas.push(classifyType(prop.getName(), propType, required, checker));
+      schemas.push(classifyType(prop.getName(), propType, required, checker));
+    } catch (error) {
+      if (!(error instanceof RangeError)) throw error;
+      if (fileName) warnRecursiveProp(fileName, prop.getName(), sink);
+    }
   }
 
   return schemas;
@@ -1035,20 +1211,28 @@ function classifyType(
   // Absent members carry no shape. `null` and `void` are stripped next to
   // `undefined` because a nullable literal union is still a literal union:
   // that is what makes cva's `VariantProps<typeof x>` enumerable.
-  const nonUndefinedTypes = type.isUnion()
-    ? type.types.filter(
-        (t) =>
-          !(t.flags & (ts.TypeFlags.Undefined | ts.TypeFlags.Null | ts.TypeFlags.Void)),
-      )
-    : [type];
+  const nonUndefinedTypes = nonUndefinedMembers(type);
 
   // If only one non-undefined type, classify it directly
   const classifyTarget =
     nonUndefinedTypes.length === 1 ? nonUndefinedTypes[0] : type;
 
-  // ReactNode / ReactElement: check all non-undefined members
-  if (nonUndefinedTypes.some((t) => isReactNodeType(t, checker))) {
+  // ReactNode: only a member that IS ReactNode, or one provably assignable
+  // from `string` (which ReactNode structurally is and ReactElement is not).
+  // A `ReactElement | JSX.Element` member alone no longer qualifies (M81 3b):
+  // a plain `ReactNode` renders a placeholder string fine; `ReactElement` does
+  // not, because callers run `React.isValidElement()` on it.
+  if (isReactNodeMember(type, checker)) {
     return { name, kind: "reactnode", required, values: [] };
+  }
+
+  // M81 3b: `ReactElement | (props) => ReactElement` (Base UI's `render`, and
+  // the same "universal customization prop" idiom in other headless
+  // libraries) is neither a plain function prop nor a ReactNode: it has no
+  // synthesizable field-bag shape either, so it is routed to objectSchema's
+  // existing opaque path instead of being classified as `function` below.
+  if (isElementOrCallableUnion(classifyTarget, checker)) {
+    return objectSchema(name, classifyTarget, required, checker);
   }
 
   // Function/callback: check all non-undefined members
@@ -1092,8 +1276,18 @@ function classifyType(
     return { name, kind: "union", required, values };
   }
 
-  // Plain string
+  // Plain string. M81 3d: `classifyType` has no way to see that a runtime
+  // validator (`Intl.NumberFormat`'s `currency` option, a BCP 47 locale tag)
+  // will reject the generic placeholder; a narrow, named allowlist of
+  // prop-name conventions closes the one repeatedly-observed false-FAIL class
+  // without claiming every runtime-validated string is now safe.
   if (classifyTarget.flags & ts.TypeFlags.String) {
+    if (CURRENCY_PROP_NAME.test(name)) {
+      return { name, kind: "string", required, values: ["USD"] };
+    }
+    if (LOCALE_PROP_NAME.test(name)) {
+      return { name, kind: "string", required, values: ["en-US"] };
+    }
     return { name, kind: "string", required, values: ["test"] };
   }
 
@@ -1177,7 +1371,13 @@ function objectSchema(
 ): PropSchema {
   const collection = collectionValue(type, checker);
   if (collection) {
-    return { name, kind: "object", required, values: [collection.value], degenerate: collection.reason };
+    return {
+      name,
+      kind: "object",
+      required,
+      values: [collection.value],
+      ...(collection.reason ? { degenerate: collection.reason } : {}),
+    };
   }
 
   const instance = instanceValue(type);
@@ -1239,6 +1439,10 @@ function newSynth(maxDepth = SYNTH_MAX_DEPTH): SynthContext {
 
 const MAP_TYPES = new Set(["Map", "WeakMap", "ReadonlyMap"]);
 const SET_TYPES = new Set(["Set", "WeakSet", "ReadonlySet"]);
+// M81 3a: a structural iterable that is neither Map nor Set. Unlike them, a
+// real array IS a valid `Iterable<T>` and survives Playwright's serializer
+// unchanged, so it carries no `reason` and is not marked degenerate.
+const ITERABLE_TYPES = new Set(["Iterable", "IterableIterator"]);
 const COLLECTION_ENTRIES = 2;
 
 // The declared name of a built-in type, or undefined for anything a user wrote.
@@ -1260,9 +1464,20 @@ function builtinName(type: ts.Type): string | undefined {
 function collectionValue(
   type: ts.Type,
   checker: ts.TypeChecker,
-): { value: unknown; reason: string } | undefined {
+): { value: unknown; reason?: string } | undefined {
   const name = builtinName(type);
-  if (!name || (!MAP_TYPES.has(name) && !SET_TYPES.has(name))) return undefined;
+  if (!name) return undefined;
+
+  // M81 3a: a real array is a valid `Iterable<T>`/`IterableIterator<T>` and
+  // does not throw inside `new Set(prop)`; unlike Map/Set it needs no
+  // entries-transport `reason` and is not marked degenerate.
+  if (ITERABLE_TYPES.has(name)) {
+    const args = checker.getTypeArguments(type as ts.TypeReference);
+    const element = args[0] ? synthesizeValue(args[0], checker, 1, newSynth()) : undefined;
+    return { value: distinctValues(element) };
+  }
+
+  if (!MAP_TYPES.has(name) && !SET_TYPES.has(name)) return undefined;
 
   const args = checker.getTypeArguments(type as ts.TypeReference);
   const reason = `${name} cannot be transported to the browser: passed as entries`;
@@ -1327,10 +1542,30 @@ function opaqueReason(type: ts.Type, checker: ts.TypeChecker): string | undefine
     return `${checker.typeToString(type)} is a class instance`;
   }
   const name = builtinName(type);
-  if (name && !MAP_TYPES.has(name) && !SET_TYPES.has(name)) {
+  if (name && !MAP_TYPES.has(name) && !SET_TYPES.has(name) && !ITERABLE_TYPES.has(name)) {
     return `${name} has no synthesizable shape`;
   }
+  // M81 3b: `ReactElement | (props) => ReactElement` (Base UI's `render`
+  // idiom): a function/element union has no synthesizable field-bag shape.
+  if (isElementOrCallableUnion(type, checker)) {
+    return `${checker.typeToString(type)} requires a real element or render function`;
+  }
   return undefined;
+}
+
+// M81 3b: a union carrying both a React-element-shaped member and a callable
+// member, with no primitive/ReactNode member to fall back to. `classifyType`
+// uses this to route the shape to `objectSchema` instead of `"function"`;
+// `opaqueReason` uses the same test to name it degenerate once there.
+function isElementOrCallableUnion(type: ts.Type, checker: ts.TypeChecker): boolean {
+  if (!type.isUnion()) return false;
+  const members = nonUndefinedMembers(type);
+  const hasElement = members.some((t) => /ReactElement|JSX\.Element/.test(checker.typeToString(t)));
+  const hasCallable = members.some((t) => t.getCallSignatures().length > 0);
+  const hasPrimitive = members.some(
+    (t) => t.flags & (ts.TypeFlags.StringLike | ts.TypeFlags.NumberLike | ts.TypeFlags.BooleanLike),
+  );
+  return hasElement && hasCallable && !hasPrimitive;
 }
 
 // An array whose elements are strings satisfies no object-shaped element type,
@@ -1395,7 +1630,7 @@ function synthesizeValue(
     if (instance !== undefined) return instance;
     const collection = collectionValue(type, checker);
     if (collection) {
-      synth.notes.push(collection.reason);
+      if (collection.reason) synth.notes.push(collection.reason);
       return collection.value;
     }
     const opaque = opaqueReason(type, checker);
@@ -1440,10 +1675,30 @@ function isBooleanUnion(types: ts.Type[]): boolean {
   );
 }
 
-function isReactNodeType(type: ts.Type, checker: ts.TypeChecker): boolean {
-  const typeStr = checker.typeToString(type);
-  return /ReactNode|ReactElement|JSX\.Element/.test(typeStr);
+// M81 3b: narrower than a bare `ReactElement|JSX\.Element` text match. A
+// plain `ReactNode` renders a placeholder string fine (it structurally
+// includes `string`); a bare `ReactElement` does not, because callers run
+// `React.isValidElement()` on it, which a string fails.
+function isReactNodeMember(type: ts.Type, checker: ts.TypeChecker): boolean {
+  // Checked against the WHOLE declared type, before it is decomposed into
+  // individual union members: TS preserves the `ReactNode` alias name when
+  // printing a direct reference to it, but `ReactNode`'s own definition is
+  // itself a union (string | number | ReactElement | Iterable<ReactNode> |
+  // ...), so none of ITS decomposed members individually prints "ReactNode" -
+  // checking per-member (as the milestone's own literal wording suggests)
+  // would never match the common case and was verified empirically to fail.
+  // An "assignable from string" fallback was tried and rejected: a plain
+  // `string` prop, and any `Iterable<string>`-shaped prop, are both trivially
+  // string-assignable and would be misclassified as reactnode too.
+  return /^(React\.)?ReactNode$/.test(checker.typeToString(type));
 }
+
+// M81 3d: commerce-F1. Named runtime-validated string conventions, matched
+// before falling back to the generic "test" placeholder. Deliberately narrow:
+// closes the one repeatedly-observed false-FAIL class (Intl construction),
+// not a general claim that every runtime-validated string is now safe.
+const CURRENCY_PROP_NAME = /^currency(code)?$/i;
+const LOCALE_PROP_NAME = /^(locale|language)$/i;
 
 export type { ExportInfo } from "./composition.js";
 

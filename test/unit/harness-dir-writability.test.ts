@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createHarnessDir, HARNESS_DIR_UNWRITABLE } from "../../src/harness.js";
+import { createHarnessDir, HARNESS_DIR_UNWRITABLE, sweepActiveHarnessDirs } from "../../src/harness.js";
 
 let tmpDir: string;
 
@@ -75,5 +75,41 @@ describe("HARNESS_DIR_UNWRITABLE message", () => {
     expect(message).toContain("/srv/app");
     expect(message).toContain("EACCES: permission denied");
     expect(message).toContain("writable");
+  });
+});
+
+// M83 #7: why harness directories survive a crash. `sweepStaleHarnessDirs`
+// is age-gated at one hour, so it can never cover a directory the *current*
+// run just abandoned; `cleanup()` is only reachable on the success path.
+// `sweepActiveHarnessDirs` is the body the `process.on("exit")` handler
+// runs — exercised directly here rather than by triggering a real process
+// exit.
+describe("M83 #7: sweepActiveHarnessDirs cleans up a directory nothing else removed", () => {
+  it("removes a directory created but never cleaned up", () => {
+    const created = createHarnessDir(tmpDir);
+    expect(fs.existsSync(created)).toBe(true);
+    sweepActiveHarnessDirs();
+    expect(fs.existsSync(created)).toBe(false);
+  });
+
+  it("removes every directory created since the last sweep, not only the most recent", () => {
+    const a = createHarnessDir(tmpDir);
+    const b = createHarnessDir(tmpDir);
+    sweepActiveHarnessDirs();
+    expect(fs.existsSync(a)).toBe(false);
+    expect(fs.existsSync(b)).toBe(false);
+  });
+
+  it("is a no-op the second time (already-cleared tracking)", () => {
+    const created = createHarnessDir(tmpDir);
+    sweepActiveHarnessDirs();
+    expect(() => sweepActiveHarnessDirs()).not.toThrow();
+    expect(fs.existsSync(created)).toBe(false);
+  });
+
+  it("swallows an already-removed directory instead of throwing", () => {
+    const created = createHarnessDir(tmpDir);
+    fs.rmSync(created, { recursive: true, force: true });
+    expect(() => sweepActiveHarnessDirs()).not.toThrow();
   });
 });

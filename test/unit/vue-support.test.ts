@@ -22,9 +22,16 @@ import {
   parseSfcScript,
   resetVueCompilerCache,
   VUE_COMPILER_MISSING,
+  detectOptionsApiProps,
   type VueSfcCompiler,
 } from "../../src/vue-sfc.js";
-import { extractProps, detectScalingProps, projectSourceFiles } from "../../src/prop-gen.js";
+import {
+  extractProps,
+  detectScalingProps,
+  projectSourceFiles,
+  VUE_OPTIONS_API_PROPS_WARNING,
+  isVueOptionsApiPropsWarning,
+} from "../../src/prop-gen.js";
 import { detectFramework } from "../../src/react-profiler.js";
 import {
   resolveFramework,
@@ -61,7 +68,12 @@ describe("file support", () => {
   });
 
   it("still rejects unmeasurable extensions", () => {
-    expect(hasAcceptedComponentExtension("./Button.ts")).toBe(false);
+    // M77 widens the accepted extensions to include `.ts` (specs/milestones/
+    // m77-type-space-runtime-space.md, "Changed contracts": ".js/.ts file is
+    // now a legal argument... it never was before"), gated by hasComponentShape
+    // rather than accepted on extension alone; `.d.ts` and a non-source
+    // double extension stay rejected, unaffected by that widening.
+    expect(hasAcceptedComponentExtension("./Button.ts")).toBe(true);
     expect(hasAcceptedComponentExtension("./types.d.ts")).toBe(false);
     expect(hasAcceptedComponentExtension("./styles.vue.css")).toBe(false);
   });
@@ -211,6 +223,150 @@ describe("prop extraction", () => {
     );
     expect(files).toContain("Nested.vue");
     expect(files).toContain("helpers.ts");
+  });
+});
+
+// M80 scope 2: detectOptionsApiProps is the shallow, parse-only signal that
+// distinguishes "props declared in a form ADR 0002 excludes" from "genuinely
+// no props." Pure-function tests, independent of a real .vue fixture on disk.
+describe("detectOptionsApiProps: names the excluded declaration form", () => {
+  it("names a runtime props object literal", () => {
+    const source = `<script>\nexport default { name: "X", props: { label: String } };\n</script>`;
+    expect(detectOptionsApiProps(source, "X.vue", compiler!)).toBe("props");
+  });
+
+  it("names an extends chain without resolving it", () => {
+    const source = `<script>\nexport default { name: "X", extends: BaseX };\n</script>`;
+    expect(detectOptionsApiProps(source, "X.vue", compiler!)).toBe("extends");
+  });
+
+  it("names mixins", () => {
+    const source = `<script>\nexport default { name: "X", mixins: [SomeMixin] };\n</script>`;
+    expect(detectOptionsApiProps(source, "X.vue", compiler!)).toBe("mixins");
+  });
+
+  it("prefers props over extends when a component declares both", () => {
+    const source = `<script>\nexport default { extends: BaseX, props: { label: String } };\n</script>`;
+    expect(detectOptionsApiProps(source, "X.vue", compiler!)).toBe("props");
+  });
+
+  it("sees through a defineComponent(...) wrapper", () => {
+    const source =
+      `<script>\nimport { defineComponent } from "vue";\n` +
+      `export default defineComponent({ props: { label: String } });\n</script>`;
+    expect(detectOptionsApiProps(source, "X.vue", compiler!)).toBe("props");
+  });
+
+  it("is not flagged for a genuinely propless component", () => {
+    const source = `<script>\nexport default { name: "X" };\n</script>`;
+    expect(detectOptionsApiProps(source, "X.vue", compiler!)).toBeUndefined();
+  });
+
+  it("returns undefined when there is no plain <script> block to inspect", () => {
+    const source = `<script setup lang="ts">\nconst props = defineProps<{ x: boolean }>();\n</script>`;
+    expect(detectOptionsApiProps(source, "X.vue", compiler!)).toBeUndefined();
+  });
+});
+
+// M80 scope 2: extractVueProps now calls detectOptionsApiProps exactly once,
+// only on the branch a .vue file with no <script setup> already falls
+// through (findDefineProps finds nothing in an empty virtual entry) --
+// verified against the real fixture project's own compiler and tsconfig, the
+// same path `extractProps` takes in production.
+describe("extractProps discloses the excluded Options-API form via onWarning", () => {
+  it("names the file and the form for a runtime props object (PrimeVue's BaseButton.vue shape)", async () => {
+    const warnings: string[] = [];
+    const schemas = await extractProps(path.join(VUE_ROOT, "OptionsProps.vue"), {
+      onWarning: (w) => warnings.push(w),
+    });
+    expect(schemas).toEqual([]);
+    expect(warnings).toHaveLength(1);
+    expect(isVueOptionsApiPropsWarning(warnings[0])).toBe(true);
+    expect(warnings[0]).toBe(
+      VUE_OPTIONS_API_PROPS_WARNING(path.join(VUE_ROOT, "OptionsProps.vue"), "props"),
+    );
+    expect(warnings[0]).toContain("OptionsProps.vue");
+    expect(warnings[0]).toContain('"props"');
+    expect(warnings[0]).toContain("OptionsProps.props.tsx");
+    // States, rather than merely omitting, that extraction did not fail and
+    // the component is not broken.
+    expect(warnings[0]).toMatch(/did not fail/i);
+    expect(warnings[0]).toMatch(/not broken/i);
+  });
+
+  it("names the form for an extends chain without following it (PrimeVue's Button.vue/DataTable.vue shape)", async () => {
+    const warnings: string[] = [];
+    const schemas = await extractProps(path.join(VUE_ROOT, "OptionsExtends.vue"), {
+      onWarning: (w) => warnings.push(w),
+    });
+    expect(schemas).toEqual([]);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("OptionsExtends.vue");
+    expect(warnings[0]).toContain('"extends"');
+  });
+
+  it("does not warn for a genuinely propless Options-API component", async () => {
+    const warnings: string[] = [];
+    const schemas = await extractProps(path.join(VUE_ROOT, "OptionsPropless.vue"), {
+      onWarning: (w) => warnings.push(w),
+    });
+    expect(schemas).toEqual([]);
+    expect(warnings).toEqual([]);
+  });
+
+  it("does not warn for an SFC with no <script> block at all (Plain.vue, unaffected)", async () => {
+    const warnings: string[] = [];
+    const schemas = await extractProps(path.join(VUE_ROOT, "Plain.vue"), {
+      onWarning: (w) => warnings.push(w),
+    });
+    expect(schemas).toEqual([]);
+    expect(warnings).toEqual([]);
+  });
+
+  it("does not warn for a <script setup> runtime defineProps(...) call (RuntimeProps.vue, ADR 0002's own already-silent Vue case, out of this milestone's scope)", async () => {
+    const warnings: string[] = [];
+    const schemas = await extractProps(path.join(VUE_ROOT, "RuntimeProps.vue"), {
+      onWarning: (w) => warnings.push(w),
+    });
+    expect(schemas).toEqual([]);
+    expect(warnings).toEqual([]);
+  });
+
+  // The mandated control case: a typed <script setup> defineProps<T>() SFC
+  // is completely unaffected -- same schemas as before, and detectOptionsApiProps
+  // is never even reached (findDefineProps finds a typed call, short-circuiting
+  // before the new branch).
+  it("control case: a typed <script setup> defineProps<T>() SFC is unaffected", async () => {
+    const warnings: string[] = [];
+    const schemas = await extractProps(path.join(VUE_ROOT, "Button.vue"), {
+      onWarning: (w) => warnings.push(w),
+    });
+    expect(schemas.map((s) => s.name).sort()).toEqual(["count", "disabled", "label", "variant"]);
+    expect(warnings).toEqual([]);
+  });
+
+  it("stays silent with no throw when no onWarning is supplied, matching every other extractProps call site", async () => {
+    await expect(extractProps(path.join(VUE_ROOT, "OptionsProps.vue"))).resolves.toEqual([]);
+  });
+});
+
+// M80 scope 2 (M76-M83-MAP.md "two separate reasons" section, and the OPEN
+// WORK item this lane closes): extractSchemas (src/analyze.ts) is a private
+// closure with no exported seam, and no test/unit file in this repo calls
+// the full analyze() pipeline directly (that convention lives in test/e2e,
+// excluded from this run). The fix is that extractSchemas now performs
+// exactly the call proven below -- extractProps(file, { ...target, onWarning })
+// -- where before it passed no onWarning at all, so this warning (and every
+// other extractPropsDetailed can produce) was silently dropped on the real
+// measurement path even though --explain-props already showed it.
+describe("extractSchemas' onWarning wiring (src/analyze.ts) is the same call proven above", () => {
+  it("extractProps(file, { onWarning }) is the call extractSchemas now performs, and it surfaces the warning", async () => {
+    const warnings: string[] = [];
+    const schemas = await extractProps(path.join(VUE_ROOT, "OptionsProps.vue"), {
+      onWarning: (w) => warnings.push(w),
+    });
+    expect(schemas).toEqual([]);
+    expect(warnings.some(isVueOptionsApiPropsWarning)).toBe(true);
   });
 });
 

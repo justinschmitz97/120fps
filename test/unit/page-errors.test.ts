@@ -4,6 +4,9 @@ import type { Page } from "playwright";
 import {
   attachPageErrorCapture,
   enrichTimeoutError,
+  isHarnessInternalNoise,
+  extractThrowingModule,
+  waitForReadyOrFatal,
   type PageErrorCapture,
 } from "../../src/page-errors.js";
 
@@ -280,6 +283,98 @@ describe("attachPageErrorCapture: network failures", () => {
 });
 
 // ====================================================================
+// M83 #2 (element-plus-F3): the harness must not blame the component for
+// its own noise. A synthesized string placeholder ("test") landing in an
+// <img src> relative-resolves against the harness's own serving root and
+// 404s; that 404 is caused by the harness's own synthesis, not the
+// component, and must not reach per-combo attribution.
+// ====================================================================
+
+describe("isHarnessInternalNoise", () => {
+  it("is true for a bare, extension-less direct child of the harness root", () => {
+    expect(
+      isHarnessInternalNoise("http://localhost:5177/.120fps-harness-KAGFHv/test", ".120fps-harness-KAGFHv"),
+    ).toBe(true);
+  });
+
+  it("is false when the final segment carries a file extension (a real asset 404)", () => {
+    expect(
+      isHarnessInternalNoise("http://localhost:5177/.120fps-harness-KAGFHv/app.css", ".120fps-harness-KAGFHv"),
+    ).toBe(false);
+  });
+
+  it("is false when the request has a subdirectory prefix", () => {
+    expect(
+      isHarnessInternalNoise("http://localhost:5177/.120fps-harness-KAGFHv/src/test", ".120fps-harness-KAGFHv"),
+    ).toBe(false);
+    expect(
+      isHarnessInternalNoise("http://localhost:5177/.120fps-harness-KAGFHv/@fs/test", ".120fps-harness-KAGFHv"),
+    ).toBe(false);
+  });
+
+  it("is false for a path under a different harness directory", () => {
+    expect(
+      isHarnessInternalNoise("http://localhost:5177/.120fps-harness-other/test", ".120fps-harness-KAGFHv"),
+    ).toBe(false);
+  });
+
+  it("is false for a request outside the harness root entirely", () => {
+    expect(isHarnessInternalNoise("http://localhost:5177/test", ".120fps-harness-KAGFHv")).toBe(false);
+  });
+
+  it("is false for an unparseable url", () => {
+    expect(isHarnessInternalNoise("not a url", ".120fps-harness-KAGFHv")).toBe(false);
+  });
+});
+
+describe("attachPageErrorCapture: harness-internal noise attribution", () => {
+  it("excludes a bare extension-less 404 under the harness root when harnessDirName is given", () => {
+    const { page, emitter } = makeFakePage();
+    const capture = attachPageErrorCapture(page, ".120fps-harness-KAGFHv");
+    emitter.emit("response", makeResponse(404, "GET", "http://localhost:5177/.120fps-harness-KAGFHv/test"));
+    expect(capture.errors).toEqual([]);
+  });
+
+  it("excludes the same shape from requestfailed too", () => {
+    const { page, emitter } = makeFakePage();
+    const capture = attachPageErrorCapture(page, ".120fps-harness-KAGFHv");
+    emitter.emit(
+      "requestfailed",
+      makeFailedRequest("GET", "http://localhost:5177/.120fps-harness-KAGFHv/test"),
+    );
+    expect(capture.errors).toEqual([]);
+  });
+
+  it("still surfaces a genuine CSS 404 under the same harness root (M70 unaffected)", () => {
+    const { page, emitter } = makeFakePage();
+    const capture = attachPageErrorCapture(page, ".120fps-harness-KAGFHv");
+    emitter.emit(
+      "response",
+      makeResponse(404, "GET", "http://localhost:5177/.120fps-harness-KAGFHv/app.css"),
+    );
+    expect(capture.errors).toEqual([
+      "response 404: GET http://localhost:5177/.120fps-harness-KAGFHv/app.css",
+    ]);
+  });
+
+  it("does not exclude anything when harnessDirName is omitted (backward compatible)", () => {
+    const { page, emitter } = makeFakePage();
+    const capture = attachPageErrorCapture(page);
+    emitter.emit("response", makeResponse(404, "GET", "http://localhost:5177/.120fps-harness-KAGFHv/test"));
+    expect(capture.errors).toEqual([
+      "response 404: GET http://localhost:5177/.120fps-harness-KAGFHv/test",
+    ]);
+  });
+
+  it("never marks the drain fatal for excluded noise", () => {
+    const { page, emitter } = makeFakePage();
+    const capture = attachPageErrorCapture(page, ".120fps-harness-KAGFHv");
+    emitter.emit("response", makeResponse(404, "GET", "http://localhost:5177/.120fps-harness-KAGFHv/test"));
+    expect(capture.drain().fatal).toBe(false);
+  });
+});
+
+// ====================================================================
 // enrichTimeoutError
 // ====================================================================
 
@@ -357,5 +452,213 @@ describe("enrichTimeoutError", () => {
     const capture = makeCaptureWith(["boom"]);
     const result = enrichTimeoutError(err, capture, "mount harness");
     expect(result).toBe(err);
+  });
+});
+
+// ====================================================================
+// M79 gap 3b (taxonomy-F1): a synchronous throw during module evaluation
+// (e.g. next.config.mjs's env-validation) fires page.on("pageerror") almost
+// immediately, but nothing used to race that against the 30s readiness gate:
+// the run waited out the full timeout before ever reading what the capture
+// already had within the first second. waitForFatal/waitForReadyOrFatal make
+// the fatal signal preemptive instead of merely diagnostic-after-the-fact.
+// ====================================================================
+
+describe("PageErrorCapture.waitForFatal", () => {
+  it("resolves with the message and stack when a pageerror fires", async () => {
+    const { page, emitter } = makeFakePage();
+    const capture = attachPageErrorCapture(page);
+    const pending = capture.waitForFatal();
+    const err = new Error("createEnv failed: NEXT_PUBLIC_API_URL is required");
+    err.stack = "Error: createEnv failed\n    at eval (http://localhost:5177/.h/src/env.mjs:12:34)";
+    emitter.emit("pageerror", err);
+    const fatal = await pending;
+    expect(fatal.message).toBe("createEnv failed: NEXT_PUBLIC_API_URL is required");
+    expect(fatal.stack).toContain("env.mjs");
+  });
+
+  it("never resolves from console.error or a network failure (fatal means an uncaught exception)", async () => {
+    const { page, emitter } = makeFakePage();
+    const capture = attachPageErrorCapture(page);
+    let resolved = false;
+    capture.waitForFatal().then(() => { resolved = true; });
+    emitter.emit("console", makeConsoleMessage("error", "just a dev warning"));
+    emitter.emit("response", makeResponse(404, "GET", "http://localhost/app.css"));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(resolved).toBe(false);
+  });
+
+  it("a fresh call after the first fatal only resolves on the NEXT pageerror", async () => {
+    const { page, emitter } = makeFakePage();
+    const capture = attachPageErrorCapture(page);
+    emitter.emit("pageerror", new Error("first"));
+    let secondResolved = false;
+    capture.waitForFatal().then(() => { secondResolved = true; });
+    await Promise.resolve();
+    expect(secondResolved).toBe(false);
+    emitter.emit("pageerror", new Error("second"));
+    await Promise.resolve();
+    expect(secondResolved).toBe(true);
+  });
+
+  it("still records the fatal message into the normal bucket (session/segment unaffected)", async () => {
+    const { page, emitter } = makeFakePage();
+    const capture = attachPageErrorCapture(page);
+    capture.waitForFatal();
+    emitter.emit("pageerror", new Error("boom"));
+    expect(capture.errors).toEqual(["boom"]);
+  });
+});
+
+describe("extractThrowingModule", () => {
+  it("names the first source-file frame with a JS/TS extension", () => {
+    const stack =
+      "Error: createEnv failed\n" +
+      "    at eval (http://localhost:5177/.120fps-harness-x/src/env.mjs:12:34)\n" +
+      "    at http://localhost:5177/.120fps-harness-x/next.config.mjs:3:1";
+    expect(extractThrowingModule(stack)).toBe("env.mjs");
+  });
+
+  it("recognizes .ts/.tsx/.js/.jsx/.vue frames", () => {
+    expect(extractThrowingModule("Error: x\n  at http://h/src/App.tsx:1:1")).toBe("App.tsx");
+    expect(extractThrowingModule("Error: x\n  at http://h/src/store.ts:1:1")).toBe("store.ts");
+    expect(extractThrowingModule("Error: x\n  at http://h/src/util.js:1:1")).toBe("util.js");
+    expect(extractThrowingModule("Error: x\n  at http://h/src/Widget.jsx:1:1")).toBe("Widget.jsx");
+    expect(extractThrowingModule("Error: x\n  at http://h/src/Widget.vue:1:1")).toBe("Widget.vue");
+  });
+
+  it("returns undefined for a stack with no recognizable source frame", () => {
+    expect(extractThrowingModule("Error: boom\n    at <anonymous>")).toBeUndefined();
+  });
+
+  it("returns undefined when no stack is given at all", () => {
+    expect(extractThrowingModule(undefined)).toBeUndefined();
+  });
+
+  it("skips the message line and reads only frame lines", () => {
+    const stack = "Error: failed in App.mjs somehow\n    at http://h/src/real.ts:9:1";
+    expect(extractThrowingModule(stack)).toBe("real.ts");
+  });
+});
+
+describe("waitForReadyOrFatal", () => {
+  function neverResolves(): Promise<never> {
+    return new Promise(() => {});
+  }
+
+  it("resolves normally when readiness wins the race", async () => {
+    const { page } = makeFakePage();
+    const capture = attachPageErrorCapture(page);
+    await expect(
+      waitForReadyOrFatal(() => Promise.resolve(), capture, "component harness"),
+    ).resolves.toBeUndefined();
+  });
+
+  it("throws fast, naming the page error, when a fatal signal wins before readiness settles", async () => {
+    const { page, emitter } = makeFakePage();
+    const capture = attachPageErrorCapture(page);
+    const pending = waitForReadyOrFatal(neverResolves, capture, "component harness");
+    const err = new Error("createEnv failed: NEXT_PUBLIC_API_URL is required");
+    emitter.emit("pageerror", err);
+    await expect(pending).rejects.toThrow(/createEnv failed/);
+  });
+
+  it("does not lead with 'did not become ready within timeout' on the fail-fast path", async () => {
+    const { page, emitter } = makeFakePage();
+    const capture = attachPageErrorCapture(page);
+    const pending = waitForReadyOrFatal(neverResolves, capture, "component harness");
+    emitter.emit("pageerror", new Error("createEnv failed"));
+    let message = "";
+    try {
+      await pending;
+    } catch (err) {
+      message = (err as Error).message;
+    }
+    expect(message).not.toMatch(/did not become ready within timeout/);
+    expect(message).toMatch(/createEnv failed/);
+  });
+
+  it("names the throwing module when the stack yields one", async () => {
+    const { page, emitter } = makeFakePage();
+    const capture = attachPageErrorCapture(page);
+    const pending = waitForReadyOrFatal(neverResolves, capture, "component harness");
+    const err = new Error("createEnv failed");
+    err.stack = "Error: createEnv failed\n    at eval (http://localhost:5177/.h/src/env.mjs:3:1)";
+    emitter.emit("pageerror", err);
+    await expect(pending).rejects.toThrow(/env\.mjs/);
+  });
+
+  it("falls back to the page-error text alone when the stack yields no module name", async () => {
+    const { page, emitter } = makeFakePage();
+    const capture = attachPageErrorCapture(page);
+    const pending = waitForReadyOrFatal(neverResolves, capture, "component harness");
+    const err = new Error("createEnv failed");
+    err.stack = "Error: createEnv failed\n    at <anonymous>";
+    emitter.emit("pageerror", err);
+    await expect(pending).rejects.toThrow(/createEnv failed/);
+  });
+
+  it("falls back to enrichTimeoutError's shape when readiness times out with no fatal signal", async () => {
+    const { page, emitter } = makeFakePage();
+    const capture = attachPageErrorCapture(page);
+    emitter.emit("response", makeResponse(404, "GET", "http://localhost/app.css"));
+    const pending = waitForReadyOrFatal(
+      () => Promise.reject(makeTimeoutError()),
+      capture,
+      "component harness",
+    );
+    let message = "";
+    try {
+      await pending;
+    } catch (err) {
+      message = (err as Error).message;
+    }
+    expect(message).toContain("component harness did not become ready within timeout.");
+    expect(message).toContain("response 404: GET http://localhost/app.css");
+  });
+
+  it("appends the env-remedy line only when the lazy callback supplies one", async () => {
+    const { page, emitter } = makeFakePage();
+    const capture = attachPageErrorCapture(page);
+    const pending = waitForReadyOrFatal(
+      neverResolves,
+      capture,
+      "component harness",
+      () => "No .env or .env.local found; only NEXT_PUBLIC_*/VITE_* keys reach the page.",
+    );
+    emitter.emit("pageerror", new Error("createEnv failed"));
+    await expect(pending).rejects.toThrow(/NEXT_PUBLIC_/);
+  });
+
+  it("does not call the env-remedy callback on the healthy path", async () => {
+    const { page } = makeFakePage();
+    const capture = attachPageErrorCapture(page);
+    let called = false;
+    await waitForReadyOrFatal(() => Promise.resolve(), capture, "component harness", () => {
+      called = true;
+      return undefined;
+    });
+    expect(called).toBe(false);
+  });
+
+  it("does not call the env-remedy callback on a plain timeout with no fatal", async () => {
+    const { page } = makeFakePage();
+    const capture = attachPageErrorCapture(page);
+    let called = false;
+    try {
+      await waitForReadyOrFatal(
+        () => Promise.reject(makeTimeoutError()),
+        capture,
+        "component harness",
+        () => {
+          called = true;
+          return undefined;
+        },
+      );
+    } catch {
+      // expected
+    }
+    expect(called).toBe(false);
   });
 });

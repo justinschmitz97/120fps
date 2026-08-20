@@ -5,9 +5,11 @@ import path from "node:path";
 import {
   runPreflight,
   detectAsyncComponent,
+  detectMissingInstall,
   preflightFailureMessage,
   NODE_BUILTIN_WARNING,
   PREFLIGHT_BYPASSED_WARNING,
+  HARD_REMEDY,
 } from "../../src/preflight.js";
 
 const ROOT = path.resolve("fixtures/m42-server");
@@ -32,13 +34,24 @@ afterEach(() => {
   }
 });
 
-function makeIsolatedRoot(prefix: string, files: Record<string, string>): { root: string; entry: string } {
+// M78: every existing caller here is testing solid-js/PnP detection, not the
+// new not-installed check, so the default fixture is "installed" (an empty
+// node_modules is enough: the check is directory existence only). Callers
+// that specifically want the not-installed shape pass installed: false.
+function makeIsolatedRoot(
+  prefix: string,
+  files: Record<string, string>,
+  options: { installed?: boolean } = {},
+): { root: string; entry: string } {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   tmpDirs.push(root);
   for (const [rel, content] of Object.entries(files)) {
     const abs = path.join(root, rel);
     fs.mkdirSync(path.dirname(abs), { recursive: true });
     fs.writeFileSync(abs, content);
+  }
+  if (options.installed !== false) {
+    fs.mkdirSync(path.join(root, "node_modules"), { recursive: true });
   }
   const entry = path.join(root, "Card.tsx");
   if (!files["Card.tsx"]) fs.writeFileSync(entry, "export function Card() { return null; }\n");
@@ -264,6 +277,67 @@ describe("Yarn PnP rejection", () => {
       "package.json": "{}",
     });
     expect(runPreflight({ projectRoot: root, entries: [entry] }).hard).toEqual([]);
+  });
+});
+
+// M78: no node_modules anywhere from the member up through the workspace
+// root. Gated behind the PnP check (a legitimate PnP project never has
+// node_modules by design) so the two are never confused.
+describe("not-installed rejection", () => {
+  it("rejects a project with no node_modules anywhere", () => {
+    const { root, entry } = makeIsolatedRoot(
+      "120fps-preflight-not-installed-",
+      { "package.json": JSON.stringify({ dependencies: { react: "^19.0.0", "react-dom": "^19.0.0" } }) },
+      { installed: false },
+    );
+    const result = runPreflight({ projectRoot: root, entries: [entry] });
+    expect(result.hard.map((h) => h.kind)).toContain("not-installed");
+  });
+
+  it("passes an otherwise-identical project once node_modules exists", () => {
+    const { root, entry } = makeIsolatedRoot("120fps-preflight-installed-", {
+      "package.json": JSON.stringify({ dependencies: { react: "^19.0.0", "react-dom": "^19.0.0" } }),
+    });
+    expect(runPreflight({ projectRoot: root, entries: [entry] }).hard).toEqual([]);
+  });
+
+  it("does not report not-installed for a PnP project (never has node_modules by design)", () => {
+    const { root, entry } = makeIsolatedRoot(
+      "120fps-preflight-pnp-not-installed-",
+      { "package.json": "{}", ".pnp.cjs": "" },
+      { installed: false },
+    );
+    const result = runPreflight({ projectRoot: root, entries: [entry] });
+    expect(result.hard.map((h) => h.kind)).toEqual(["yarn-pnp"]);
+  });
+
+  it("names the missing install in the failure message with no --no-preflight escape hatch", () => {
+    const { root, entry } = makeIsolatedRoot(
+      "120fps-preflight-not-installed-msg-",
+      { "package.json": "{}" },
+      { installed: false },
+    );
+    const result = runPreflight({ projectRoot: root, entries: [entry] });
+    const message = preflightFailureMessage(result.hard);
+    expect(message).toContain("no installed dependencies");
+    expect(message).not.toContain("--no-preflight");
+    expect(message).toContain("npm install");
+  });
+
+  it("directly: detectMissingInstall is true when no level has node_modules", () => {
+    const { root } = makeIsolatedRoot("120fps-missing-install-direct-", { "package.json": "{}" }, { installed: false });
+    expect(detectMissingInstall(root, root)).toBe(true);
+  });
+
+  it("directly: detectMissingInstall is false once node_modules exists at any level", () => {
+    const { root } = makeIsolatedRoot("120fps-missing-install-direct-installed-", { "package.json": "{}" });
+    expect(detectMissingInstall(root, root)).toBe(false);
+  });
+
+  it("exports HARD_REMEDY verbatim so assertReactDomClient's taxonomy can reuse it", () => {
+    expect(HARD_REMEDY["not-installed"]).toContain("npm install");
+    expect(HARD_REMEDY["not-installed"]).not.toContain("--no-preflight");
+    expect(HARD_REMEDY["yarn-pnp"]).toContain("--no-preflight");
   });
 });
 

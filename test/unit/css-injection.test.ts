@@ -159,11 +159,12 @@ describe("resolveCssFiles", () => {
     expect(resolveCssFiles({}, tmpDir)).toEqual({
       files: [detected],
       autoDetected: true,
+      layer: "known-name",
     });
   });
 
   it("returns an empty list when nothing is detected", () => {
-    expect(resolveCssFiles({}, tmpDir)).toEqual({ files: [], autoDetected: false });
+    expect(resolveCssFiles({}, tmpDir)).toEqual({ files: [], autoDetected: false, layer: "none" });
   });
 
   it("explicit files suppress detection and keep order", () => {
@@ -173,6 +174,7 @@ describe("resolveCssFiles", () => {
     expect(resolveCssFiles({ cssFiles: [b, a] }, tmpDir)).toEqual({
       files: [b, a],
       autoDetected: false,
+      layer: "explicit",
     });
   });
 
@@ -181,6 +183,7 @@ describe("resolveCssFiles", () => {
     expect(resolveCssFiles({ noCss: true }, tmpDir)).toEqual({
       files: [],
       autoDetected: false,
+      layer: "disabled",
     });
   });
 
@@ -189,6 +192,7 @@ describe("resolveCssFiles", () => {
     expect(resolveCssFiles({ cssFiles: [a], noCss: true }, tmpDir)).toEqual({
       files: [],
       autoDetected: false,
+      layer: "disabled",
     });
   });
 

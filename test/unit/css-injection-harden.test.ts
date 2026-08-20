@@ -113,6 +113,7 @@ describe("H5: --no-css wins", () => {
     expect(resolveCssFiles({ cssFiles: [explicit], noCss: true }, tmpDir)).toEqual({
       files: [],
       autoDetected: false,
+      layer: "disabled",
     });
   });
 

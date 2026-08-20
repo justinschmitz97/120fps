@@ -246,13 +246,22 @@ describe("prop synthesis: edge-case types", () => {
     expect(names).toContain("address");
   });
 
-  // H34 a props type that is nothing but React's DOM surface.
-  it("H34: ComponentProps<'button'> enumerates nothing and says why", async () => {
+  // H34 a props type that is nothing but React's DOM surface. M81 section 2:
+  // this surface is genuinely enumerable (it was never an unenumerable
+  // computed type, just fully noise-filtered before the cap), so it is now
+  // measured like any other inherited surface: ranked, capped at 32, and
+  // disclosed by `warnPropCap` naming the true (uncapped) total — not
+  // silently reported as `[]` with a misleading "could not be enumerated".
+  it("H34: ComponentProps<'button'> is measured with its real DOM surface, capped honestly", async () => {
     const stderr = captureStderr();
-    expect(await extractProps(fixture("native-button.tsx"))).toEqual([]);
-    const warning = stderr.lines().find((l) => l.includes("NativeButton"));
+    const schemas = await extractProps(fixture("native-button.tsx"));
+    const names = schemas.map((s) => s.name);
+    expect(schemas.length).toBe(32);
+    expect(names).toContain("children");
+    expect(names).toContain("disabled");
+    const warning = stderr.lines().find((l) => l.includes("props were extracted"));
     expect(warning).toBeDefined();
-    expect(warning).toContain("ComponentProps");
+    expect(warning).toContain("237 props were extracted");
   });
 
   // H35 every edge shape stays generatable.
@@ -292,9 +301,20 @@ describe("prop synthesis: unaffected code paths", () => {
     expect(pair.values[0]).toEqual([1, 1]);
   });
 
-  // H24 the DOM surface of an HTMLAttributes-extending props type stays out.
-  it("H24: inherited DOM attributes are still filtered", async () => {
+  // H24 the DOM surface of an HTMLAttributes-extending props type is now
+  // ranked and capped rather than silently erased (M81 section 2): the
+  // component's own `padding`/`elevation` (Tier 1/2) still survive, and so
+  // does the inherited surface up to the 32-prop cap.
+  it("H24: inherited DOM attributes are ranked and capped, not erased", async () => {
+    const stderr = captureStderr();
     const props = await extractProps("./fixtures/html-attrs.tsx");
-    expect(props.map((s) => s.name).sort()).toEqual(["elevation", "padding"]);
+    const names = props.map((s) => s.name);
+    expect(props.length).toBe(32);
+    expect(names).toContain("padding");
+    expect(names).toContain("elevation");
+    expect(names).toContain("children");
+    const warning = stderr.lines().find((l) => l.includes("props were extracted"));
+    expect(warning).toBeDefined();
+    expect(warning).toContain("227 props were extracted");
   });
 });

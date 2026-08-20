@@ -166,7 +166,23 @@ export function hintsForReport(report: Report): HintId[] {
   if ((isolation?.rerender?.churnDegradation ?? 0) > 0) found.add("churnDegradation");
 
   const curveReport = report.scalingCurveReport;
-  if (curveReport?.domFlat) found.add("domFlat");
+  // M79 (4b, chakra-ui-F1) / M83: curve mode has no combos, so the per-combo
+  // renderHealth gate above can never fire for it. `renderErrorPoints`
+  // (report.ts) is the structural signal a broken scale point leaves behind,
+  // populated by runCurveMode at the same point CURVE_RENDER_ERROR_WARNING is
+  // pushed, so the two never drift by construction. The "scale point N="
+  // string match is kept as a fallback for a report built without the field
+  // (e.g. hand-constructed in a test, or from an older JSON report) — the
+  // structural field is what production code actually populates.
+  const curveRenderError =
+    (curveReport?.renderErrorPoints?.length ?? 0) > 0 ||
+    (report.warnings ?? []).some((w) => /^scale point N=/.test(w));
+  if (curveRenderError) found.add("renderError");
+  // A page that threw on every scale point is not evidence the scaling prop
+  // fails to drive rendering: domFlat's hint text is actively wrong for that
+  // case, so it is suppressed whenever this same report already has a render
+  // error to explain the flat curve.
+  if (curveReport?.domFlat && !curveRenderError) found.add("domFlat");
   // Both classes are printed on the curve screen's `Growth:` line, so the hint
   // never cites a classification the reader cannot see.
   for (const curve of [curveReport?.mountCurve, curveReport?.rerenderCurve]) {
@@ -190,9 +206,42 @@ export const MEASUREMENT_BASIS_LINE =
 export const PROVIDER_HINT_LINE = (candidate: string): string =>
   `component imports ${candidate}: likely needs a provider wrapper; see --wrap / 120fps.setup.tsx`;
 
+// M79 (4a, base-ui-F2): loose, deliberately — the goal is withholding a wrong
+// guess, not proving a right one. A captured error naming the real cause
+// (e.g. Base UI's own "The render prop was provided an invalid React
+// element...") must not also print a provider guess that has nothing to do
+// with it.
+const PROVIDER_ERROR_SIGNATURE = /provider|context/i;
+
+// Combo mode's captured text lives on each combo; curve mode has none of its
+// own combos, but its equivalent capture lives structurally in
+// scalingCurveReport.renderErrorPoints (report.ts), populated by runCurveMode
+// at the same point CURVE_RENDER_ERROR_WARNING (analyze.ts) is pushed into
+// report.warnings — both are read here so a report built either way (the
+// structural field, or only the formatted warning string) is covered.
+function capturedErrorTexts(report: Report): string[] {
+  const texts: string[] = [];
+  for (const combo of report.combos) {
+    if (combo.pageErrors) texts.push(...combo.pageErrors);
+  }
+  for (const point of report.scalingCurveReport?.renderErrorPoints ?? []) {
+    texts.push(...point.pageErrors);
+  }
+  for (const warning of report.warnings ?? []) {
+    if (/^scale point N=/.test(warning)) texts.push(warning);
+  }
+  return texts;
+}
+
 function extraHintLines(id: HintId, report: Report | undefined): string[] {
-  if (id !== "renderError") return [];
-  return (report?.providerCandidates ?? []).map(PROVIDER_HINT_LINE);
+  if (id !== "renderError" || !report) return [];
+  // M79 (4a): only emit the provider guess when at least one captured
+  // page-error message actually looks provider/context-shaped. When nothing
+  // captured mentions either, the reader already has the real captured text
+  // from appendPageErrors, and a wrong guess on top of a correct disclosure
+  // is worse than no guess.
+  if (!capturedErrorTexts(report).some((text) => PROVIDER_ERROR_SIGNATURE.test(text))) return [];
+  return (report.providerCandidates ?? []).map(PROVIDER_HINT_LINE);
 }
 
 export function formatHints(ids: HintId[], report?: Report): string {

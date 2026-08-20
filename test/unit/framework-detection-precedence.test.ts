@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { detectFramework, FRAMEWORK_MANIFEST_UNREADABLE } from "../../src/react-profiler.js";
-import { resolveFramework } from "../../src/analyze.js";
+import { resolveFramework, FRAMEWORK_FLAG_NO_MOUNT_EFFECT_WARNING } from "../../src/analyze.js";
 
 let tmpDir: string;
 
@@ -146,6 +146,54 @@ describe("framework resolution around the detector", () => {
     fs.mkdirSync(dir);
     const warnings: string[] = [];
     expect(resolveFramework("react", dir, undefined, (w) => warnings.push(w))).toBe("react");
+    expect(warnings).toEqual([]);
+  });
+});
+
+// M83 #4b (preact-app-F4): mount dispatch is purely extension-based; an
+// explicit --framework request that disagrees with what will actually mount
+// used to be silently discarded in both directions.
+describe("M83 #4b: --framework flag versus what actually mounts", () => {
+  it("warns when --framework vanilla is requested on a .tsx file (mounts react anyway)", () => {
+    const dir = path.join(tmpDir, "empty");
+    fs.mkdirSync(dir);
+    const warnings: string[] = [];
+    const result = resolveFramework("vanilla", dir, "Button.tsx", (w) => warnings.push(w));
+    expect(result).toBe("vanilla");
+    expect(warnings).toEqual([FRAMEWORK_FLAG_NO_MOUNT_EFFECT_WARNING("vanilla", "react")]);
+  });
+
+  it("says nothing when --framework react matches what a .tsx file actually mounts", () => {
+    const dir = path.join(tmpDir, "empty");
+    fs.mkdirSync(dir);
+    const warnings: string[] = [];
+    const result = resolveFramework("react", dir, "Button.tsx", (w) => warnings.push(w));
+    expect(result).toBe("react");
+    expect(warnings).toEqual([]);
+  });
+
+  it("warns when --framework react is requested on a .vue file (mounts vue anyway, and framework is force-reset)", () => {
+    const dir = path.join(tmpDir, "empty");
+    fs.mkdirSync(dir);
+    const warnings: string[] = [];
+    const result = resolveFramework("react", dir, "Widget.vue", (w) => warnings.push(w));
+    expect(result).toBe("vue");
+    expect(warnings).toEqual([FRAMEWORK_FLAG_NO_MOUNT_EFFECT_WARNING("react", "vue")]);
+  });
+
+  it("warns when --framework vue is requested on a non-.vue file", () => {
+    const dir = path.join(tmpDir, "empty");
+    fs.mkdirSync(dir);
+    const warnings: string[] = [];
+    const result = resolveFramework("vue", dir, "Button.tsx", (w) => warnings.push(w));
+    expect(result).toBe("vue");
+    expect(warnings).toEqual([FRAMEWORK_FLAG_NO_MOUNT_EFFECT_WARNING("vue", "react")]);
+  });
+
+  it("auto is exempt in both directions", () => {
+    const member = makeWorkspace({ dependencies: { react: "^19.0.0" } });
+    const warnings: string[] = [];
+    resolveFramework("auto", member, path.join(member, "Widget.vue"), (w) => warnings.push(w));
     expect(warnings).toEqual([]);
   });
 });

@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import {
   parseArgs,
   resolveIsolationOption,
@@ -10,6 +10,8 @@ import {
   stylesheetNotFoundMessage,
   nodeVersionError,
   MIN_NODE_MAJOR,
+  resolveFatalProcessError,
+  resetFatalProcessErrorGuard,
 } from "../../src/cli.js";
 import { resolveWrapPath, resolveCssFiles } from "../../src/analyze.js";
 
@@ -223,5 +225,78 @@ describe("node version gate", () => {
 
   it("does not reject an unparseable version string", () => {
     expect(nodeVersionError("not-a-version")).toBeUndefined();
+  });
+});
+
+// M79 behavior 2: no process.on("unhandledRejection"/"uncaughtException")
+// handler existed anywhere; Vite's fire-and-forget dependency-optimizer scan
+// could reject after buildAndServe's own try/catch already exited
+// successfully, which Node's default --unhandled-rejections=throw then
+// escalated to an uncaught exception with exit code 1 (documented at
+// cli.ts's own --help table as "a verdict failed" — wrong for a setup/harness
+// failure). resolveFatalProcessError is the pure decision the real
+// process.on handlers (registered only under isDirectRun, so importing
+// cli.ts from a test never installs them) apply.
+describe("M79 behavior 2: resolveFatalProcessError", () => {
+  afterEach(() => {
+    resetFatalProcessErrorGuard();
+  });
+
+  it("formats the same way formatCliError does, and exits 2 (setup/harness failure)", () => {
+    const err = new Error("Build failed with 1 error: Could not resolve \"./version\"");
+    const resolved = resolveFatalProcessError(err, undefined);
+    expect(resolved).toBeDefined();
+    expect(resolved!.exitCode).toBe(2);
+    expect(resolved!.output).toBe(formatCliError(err, undefined));
+    expect(resolved!.output).toContain("Build failed with 1 error");
+  });
+
+  it("prints no raw stack by default, and does under DEBUG=120fps (same DEBUG contract as formatCliError)", () => {
+    const err = new Error("boom");
+    const withoutDebug = resolveFatalProcessError(err, undefined);
+    expect(withoutDebug!.output).toBe(formatCliError(err, undefined));
+    expect(withoutDebug!.output).not.toContain(err.stack!);
+    resetFatalProcessErrorGuard();
+    const withDebug = resolveFatalProcessError(err, "120fps");
+    expect(withDebug!.output).toBe(formatCliError(err, "120fps"));
+    expect(withDebug!.output).toContain(err.stack!);
+  });
+
+  it("handles a non-Error thrown value", () => {
+    const resolved = resolveFatalProcessError("raw string rejection", undefined);
+    expect(resolved!.output).toContain("raw string rejection");
+    expect(resolved!.exitCode).toBe(2);
+  });
+
+  it("fires only once: a second rejection arriving before the process actually exits is a no-op", () => {
+    const first = resolveFatalProcessError(new Error("first"), undefined);
+    const second = resolveFatalProcessError(new Error("second"), undefined);
+    expect(first).toBeDefined();
+    expect(second).toBeUndefined();
+  });
+
+  it("resetFatalProcessErrorGuard re-arms the guard for the next case", () => {
+    expect(resolveFatalProcessError(new Error("a"), undefined)).toBeDefined();
+    resetFatalProcessErrorGuard();
+    expect(resolveFatalProcessError(new Error("b"), undefined)).toBeDefined();
+  });
+});
+
+// M79 taxonomy-F1: readEnvDefines reads only .env/.env.local and defines
+// process.env as {} — neither --help nor README mentioned this at all
+// (both grepped, zero hits, confirmed in specs/milestones/M76-M83-MAP.md).
+describe("M79 taxonomy-F1: --help documents the .env contract", () => {
+  it("names .env / .env.local as the only source", () => {
+    expect(helpText()).toContain(".env");
+    expect(helpText()).toContain(".env.local");
+  });
+
+  it("names the NEXT_PUBLIC_/VITE_ prefix requirement", () => {
+    expect(helpText()).toContain("NEXT_PUBLIC_");
+    expect(helpText()).toContain("VITE_");
+  });
+
+  it("states the invoking shell's own environment is not passed through", () => {
+    expect(helpText()).toMatch(/shell.{0,40}environment.{0,40}not/i);
   });
 });

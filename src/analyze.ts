@@ -1,16 +1,16 @@
 import os from "node:os";
 import fs from "node:fs";
 import path from "node:path";
-import { buildAndServe, detectComponentExport, detectProjectTransforms, discoverGlobalCss, detectScaleExport, detectWrapper, findProjectRoot, resolveReactCompilerState, type HarnessResult } from "./harness.js";
+import { buildAndServe, detectComponentExport, detectProjectTransforms, discoverGlobalCss, detectScaleExport, detectWrapper, findProjectRoot, resolveReactCompilerState, assertReactDomClient, rendererFor, detectBundlerReactDomAlias, BUNDLER_PREACT_ALIAS_WARNING, stylesheetRuleCount, hasAnyEnvFile, NO_ENV_FILE_REMEDY_NOTE, type HarnessResult } from "./harness.js";
 import {
   attachPageErrorCapture,
-  enrichTimeoutError,
   gotoWithErrorContext,
   hasPageErrors,
   mergeDrains,
   renderDrain,
+  waitForReadyOrFatal,
 } from "./page-errors.js";
-import { extractProps, extractPropsDetailed, extractExports, extractAllProps, detectScalingProps, projectSourceFiles, type PropSchema, type ScalingPropMatch } from "./prop-gen.js";
+import { extractProps, extractPropsDetailed, extractExports, extractAllProps, detectScalingProps, projectSourceFiles, isVueOptionsApiPropsWarning, type PropSchema, type ScalingPropMatch } from "./prop-gen.js";
 import { hintsForReport } from "./hints.js";
 import {
   probeMachineNoise,
@@ -27,11 +27,12 @@ import {
 import {
   runPreflight,
   preflightFailureMessage,
-  transformFailureNote,
   providerCandidateLabels,
   NODE_BUILTIN_WARNING,
   PROJECT_TRANSFORM_WARNING,
   PREFLIGHT_BYPASSED_WARNING,
+  PreflightHardRejectionError,
+  classifyPreprocessorAvailability,
 } from "./preflight.js";
 import {
   inferComposition,
@@ -39,6 +40,9 @@ import {
   buildFixtureScaffold,
   fixtureScaffoldPath,
   COMPOSITION_EMPTY_WARNING,
+  declaredCompositionSiblings,
+  extractRelativeTypeImports,
+  UNCOMPOSED_SIBLINGS_WARNING,
   type CompositionTree,
 } from "./composition.js";
 import { detectFramework, runReactAnalysis, hasReactWarning, type ReactOptimizations } from "./react-profiler.js";
@@ -113,6 +117,7 @@ import {
   classifyTier,
   computeVerdict,
   deriveReportMode,
+  detectRenderHealthInconsistency,
   DEFAULT_THRESHOLDS,
   TIER_BUDGETS,
   type CalibrationResult,
@@ -219,6 +224,19 @@ export const MATRIX_PAIRWISE_COVER_WARNING = (covered: number, full: number): st
 export const MATRIX_AUTO_ACTIVATED_NOTICE = (cellCount: number): string =>
   `Matrix mode auto-activated: measuring all ${cellCount} prop combinations, which multiplies run time ` +
   `roughly ${cellCount}x versus a single combo. Use --no-matrix to disable.`;
+
+// M83 #4a (twenty-F6): a run is one whole-run mode or the other; an explicit
+// --matrix silently lost to an auto-activated curve mode before this existed.
+export const MATRIX_SUPPRESSED_BY_CURVE_WARNING = (propName: string): string =>
+  `--matrix did not activate: curve mode auto-activated on ${propName} first, and a run is one ` +
+  "whole-run mode or the other. Re-run with --no-curve to force matrix instead.";
+
+// M83 #4c (commerce-F5): an explicit --matrix bypasses shouldAutoActivateMatrix's
+// 2-eligible-axis floor; when the component genuinely has none, the run still
+// prints a matrix table with one anchor-combo cell and no explanation.
+export const MATRIX_NO_AXES_WARNING =
+  "matrix mode found no boolean or small-union prop to cross: the single cell shown is the anchor " +
+  "combo, not a real matrix. Re-run --explain-props to see why no prop qualified as an axis.";
 
 // Shared by the plain-combo and forced-matrix paths so a large cell/combo
 // count throttles samples identically in either mode.
@@ -372,6 +390,11 @@ export interface BuildReportInput {
   skipAttribution?: boolean;
   autoComposition?: boolean;
   compositionTree?: import("./composition.js").CompositionTree;
+  // M80: a combo rendered something, but not the whole component. Applied
+  // once, after the per-combo loop, to every combo without a renderHealth
+  // value already: renderHealth already fully discloses the combo's shape,
+  // so a combo that has it is left untouched by this field and its verdict.
+  disclosureReason?: "uncomposed" | "propsExcluded";
   nextJsShims?: string[];
   scalingCurveReport?: ScalingCurveReport;
   matrixReport?: import("./report.js").MatrixReport;
@@ -484,6 +507,12 @@ export function buildReport(input: BuildReportInput): Report {
     combos.push(combo);
   }
 
+  // M83 #1 (element-plus-F2): computed here, before the scale-probe curve fit
+  // below can add more combos to reconcile against, and pushed onto
+  // report.warnings once the report exists — same array every other
+  // buildReport-time warning reaches, so the JSON report carries it too.
+  const renderHealthInconsistencyWarning = detectRenderHealthInconsistency(combos);
+
   // M61: domNodeCount growth used to be fitted across every combo: mixing
   // the sibling-copies probe's real N-copies growth with whatever incidental
   // DOM differences unrelated real prop combos happened to have, then
@@ -558,6 +587,10 @@ export function buildReport(input: BuildReportInput): Report {
     ));
   }
 
+  if (renderHealthInconsistencyWarning) {
+    report.warnings = [...(report.warnings ?? []), renderHealthInconsistencyWarning];
+  }
+
   if (input.fixturePath !== undefined) {
     report.fixturePath = input.fixturePath;
     report.fixtureAutoDetected = input.fixtureAutoDetected ?? false;
@@ -572,6 +605,18 @@ export function buildReport(input: BuildReportInput): Report {
   }
   if (input.compositionTree) {
     report.compositionTree = input.compositionTree;
+  }
+
+  // M80: never overrides an honest renderHealth ("error"/"empty") combo —
+  // that already fully discloses what happened. Only a combo that rendered
+  // something (the dangerous case: a real-looking DOM count with none of the
+  // declared parts inside it) gets the new field and the pass->warn downgrade.
+  if (input.disclosureReason) {
+    for (const combo of combos) {
+      if (combo.renderHealth) continue;
+      combo.disclosureReason = input.disclosureReason;
+      if (combo.verdict === "pass") combo.verdict = "warn";
+    }
   }
 
   if (input.nextJsShims && input.nextJsShims.length > 0) {
@@ -736,6 +781,10 @@ interface ModeContext {
   fixtureAutoDetected: boolean;
   composed: boolean;
   compositionTree?: CompositionTree;
+  // M80: see BuildReportInput.disclosureReason. Curve mode and isolation
+  // mode compute their own pass/fail independently of buildReport and never
+  // read this; only the combo/matrix path (both call buildReport) does.
+  disclosureReason?: "uncomposed" | "propsExcluded";
   wrapper?: WrapperReport;
   cssReport?: CssReport;
   runWarnings: string[];
@@ -746,6 +795,15 @@ interface ModeContext {
   getSourceFingerprint: () => Promise<string>;
   attachHarnessContext: (report: Report) => void;
 }
+
+// M83 #3 (element-plus-F4): per M46's precedent (a hostile run skips baseline
+// comparison entirely), a hostile run's leak signal does not unilaterally
+// fail the isolation run either — this is a coupling, not a retraction: the
+// raw `isolation.memory.leakSuspected: true` signal is untouched.
+export const LEAK_VERDICT_NOISE_QUALIFIED_WARNING = (cvPercent: number): string =>
+  `leak suspected (heap growth crossed the per-cycle threshold), but this run's machine noise was ` +
+  `hostile (probe CV ${Math.round(cvPercent)}%): the FAIL this would otherwise cause is withheld ` +
+  "until a quieter run confirms it.";
 
 async function runIsolationMode(
   ctx: ModeContext,
@@ -797,6 +855,13 @@ async function runIsolationMode(
     : resolveComponentBudget(loadBudgetConfig(ctx.projectRoot), ctx.relativeComponent, tier).mountMs;
 
   const componentName = detectComponentName(ctx.metadataPath, ctx.options.target);
+  // M83 #3 (element-plus-F4): `pass` is a placeholder here — isolation-mode
+  // reports always carry `combos: []`, so `attachHarnessContext`'s noise
+  // computation (unstableFraction) is structurally 0 for this mode, and only
+  // `probeCv` can classify the run. Computing the real verdict before that
+  // classification exists means a hostile run's leak signal has no noise
+  // level to check against. `report.pass` is reassigned below, after
+  // attachHarnessContext has populated `report.noise`.
   const report: Report = {
     version: 1,
     timestamp: new Date().toISOString(),
@@ -806,7 +871,7 @@ async function runIsolationMode(
     calibration: ctx.calibration,
     combos: [],
     thresholds,
-    pass: computeIsolationVerdict(run.isolation, mountBudgetMs),
+    pass: false,
     isolation: run.isolation,
     ...(harness.nextJsShims && harness.nextJsShims.length > 0
       ? { nextJsShims: harness.nextJsShims }
@@ -828,6 +893,18 @@ async function runIsolationMode(
     report.warnings = [...(report.warnings ?? []), ...run.warnings];
   }
 
+  report.pass = computeIsolationVerdict(run.isolation, mountBudgetMs, report.noise?.level);
+  // The memory branch's FAIL was withheld because the run's own sentinel
+  // called it hostile: the raw signal (isolation.memory.leakSuspected) stays
+  // true in the JSON, unchanged — only the FAIL rollup is qualified, and the
+  // report says why.
+  if (run.isolation.memory?.leakSuspected && report.noise?.level === "hostile") {
+    report.warnings = [
+      ...(report.warnings ?? []),
+      LEAK_VERDICT_NOISE_QUALIFIED_WARNING(report.noise.signals.probeCv),
+    ];
+  }
+
   applyBaselineWorkflow(
     report,
     isolationBaselineMetrics(run.isolation, tier, run.domNodeCount ?? 0),
@@ -843,7 +920,9 @@ async function runIsolationMode(
         samples: ctx.samples,
         mode: "isolation",
         framework: ctx.framework,
-        ...(ctx.cssReport ? { css: ctx.cssReport.files } : {}),
+        // M82: cssReport is now always constructed, even for "none" — gate on
+        // files.length so a no-CSS project's fingerprint bytes stay unchanged.
+        ...(ctx.cssReport && ctx.cssReport.files.length > 0 ? { css: ctx.cssReport.files } : {}),
         ...(ctx.wrapper ? { wrapper: ctx.wrapper.path } : {}),
         ...(harness.reactCompiler?.active ? { reactCompiler: true } : {}),
       }),
@@ -974,6 +1053,15 @@ async function runCurveMode(ctx: ModeContext, match: ScalingPropMatch): Promise<
   const brokenPoints = curveMounts.filter(
     (m) => m.domNodeCount === 0 && m.pageErrors?.fatal,
   );
+  if (brokenPoints.length > 0) {
+    // M79 gap: the structural counterpart to CURVE_RENDER_ERROR_WARNING's
+    // formatted string below, populated at the same point so the two never
+    // drift by construction rather than by convention.
+    curveReport.renderErrorPoints = brokenPoints.map((broken) => ({
+      n: curveScalePoints[broken.comboIndex] ?? broken.comboIndex,
+      pageErrors: renderDrain(broken.pageErrors!),
+    }));
+  }
   for (const broken of brokenPoints) {
     runWarnings.push(
       CURVE_RENDER_ERROR_WARNING(
@@ -1024,6 +1112,13 @@ async function runMatrixMode(ctx: ModeContext, matrixAutoActivated: boolean): Pr
   const fullMatrixCells = matrixAxes.reduce((acc, a) => acc * a.values.length, 1);
   if (fullMatrixCells > matrixCombos.length) {
     runWarnings.push(MATRIX_PAIRWISE_COVER_WARNING(matrixCombos.length, fullMatrixCells));
+  }
+
+  // M83 #4c (commerce-F5): an explicit --matrix bypasses shouldAutoActivateMatrix's
+  // 2-axis floor entirely; a component with zero boolean/small-union props
+  // still gets here and would otherwise print an unexplained "Prop Matrix ()".
+  if (matrixAxes.length === 0) {
+    runWarnings.push(MATRIX_NO_AXES_WARNING);
   }
 
   // M61: --max-combos previously did nothing once matrix mode auto-activated
@@ -1152,6 +1247,7 @@ async function runMatrixMode(ctx: ModeContext, matrixAutoActivated: boolean): Pr
     flatThresholds: options.flatThresholds,
     explicitThresholds,
     skipAttribution: options.skipAttribution,
+    ...(ctx.disclosureReason !== undefined ? { disclosureReason: ctx.disclosureReason } : {}),
     ...(harness.nextJsShims && harness.nextJsShims.length > 0 ? { nextJsShims: harness.nextJsShims } : {}),
   });
 
@@ -1474,6 +1570,7 @@ async function runComboMode(ctx: ModeContext, fixtureHasScale: boolean): Promise
     flatThresholds: options.flatThresholds,
     explicitThresholds,
     skipAttribution: options.skipAttribution,
+    ...(ctx.disclosureReason !== undefined ? { disclosureReason: ctx.disclosureReason } : {}),
     ...(useFixture
       ? {
           fixturePath: ctx.inputIsFixture ? ctx.componentPath : ctx.fixturePath,
@@ -1556,7 +1653,9 @@ async function runComboMode(ctx: ModeContext, fixtureHasScale: boolean): Promise
     samples: effectiveSamples,
     mode: "combo",
     framework: ctx.framework,
-    ...(ctx.cssReport ? { css: ctx.cssReport.files } : {}),
+    // M82: cssReport is now always constructed, even for "none" — gate on
+    // files.length so a no-CSS project's fingerprint bytes stay unchanged.
+    ...(ctx.cssReport && ctx.cssReport.files.length > 0 ? { css: ctx.cssReport.files } : {}),
     ...(ctx.wrapper ? { wrapper: ctx.wrapper.path } : {}),
     ...(harness.reactCompiler?.active ? { reactCompiler: true } : {}),
   });
@@ -1635,6 +1734,13 @@ export interface PropsExplanation {
   props: ExplainedProp[];
   curve?: { propName: string; reason: string };
   matrixWouldActivate: boolean;
+  // M83 #5 (base-ui-F6): the "Curve mode: would (not) activate" line only
+  // predicts detectScalingProps's whole-run auto-activation. The M61
+  // sibling-copies scale probe is a separate, unconditional mechanism
+  // appended to every default combo-mode run for a non-fixture target with
+  // no curve match — this predicts *that*, so the dry run's stated mode
+  // matches what a real run on the same target would actually do.
+  scaleProbeWillRun: boolean;
   presetPath?: string;
   warnings: string[];
 }
@@ -1643,7 +1749,7 @@ export interface PropsExplanation {
 // effect: no harness directory, no dev server, no browser, no report file.
 export async function explainProps(
   componentPath: string,
-  options: { target?: string } = {},
+  options: { target?: string; noPreflight?: boolean } = {},
 ): Promise<PropsExplanation> {
   const resolvedPath = path.resolve(componentPath);
   if (!fs.existsSync(resolvedPath)) {
@@ -1654,6 +1760,27 @@ export async function explainProps(
   const componentName = detectComponentExport(resolvedPath, options.target).name;
 
   const warnings: string[] = [];
+
+  // M78: the comment at this function's cli.ts call site has always promised
+  // "before every check that exists to protect a measurement, because it
+  // never starts one" — this call is what makes that true. Same gate order
+  // buildAndServe uses: preflight's graph-walk hard-hits first (bypassable
+  // via --no-preflight), then the always-on react-dom gate, at zero build
+  // cost (no harness dir, no dev server), matching this function's own
+  // "measures nothing" contract.
+  const preflight = runPreflight({ projectRoot, entries: [resolvedPath], componentName });
+  if (preflight.hard.length > 0) {
+    if (options.noPreflight) warnings.push(PREFLIGHT_BYPASSED_WARNING(preflight.hard));
+    else throw new Error(preflightFailureMessage(preflight.hard));
+  }
+  if (rendererFor(resolvedPath) === "react") {
+    assertReactDomClient(projectRoot);
+    const bundlerAlias = detectBundlerReactDomAlias(projectRoot);
+    if (bundlerAlias) {
+      warnings.push(BUNDLER_PREACT_ALIAS_WARNING(bundlerAlias.configFile, bundlerAlias.target));
+    }
+  }
+
   const detail = await extractPropsDetailed(resolvedPath, {
     ...(options.target ? { target: options.target } : {}),
     // A sink, not stderr: a dry run prints its diagnostics in its own output.
@@ -1678,6 +1805,29 @@ export async function explainProps(
     : (await extractExports(resolvedPath)).map((e) => e.name);
   const curveMatch = detectScalingProps(schemas)[0];
 
+  // M83 #8 (chakra-ui-F7): detectComponentExport resolving to the file's own
+  // marked `export default` is correct by JS/TS export semantics, not a bug
+  // (Chakra's own authoring choice) — no change to *which* export is picked.
+  // Only the escape hatch was undisclosed: when the resolved export carries a
+  // degenerate-flagged required prop (M60) and an unpicked export in the same
+  // file has an all-non-degenerate schema, name it and its #ExportName
+  // override.
+  if (!options.target && exports.length > 1 && schemas.some((s) => s.required && s.degenerate)) {
+    for (const altName of exports) {
+      if (altName === componentName) continue;
+      let altSchemas: PropSchema[];
+      try {
+        altSchemas = await extractProps(resolvedPath, { target: altName, onWarning: () => {} });
+      } catch {
+        continue; // not every export is a component; skip ones extraction rejects
+      }
+      if (altSchemas.length > 0 && altSchemas.every((s) => !s.degenerate)) {
+        warnings.push(ALTERNATIVE_EXPORT_WITHOUT_DEGENERATE_PROPS_NOTE(componentName, altName));
+        break;
+      }
+    }
+  }
+
   return {
     componentPath,
     componentName,
@@ -1699,6 +1849,12 @@ export async function explainProps(
     ...(curveMatch
       ? { curve: { propName: curveMatch.schema.name, reason: curveMatch.reason } }
       : {}),
+    // M83 #5: the same gating condition runComboMode's non-curve, non-fixture
+    // branch uses. Accurate for the common case this predicts; an
+    // auto-composed scene is not cheaply detectable inside a dry run's scope,
+    // so this may be imprecise for that shape — an accepted, stated limit,
+    // not silently glossed over.
+    scaleProbeWillRun: !isFixturePath(resolvedPath) && !curveMatch,
     matrixWouldActivate: shouldAutoActivateMatrix(schemas),
     ...(presets ? { presetPath: presets.path } : {}),
     warnings,
@@ -1765,6 +1921,16 @@ export function formatExplainProps(explained: PropsExplanation): string {
       ? `Curve mode:   would activate on ${explained.curve.propName} (${explained.curve.reason})`
       : "Curve mode:   would not activate: no array or numeric scaling prop",
   );
+  // M83 #5 (base-ui-F6): a separate mechanism from curve mode above — the M61
+  // sibling-copies scale probe runs unconditionally on a non-fixture target
+  // whenever curve mode does not, regardless of whether the component has
+  // any array/numeric prop at all.
+  if (explained.scaleProbeWillRun) {
+    lines.push(
+      "Scale probe:  would still run N=1/5/20/50 synthetic copies and report a growth class, " +
+      "independent of curve mode",
+    );
+  }
   lines.push(
     explained.matrixWouldActivate
       ? "Matrix mode:  would auto-activate"
@@ -1884,7 +2050,9 @@ async function tryReuseStoredVerdict(args: {
     samples: args.samples,
     mode: "combo",
     framework: args.framework,
-    ...(args.cssReport ? { css: args.cssReport.files } : {}),
+    // M82: cssReport is now always constructed, even for "none" — gate on
+    // files.length so a no-CSS project's fingerprint bytes stay unchanged.
+    ...(args.cssReport && args.cssReport.files.length > 0 ? { css: args.cssReport.files } : {}),
     ...(args.wrapPath
       ? { wrapper: path.relative(projectRoot, args.wrapPath).replace(/\\/g, "/") }
       : {}),
@@ -1995,6 +2163,13 @@ export async function analyze(
 
   let compositionTree: CompositionTree | undefined;
   let componentExports: import("./composition.js").ExportInfo[] | undefined;
+  // M80: set when a run's combos measured less than the whole component
+  // (radix's dual-family/bare-alias shape, base-ui's cross-file parts, or
+  // Vue's Options-API prop exclusion). Held locally until `runWarnings`
+  // exists (it is declared further down this function) because the check
+  // below can fire before that point.
+  let disclosureReason: "uncomposed" | "propsExcluded" | undefined;
+  let uncomposedWarning: string | undefined;
   // M65: an explicit target names the one export to render, which is the
   // opposite of inferring a scene from several.
   if (!fixturePath && !inputIsFixture && !options.skipAutoCompose && !rendererIsVue && !options.target) {
@@ -2003,6 +2178,21 @@ export async function analyze(
       const allSchemas = await extractAllProps(resolvedPath);
       const tree = inferComposition(componentExports, allSchemas);
       if (tree) compositionTree = tree;
+    }
+    // M80: composition either never attempted (a single-export file, e.g.
+    // base-ui's TabsRoot.tsx) or attempted and failed to find a root (radix's
+    // dual prefixed/bare-alias shape defeats findRoot's prefix check). Either
+    // way the run is about to measure the bare export alone; check whether
+    // the file itself still declares recognized sibling parts.
+    if (!compositionTree) {
+      const boundName = detectComponentExport(resolvedPath, options.target).name;
+      const typeImportNames = await extractRelativeTypeImports(resolvedPath);
+      const siblingExports = componentExports.filter((e) => e.name !== boundName);
+      const siblings = declaredCompositionSiblings(boundName, siblingExports, typeImportNames);
+      if (siblings.length > 0) {
+        disclosureReason = "uncomposed";
+        uncomposedWarning = UNCOMPOSED_SIBLINGS_WARNING(boundName, siblings.map((s) => s.name));
+      }
     }
   }
 
@@ -2019,17 +2209,39 @@ export async function analyze(
   const framework = resolveFramework(options.framework ?? "auto", projectRoot, harnessPath, (w) =>
     frameworkWarnings.push(w),
   );
-  const { wrapPath, wrapAutoDetected } = resolveWrapPath(options, projectRoot, framework);
+  // M76: what the wrapper probe had to fall back to, folded into the run's
+  // warnings below alongside frameworkWarnings and cssWarnings.
+  const wrapWarnings: string[] = [];
+  const { wrapPath, wrapAutoDetected } = resolveWrapPath(options, projectRoot, framework, wrapWarnings);
   // M71: what discovery had to guess at, folded into the run's warnings below.
   const cssWarnings: string[] = [];
   const resolvedCss = resolveCssFiles(options, projectRoot, cssWarnings);
-  const cssReport: CssReport | undefined =
-    resolvedCss.files.length > 0
-      ? {
-          files: resolvedCss.files.map((f) => path.relative(projectRoot, f).replace(/\\/g, "/")),
-          autoDetected: resolvedCss.autoDetected,
-        }
-      : undefined;
+  // M82: always constructed, even for "none" — the fingerprint call sites
+  // below guard on files.length so a no-CSS project's fingerprint bytes stay
+  // unchanged despite cssReport no longer being undefined for that case.
+  const cssReport: CssReport = {
+    files: resolvedCss.files.map((f) => path.relative(projectRoot, f).replace(/\\/g, "/")),
+    autoDetected: resolvedCss.autoDetected,
+    layer: resolvedCss.layer,
+    details: resolvedCss.files.map((f) => {
+      let bytes = 0;
+      try {
+        bytes = fs.statSync(f).size;
+      } catch {
+        bytes = 0;
+      }
+      return {
+        file: path.relative(projectRoot, f).replace(/\\/g, "/"),
+        bytes,
+        rules: stylesheetRuleCount(f),
+      };
+    }),
+    ...(resolvedCss.runtimeEngines !== undefined ? { runtimeEngines: resolvedCss.runtimeEngines } : {}),
+    ...(resolvedCss.onlyCandidate !== undefined ? { onlyCandidate: resolvedCss.onlyCandidate } : {}),
+    ...(resolvedCss.noEntryInPackage !== undefined
+      ? { noEntryInPackage: resolvedCss.noEntryInPackage }
+      : {}),
+  };
   // M44: a fixture already owns its scene, so presets never apply there.
   const presetPath = useFixture ? undefined : detectPropPresets(resolvedPath);
   const presets = presetPath ? loadPropPresets(presetPath, projectRoot) : undefined;
@@ -2039,7 +2251,12 @@ export async function analyze(
   // M48: kept outside the try so a failure on the way out can still name them.
   let transformHits: import("./preflight.js").PreflightHit[] = [];
   let activeTransforms: string[] | undefined;
-  const runWarnings: string[] = [...frameworkWarnings, ...cssWarnings];
+  const runWarnings: string[] = [
+    ...frameworkWarnings,
+    ...cssWarnings,
+    ...wrapWarnings,
+    ...(uncomposedWarning ? [uncomposedWarning] : []),
+  ];
   // M46: counted before dedup: one surviving reload is a noise signal, and the
   // warning list deliberately shows it once however often it happened.
   let contextRetries = 0;
@@ -2054,7 +2271,25 @@ export async function analyze(
   // deltas, matrix cells and curve anchors all measure the same data.
   const presetApplied = new Set<string>();
   const extractSchemas = async (file: string): Promise<PropSchema[]> => {
-    const raw = await extractProps(file, options.target ? { target: options.target } : undefined);
+    // M80 scope 2: extractPropsDetailed's warnings (not just the Vue one)
+    // used to be dropped on this, the real measurement path, even though
+    // --explain-props's extractPropsDetailed call already passed onWarning.
+    let sawOptionsApiExclusion = false;
+    const raw = await extractProps(file, {
+      ...(options.target ? { target: options.target } : {}),
+      onWarning: (warning) => {
+        if (isVueOptionsApiPropsWarning(warning)) sawOptionsApiExclusion = true;
+        onWarning(warning);
+      },
+    });
+    // The producer for BuildReportInput.disclosureReason's "propsExcluded"
+    // value (M80 scope 1 built the downgrade; nothing produced this value
+    // until now). `disclosureReason` is untouched by the auto-composition
+    // guard above for a Vue run (rendererIsVue skips it entirely), so this is
+    // the only place a Vue run can set it.
+    if (raw.length === 0 && sawOptionsApiExclusion && disclosureReason === undefined) {
+      disclosureReason = "propsExcluded";
+    }
     if (!presets) return raw;
     const result = applyPropPresets(raw, presets);
     for (const name of result.applied) presetApplied.add(name);
@@ -2163,6 +2398,15 @@ export async function analyze(
   let harness: HarnessResult | undefined;
   let msession: MeasurementSession | undefined;
 
+  // M79 (1b): generalizes the old transformHits-only special case. Every
+  // warning already computed by the time of a throw (the same array
+  // attachHarnessContext would have used on success) is worth as much on the
+  // way out as it would have been in a successful report — a
+  // preprocessor-config-ignored or unsupported-style-engine warning explains
+  // a crash the bare error message alone would not.
+  const formatAccumulatedWarnings = (warnings: string[]): string =>
+    ["", "", "Warnings recorded before this failure:", ...warnings.map((w) => `  ${w}`)].join("\n");
+
   try {
     const reused = await tryReuseStoredVerdict({
       options,
@@ -2210,20 +2454,47 @@ export async function analyze(
     const loadableTransforms = new Set(
       (options.noTransforms ? [] : detectProjectTransforms(projectRoot)).map((t) => t.code),
     );
-    transformHits = preflight.transforms.filter(
-      (hit) => !hit.transformCode || !loadableTransforms.has(hit.transformCode),
-    );
+    // M79 (twenty-F3, half 2): a css-preprocessor hit fires unconditionally
+    // (recognizeTransform performs no availability check by design). Vite's
+    // own CSS pipeline resolves sass/less/stylus directly, so an installed
+    // preprocessor needs no warning at all, and a declared-but-uninstalled
+    // one needs different wording than the genuinely-neither case.
+    const preprocessorWorkspaceRoot = findWorkspaceRoot(projectRoot);
+    const candidateTransformHits = preflight.transforms
+      .filter((hit) => !hit.transformCode || !loadableTransforms.has(hit.transformCode))
+      .map((hit) => ({
+        hit,
+        availability: classifyPreprocessorAvailability(hit, projectRoot, preprocessorWorkspaceRoot),
+      }))
+      .filter(({ availability }) => availability !== "installed");
+    transformHits = candidateTransformHits.map(({ hit }) => hit);
     // Named up front, and again on the way out if the run dies: a transform
     // the harness cannot apply is the first thing to check.
-    for (const hit of transformHits) runWarnings.push(PROJECT_TRANSFORM_WARNING(hit));
+    for (const { hit, availability } of candidateTransformHits) {
+      runWarnings.push(PROJECT_TRANSFORM_WARNING(hit, availability));
+    }
     if (loadableTransforms.size > 0) {
       activeTransforms = [...loadableTransforms].sort();
+    }
+    // M78 loose end: wired into --explain-props (explainProps, above) but
+    // never into the default run's own warning list. Zero cost when the
+    // project has no next.config/webpack.config matching the shape (a single
+    // probe-order file read).
+    if (framework === "react") {
+      const bundlerAlias = detectBundlerReactDomAlias(projectRoot);
+      if (bundlerAlias) {
+        runWarnings.push(BUNDLER_PREACT_ALIAS_WARNING(bundlerAlias.configFile, bundlerAlias.target));
+      }
     }
     if (preflight.hard.length > 0) {
       if (options.noPreflight) {
         runWarnings.push(PREFLIGHT_BYPASSED_WARNING(preflight.hard));
       } else {
-        throw new Error(preflightFailureMessage(preflight.hard));
+        // M79/M78: a preflight hard-rejection, not a build/runtime failure —
+        // nothing has been built yet, so the diagnosis is already complete.
+        // The marker lets the outer catch below skip stacking accumulated
+        // warnings (e.g. an unrelated css-preprocessor note) on top of it.
+        throw new PreflightHardRejectionError(preflightFailureMessage(preflight.hard));
       }
     }
 
@@ -2247,7 +2518,12 @@ export async function analyze(
 
     // M35: calibration, trial mount, and wrapper overhead run under the same
     // driven frame pacing as the measurement passes they normalize.
-    msession = await openMeasurementSession({ driven: true, onWarning, pool });
+    msession = await openMeasurementSession({
+      driven: true,
+      onWarning,
+      pool,
+      harnessDirName: path.basename(harness.harnessDir),
+    });
     const page = msession.page;
     const pageErrors = msession.errorCapture;
     const cdp = msession.session.cdp;
@@ -2259,15 +2535,24 @@ export async function analyze(
       await gotoWithErrorContext(page, harness!.url, pageErrors, "component harness", {
         waitUntil: HARNESS_NAV_WAIT,
       });
-      try {
-        await page.waitForFunction(
-          () => typeof (window as any).__120fps === "object",
-          undefined,
-          { timeout: 30000 },
-        );
-      } catch (err) {
-        throw enrichTimeoutError(err, pageErrors, "component harness");
-      }
+      // M79 gap 3b: races readiness against a fatal page error (a
+      // synchronous throw during module evaluation, e.g. a next.config.mjs
+      // env-validation failure) instead of always waiting out the full
+      // timeout.
+      await waitForReadyOrFatal(
+        () =>
+          page.waitForFunction(
+            () => typeof (window as any).__120fps === "object",
+            undefined,
+            { timeout: 30000 },
+          ),
+        pageErrors,
+        "component harness",
+        () => {
+          const projectRoot = path.dirname(harness!.harnessDir);
+          return hasAnyEnvFile(projectRoot) ? undefined : NO_ENV_FILE_REMEDY_NOTE;
+        },
+      );
 
       await applyWrapperViewport(page);
       // M74 (B10): threads both the settle-timeout warning and, when a
@@ -2289,6 +2574,22 @@ export async function analyze(
           runWarnings.push(
             writeFixtureScaffold(resolvedPath, componentExports ?? [], compositionTree!),
           );
+        }
+        // M80: the rolled-back mount is about to measure the bare root
+        // alone, same shape as the never-composed case above. Checked before
+        // `compositionTree`/`componentExports` are cleared below: a root
+        // that self-wraps in one element (nonzero domNodeCount, so
+        // renderHealth never fires) but still declares recognized sibling
+        // parts must not read as an unqualified pass.
+        {
+          const rootName = compositionTree!.root;
+          const typeImportNames = await extractRelativeTypeImports(resolvedPath);
+          const siblingExports = (componentExports ?? []).filter((e) => e.name !== rootName);
+          const siblings = declaredCompositionSiblings(rootName, siblingExports, typeImportNames);
+          if (siblings.length > 0) {
+            disclosureReason = "uncomposed";
+            runWarnings.push(UNCOMPOSED_SIBLINGS_WARNING(rootName, siblings.map((s) => s.name)));
+          }
         }
         compositionTree = undefined;
         componentExports = undefined;
@@ -2359,6 +2660,17 @@ export async function analyze(
       fixtureAutoDetected,
       composed,
       ...(compositionTree !== undefined ? { compositionTree } : {}),
+      // M80 scope 2 (cross-boundary fix, see Lane G report): a plain
+      // value-spread here would snapshot `disclosureReason` at ctx
+      // construction time, which is always before getSchemas() -- and thus
+      // extractSchemas's own, later "propsExcluded" assignment -- ever runs.
+      // A getter re-reads the outer binding live, so a Vue run's disclosure
+      // (computed lazily, on first getSchemas() call) still reaches
+      // BuildReportInput.disclosureReason below. The "uncomposed" producer is
+      // unaffected: it already assigns before this object is constructed.
+      get disclosureReason() {
+        return disclosureReason;
+      },
       ...(wrapper !== undefined ? { wrapper } : {}),
       ...(cssReport !== undefined ? { cssReport } : {}),
       runWarnings,
@@ -2378,6 +2690,14 @@ export async function analyze(
     // --- Curve mode check ---
     const curveMatch = await resolveCurveMatch(ctx);
     if (curveMatch) {
+      // M83 #4a (twenty-F6): the CLI already rejects an explicit --curve
+      // combined with an explicit --matrix at parse time, so a truthy
+      // curveMatch here alongside an explicit --matrix can only be an
+      // auto-activation winning a mode conflict the user did not ask to lose
+      // silently.
+      if (options.matrixMode === true) {
+        runWarnings.push(MATRIX_SUPPRESSED_BY_CURVE_WARNING(curveMatch.schema.name));
+      }
       progress(`mode: curve on ${curveMatch.schema.name}`);
       return await runCurveMode(ctx, curveMatch);
     }
@@ -2406,11 +2726,22 @@ export async function analyze(
     progress("mode: prop combos");
     return await runComboMode(ctx, fixtureHasScale);
   } catch (err) {
-    // M48: whatever killed the run, an unloadable project transform in the
-    // graph is the likeliest cause and the least visible one. Vite's own error
-    // never mentions the plugin the project relies on.
-    if (transformHits.length > 0 && err instanceof Error) {
-      throw new Error(err.message + transformFailureNote(transformHits), { cause: err });
+    // M79/M78: a preflight hard-rejection already names a complete, correct
+    // fix (nothing was built yet); stacking accumulated warnings on top of it
+    // is exactly the compounding-note bug (excalidraw-F3's "needs a CSS
+    // preprocessor" note glued onto an unrelated "nothing installed" hard
+    // rejection).
+    if (err instanceof PreflightHardRejectionError) throw err;
+    // M79 (1b): subsumes the old transformHits-only special case —
+    // transformHits's own warnings are already in runWarnings (pushed above),
+    // and 1a's harness.ts throw sites attach their own buildWarnings on the
+    // error itself, so both sources fold into one block here.
+    if (err instanceof Error) {
+      const carried = (err as Error & { warnings?: string[] }).warnings ?? [];
+      const combined = [...new Set([...runWarnings, ...carried])];
+      if (combined.length > 0) {
+        throw new Error(err.message + formatAccumulatedWarnings(combined), { cause: err });
+      }
     }
     throw err;
   } finally {
@@ -2428,6 +2759,17 @@ function animatedIndices(mounts: MountResult[]): number[] {
 
 export const ZERO_PROPS_WARNING =
   "No props extracted: component measured with empty props only; if the component has typed props, extraction may have failed";
+
+// M83 #8 (chakra-ui-F7): the resolved export is correct by JS/TS export
+// semantics; this only surfaces the existing #ExportName escape hatch when
+// it would trade a degenerate required prop away.
+export const ALTERNATIVE_EXPORT_WITHOUT_DEGENERATE_PROPS_NOTE = (
+  resolved: string,
+  alternative: string,
+): string =>
+  `${resolved} has a required prop this tool cannot synthesize a real value for; this file also ` +
+  `exports ${alternative}, whose props are all synthesizable. Target it with #${alternative} if it is ` +
+  "the component you meant to measure.";
 
 // M65: `<file>#Export` and `--fixture` both decide what gets rendered.
 export const TARGET_WITH_FIXTURE_ERROR =
@@ -2449,12 +2791,22 @@ export const CURVE_RENDER_ERROR_WARNING = (n: number, messages: string[]): strin
 // paths resolve against process.cwd() and suppress detection. M71: detection
 // follows the project's own entry imports first and can return several files,
 // in import order; whatever it had to guess at travels in `warningsOut`.
+// M82: layer travels with the resolution so analyzeComponent can build a
+// CssReport unconditionally — layer is what makes "found nothing" and "found
+// nothing because --no-css" distinguishable in the disclosed report.
 export function resolveCssFiles(
   options: Pick<AnalyzeOptions, "cssFiles" | "noCss">,
   projectRoot: string,
   warningsOut?: string[],
-): { files: string[]; autoDetected: boolean } {
-  if (options.noCss) return { files: [], autoDetected: false };
+): {
+  files: string[];
+  autoDetected: boolean;
+  layer: CssReport["layer"];
+  onlyCandidate?: boolean;
+  noEntryInPackage?: boolean;
+  runtimeEngines?: string[];
+} {
+  if (options.noCss) return { files: [], autoDetected: false, layer: "disabled" };
 
   if (options.cssFiles && options.cssFiles.length > 0) {
     const files: string[] = [];
@@ -2469,13 +2821,40 @@ export function resolveCssFiles(
       if (!stat.isFile()) throw new Error(`Stylesheet is not a file: ${raw}`);
       if (!files.includes(resolved)) files.push(resolved);
     }
-    return { files, autoDetected: false };
+    return { files, autoDetected: false, layer: "explicit" };
   }
 
   const discovered = discoverGlobalCss(projectRoot, warningsOut);
-  return discovered.files.length > 0
-    ? { files: discovered.files, autoDetected: true }
-    : { files: [], autoDetected: false };
+  const layer: CssReport["layer"] =
+    discovered.source === "entry"
+      ? "entry-chain"
+      : discovered.source === "candidate"
+        ? "known-name"
+        : discovered.source === "fallback"
+          ? "largest-fallback"
+          : discovered.source === "runtime"
+            ? "runtime"
+            : "none";
+  return {
+    files: discovered.files,
+    autoDetected: discovered.files.length > 0,
+    layer,
+    ...(discovered.onlyCandidate !== undefined ? { onlyCandidate: discovered.onlyCandidate } : {}),
+    ...(discovered.noEntryInPackage !== undefined
+      ? { noEntryInPackage: discovered.noEntryInPackage }
+      : {}),
+    ...(discovered.runtimeEngines !== undefined ? { runtimeEngines: discovered.runtimeEngines } : {}),
+  };
+}
+
+// M76: chakra-ui-F2's finding is exactly that a wrapper placed at the natural
+// monorepo root produces total silence, identical to no wrapper existing at
+// all — a wrapper that loads from an unexpected level must say so.
+export function WRAPPER_FROM_WORKSPACE_ROOT_WARNING(wrapPath: string, projectRoot: string): string {
+  return (
+    `${wrapPath} was found at the workspace root, not in ${projectRoot}; the component's own package ` +
+    "declares no 120fps.setup.* wrapper of its own"
+  );
 }
 
 // --no-wrap wins over an explicit --wrap, matching --no-isolate/--isolate.
@@ -2483,6 +2862,7 @@ export function resolveWrapPath(
   options: Pick<AnalyzeOptions, "wrapPath" | "noWrap">,
   projectRoot: string,
   framework?: string,
+  warningsOut?: string[],
 ): { wrapPath?: string; wrapAutoDetected: boolean } {
   if (options.noWrap) return { wrapAutoDetected: false };
   if (options.wrapPath) {
@@ -2493,7 +2873,17 @@ export function resolveWrapPath(
     return { wrapPath: resolved, wrapAutoDetected: false };
   }
   const detected = detectWrapper(projectRoot, framework);
-  return detected ? { wrapPath: detected, wrapAutoDetected: true } : { wrapAutoDetected: false };
+  if (detected) return { wrapPath: detected, wrapAutoDetected: true };
+
+  const workspaceRoot = findWorkspaceRoot(projectRoot);
+  if (workspaceRoot !== projectRoot) {
+    const fromRoot = detectWrapper(workspaceRoot, framework);
+    if (fromRoot) {
+      warningsOut?.push(WRAPPER_FROM_WORKSPACE_ROOT_WARNING(fromRoot, projectRoot));
+      return { wrapPath: fromRoot, wrapAutoDetected: true };
+    }
+  }
+  return { wrapAutoDetected: false };
 }
 
 // Root for 120fps.config.json / 120fps-baseline.json: nearest ancestor of the
@@ -2559,15 +2949,31 @@ export function legacyBaselineWarning(
 // Explicit --framework react|vue|vanilla skips detection; auto detects from the
 // project's package.json. A `.vue` file overrides both: no flag can make React
 // render an SFC, so the file's own type is the stronger evidence.
+//
+// M83 #4b (preact-app-F4): `rendererFor` (src/harness.ts) decides the mount
+// template purely by file extension and never reads --framework; the flag
+// only ever gates which *post-mount analysis* pass runs. An explicit,
+// non-"auto" request that disagrees with what will actually mount (by the
+// same extension check performed here) now says so instead of being
+// silently discarded in either direction.
 export function resolveFramework(
   mode: "react" | "vue" | "vanilla" | "auto",
   projectRoot: string,
   componentPath?: string,
   onWarning?: (warning: string) => void,
 ): "react" | "vue" | "vanilla" {
+  const mounts = componentPath && isVueFile(componentPath) ? "vue" : "react";
+  if (mode !== "auto" && mode !== mounts) {
+    onWarning?.(FRAMEWORK_FLAG_NO_MOUNT_EFFECT_WARNING(mode, mounts));
+  }
   if (componentPath && isVueFile(componentPath)) return "vue";
   return mode === "auto" ? detectFramework(projectRoot, onWarning) : mode;
 }
+
+export const FRAMEWORK_FLAG_NO_MOUNT_EFFECT_WARNING = (requested: string, mounts: string): string =>
+  `--framework ${requested} does not change how this file mounts: a component always mounts by its ` +
+  `file extension (this file mounts as ${mounts}). The flag only selects which post-mount analysis ` +
+  "pass runs.";
 
 export function hasScaleExport(source: string): boolean {
   return /export\s+(?:function|const)\s+scale\b/.test(source);

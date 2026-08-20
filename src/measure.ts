@@ -1,16 +1,16 @@
 import path from "node:path";
 import { chromium, type Browser, type CDPSession, type Page } from "playwright";
-import type { HarnessResult } from "./harness.js";
+import { hasAnyEnvFile, NO_ENV_FILE_REMEDY_NOTE, type HarnessResult } from "./harness.js";
 import type { PropCombination } from "./prop-gen-values.js";
 import { extractProps } from "./prop-gen.js";
 import { generateCombinations } from "./prop-gen-values.js";
 import {
   attachPageErrorCapture,
   enrichPhaseError,
-  enrichTimeoutError,
   gotoWithErrorContext,
   hasPageErrors,
   mergeDrains,
+  waitForReadyOrFatal,
   type MeasurementPhase,
   type PageErrorCapture,
   type PageErrorDrain,
@@ -386,15 +386,25 @@ export async function enterHarness(
   await gotoWithErrorContext(page, url, errorCapture, options.label, {
     waitUntil: HARNESS_NAV_WAIT,
   });
-  try {
-    await page.waitForFunction(
-      () => typeof (window as any).__120fps === "object",
-      undefined,
-      { timeout: HARNESS_READY_TIMEOUT_MS },
-    );
-  } catch (err) {
-    throw enrichTimeoutError(err, errorCapture, options.label);
-  }
+  // M79 gap 3b: races readiness against a fatal page error (a synchronous
+  // throw during module evaluation, e.g. a next.config.mjs env-validation
+  // failure). When the fatal signal wins, this throws immediately instead of
+  // waiting out the remaining timeout, and leads with the page error instead
+  // of "did not become ready within timeout".
+  await waitForReadyOrFatal(
+    () =>
+      page.waitForFunction(
+        () => typeof (window as any).__120fps === "object",
+        undefined,
+        { timeout: HARNESS_READY_TIMEOUT_MS },
+      ),
+    errorCapture,
+    options.label,
+    () => {
+      const projectRoot = path.dirname(harness.harnessDir);
+      return hasAnyEnvFile(projectRoot) ? undefined : NO_ENV_FILE_REMEDY_NOTE;
+    },
+  );
 
   await applyWrapperViewport(page);
   // Before any mount, so every sample runs under the same instrumentation.
@@ -618,6 +628,11 @@ export async function openMeasurementSession(options: {
   driven: boolean;
   onWarning?: (warning: string) => void;
   pool?: BrowserPool;
+  // M83 #2: threaded into attachPageErrorCapture so a bare, extension-less
+  // 404 landing directly under the harness's own serving root (a
+  // synthesized-placeholder collision, not a component defect) is excluded
+  // from attribution.
+  harnessDirName?: string;
 }): Promise<MeasurementSession> {
   // With a pool the session owns a context; without one it owns the browser.
   const open = async (driven: boolean) => {
@@ -638,7 +653,7 @@ export async function openMeasurementSession(options: {
   if (options.driven) {
     const { browser, page, dispose } = await open(true);
     try {
-      const errorCapture = attachPageErrorCapture(page);
+      const errorCapture = attachPageErrorCapture(page, options.harnessDirName);
       const cdp = await page.context().newCDPSession(page);
       const holder: CdpHolder = { cdp };
       await cdp.send("HeadlessExperimental.beginFrame" as never, {} as never);
@@ -664,7 +679,7 @@ export async function openMeasurementSession(options: {
   }
 
   const { browser, page, dispose } = await open(false);
-  const errorCapture = attachPageErrorCapture(page);
+  const errorCapture = attachPageErrorCapture(page, options.harnessDirName);
   const cdp = await page.context().newCDPSession(page);
   return {
     browser,
@@ -740,6 +755,7 @@ export async function runHarnessSession<T>(
     driven: options.pacing !== "vsync",
     onWarning: options.onWarning,
     pool: options.pool,
+    harnessDirName: path.basename(harness.harnessDir),
   });
   try {
     const enter = (search?: string) =>
@@ -1317,7 +1333,7 @@ export async function measureRerender(
   };
 
   if (drivenIndices.length > 0) {
-    const ms = await openMeasurementSession({ driven: true, onWarning: options.onWarning, pool: options.pool });
+    const ms = await openMeasurementSession({ driven: true, onWarning: options.onWarning, pool: options.pool, harnessDirName: path.basename(harness.harnessDir) });
     try {
       await inFlight.run(() => runPass(ms, drivenIndices));
     } finally {
@@ -1325,7 +1341,7 @@ export async function measureRerender(
     }
   }
   if (vsyncIndices.length > 0) {
-    const ms = await openMeasurementSession({ driven: false, onWarning: options.onWarning, pool: options.pool });
+    const ms = await openMeasurementSession({ driven: false, onWarning: options.onWarning, pool: options.pool, harnessDirName: path.basename(harness.harnessDir) });
     try {
       await inFlight.run(() => runPass(ms, vsyncIndices));
     } finally {
@@ -1463,7 +1479,7 @@ export async function measureMount(
     }
   };
 
-  const driven = await openMeasurementSession({ driven: true, onWarning: options.onWarning, pool: options.pool });
+  const driven = await openMeasurementSession({ driven: true, onWarning: options.onWarning, pool: options.pool, harnessDirName: path.basename(harness.harnessDir) });
   try {
     await inFlight.run(() =>
       runPass(
@@ -1479,7 +1495,7 @@ export async function measureMount(
   }
 
   if (vsyncQueue.length > 0) {
-    const vs = await openMeasurementSession({ driven: false, onWarning: options.onWarning, pool: options.pool });
+    const vs = await openMeasurementSession({ driven: false, onWarning: options.onWarning, pool: options.pool, harnessDirName: path.basename(harness.harnessDir) });
     try {
       await inFlight.run(() => runPass(vs, vsyncQueue, false));
     } finally {
