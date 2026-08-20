@@ -4,7 +4,13 @@ import { builtinModules } from "node:module";
 import ts from "typescript";
 import { projectCompilerOptions } from "./prop-gen.js";
 import { isVueFile, parseSfcScript, type VueSfcCompiler } from "./vue-sfc.js";
-import { detectPnP, findWorkspaceRoot, isPackageDeclared } from "./project-model.js";
+import {
+  detectPnP,
+  findWorkspaceRoot,
+  installedPackageDir,
+  isPackageDeclared,
+  workspaceLevels,
+} from "./project-model.js";
 
 // The marker package a server module imports to make the boundary explicit.
 // M72: "next/server-only" was never a real module (Next.js re-exports the
@@ -26,7 +32,11 @@ export type PreflightKind =
   | "unsupported-framework"
   // M72: the workspace installs via Yarn Plug'n'Play, which node_modules-
   // based resolution (this harness's, and Vite's) cannot read.
-  | "yarn-pnp";
+  | "yarn-pnp"
+  // M78: no level from the member up through the workspace root has ever
+  // been installed. Checked after the PnP check (a legitimate PnP project
+  // never has node_modules by design) so the two are not confused.
+  | "not-installed";
 
 // The harness never loads the project's vite.config (M30): its plugins target
 // its own Vite major and its server options are not measurement-safe. That is
@@ -334,6 +344,18 @@ function relative(projectRoot: string, file: string): string {
   return path.relative(projectRoot, file).replace(/\\/g, "/");
 }
 
+// M78: directory existence only, mirroring isInstalledAt's own fs.existsSync
+// style (project-model.ts) — an empty-but-present node_modules is out of
+// scope (no field-test evidence for that shape). The single source of truth
+// runPreflight and assertReactDomClient's taxonomy both consult, so a run
+// says the same thing whether the rejection lands before the harness builds
+// or as buildAndServe's own backstop.
+export function detectMissingInstall(memberRoot: string, workspaceRoot: string): boolean {
+  return workspaceLevels(memberRoot, workspaceRoot).every(
+    (level) => !fs.existsSync(path.join(level, "node_modules")),
+  );
+}
+
 export interface PreflightOptions {
   projectRoot: string;
   // Entry points into the graph: the measured file, and the wrapper when one
@@ -374,6 +396,8 @@ export function runPreflight(options: PreflightOptions): PreflightResult {
   const workspaceRoot = findWorkspaceRoot(projectRoot);
   if (detectPnP(workspaceRoot)) {
     hard.push({ kind: "yarn-pnp", chain: entryChain });
+  } else if (detectMissingInstall(projectRoot, workspaceRoot)) {
+    hard.push({ kind: "not-installed", chain: entryChain });
   }
   // M72 (fixed post-review): isPackageAvailable also counts a transitive,
   // hoisted node_modules/<pkg> nobody declared (M68's declared-vs-available
@@ -516,6 +540,9 @@ const HARD_CAUSE: Record<HardKind, string> = {
   "async-component": "exports an async function component (a React Server Component)",
   "unsupported-framework": "is measured in a project that declares solid-js; 120fps does not support Solid",
   "yarn-pnp": "is installed via Yarn Plug'n'Play, which 120fps cannot resolve modules through",
+  "not-installed":
+    "is measured in a project with no installed dependencies (no node_modules under it or its " +
+    "workspace root)",
 };
 
 // M72: the server-boundary remedy ("extract the client part") only makes
@@ -525,7 +552,11 @@ const EXTRACT_REMEDY = [
   "child component. Pass --no-preflight to attempt the run anyway.",
 ].join("\n");
 
-const HARD_REMEDY: Record<HardKind, string> = {
+// M78: exported so assertReactDomClient's own taxonomy (src/harness.ts) can
+// reuse the yarn-pnp/not-installed/unsupported-framework remedies verbatim —
+// a run says the same thing whether it dies here or as buildAndServe's own
+// backstop.
+export const HARD_REMEDY: Record<HardKind, string> = {
   "server-only": EXTRACT_REMEDY,
   "use-server": EXTRACT_REMEDY,
   "async-component": EXTRACT_REMEDY,
@@ -536,7 +567,26 @@ const HARD_REMEDY: Record<HardKind, string> = {
   "yarn-pnp":
     "Set nodeLinker: node-modules in .yarnrc.yml and reinstall, or use npm/pnpm instead. Pass " +
     "--no-preflight to attempt the run anyway.",
+  // Unlike every other hard kind, no "--no-preflight" escape hatch: nothing
+  // is installed for the harness to boot against, so bypassing this specific
+  // check cannot succeed.
+  "not-installed":
+    "Run your package manager's install (npm install, yarn install, or pnpm install), then " +
+    "measure again.",
 };
+
+// M78/M79 (excalidraw-F3's compounding note): marks a thrown error as a
+// preflight hard-rejection — nothing has been built yet, so the diagnosis is
+// already complete. analyze.ts's outer catch checks for this marker and skips
+// appending accumulated warnings/transform notes, which would otherwise stack
+// an unrelated "needs a CSS preprocessor" note on top of a PnP/Solid/
+// not-installed rejection that already names the real, sufficient fix.
+export class PreflightHardRejectionError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "PreflightHardRejectionError";
+  }
+}
 
 // The first hit is the one to fix: everything below it is unreachable until
 // that edge moves.
@@ -557,12 +607,65 @@ export const NODE_BUILTIN_WARNING = (hit: PreflightHit): string =>
   `${chainText(hit)}: a Node builtin in the component graph. ` +
   "Vite may externalize it; if the run fails to boot, this is the first place to look.";
 
+// M79 (twenty-F3, half 2). The css-preprocessor recognizer above performs no
+// availability check by design (recognizeTransform's return shape is
+// test-locked, see project-transforms.test.ts:98-99): it fires for every
+// .scss/.sass/.less/.styl(us) import whether or not sass/less/stylus is
+// actually installed. Vite's own CSS pipeline resolves the preprocessor
+// directly — it is never loaded as a Vite plugin object, so it is
+// deliberately absent from harness.ts's SUPPORTED_TRANSFORM_PLUGINS — which
+// means the downstream consumer (analyze.ts) is the only place that can tell
+// "installed" apart from "declared but not installed" apart from "neither".
+// Mirrors harness.ts's own private PREPROCESSOR_PACKAGES table (CSS-discovery
+// region, owned elsewhere); duplicated here rather than importing across that
+// boundary, since it is four stable entries.
+export const CSS_PREPROCESSOR_PACKAGES: Record<string, string[]> = {
+  ".scss": ["sass", "sass-embedded"],
+  ".sass": ["sass", "sass-embedded"],
+  ".less": ["less"],
+  ".styl": ["stylus"],
+  ".stylus": ["stylus"],
+};
+
+export type PreprocessorAvailability = "installed" | "declared-not-installed" | "neither";
+
+// undefined for anything that is not a css-preprocessor hit with a known
+// extension: those callers keep today's unconditional wording.
+export function classifyPreprocessorAvailability(
+  hit: PreflightHit,
+  memberRoot: string,
+  workspaceRoot: string,
+): PreprocessorAvailability | undefined {
+  if (hit.transformCode !== "css-preprocessor" || !hit.specifier) return undefined;
+  const packages = CSS_PREPROCESSOR_PACKAGES[path.extname(hit.specifier).toLowerCase()];
+  if (!packages) return undefined;
+  if (packages.some((pkg) => installedPackageDir(pkg, memberRoot) !== undefined)) return "installed";
+  if (packages.some((pkg) => isPackageDeclared(pkg, memberRoot, workspaceRoot))) {
+    return "declared-not-installed";
+  }
+  return "neither";
+}
+
 // Names the transform, not the symptom. Without this the run fails deep inside
 // Vite with a message that never mentions the plugin the project relies on.
-export const PROJECT_TRANSFORM_WARNING = (hit: PreflightHit): string =>
-  `[transform:${hit.transformCode}] ${chainText(hit)}: this project compiles that with ` +
-  `${hit.transformOwner}, which 120fps does not load (the harness never reads your vite.config). ` +
-  "The import may fail to build, or build unstyled.";
+// `availability` is only meaningful for a css-preprocessor hit (see above);
+// every other transform kind is unaffected and keeps the original wording.
+export const PROJECT_TRANSFORM_WARNING = (
+  hit: PreflightHit,
+  availability?: PreprocessorAvailability,
+): string => {
+  if (hit.transformCode === "css-preprocessor" && availability === "declared-not-installed") {
+    return (
+      `[transform:${hit.transformCode}] ${chainText(hit)}: the CSS preprocessor it needs is ` +
+      "declared in package.json but not installed; run your package manager's install."
+    );
+  }
+  return (
+    `[transform:${hit.transformCode}] ${chainText(hit)}: this project compiles that with ` +
+    `${hit.transformOwner}, which 120fps does not load (the harness never reads your vite.config). ` +
+    "The import may fail to build, or build unstyled."
+  );
+};
 
 // Appended to whatever error ended the run: a transform the harness cannot
 // apply is the first thing to check when a build or readiness failure appears.

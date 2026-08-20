@@ -184,3 +184,48 @@ describe("formatTable with scalingCurveReport", () => {
   });
 });
 
+// M79 gap (chakra-ui-F1): a structural signal for a broken scale point,
+// populated by runCurveMode alongside CURVE_RENDER_ERROR_WARNING so the two
+// never drift by construction, read here without any warnings string at all
+// — proving formatCurveOutput reads the field structurally, not by matching
+// a "scale point N=" convention.
+describe("formatTable marks a broken scale point structurally", () => {
+  it("marks the broken row's Growth cell with [render error]", () => {
+    const cr = makeCurveReport({
+      renderErrorPoints: [{ n: 20, pageErrors: ["TypeError: boom"] }],
+    });
+    const report = makeReport({ scalingCurveReport: cr, pass: false });
+    const output = formatTable(report);
+    const brokenRow = output.split("\n").find((l) => /^20\s/.test(l.trim()));
+    expect(brokenRow).toContain("[render error]");
+  });
+
+  it("marks the terminal Result: FAIL line", () => {
+    const cr = makeCurveReport({
+      renderErrorPoints: [{ n: 1, pageErrors: ["boom"] }],
+    });
+    const report = makeReport({ scalingCurveReport: cr, pass: false });
+    const output = formatTable(report);
+    expect(output).toContain("Result: FAIL [render error]");
+  });
+
+  it("does not mark any row or the result line when nothing broke", () => {
+    const report = makeReport({ scalingCurveReport: makeCurveReport(), pass: true });
+    const output = formatTable(report);
+    expect(output).not.toContain("[render error]");
+    expect(output).toContain("Result: PASS");
+    expect(output).not.toContain("Result: PASS [render error]");
+  });
+
+  it("marks the last row's Growth cell alongside its growth class when the last point is the broken one", () => {
+    const cr = makeCurveReport({
+      renderErrorPoints: [{ n: 50, pageErrors: ["boom"] }],
+    });
+    const report = makeReport({ scalingCurveReport: cr, pass: false });
+    const output = formatTable(report);
+    const lastRow = output.split("\n").find((l) => /^50\s/.test(l.trim()));
+    expect(lastRow).toContain("linear");
+    expect(lastRow).toContain("[render error]");
+  });
+});
+

@@ -44,7 +44,12 @@ function buildAllDeltaPairs(schemas: PropSchema[]): DeltaPair[] {
           flipValue: s.values[i],
         });
       }
-    } else if (s.kind === "object" && !s.required) {
+    } else if (s.kind === "object" && !s.required && !s.degenerate) {
+      // M81 3c/4: a degenerate schema has no real value to flip to (base and
+      // flip would be the same fabricated stand-in), so it does not
+      // participate in its own delta pair; it still flows into `anchor` via
+      // `resolveAnchorValue`, which resolves it to `undefined` for every
+      // other prop's pair.
       const firstVal = s.values.length > 0 ? s.values[0] : {};
       objectPairs.push({
         propName: s.name,
@@ -123,7 +128,16 @@ function cloneTemplate(value: unknown): unknown {
   return value;
 }
 
+// M81 3c/4: a degenerate "object"/"reactnode" schema has no faithful value to
+// synthesize; the run and `--explain-props` must agree it is unusable, so
+// this returns an omitted prop, not a fabricated stand-in. A preset override
+// clears `degenerate` (`applyPropPresets`), so this never overrides one.
+function isUnsafeDegenerate(schema: PropSchema): boolean {
+  return !!schema.degenerate && (schema.kind === "object" || schema.kind === "reactnode");
+}
+
 export function resolveAnchorValue(schema: PropSchema): unknown {
+  if (isUnsafeDegenerate(schema)) return undefined;
   switch (schema.kind) {
     case "boolean":
       return false;
@@ -225,6 +239,7 @@ function resolveValues(schema: PropSchema): unknown[] {
 }
 
 function resolveBaseValues(schema: PropSchema): unknown[] {
+  if (isUnsafeDegenerate(schema)) return [undefined];
   switch (schema.kind) {
     case "boolean":
       return [true, false];

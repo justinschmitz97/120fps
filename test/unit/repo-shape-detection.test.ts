@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeAll } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import { runPreflight, preflightFailureMessage } from "../../src/preflight.js";
@@ -12,6 +12,16 @@ import { loadTsconfigAliases } from "../../src/harness.js";
 const SOLID = path.resolve("fixtures/solid-project");
 const PREACT = path.resolve("fixtures/preact-project");
 const JSCONFIG = path.resolve("fixtures/jsconfig-project");
+
+// M78: these fixtures test framework-name detection, not install state, and
+// (like every node_modules directory) are gitignored, so a fresh checkout has
+// neither. An empty node_modules keeps them decoupled from the new
+// not-installed preflight check (src/preflight.ts detectMissingInstall),
+// which is directory existence only.
+beforeAll(() => {
+  fs.mkdirSync(path.join(SOLID, "node_modules"), { recursive: true });
+  fs.mkdirSync(path.join(PREACT, "node_modules"), { recursive: true });
+});
 
 // Every fixture here sits inside this repository, whose root declares react and
 // react-dom. The two framework fixtures carry their own lockfile so

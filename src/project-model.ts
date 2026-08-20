@@ -160,6 +160,23 @@ function isInstalledOnResolutionChain(fromDir: string, pkg: string): boolean {
   }
 }
 
+// M77. The same upward walk as isInstalledOnResolutionChain, but returns
+// where a package lives instead of whether it does, so a caller can inspect
+// what is actually installed there (e.g. whether it has a runtime entry at
+// all, as distinct from a type-only import TypeScript resolves but a bundler
+// cannot load).
+export function installedPackageDir(pkg: string, fromDir: string): string | undefined {
+  let current = path.resolve(fromDir);
+  while (true) {
+    if (path.basename(current) !== "node_modules" && isInstalledAt(current, pkg)) {
+      return path.join(current, "node_modules", ...pkg.split("/"));
+    }
+    const parent = path.dirname(current);
+    if (parent === current) return undefined;
+    current = parent;
+  }
+}
+
 // The chain walk is a strict superset of the workspace levels: every level is
 // memberRoot or one of its ancestors, so it needs no separate probe.
 export function isPackageAvailable(

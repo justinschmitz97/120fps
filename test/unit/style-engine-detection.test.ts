@@ -49,6 +49,13 @@ describe("loading the Tailwind plugin", () => {
   });
 });
 
+// M83 #6 (twenty-F5): manifest/resolution-chain availability alone used to
+// be sufficient to fire this warning, so a workspace member that merely
+// declared an unsupported style engine got the warning on every component in
+// it, including one whose own import graph never reaches it. `pkg` and
+// `workspaceRoot` no longer decide anything here; the measured component's
+// (and wrapper's) scanned import graph — the same `externalDeps` list the
+// harness already builds — does.
 describe("recognizing styling engines the harness cannot replicate", () => {
   it("lists the engines it knows about", () => {
     expect(UNSUPPORTED_STYLE_ENGINES).toEqual([
@@ -60,23 +67,35 @@ describe("recognizing styling engines the harness cannot replicate", () => {
     ]);
   });
 
-  it("finds none in a plain project", () => {
-    manifest(tmpDir, { react: "^19.0.0" });
-    expect(detectUnsupportedStyleEngines(tmpDir)).toEqual([]);
+  it("finds none when the import graph reaches none of them", () => {
+    expect(detectUnsupportedStyleEngines(tmpDir, tmpDir, [])).toEqual([]);
+    expect(detectUnsupportedStyleEngines(tmpDir, tmpDir, ["react"])).toEqual([]);
   });
 
-  it("names each engine the project depends on", () => {
+  it("names each engine the import graph actually reaches", () => {
+    expect(
+      detectUnsupportedStyleEngines(tmpDir, tmpDir, ["react", "unocss", "@pandacss/dev"]),
+    ).toEqual(["unocss", "@pandacss/dev"]);
+  });
+
+  it("does NOT fire for a package declared in package.json but never imported by the component", () => {
     manifest(tmpDir, { unocss: "^0.60.0", "@pandacss/dev": "^0.40.0" });
-    expect(detectUnsupportedStyleEngines(tmpDir)).toEqual(["unocss", "@pandacss/dev"]);
+    expect(detectUnsupportedStyleEngines(tmpDir, tmpDir, [])).toEqual([]);
   });
 
-  it("finds an engine declared at the workspace root", () => {
+  it("does NOT fire for a package declared at the workspace root but never imported", () => {
     const { root, member } = workspace();
     fs.writeFileSync(
       path.join(root, "package.json"),
       JSON.stringify({ name: "root", devDependencies: { "@linaria/vite": "^5.0.0" } }),
     );
-    expect(detectUnsupportedStyleEngines(member)).toEqual(["@linaria/vite"]);
+    expect(detectUnsupportedStyleEngines(member, root, [])).toEqual([]);
+  });
+
+  it("fires for a package the import graph reaches even when package.json never declares it", () => {
+    // e.g. resolved only via a hoisted transitive install, or a bare import
+    // the manifest omits entirely — declaration is no longer the gate.
+    expect(detectUnsupportedStyleEngines(tmpDir, tmpDir, ["@linaria/vite"])).toEqual(["@linaria/vite"]);
   });
 
   it("says the styling is not replicated", () => {
@@ -85,15 +104,19 @@ describe("recognizing styling engines the harness cannot replicate", () => {
     expect(warning).toMatch(/not replicated|unstyled/i);
   });
 
-  it("carries one warning naming every engine found", () => {
-    manifest(tmpDir, { unocss: "^0.60.0", "@linaria/core": "^6.0.0" });
-    expect(resolveStyleTooling(tmpDir).warnings).toEqual([
+  it("carries one warning naming every engine the import graph reaches", () => {
+    expect(resolveStyleTooling(tmpDir, tmpDir, ["unocss", "@linaria/core"]).warnings).toEqual([
       UNSUPPORTED_STYLE_ENGINE_WARNING(["unocss", "@linaria/core"]),
     ]);
   });
 
-  it("warns about nothing for a project with no such engine", () => {
-    manifest(tmpDir, { react: "^19.0.0" });
+  it("warns about nothing when the import graph reaches no such engine, even with one declared", () => {
+    manifest(tmpDir, { unocss: "^0.60.0" });
+    expect(resolveStyleTooling(tmpDir, tmpDir, []).warnings).toEqual([]);
+  });
+
+  it("defaults to no imported packages when the caller supplies none (backward compatible)", () => {
+    manifest(tmpDir, { unocss: "^0.60.0" });
     expect(resolveStyleTooling(tmpDir).warnings).toEqual([]);
   });
 });

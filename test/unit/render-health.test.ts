@@ -323,6 +323,62 @@ describe("C2 render-health gate", () => {
 });
 
 // ====================================================================
+// M80: disclosureReason must never overwrite an honest renderHealth combo
+// ====================================================================
+
+describe("M80 disclosure vs. render-health precedence", () => {
+  it("preserves the honest DialogRoot case: an empty render keeps renderHealth, gets no disclosureReason", () => {
+    const report = build({
+      mounts: [makeMountResult({ domNodeCount: 0 })],
+      disclosureReason: "uncomposed",
+    } as any);
+    expect(report.combos[0].renderHealth).toBe("empty");
+    expect(report.combos[0].disclosureReason).toBeUndefined();
+    expect(report.combos[0].verdict).toBe("pass");
+    expect(report.pass).toBe(true);
+  });
+
+  it("leaves a render-error combo's fail verdict alone, with no disclosureReason", () => {
+    const report = build({
+      mounts: [
+        makeMountResult({
+          domNodeCount: 0,
+          pageErrors: { messages: ["boom"], fatal: true, dropped: 0 },
+        }),
+      ],
+      disclosureReason: "uncomposed",
+    } as any);
+    expect(report.combos[0].renderHealth).toBe("error");
+    expect(report.combos[0].disclosureReason).toBeUndefined();
+    expect(report.combos[0].verdict).toBe("fail");
+  });
+
+  it("applies disclosureReason to a combo that actually rendered something", () => {
+    const report = build({
+      mounts: [makeMountResult({ domNodeCount: 1 })],
+      disclosureReason: "uncomposed",
+    } as any);
+    expect(report.combos[0].renderHealth).toBeUndefined();
+    expect(report.combos[0].disclosureReason).toBe("uncomposed");
+    expect(report.combos[0].verdict).toBe("warn");
+  });
+
+  it("carries the [uncomposed] mark on the verdict cell in the console table", () => {
+    const out = formatTable(
+      build({ mounts: [makeMountResult({ domNodeCount: 1 })], disclosureReason: "uncomposed" } as any),
+    );
+    expect(out).toContain("[uncomposed]");
+  });
+
+  it("carries the [props excluded] mark on the verdict cell in the console table", () => {
+    const out = formatTable(
+      build({ mounts: [makeMountResult({ domNodeCount: 1 })], disclosureReason: "propsExcluded" } as any),
+    );
+    expect(out).toContain("[props excluded]");
+  });
+});
+
+// ====================================================================
 // C2: terminal surfacing
 // ====================================================================
 

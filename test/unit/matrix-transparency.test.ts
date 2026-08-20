@@ -1,7 +1,12 @@
 import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
-import { computeEffectiveSamples, MATRIX_AUTO_ACTIVATED_NOTICE } from "../../src/analyze.js";
+import {
+  computeEffectiveSamples,
+  MATRIX_AUTO_ACTIVATED_NOTICE,
+  MATRIX_NO_AXES_WARNING,
+  MATRIX_SUPPRESSED_BY_CURVE_WARNING,
+} from "../../src/analyze.js";
 
 const src = (name: string) => fs.readFileSync(path.resolve("src", name), "utf-8");
 
@@ -75,5 +80,52 @@ describe("matrix branch wiring", () => {
 
   it("the plain-combo path uses the same computeEffectiveSamples helper", () => {
     expect(analyzeSrc).toContain("const effectiveSamples = computeEffectiveSamples(combos.length, samples);");
+  });
+
+  // M83 #4c (commerce-F5): an explicit --matrix with zero eligible axes must
+  // not silently print an unexplained "Prop Matrix ()".
+  it("warns when matrixAxes is empty, right alongside the pairwise-cover check", () => {
+    expect(branch).toContain("if (matrixAxes.length === 0)");
+    expect(branch).toContain("MATRIX_NO_AXES_WARNING");
+    const axesIdx = branch.indexOf("const matrixAxes: MatrixAxis[]");
+    const noAxesIdx = branch.indexOf("if (matrixAxes.length === 0)");
+    const measureIdx = branch.indexOf("const matrixMounts = await measureMount(");
+    expect(axesIdx).toBeGreaterThan(-1);
+    expect(noAxesIdx).toBeGreaterThan(axesIdx);
+    expect(noAxesIdx).toBeLessThan(measureIdx);
+  });
+});
+
+describe("MATRIX_NO_AXES_WARNING", () => {
+  it("names the anchor combo and points at --explain-props", () => {
+    expect(MATRIX_NO_AXES_WARNING).toContain("anchor");
+    expect(MATRIX_NO_AXES_WARNING).toContain("--explain-props");
+  });
+});
+
+// M83 #4a (twenty-F6): an explicit --matrix must not silently lose to an
+// auto-activated curve mode.
+describe("MATRIX_SUPPRESSED_BY_CURVE_WARNING", () => {
+  it("names the winning prop and the escape hatch", () => {
+    const msg = MATRIX_SUPPRESSED_BY_CURVE_WARNING("items");
+    expect(msg).toContain("items");
+    expect(msg).toContain("--matrix");
+    expect(msg).toContain("--no-curve");
+  });
+});
+
+describe("M83 #4a: curve-vs-matrix dispatch wiring", () => {
+  it("checks options.matrixMode before returning runCurveMode, and pushes the warning first", () => {
+    const fullSrc = src("analyze.ts");
+    const dispatchBranch = fullSrc.slice(
+      fullSrc.indexOf("// --- Curve mode check ---"),
+      fullSrc.indexOf("// --- Matrix mode check ---"),
+    );
+    expect(dispatchBranch).toContain("options.matrixMode === true");
+    expect(dispatchBranch).toContain("MATRIX_SUPPRESSED_BY_CURVE_WARNING(curveMatch.schema.name)");
+    const warnIdx = dispatchBranch.indexOf("MATRIX_SUPPRESSED_BY_CURVE_WARNING");
+    const returnIdx = dispatchBranch.indexOf("return await runCurveMode(");
+    expect(warnIdx).toBeGreaterThan(-1);
+    expect(returnIdx).toBeGreaterThan(warnIdx);
   });
 });

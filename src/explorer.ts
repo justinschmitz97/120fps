@@ -1,3 +1,4 @@
+import path from "node:path";
 import { chromium, type Browser, type CDPSession, type Page } from "playwright";
 import type { HarnessResult } from "./harness.js";
 import type { PropCombination } from "./prop-gen-values.js";
@@ -458,7 +459,7 @@ export async function explore(
       browser = await chromium.launch({ headless: true });
     }
     const page = context ? await context.newPage() : await browser!.newPage();
-    const errorCapture = attachPageErrorCapture(page);
+    const errorCapture = attachPageErrorCapture(page, path.basename(harness.harnessDir));
     const initialCdp = await page.context().newCDPSession(page);
 
     // Renamed so a leftover reference to the pre-recovery session cannot

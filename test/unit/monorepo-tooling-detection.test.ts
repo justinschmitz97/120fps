@@ -7,6 +7,7 @@ import {
   detectTailwindVite,
   detectReactCompiler,
   detectProjectTransforms,
+  HOISTED_TRANSFORM_WARNING,
 } from "../../src/harness.js";
 
 let tmpDir: string;
@@ -148,5 +149,39 @@ describe("project transform detection across workspace levels", () => {
     expect(
       detectProjectTransforms(path.resolve("fixtures/vue-noplugin")).map((t) => t.code),
     ).not.toContain("vue");
+  });
+});
+
+// M83 #8 (primevue-Probe1): resolution via the hoisted-transitive-copy
+// fallback is correct and by design (M75) — only the disclosure was
+// missing. A plugin resolved that way, not declared in this project's own
+// package.json (at either workspace level), now names itself.
+describe("HOISTED_TRANSFORM_WARNING disclosure", () => {
+  it("warns for a plugin resolved only via the hoisted fallback, not declared anywhere", () => {
+    const member = makeWorkspace({});
+    installPackage(member, "vite-plugin-svgr");
+    const warnings: string[] = [];
+    detectProjectTransforms(member, undefined, (w) => warnings.push(w));
+    expect(warnings).toEqual([HOISTED_TRANSFORM_WARNING("vite-plugin-svgr")]);
+  });
+
+  it("says nothing when the plugin is declared at the workspace root", () => {
+    const member = makeWorkspace({ devDependencies: { "@vitejs/plugin-vue": "^5.2.0" } });
+    const warnings: string[] = [];
+    detectProjectTransforms(member, undefined, (w) => warnings.push(w));
+    expect(warnings).toEqual([]);
+  });
+
+  it("says nothing when the plugin is declared by the member itself", () => {
+    const member = makeSinglePackage({ devDependencies: { "@vitejs/plugin-vue": "^5.2.0" } });
+    const warnings: string[] = [];
+    detectProjectTransforms(member, undefined, (w) => warnings.push(w));
+    expect(warnings).toEqual([]);
+  });
+
+  it("says nothing when onWarning is not supplied (backward compatible)", () => {
+    const member = makeWorkspace({});
+    installPackage(member, "vite-plugin-svgr");
+    expect(() => detectProjectTransforms(member)).not.toThrow();
   });
 });

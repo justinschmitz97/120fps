@@ -1,6 +1,14 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
-import { expandComponentPaths, isComponentFile, type PathReader } from "../../src/cli.js";
+import {
+  expandComponentPaths,
+  isComponentFile,
+  hasComponentShape,
+  NO_COMPONENT_EXPORT_ERROR,
+  type PathReader,
+} from "../../src/cli.js";
 
 // Injected filesystem so the contract is testable without touching disk.
 function reader(tree: Record<string, "file" | "dir">): PathReader {
@@ -56,6 +64,104 @@ describe("component file recognition", () => {
   it("accepts a windows-style path", () => {
     expect(isComponentFile("src\\components\\ui\\button.tsx")).toBe(true);
     expect(isComponentFile("src\\components\\ui\\button.test.tsx")).toBe(false);
+  });
+});
+
+// M77: `.ts`/`.js` are now legal extensions, gated by hasComponentShape
+// rather than accepted on extension alone. `.tsx`/`.jsx`/`.vue` short-circuit
+// true with no content read (asserted implicitly above: those tests use
+// fake, non-existent paths and still pass), so only the new `.ts`/`.js`
+// branch needs real files on disk.
+describe("the .js/.ts entry gate (M77)", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "120fps-cli-gate-"));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function write(name: string, content: string): string {
+    const full = path.join(tmpDir, name);
+    fs.writeFileSync(full, content);
+    return full;
+  }
+
+  it("accepts a .js file with a default-exported PascalCase function containing JSX", () => {
+    const file = write("Button.js", "export default function Button() { return <div/>; }\n");
+    expect(isComponentFile(file)).toBe(true);
+  });
+
+  it("accepts a .ts file with a PascalCase named export and zero JSX literals (factory-call shape)", () => {
+    const file = write("tabs.ts", "export function TabsRoot() { return {}; }\n");
+    expect(isComponentFile(file)).toBe(true);
+  });
+
+  it("rejects a .js file with only camelCase exports", () => {
+    const file = write("utils.js", "export function helper() { return 1; }\n");
+    expect(isComponentFile(file)).toBe(false);
+  });
+
+  it("still rejects a .d.ts file, unaffected by the .ts widening", () => {
+    const file = write("types.d.ts", "export type X = 1;\n");
+    expect(isComponentFile(file)).toBe(false);
+  });
+
+  describe("hasComponentShape", () => {
+    it("returns true for .tsx/.jsx/.vue without reading the file", () => {
+      expect(hasComponentShape(path.join(tmpDir, "does-not-exist.tsx"))).toBe(true);
+      expect(hasComponentShape(path.join(tmpDir, "does-not-exist.jsx"))).toBe(true);
+      expect(hasComponentShape(path.join(tmpDir, "does-not-exist.vue"))).toBe(true);
+    });
+
+    it("reads a .js/.ts file's exports to decide", () => {
+      const component = write("Card.js", "export function Card() { return null; }\n");
+      const utility = write("format.js", "export const formatDate = () => '';\n");
+      expect(hasComponentShape(component)).toBe(true);
+      expect(hasComponentShape(utility)).toBe(false);
+    });
+  });
+
+  describe("expandComponentPaths: NO_COMPONENT_EXPORT_ERROR", () => {
+    it("errors on an explicit .js path with no component export", () => {
+      const file = write("utils.js", "export function helper() { return 1; }\n");
+      const fsReader: PathReader = {
+        exists: (p) => p === file,
+        isDirectory: () => false,
+        walk: () => [],
+      };
+      const result = expandComponentPaths([file], fsReader);
+      expect(result.paths).toEqual([]);
+      expect(result.error).toBe(NO_COMPONENT_EXPORT_ERROR(file));
+    });
+
+    it("accepts an explicit .ts path with a component export", () => {
+      const file = write("tabs.ts", "export function TabsRoot() { return {}; }\n");
+      const fsReader: PathReader = {
+        exists: (p) => p === file,
+        isDirectory: () => false,
+        walk: () => [],
+      };
+      const result = expandComponentPaths([file], fsReader);
+      expect(result.error).toBeUndefined();
+      expect(result.paths).toEqual([file]);
+    });
+
+    it("directory expansion matches only the real .js component, ignoring camelCase utility files", () => {
+      const component = write("Button.js", "export default function Button() { return null; }\n");
+      write("helpers.js", "export function helper() { return 1; }\n");
+      write("format.js", "export const formatDate = () => '';\n");
+      const fsReader: PathReader = {
+        exists: (p) => p === tmpDir,
+        isDirectory: (p) => p === tmpDir,
+        walk: () => [component, path.join(tmpDir, "helpers.js"), path.join(tmpDir, "format.js")],
+      };
+      const result = expandComponentPaths([tmpDir], fsReader);
+      expect(result.error).toBeUndefined();
+      expect(result.paths).toEqual([component]);
+    });
   });
 });
 

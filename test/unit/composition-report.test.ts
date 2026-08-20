@@ -63,3 +63,45 @@ describe("Report autoComposition fields", () => {
     expect(report.compositionTree).toEqual(tree);
   });
 });
+
+// ─── M80: disclosureReason downgrades a confident PASS to WARN ───
+
+describe("BuildReportInput.disclosureReason", () => {
+  it("is absent by default: no disclosureReason and no verdict change", () => {
+    const input = makeInput();
+    const report = buildReport(input);
+    expect(report.combos[0].disclosureReason).toBeUndefined();
+    expect(report.combos[0].verdict).toBe("pass");
+  });
+
+  it("sets combo.disclosureReason and downgrades a pass verdict to warn", () => {
+    const input = makeInput({ disclosureReason: "uncomposed" } as any);
+    const report = buildReport(input);
+    expect(report.combos[0].disclosureReason).toBe("uncomposed");
+    expect(report.combos[0].verdict).toBe("warn");
+  });
+
+  it("keeps report.pass true: a WARN combo is still the green bucket", () => {
+    const input = makeInput({ disclosureReason: "uncomposed" } as any);
+    const report = buildReport(input);
+    expect(report.pass).toBe(true);
+  });
+
+  it("supports propsExcluded the same way", () => {
+    const input = makeInput({ disclosureReason: "propsExcluded" } as any);
+    const report = buildReport(input);
+    expect(report.combos[0].disclosureReason).toBe("propsExcluded");
+    expect(report.combos[0].verdict).toBe("warn");
+  });
+
+  it("never touches an already-failing combo's verdict", () => {
+    const input = makeInput({
+      disclosureReason: "uncomposed",
+      flatThresholds: true,
+      thresholds: { ...DEFAULT_THRESHOLDS, mountMs: 0 },
+    } as any);
+    const report = buildReport(input);
+    // mount.median (1) > mountMs (0): computeVerdict already failed it.
+    expect(report.combos[0].verdict).toBe("fail");
+  });
+});

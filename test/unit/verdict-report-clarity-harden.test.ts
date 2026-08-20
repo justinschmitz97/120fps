@@ -2,7 +2,9 @@ import { describe, it, expect } from "vitest";
 import {
   classifyTier,
   deriveReportMode,
+  detectRenderHealthInconsistency,
   formatTable,
+  RENDER_HEALTH_INCONSISTENT_WARNING,
   DEFAULT_THRESHOLDS,
   TIER_BUDGETS,
   type ComboReport,
@@ -491,5 +493,121 @@ describe("H18: size boundaries unchanged", () => {
   it("treats a negative node count as T1 and still honours the floor", () => {
     expect(classifyTier({ domNodeCount: -1, hasPortal: false, hasAnimation: false })).toBe("T1");
     expect(classifyTier({ domNodeCount: -1, hasPortal: true, hasAnimation: false })).toBe("T3");
+  });
+});
+
+// M83 #1 (element-plus-F2): a same-run disagreement between an empty combo
+// and a nonzero sibling (including a scale-probe row) must be reported, not
+// asserted away as "the component renders nothing for these props".
+describe("M83 #1: detectRenderHealthInconsistency", () => {
+  it("returns undefined when nothing is empty", () => {
+    const combos = [makeCombo({ comboIndex: 0, domNodeCount: 5 })];
+    expect(detectRenderHealthInconsistency(combos)).toBeUndefined();
+  });
+
+  it("returns undefined when every combo is empty (no disagreement)", () => {
+    const combos = [
+      makeCombo({ comboIndex: 0, domNodeCount: 0, renderHealth: "empty" }),
+      makeCombo({ comboIndex: 1, domNodeCount: 0, renderHealth: "empty" }),
+    ];
+    expect(detectRenderHealthInconsistency(combos)).toBeUndefined();
+  });
+
+  it("names the empty and nonzero combo indices when both exist in the same run", () => {
+    const combos = [
+      makeCombo({ comboIndex: 0, domNodeCount: 0, renderHealth: "empty" }),
+      makeCombo({ comboIndex: 1, domNodeCount: 12, scaleProbe: 5 }),
+    ];
+    const message = detectRenderHealthInconsistency(combos);
+    expect(message).toBe(RENDER_HEALTH_INCONSISTENT_WARNING([0], [1]));
+    expect(message).toContain("#0");
+    expect(message).toContain("#1");
+    expect(message).toContain("not resolved");
+  });
+
+  it("does not fire on a renderHealth: error combo alone (that is a real failure, not a disagreement)", () => {
+    const combos = [makeCombo({ comboIndex: 0, domNodeCount: 0, renderHealth: "error" })];
+    expect(detectRenderHealthInconsistency(combos)).toBeUndefined();
+  });
+});
+
+describe("M83 #1: appendEmptyRenderNote states the disagreement instead of asserting it away", () => {
+  it("prints the inconsistency message instead of 'renders nothing' when a sibling combo is nonzero", () => {
+    const report = makeReport({
+      combos: [
+        makeCombo({ comboIndex: 0, domNodeCount: 0, renderHealth: "empty" }),
+        makeCombo({ comboIndex: 1, domNodeCount: 8, scaleProbe: 20 }),
+      ],
+    });
+    const table = formatTable(report);
+    expect(table).toContain("this disagreement was not resolved");
+    expect(table).not.toContain("the component renders nothing for these props");
+  });
+
+  it("keeps the original phrasing when every combo agrees", () => {
+    const report = makeReport({
+      combos: [makeCombo({ comboIndex: 0, domNodeCount: 0, renderHealth: "empty" })],
+    });
+    const table = formatTable(report);
+    expect(table).toContain("the component renders nothing for these props");
+  });
+});
+
+// M83 #8 (primevue-Minor1): detectFixture never accepts `.fixture.tsx` for a
+// Vue target — it looks only for `${stem}.fixture.vue`. The fixture-creation
+// hint must name a file the loader will actually find.
+describe("M83 #8: fixture suggestion matches the loader's own extension", () => {
+  it("suggests .fixture.vue for a Vue component", () => {
+    const report = makeReport({ componentPath: "./Button.vue", combos: [makeCombo({ interactions: [] })] });
+    expect(formatTable(report)).toContain("Button.fixture.vue");
+    expect(formatTable(report)).not.toContain("Button.fixture.tsx");
+  });
+
+  it("still suggests .fixture.tsx for a React component (unchanged)", () => {
+    const report = makeReport({ componentPath: "./Button.tsx", combos: [makeCombo({ interactions: [] })] });
+    expect(formatTable(report)).toContain("Button.fixture.tsx");
+  });
+});
+
+// Integration: buildReport itself must push the warning onto report.warnings,
+// not only formatTable's terminal phrasing — so the JSON report carries it too.
+describe("M83 #1: buildReport pushes RENDER_HEALTH_INCONSISTENT_WARNING", () => {
+  it("warns when a discrete combo is empty and a scale-probe sibling is nonzero", () => {
+    const mounts = [
+      { comboIndex: 0, props: {}, mount: { samples: [1], median: 1, p95: 1 }, unmount: { samples: [1], median: 1, p95: 1 }, domNodeCount: 0 },
+      { comboIndex: 1, props: { __120fps_scaleN: 5 }, mount: { samples: [1], median: 1, p95: 1 }, unmount: { samples: [1], median: 1, p95: 1 }, domNodeCount: 10 },
+      { comboIndex: 2, props: { __120fps_scaleN: 20 }, mount: { samples: [2], median: 2, p95: 2 }, unmount: { samples: [1], median: 1, p95: 1 }, domNodeCount: 40 },
+    ];
+    const report = buildReport({
+      componentPath: "./Avatar.vue",
+      componentName: "Avatar",
+      machine: baseMachine,
+      calibration: { totalDuration: 10, scriptDuration: 5 },
+      mounts: mounts as any,
+      explores: [],
+      heapDeltas: mounts.map(() => 0),
+      thresholds: DEFAULT_THRESHOLDS,
+    });
+    expect(report.warnings).toBeDefined();
+    expect(report.warnings!.some((w) => w.includes("this disagreement was not resolved"))).toBe(true);
+  });
+
+  it("does not warn when every combo agrees (all nonzero)", () => {
+    const mounts = [
+      { comboIndex: 0, props: {}, mount: { samples: [1], median: 1, p95: 1 }, unmount: { samples: [1], median: 1, p95: 1 }, domNodeCount: 5 },
+    ];
+    const report = buildReport({
+      componentPath: "./Button.tsx",
+      componentName: "Button",
+      machine: baseMachine,
+      calibration: { totalDuration: 10, scriptDuration: 5 },
+      mounts: mounts as any,
+      explores: [],
+      heapDeltas: mounts.map(() => 0),
+      thresholds: DEFAULT_THRESHOLDS,
+    });
+    expect(
+      (report.warnings ?? []).some((w) => w.includes("this disagreement was not resolved")),
+    ).toBe(false);
   });
 });

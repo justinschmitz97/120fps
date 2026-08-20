@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { scanExternalDeps } from "../../src/harness.js";
+import { scanExternalDeps, TYPE_ONLY_PACKAGE_WARNING } from "../../src/harness.js";
 
 let tmpDir: string;
 
@@ -172,5 +172,174 @@ describe("resolution targets beyond source files and index files", () => {
     const entry = write("Entry.tsx", `import inner from "@/pkg";\nexport default inner;\n`);
 
     expect(scanExternalDeps(entry, tmpDir, srcAlias())).toContain("index-pkg");
+  });
+});
+
+// M76: a workspace-sibling package whose own root has no resolvable entry and
+// is never imported bare contributes the subpath actually scanned instead of
+// its unresolvable collapsed root name.
+describe("workspace-sibling subpath substitution", () => {
+  function mkWorkspace(): { workspaceRoot: string; member: string } {
+    const workspaceRoot = tmpDir;
+    fs.writeFileSync(path.join(workspaceRoot, "pnpm-workspace.yaml"), "packages:\n  - member\n");
+    const member = path.join(workspaceRoot, "member");
+    fs.mkdirSync(member, { recursive: true });
+    return { workspaceRoot, member };
+  }
+
+  function linkSibling(workspaceRoot: string, member: string, scopedName: string): string {
+    const [scope, name] = scopedName.split("/");
+    const real = path.join(workspaceRoot, "packages", name);
+    fs.mkdirSync(real, { recursive: true });
+    const linkParent = path.join(member, "node_modules", scope);
+    fs.mkdirSync(linkParent, { recursive: true });
+    fs.symlinkSync(real, path.join(linkParent, name), process.platform === "win32" ? "junction" : "dir");
+    return real;
+  }
+
+  it("substitutes the scanned subpath for a bare root with no '.' export", () => {
+    const { workspaceRoot, member } = mkWorkspace();
+    const real = linkSibling(workspaceRoot, member, "@scope/ui");
+    fs.writeFileSync(
+      path.join(real, "package.json"),
+      JSON.stringify({ name: "@scope/ui", exports: { "./classNames": "./classNames.js" } }),
+    );
+    fs.writeFileSync(path.join(real, "classNames.js"), "export const x = 1;\n");
+    const entry = write("member/Entry.tsx", `import "@scope/ui/classNames";\nexport const x = 1;\n`);
+
+    const pkgs = scanExternalDeps(entry, member, []);
+    expect(pkgs).toContain("@scope/ui/classNames");
+    expect(pkgs).not.toContain("@scope/ui");
+  });
+
+  it("keeps the bare root name in the collapse decision when the same sibling is also imported bare elsewhere", () => {
+    const { workspaceRoot, member } = mkWorkspace();
+    const real = linkSibling(workspaceRoot, member, "@scope/ui");
+    fs.writeFileSync(
+      path.join(real, "package.json"),
+      JSON.stringify({ name: "@scope/ui", exports: { "./classNames": "./classNames.js" } }),
+    );
+    fs.writeFileSync(path.join(real, "classNames.js"), "export const x = 1;\n");
+    const entry = write(
+      "member/Entry.tsx",
+      `import "@scope/ui/classNames";\nimport "@scope/ui";\nexport const x = 1;\n`,
+    );
+
+    const warnings: string[] = [];
+    const pkgs = scanExternalDeps(entry, member, [], undefined, warnings);
+    // M76's collapse decision keeps the bare name once anything in the graph
+    // imports it bare, matching today's behavior — proven here because the
+    // bare name has no resolvable root either, so it only reaches M77's
+    // separate, later type-only-package warning if M76 actually added it.
+    expect(warnings).toContain(TYPE_ONLY_PACKAGE_WARNING("@scope/ui"));
+    // M77: that bare name has no resolvable root entry, so the later,
+    // general type-only-package check removes it from the final list instead
+    // of leaving an unresolvable optimizeDeps entry there — the two fixes
+    // compose without reintroducing calcom-F1's crash.
+    expect(pkgs).not.toContain("@scope/ui");
+  });
+
+  it("keeps the bare root name for a workspace sibling whose own root does resolve", () => {
+    const { workspaceRoot, member } = mkWorkspace();
+    const real = linkSibling(workspaceRoot, member, "@scope/ok");
+    fs.writeFileSync(
+      path.join(real, "package.json"),
+      JSON.stringify({ name: "@scope/ok", main: "./index.js" }),
+    );
+    fs.writeFileSync(path.join(real, "index.js"), "export const x = 1;\n");
+    fs.mkdirSync(path.join(real, "sub"), { recursive: true });
+    fs.writeFileSync(path.join(real, "sub", "index.js"), "export const y = 1;\n");
+    const entry = write("member/Entry.tsx", `import "@scope/ok/sub";\nexport const x = 1;\n`);
+
+    const pkgs = scanExternalDeps(entry, member, []);
+    expect(pkgs).toContain("@scope/ok");
+    expect(pkgs).not.toContain("@scope/ok/sub");
+  });
+
+  it("keeps the bare root name in the collapse decision for a non-workspace-sibling package (real install, not a symlink)", () => {
+    const pkgDir = path.join(tmpDir, "node_modules", "no-entry-pkg");
+    fs.mkdirSync(pkgDir, { recursive: true });
+    fs.writeFileSync(path.join(pkgDir, "package.json"), JSON.stringify({ main: "" }));
+    const entry = write("Entry.tsx", `import "no-entry-pkg/subpath";\nexport const x = 1;\n`);
+
+    const warnings: string[] = [];
+    const pkgs = scanExternalDeps(entry, tmpDir, [], undefined, warnings);
+    // M76: not a workspace sibling, so the subpath collapses to the bare
+    // root exactly as it always has — never substituted.
+    expect(pkgs).not.toContain("no-entry-pkg/subpath");
+    // This particular fixture's bare root also happens to have no runtime
+    // entry (`main: ""`), so M77's separate, later check removes it too.
+    expect(warnings).toContain(TYPE_ONLY_PACKAGE_WARNING("no-entry-pkg"));
+    expect(pkgs).not.toContain("no-entry-pkg");
+  });
+});
+
+// M77: a bare specifier that resolves to an installed package with no
+// runtime entry is almost certainly type-only. Left in optimizeDeps.include
+// it aborts Vite's boot before any per-file transform gets a chance to elide
+// the import the way it would without the eager pre-bundle.
+describe("type-only package exclusion", () => {
+  function mkNoEntryPackage(name: string): void {
+    const dir = path.join(tmpDir, "node_modules", name);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({ name, main: "" }));
+  }
+
+  it("excludes a value-imported package with no runtime entry, and warns", () => {
+    mkNoEntryPackage("csstype-like");
+    const entry = write("Entry.tsx", `import * as X from "csstype-like";\nexport const x = X;\n`);
+
+    const warnings: string[] = [];
+    const pkgs = scanExternalDeps(entry, tmpDir, [], undefined, warnings);
+
+    expect(pkgs).not.toContain("csstype-like");
+    expect(warnings).toEqual([TYPE_ONLY_PACKAGE_WARNING("csstype-like")]);
+  });
+
+  it("a whole-clause `import type` never reaches the scanner's specifier collection, so no warning is needed", () => {
+    mkNoEntryPackage("csstype-like");
+    const entry = write(
+      "Entry.tsx",
+      `import type { X } from "csstype-like";\nexport const x: X = 1 as unknown as X;\n`,
+    );
+
+    const warnings: string[] = [];
+    const pkgs = scanExternalDeps(entry, tmpDir, [], undefined, warnings);
+
+    expect(pkgs).not.toContain("csstype-like");
+    expect(warnings).toEqual([]);
+  });
+
+  it("a type-only import plus a real value import in the same file still ends up excluded, with the warning", () => {
+    mkNoEntryPackage("csstype-like");
+    const entry = write(
+      "Entry.tsx",
+      `import type { X } from "csstype-like";\nimport * as Y from "csstype-like";\nexport const x = Y;\n`,
+    );
+
+    const warnings: string[] = [];
+    const pkgs = scanExternalDeps(entry, tmpDir, [], undefined, warnings);
+
+    expect(pkgs).not.toContain("csstype-like");
+    expect(warnings).toEqual([TYPE_ONLY_PACKAGE_WARNING("csstype-like")]);
+  });
+
+  it("a mixed named-import clause (type + value binding) still scans the specifier", () => {
+    const entry = write(
+      "Entry.tsx",
+      `import { type A, b } from "mixed-clause-pkg";\nexport const x = b;\nexport type { A };\n`,
+    );
+
+    expect(scanExternalDeps(entry, tmpDir, [])).toContain("mixed-clause-pkg");
+  });
+
+  it("leaves a package alone when it cannot be found on the resolution chain at all (not proven non-loadable)", () => {
+    const entry = write("Entry.tsx", `import "nowhere-to-be-found";\nexport const x = 1;\n`);
+
+    const warnings: string[] = [];
+    const pkgs = scanExternalDeps(entry, tmpDir, [], undefined, warnings);
+
+    expect(pkgs).toContain("nowhere-to-be-found");
+    expect(warnings).toEqual([]);
   });
 });

@@ -314,11 +314,67 @@ describe("H19: explain on a missing file", () => {
   });
 });
 
+// M83 #5 (base-ui-F6): --explain-props' "Curve mode: would (not) activate"
+// line only predicts detectScalingProps's whole-run auto-activation. The M61
+// sibling-copies scale probe is a separate, unconditional mechanism that
+// still runs on a non-fixture target whenever curve mode does not.
+describe("M83 #5: scaleProbeWillRun predicts the sibling-copies scale probe", () => {
+  it("is false when curve mode would activate (the scale probe never runs then)", async () => {
+    const explained = await explainProps(fixture("m58/hotspot-image.tsx"));
+    expect(explained.curve?.propName).toBe("hotspots");
+    expect(explained.scaleProbeWillRun).toBe(false);
+    expect(formatExplainProps(explained)).not.toContain("Scale probe:");
+  });
+
+  it("is true for a non-fixture target with no array/numeric prop", async () => {
+    const explained = await explainProps(fixture("m60/cva-button.tsx"));
+    expect(explained.curve).toBeUndefined();
+    expect(explained.scaleProbeWillRun).toBe(true);
+    const text = formatExplainProps(explained);
+    expect(text).toContain("Scale probe:");
+    expect(text).toContain("N=1/5/20/50");
+    expect(text).toContain("independent of curve mode");
+  });
+
+  it("is false for a .fixture.tsx target even with no curve match", async () => {
+    const explained = await explainProps(fixture("broken.fixture.tsx"));
+    expect(explained.curve).toBeUndefined();
+    expect(explained.scaleProbeWillRun).toBe(false);
+    expect(formatExplainProps(explained)).not.toContain("Scale probe:");
+  });
+});
+
+// M83 #8 (chakra-ui-F7): detectComponentExport picking the file's own marked
+// `export default` is correct by JS/TS semantics — this does not change
+// which export is picked, only discloses the #ExportName escape hatch when
+// the resolved export has a degenerate required prop and a sibling export
+// does not.
+describe("M83 #8: alternative-export disclosure for a degenerate required prop", () => {
+  it("names the sibling export and its #ExportName override", async () => {
+    const explained = await explainProps(fixture("m83/alt-export.tsx"));
+    expect(explained.componentName).toBe("AltExportDefault");
+    expect(explained.warnings.join("\n")).toContain("AltExportNamed");
+    expect(explained.warnings.join("\n")).toContain("#AltExportNamed");
+  });
+
+  it("says nothing when the target was already explicitly chosen (the escape hatch already used)", async () => {
+    const explained = await explainProps(fixture("m83/alt-export.tsx"), { target: "AltExportDefault" });
+    expect(explained.warnings.join("\n")).not.toContain("AltExportNamed");
+  });
+
+  it("says nothing when the resolved export has no degenerate required prop", async () => {
+    const explained = await explainProps(fixture("two-exports.tsx"));
+    expect(explained.warnings.join("\n")).not.toMatch(/#\w+.*override|Target it with/);
+  });
+});
+
 // H20: the provider hint reads as one actionable line per candidate.
 describe("H20: provider hint text", () => {
   it("names every candidate exactly once", () => {
+    // M79 (4a): the provider hint is gated on a captured page-error message
+    // that actually looks provider/context-shaped.
     const report = {
-      combos: [],
+      combos: [{ pageErrors: ["Cannot read properties of undefined (reading 'Context')"] }],
       providerCandidates: ["next-intl (useTranslations)", "src/store.tsx (useWorkbench)"],
     } as unknown as Report;
     const text = formatHints(["renderError"], report);

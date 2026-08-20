@@ -595,6 +595,52 @@ export interface ReactAnalysisOptions {
 export interface ReactDomIdentity {
   name: string;
   version: string;
+  // M78: set when the identity came from a Vite resolve.alias match rather
+  // than react-dom's own installed package.json, so REACT_DOM_NOT_REACT_WARNING
+  // can name the right mechanism (and the right, different remedy).
+  source?: "vite-alias";
+}
+
+// M78 (preact-app-F3, the Vite-config shape). readViteConfigData's
+// resolve.alias output is already merged into the harness's own Vite alias
+// list, so a literal-path alias targeting react-dom is genuinely what this
+// server mounts — the real react-dom package on disk is never touched and
+// stays irrelevant. Resolves the aliased file's nearest ancestor
+// package.json, the same identity signal already trusted for the npm-alias
+// case below, fed through a second path.
+function nearestPackageJson(fromPath: string): { name?: unknown; version?: unknown } | undefined {
+  let dir: string;
+  try {
+    dir = fs.statSync(fromPath).isDirectory() ? fromPath : path.dirname(fromPath);
+  } catch {
+    dir = path.dirname(fromPath);
+  }
+  while (true) {
+    const candidate = path.join(dir, "package.json");
+    if (fs.existsSync(candidate)) {
+      try {
+        return JSON.parse(fs.readFileSync(candidate, "utf-8"));
+      } catch {
+        return undefined;
+      }
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) return undefined;
+    dir = parent;
+  }
+}
+
+function resolveViaBundlerAlias(
+  bundlerAliases: Array<{ find: RegExp; replacement: string }>,
+): ReactDomIdentity | undefined {
+  for (const entry of bundlerAliases) {
+    if (!entry.find.test("react-dom") && !entry.find.test("react-dom/client")) continue;
+    const pkg = nearestPackageJson(entry.replacement);
+    if (pkg && typeof pkg.name === "string" && typeof pkg.version === "string") {
+      return { name: pkg.name, version: pkg.version, source: "vite-alias" };
+    }
+  }
+  return undefined;
 }
 
 // M72: an npm/pnpm alias (`"react-dom": "npm:preact/compat"`) keeps the
@@ -604,7 +650,15 @@ export interface ReactDomIdentity {
 // alone cannot. `fromDir` is normally `harness.harnessDir`, which
 // `mkdtempSync` creates directly under the project root (`src/harness.ts`),
 // so Node's own upward resolution walk reaches the project's real install.
-export function resolveReactDomIdentity(fromDir: string): ReactDomIdentity | undefined {
+// M78: `bundlerAliases` (normally `harness.viteAliases`) is checked first —
+// when one matches, it is what this server actually mounts, overriding
+// whatever the real react-dom's own manifest says.
+export function resolveReactDomIdentity(
+  fromDir: string,
+  bundlerAliases: Array<{ find: RegExp; replacement: string }> = [],
+): ReactDomIdentity | undefined {
+  const viaAlias = resolveViaBundlerAlias(bundlerAliases);
+  if (viaAlias) return viaAlias;
   try {
     const projectRequire = createRequire(path.join(fromDir, "/"));
     const pkgPath = projectRequire.resolve("react-dom/package.json");
@@ -633,8 +687,16 @@ export function isSupportedReactDomVersion(version: string): boolean {
   return major <= REACT_DOM_MAX_MAJOR;
 }
 
-export const REACT_DOM_NOT_REACT_WARNING = (identity: ReactDomIdentity | undefined): string =>
-  identity
+export const REACT_DOM_NOT_REACT_WARNING = (identity: ReactDomIdentity | undefined): string => {
+  if (identity?.source === "vite-alias") {
+    return (
+      `react-dom resolves to "${identity.name}" via this project's vite.config.ts resolve.alias, ` +
+      "not the installed react-dom package; skipping React fiber analysis (memo bailout, context " +
+      "fan-out, callback identity, render attribution). The component still mounts and is " +
+      "measured normally."
+    );
+  }
+  return identity
     ? `react-dom resolves to "${identity.name}", not react-dom (an npm alias such as ` +
       `"react-dom": "npm:preact/compat" resolves this way); skipping React fiber analysis ` +
       "(memo bailout, context fan-out, callback identity, render attribution). The component " +
@@ -642,6 +704,7 @@ export const REACT_DOM_NOT_REACT_WARNING = (identity: ReactDomIdentity | undefin
     : "could not resolve react-dom's package.json to confirm its identity; skipping React fiber " +
       "analysis (memo bailout, context fan-out, callback identity, render attribution) since it " +
       "may not be React. The component still mounts and is measured normally.";
+};
 
 export const REACT_DOM_VERSION_RANGE_WARNING = (version: string): string =>
   `react-dom ${version} is outside 120fps's tested range (16.5-19); the fiber profiler hardcodes ` +
@@ -726,7 +789,7 @@ export async function runReactAnalysis(
   // wrong or unconfirmed identity is skipped entirely rather than reporting
   // fiction. Mounting itself is unaffected: it happens in harness.ts via
   // createRoot, which preact/compat implements too.
-  const reactDomIdentity = resolveReactDomIdentity(harness.harnessDir);
+  const reactDomIdentity = resolveReactDomIdentity(harness.harnessDir, harness.viteAliases ?? []);
   if (!reactDomIdentity || reactDomIdentity.name !== "react-dom") {
     options.onWarning?.(REACT_DOM_NOT_REACT_WARNING(reactDomIdentity));
     return new Map();
@@ -769,7 +832,7 @@ export async function runReactAnalysis(
 
     await injectProfilerHook(cdp);
 
-    const errorCapture = attachPageErrorCapture(page);
+    const errorCapture = attachPageErrorCapture(page, path.basename(harness.harnessDir));
 
     await gotoWithErrorContext(page, probeUrl, errorCapture, "react analysis harness", {
       timeout: 30000,

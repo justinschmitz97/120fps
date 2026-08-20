@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach, afterAll } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { loadTsconfigAliases } from "../../src/harness.js";
+import { loadTsconfigAliases, TYPES_ONLY_ALIAS_WARNING } from "../../src/harness.js";
 
 const cleanupDirs: string[] = [];
 
@@ -184,5 +184,206 @@ describe("loadTsconfigAliases", () => {
     const aliases = loadTsconfigAliases(dir);
     expect(aliases).toHaveLength(1);
     expect(aliases[0].find.test("@ok/x")).toBe(true);
+  });
+});
+
+// M76: a second, additive layer probing workspaceRoot's own tsconfig for
+// patterns the member does not declare. Every fixture above is a bare tmpdir
+// with no ancestor lockfile, so workspaceRoot === projectRoot there and this
+// layer never engages — these fixtures build a real two-level workspace so it
+// does.
+function mkWorkspaceMember(
+  rootFiles: Record<string, string>,
+  memberFiles: Record<string, string>,
+): { root: string; member: string } {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "120fps-tsconf-ws-"));
+  cleanupDirs.push(root);
+  fs.writeFileSync(path.join(root, "pnpm-workspace.yaml"), "packages:\n  - member\n");
+  for (const [rel, content] of Object.entries(rootFiles)) {
+    const full = path.join(root, rel);
+    fs.mkdirSync(path.dirname(full), { recursive: true });
+    fs.writeFileSync(full, content);
+  }
+  const member = path.join(root, "member");
+  fs.mkdirSync(member, { recursive: true });
+  for (const [rel, content] of Object.entries(memberFiles)) {
+    const full = path.join(member, rel);
+    fs.mkdirSync(path.dirname(full), { recursive: true });
+    fs.writeFileSync(full, content);
+  }
+  return { root, member };
+}
+
+describe("loadTsconfigAliases: workspace-root fallback (M76)", () => {
+  it("adds a workspace-root paths pattern the member's own tsconfig does not declare", () => {
+    const { root, member } = mkWorkspaceMember(
+      {
+        "tsconfig.json": JSON.stringify({
+          compilerOptions: { paths: { "@mantine/hooks": ["./packages/hooks/src/index.ts"] } },
+        }),
+        "packages/hooks/src/index.ts": "export const useX = 1;",
+      },
+      {
+        "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true } }),
+      },
+    );
+    const aliases = loadTsconfigAliases(member);
+    expect(aliases).toHaveLength(1);
+    expect(aliases[0].find.test("@mantine/hooks")).toBe(true);
+    expect(aliases[0].replacement).toBe(`${fwd(root)}/packages/hooks/src/index.ts`);
+    expect(aliases[0].fromWorkspaceRoot).toEqual({
+      pattern: "@mantine/hooks",
+      target: "./packages/hooks/src/index.ts",
+      configFile: `${fwd(root)}/tsconfig.json`,
+    });
+  });
+
+  it("falls back to the workspace root when the member has no tsconfig at all", () => {
+    const { root, member } = mkWorkspaceMember(
+      {
+        "tsconfig.json": JSON.stringify({
+          compilerOptions: { paths: { "@root/only": ["./root-only.ts"] } },
+        }),
+        "root-only.ts": "export const x = 1;",
+      },
+      {},
+    );
+    const aliases = loadTsconfigAliases(member);
+    expect(aliases).toHaveLength(1);
+    expect(aliases[0].find.test("@root/only")).toBe(true);
+    expect(aliases[0].replacement).toBe(`${fwd(root)}/root-only.ts`);
+  });
+
+  it("does NOT fall back to the workspace root for a member that declares baseUrl and deliberately no paths", () => {
+    // M76 "Does NOT include": baseUrl-only workspace-root fallback is out of
+    // scope — "No field-test finding is shaped this way; extending the
+    // fallback to baseUrl without evidence would be guessing." A member with
+    // an empty `memberPatterns` set here means "declared nothing usable" in
+    // the no-tsconfig-at-all case above, but must not be conflated with "has
+    // baseUrl, deliberately no paths": that member's own answer is silence,
+    // and the root's paths must stay unmerged.
+    const { member } = mkWorkspaceMember(
+      {
+        "tsconfig.json": JSON.stringify({
+          compilerOptions: { paths: { "@root/only": ["./root-only.ts"] } },
+        }),
+        "root-only.ts": "export const x = 1;",
+      },
+      {
+        "tsconfig.json": JSON.stringify({ compilerOptions: { baseUrl: "." } }),
+      },
+    );
+    const warnings: string[] = [];
+    const aliases = loadTsconfigAliases(member, warnings);
+    expect(aliases.every((a) => a.fromWorkspaceRoot === undefined)).toBe(true);
+    expect(aliases.some((a) => a.find.test("@root/only"))).toBe(false);
+    expect(warnings).toEqual([]);
+  });
+
+  it("single-package project (workspaceRoot === projectRoot) is unaffected: no root layer to probe", () => {
+    const dir = mkProject({ "src/x.ts": "export const x = 1;" });
+    expect(loadTsconfigAliases(dir)).toEqual([]);
+  });
+
+  it("member's own wildcard pattern wins over the workspace root's, even when the member's own target does not resolve to anything on disk", () => {
+    // The M77 loadable-entry check is scoped to the non-wildcard branch only
+    // (a directory prefix has no single "load" to check), so this precedence
+    // rule holds for a wildcard pattern regardless of which milestone's checks
+    // are active.
+    const { member } = mkWorkspaceMember(
+      {
+        "tsconfig.json": JSON.stringify({
+          compilerOptions: { paths: { "@shared/*": ["./real-shared/*"] } },
+        }),
+        "real-shared/x.ts": "export const x = 1;",
+      },
+      {
+        "tsconfig.json": JSON.stringify({
+          compilerOptions: { paths: { "@shared/*": ["./missing-shared/*"] } },
+        }),
+      },
+    );
+    const aliases = loadTsconfigAliases(member);
+    expect(aliases).toHaveLength(1);
+    expect(aliases[0].fromWorkspaceRoot).toBeUndefined();
+    expect(aliases[0].replacement).toBe(`${fwd(member)}/missing-shared/`);
+  });
+
+  it("member's own exact pattern wins over the workspace root's declaration of the same name", () => {
+    const { member } = mkWorkspaceMember(
+      {
+        "tsconfig.json": JSON.stringify({
+          compilerOptions: { paths: { "#shared": ["./root-shared.ts"] } },
+        }),
+        "root-shared.ts": "export const x = 1;",
+      },
+      {
+        "tsconfig.json": JSON.stringify({
+          compilerOptions: { paths: { "#shared": ["./member-shared.ts"] } },
+        }),
+        "member-shared.ts": "export const x = 1;",
+      },
+    );
+    const aliases = loadTsconfigAliases(member);
+    expect(aliases).toHaveLength(1);
+    expect(aliases[0].fromWorkspaceRoot).toBeUndefined();
+    expect(aliases[0].replacement).toBe(`${fwd(member)}/member-shared.ts`);
+  });
+});
+
+// M77: a non-wildcard `paths` target with no runtime entry (an @types/* stub,
+// a .d.ts-only package, any other location TypeScript resolves but a bundler
+// cannot load) never becomes a Vite alias.
+describe("loadTsconfigAliases: types-only paths targets (M77)", () => {
+  it("skips a paths entry whose target has only .d.ts files and no package.json main/module/exports", () => {
+    const dir = mkProject({
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: { paths: { react: ["./node_modules/@types/react"] } },
+      }),
+      "node_modules/@types/react/package.json": JSON.stringify({ name: "@types/react" }),
+      "node_modules/@types/react/index.d.ts": "export {};",
+    });
+    const warnings: string[] = [];
+    const aliases = loadTsconfigAliases(dir, warnings);
+    expect(aliases).toEqual([]);
+    expect(warnings).toEqual([
+      TYPES_ONLY_ALIAS_WARNING("react", "./node_modules/@types/react"),
+    ]);
+  });
+
+  it("still builds a sibling alias whose target does resolve", () => {
+    const dir = mkProject({
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: {
+          paths: {
+            react: ["./node_modules/@types/react"],
+            "@/*": ["./src/*"],
+          },
+        },
+      }),
+      "node_modules/@types/react/package.json": JSON.stringify({ name: "@types/react" }),
+      "node_modules/@types/react/index.d.ts": "export {};",
+      "src/x.ts": "export const x = 1;",
+    });
+    const warnings: string[] = [];
+    const aliases = loadTsconfigAliases(dir, warnings);
+    expect(aliases).toHaveLength(1);
+    expect(aliases[0].find.test("@/components/Button")).toBe(true);
+    expect(warnings).toEqual([
+      TYPES_ONLY_ALIAS_WARNING("react", "./node_modules/@types/react"),
+    ]);
+  });
+
+  it("keeps the exact (non-wildcard) alias from the existing test suite: its target is a real file", () => {
+    const dir = mkProject({
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: { paths: { "#utils": ["./src/utils/index.ts"] } },
+      }),
+      "src/utils/index.ts": "export const x = 1;",
+    });
+    const warnings: string[] = [];
+    const aliases = loadTsconfigAliases(dir, warnings);
+    expect(aliases).toHaveLength(1);
+    expect(warnings).toEqual([]);
   });
 });

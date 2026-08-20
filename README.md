@@ -285,6 +285,10 @@ Auto-classified from DOM complexity; portals/animation raise the floor to T3.
 - Unloadable transforms are named with a stable code (`[transform:svgr]`) instead of failing deep inside Vite.
 - `--no-transforms` measures without them. Active transforms are recorded in the report and fingerprint.
 
+## Environment variables
+
+`process.env` on the harness page is built from `.env` and `.env.local` files at the measured project's own root and, in a workspace, its workspace root too — read, never written. Only `NEXT_PUBLIC_*` and `VITE_*`-prefixed keys are forwarded, matching what a real Next.js or Vite production build actually exposes to the browser. The invoking shell's own environment is never read: a component that reads an unprefixed or shell-only variable, or `process.env` itself outside those files, measures `undefined`, the same as it would in production.
+
 ## Remediation
 
 Each finding prints its hint once per run; ids are in the JSON `hints`.

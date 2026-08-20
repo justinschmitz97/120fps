@@ -7,6 +7,7 @@ import { compareAgainstRef, formatCompare, validateCompareOptions } from "./comp
 import { formatMarkdown, formatJUnit } from "./ci-report.js";
 import { createBrowserPool } from "./measure.js";
 import { createServerPool } from "./harness.js";
+import { scanExports } from "./prop-gen.js";
 import { parseIsolationPhases, strictModeUnsupported, VUE_STRICTMODE_ERROR } from "./isolation.js";
 import { formatTable, DEFAULT_THRESHOLDS } from "./report.js";
 
@@ -679,6 +680,40 @@ export function formatCliError(err: unknown, debugEnv: string | undefined): stri
   return out;
 }
 
+// M79 (behavior 2). No process.on("unhandledRejection"/"uncaughtException")
+// handler exists anywhere in src/ today, so Vite's dependency-optimizer scan
+// — fire-and-forget by design, so it must not block server.listen() — can
+// reject after buildAndServe's own try/catch has already exited successfully;
+// Node's default --unhandled-rejections=throw then converts that into a
+// process-terminating uncaught exception with a raw esbuild stack, and exit
+// code 1, which cli.ts:744-747's own table documents as "a verdict failed" —
+// wrong for a setup/harness failure. This resolver is the pure decision the
+// process.on handlers below apply: same formatCliError text every other
+// error path already uses (a raw stack only under DEBUG), and the "harness or
+// browser failure" exit bucket (2), not Node's default. Exported so the
+// decision is unit-testable without touching real process.exit/process.on;
+// only the thin wrapper below performs those.
+let fatalProcessErrorFired = false;
+
+export function resolveFatalProcessError(
+  err: unknown,
+  debugEnv: string | undefined,
+): { output: string; exitCode: number } | undefined {
+  // process.exit does not stop already-scheduled work synchronously, so a
+  // second rejection arriving before the process actually exits must not
+  // print or decide again.
+  if (fatalProcessErrorFired) return undefined;
+  fatalProcessErrorFired = true;
+  return { output: formatCliError(err, debugEnv), exitCode: 2 };
+}
+
+// Test-only escape hatch for the module-level guard above, matching this
+// codebase's existing process-lifetime-cache reset convention
+// (prop-gen.ts's resetExtractionCache).
+export function resetFatalProcessErrorGuard(): void {
+  fatalProcessErrorFired = false;
+}
+
 // Wording kept identical to analyze.ts's resolveWrapPath/resolveCssFiles
 // re-checks (src/analyze.ts) so the CLI's early exit and the pipeline's
 // later throw read as the same error either way a run reaches them.
@@ -763,6 +798,14 @@ Combo caps:
   --max-combos bounds both prop-combo mode and matrix mode (default: 8 cells
   either way). In matrix mode, the base/anchor cell is always kept, then
   single-axis deviations from it, before wider cells are dropped.
+
+Environment variables:
+  The harness page only ever sees process.env from .env / .env.local files at
+  the measured project's own root and its workspace root (read, never
+  written); the invoking shell's environment is not passed through. Only keys
+  prefixed NEXT_PUBLIC_ or VITE_ are forwarded, matching what a real Next.js
+  or Vite build exposes to the browser. A component reading an unprefixed or
+  shell-only variable measures undefined, same as it would in production.
 
 Which mode answers which question:
   is it fast?                    (default)
@@ -959,6 +1002,7 @@ async function main(): Promise<void> {
       try {
         const explained = await explainProps(componentPath, {
           ...(args.targets?.[componentPath] ? { target: args.targets[componentPath] } : {}),
+          ...(args.noPreflight ? { noPreflight: true } : {}),
         });
         process.stdout.write(formatExplainProps(explained) + "\n");
       } catch (err: unknown) {
@@ -1150,7 +1194,7 @@ export interface PathReader {
   walk: (root: string) => string[];
 }
 
-const ACCEPTED_COMPONENT_EXTENSIONS = [".tsx", ".jsx", ".vue"];
+const ACCEPTED_COMPONENT_EXTENSIONS = [".tsx", ".jsx", ".vue", ".ts", ".js"];
 
 // Extension only: directory/glob expansion additionally filters build dirs
 // and test/story/fixture suffixes via isComponentFile below; a plain path
@@ -1158,7 +1202,27 @@ const ACCEPTED_COMPONENT_EXTENSIONS = [".tsx", ".jsx", ".vue"];
 export function hasAcceptedComponentExtension(filePath: string): boolean {
   const posix = filePath.replace(/\\/g, "/");
   if (posix.endsWith(".d.ts")) return false;
-  return /\.(tsx|jsx|vue)$/.test(posix);
+  return /\.(tsx|jsx|vue|ts|js)$/.test(posix);
+}
+
+// M77: extension alone is not enough for `.ts`/`.js` — MUI's own .js-with-JSX
+// convention and Ark-UI-wrapper .ts-with-no-JSX shapes are both legitimate
+// components, but a `.js`/`.ts` utility file with only camelCase exports is
+// not. `.tsx`/`.jsx`/`.vue` short-circuit true with no content read: zero
+// behavior change for extensions already accepted before this milestone.
+export function hasComponentShape(filePath: string): boolean {
+  const posix = filePath.replace(/\\/g, "/");
+  if (/\.(tsx|jsx|vue)$/.test(posix)) return true;
+  try {
+    const content = fs.readFileSync(filePath, "utf-8");
+    return scanExports(content, filePath).length > 0;
+  } catch {
+    return false;
+  }
+}
+
+export function NO_COMPONENT_EXPORT_ERROR(filePath: string): string {
+  return `${filePath} has no PascalCase-named export: 120fps could not find a component to measure in this file`;
 }
 
 export function isComponentFile(filePath: string): boolean {
@@ -1170,7 +1234,8 @@ export function isComponentFile(filePath: string): boolean {
     }
   }
   const base = posix.slice(posix.lastIndexOf("/") + 1);
-  return !SKIP_SUFFIX.some((s) => base.includes(s));
+  if (SKIP_SUFFIX.some((s) => base.includes(s))) return false;
+  return hasComponentShape(filePath);
 }
 
 // `*` stops at a separator, `**` does not. Nothing else is special, so a path
@@ -1240,6 +1305,9 @@ export function expandComponentPaths(
           error: `${arg} is not a component file: 120fps only measures ${ACCEPTED_COMPONENT_EXTENSIONS.join(", ")} files`,
         };
       }
+      if (!hasComponentShape(arg)) {
+        return { paths: [], error: NO_COMPONENT_EXPORT_ERROR(arg) };
+      }
       matches.push(arg);
     }
 
@@ -1305,5 +1373,19 @@ const isDirectRun =
   (process.argv[1].endsWith("cli.js") || process.argv[1].endsWith("cli.ts"));
 
 if (isDirectRun) {
+  // M79 (behavior 2). Registered only on the real CLI process, never when
+  // cli.ts is merely imported by a test: unit tests routinely trigger a real
+  // unhandled rejection (the documented provider-wrapper.test.ts esbuild
+  // temp-dir flake, per specs/overview/00-tdd.md), and a global handler that
+  // called process.exit(2) on that would abort the whole suite rather than
+  // let vitest's own reporting handle it.
+  const handleFatalProcessError = (err: unknown): void => {
+    const resolved = resolveFatalProcessError(err, process.env.DEBUG);
+    if (!resolved) return;
+    process.stderr.write(resolved.output);
+    process.exit(resolved.exitCode);
+  };
+  process.on("unhandledRejection", handleFatalProcessError);
+  process.on("uncaughtException", handleFatalProcessError);
   main();
 }
