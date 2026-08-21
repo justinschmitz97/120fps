@@ -220,22 +220,69 @@ export function renderDrain(drain: PageErrorDrain): string[] {
 // capture.summary() text under two different lead sentences, so a genuine
 // hang (nothing captured, timeout fires) and an early fatal throw (something
 // captured almost instantly) read as two different failures, which they are.
+// M106 A2 (excalidraw-F1): "Cannot access 'DropdownMenu' before initialization"
+// is an ESM temporal-dead-zone error, not a component defect and not a
+// timeout. The preflight import-cycle warning printed above says which cycle;
+// this says why the failure the user is looking at is that cycle.
+const TDZ_PAGE_ERROR = /Cannot access '([^']+)' before initialization/;
+
+// Review A3: the note used to assert a cycle it never checked, and to
+// cross-reference a warning that need not have been printed (a --no-preflight
+// run prints none at all). `runPreflight` sets this when it actually reports an
+// import-cycle hit, and clears it when it walks a graph without one.
+let importCycleReported = false;
+
+export function setImportCycleReported(reported: boolean): void {
+  importCycleReported = reported;
+}
+
+export function tdzCycleNote(capture: PageErrorCapture): string | undefined {
+  for (const error of capture.errors) {
+    const match = TDZ_PAGE_ERROR.exec(error);
+    if (!match) continue;
+    const lead = `${match[1]} was read before its module finished initializing`;
+    return importCycleReported
+      ? `${lead}: an import cycle the generated entry enters from the component's own file, ` +
+          "rather than where the application enters it (see the import-cycle warning above). Add " +
+          "a 120fps.setup.tsx, or pass --wrap, that imports this package's own root module first."
+      : `${lead} (a temporal dead zone) — possibly an import cycle this run's preflight did not ` +
+          "report, or a module-scope read of a binding initialized later in the same file.";
+  }
+  return undefined;
+}
+
 function errorDetailBlock(capture: PageErrorCapture): string {
   return capture.errors.length > 0
     ? ` Page errors:\n${capture.summary()}`
     : " No page errors were captured.";
 }
 
+// M105 (taxonomy-F3): `remedyLine` is the same line buildFatalPageErrorMessage
+// already appends. It reaches this branch because the readiness wait's own
+// timeout usually beats the fatal signal (verify/V7's side finding), which left
+// the refusal a user can act on with no next step at all. Appended only when
+// the capture actually holds a page error: with nothing captured, a suggestion
+// about environment files would be a guess about a silent hang.
 export function enrichTimeoutError(
   err: unknown,
   capture: PageErrorCapture,
   context: string,
+  remedyLine?: string,
 ): Error {
   const base = err instanceof Error ? err : new Error(String(err));
   const isTimeout = base.name === "TimeoutError" || base.message.includes("Timeout");
   if (!isTimeout) return base;
 
-  return new Error(`${context} did not become ready within timeout.${errorDetailBlock(capture)}`, { cause: err });
+  const remedy = remedyLine && capture.errors.length > 0 ? `\n${remedyLine}` : "";
+  // M106 A2: a temporal-dead-zone error has a known cause, so it is attributed
+  // instead of speculated about; the env-file line would read as a guess next
+  // to it and is dropped for that one shape.
+  const cycle = tdzCycleNote(capture);
+  return new Error(
+    `${context} did not become ready within timeout.${errorDetailBlock(capture)}` +
+      (cycle ? `\n${cycle}` : remedy),
+    { cause: err },
+  );
 }
 
 // M79 gap 3b: a file with a JS/TS/Vue extension, the first such frame in the
@@ -294,7 +341,15 @@ export async function waitForReadyOrFatal(
   try {
     await Promise.race([waitForReady(), fatalSignal]);
   } catch (err) {
-    throw enrichTimeoutError(err, capture, context);
+    // M105: the readiness wait rejecting first does not mean no fatal error
+    // arrived — on taxonomy it always arrives, seconds earlier, and the race is
+    // decided by whichever promise settles first. A fatal signal that is
+    // already here still leads; otherwise the timeout carries the remedy.
+    if (fatal) throw buildFatalPageErrorMessage(fatal, capture, context, buildEnvRemedyLine?.());
+    // Still lazy: a timeout that captured nothing has nothing to attribute a
+    // remedy to, so the callback is not even called for it.
+    const remedyLine = capture.errors.length > 0 ? buildEnvRemedyLine?.() : undefined;
+    throw enrichTimeoutError(err, capture, context, remedyLine);
   }
   if (fatal) {
     throw buildFatalPageErrorMessage(fatal, capture, context, buildEnvRemedyLine?.());
@@ -322,7 +377,13 @@ export async function gotoWithErrorContext(
   }
 }
 
-export type MeasurementPhase = "mount" | "rerender" | "explore" | "attribution";
+// M89 gap (taxonomy control failure): "delta" is the prop-delta pass's own
+// extra mount/rerender calls (src/analyze.ts's measureStandardPropDeltas) —
+// distinct from the ordinary "mount"/"rerender" phases those same
+// measure.ts functions tag themselves with, because the right remediation
+// flag differs (see stallHintForPhase below) even though the underlying
+// measurement code is shared.
+export type MeasurementPhase = "mount" | "rerender" | "explore" | "attribution" | "delta";
 
 export interface PhaseContext {
   phase: MeasurementPhase;
@@ -333,6 +394,47 @@ export interface PhaseContext {
 export const HARNESS_STALL_HINT =
   "A Worker, a long-lived timer or a running animation can keep the page busy so the trace " +
   "never completes; retry with --no-attribution, a shorter --explore-budget, or fewer --samples.";
+
+// M89 gap: --no-attribution only disables cost-attribution tracing, a pass
+// the delta measurement never runs — it cannot be the remedy for a stall
+// inside the delta pass's own mount/rerender calls. --no-deltas is the flag
+// that actually skips that code path (taxonomy's control: --no-attribution
+// stalled identically, --no-deltas produced a clean PASS in 4m 8s).
+export const DELTA_PHASE_STALL_HINT =
+  "A Worker, a long-lived timer or a running animation can keep the page busy so the trace " +
+  "never completes; retry with --no-deltas, a shorter --explore-budget, or fewer --samples.";
+
+// M89 defect 2 (live taxonomy proof): the same false-remediation problem the
+// delta phase had reaches the rerender phase directly, not only through the
+// delta pass's retagging -- taxonomy's run failed with `rerender phase
+// failed on combo 1 of button.tsx: ... Target page, context or browser has
+// been closed` and still carried `retry with --no-attribution, ...`.
+// --no-attribution only disables react-profiler.ts's separate
+// cost-attribution pass (the "attribution" phase); it does not touch
+// anything measureRerender does. --samples and --max-combos are the flags
+// that actually shrink the rerender pass's own workload (measure.ts).
+// --explore-budget is left out for the same reason --no-attribution is: it
+// governs explorer.ts's interaction exploration, not the rerender pass.
+export const RERENDER_PHASE_STALL_HINT =
+  "A Worker, a long-lived timer or a running animation can keep the page busy so the trace " +
+  "never completes; retry with fewer --samples or a lower --max-combos.";
+
+// M106 A1 (calcom-F3): the explore phase's `--no-attribution` advice was
+// measured against the failing component and produced an identical 124 s
+// failure — the stall is the exploration's own interaction budget (20 clicks
+// against a Radix portal whose `pointer-events: none` times each one out),
+// not the tracing pass. The two flags that really bound it are the budget and
+// the sample count.
+export const EXPLORE_PHASE_STALL_HINT =
+  "A Worker, a long-lived timer or a running animation can keep the page busy so the trace " +
+  "never completes; retry with a shorter --explore-budget or fewer --samples.";
+
+function stallHintForPhase(phase: MeasurementPhase): string {
+  if (phase === "delta") return DELTA_PHASE_STALL_HINT;
+  if (phase === "rerender") return RERENDER_PHASE_STALL_HINT;
+  if (phase === "explore") return EXPLORE_PHASE_STALL_HINT;
+  return HARNESS_STALL_HINT;
+}
 
 // Failures whose cause is the page never going idle. Everything else keeps its
 // own message and gets no hint: a wrong hint costs more than no hint.
@@ -357,9 +459,21 @@ export function enrichPhaseError(err: unknown, context: PhaseContext): Error {
   if ((base as unknown as Record<symbol, unknown>)[PHASE_TAGGED]) return base;
 
   const hint = STALL_SIGNATURES.some((pattern) => pattern.test(base.message))
-    ? ` ${HARNESS_STALL_HINT}`
+    ? ` ${stallHintForPhase(context.phase)}`
     : "";
   const enriched = new Error(`${describePhase(context)}: ${base.message}${hint}`, { cause: err });
   (enriched as unknown as Record<symbol, unknown>)[PHASE_TAGGED] = true;
   return enriched;
+}
+
+// M89 gap: a caller whose own context is more specific than the phase an
+// inner measurement call already tagged (the delta pass's own extra
+// mount/rerender calls, tagged "mount"/"rerender" by measure.ts) cannot
+// just call enrichPhaseError again — its PHASE_TAGGED guard makes a second
+// call on an already-enriched error a no-op. Re-enriches `.cause` instead,
+// which enrichPhaseError always sets to the untagged original error, so the
+// stall-signature check and hint selection run fresh under the new phase.
+export function retagPhaseError(err: unknown, context: PhaseContext): Error {
+  const cause = err instanceof Error ? err.cause : undefined;
+  return enrichPhaseError(cause ?? err, context);
 }

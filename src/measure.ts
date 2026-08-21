@@ -53,19 +53,114 @@ export async function detectAnimations(page: Page): Promise<boolean> {
 // that pushed small components a whole tier up. Count what the component
 // actually rendered: everything inside #root, plus portal content, which lives
 // on document.body but belongs to the component.
-export async function countComponentNodes(page: Page): Promise<number> {
-  return page.evaluate(() => {
-    const INTERNAL = new Set(["SCRIPT", "STYLE", "LINK", "NOSCRIPT", "TEMPLATE"]);
-    const root = document.getElementById("root");
-    let count = root ? root.querySelectorAll("*").length : 0;
-    for (const child of Array.from(document.body.children)) {
-      if (child === root) continue;
-      if (INTERNAL.has(child.tagName)) continue;
-      if (child.localName.startsWith("vite-")) continue;
-      count += 1 + child.querySelectorAll("*").length;
+//
+// M106 B4 (dub-F6): the two halves are reported separately. The sum is what
+// every existing caller reads and is unchanged; the split is what lets a
+// report say "this component rendered only through a portal" instead of
+// leaving `domNodeCount` to carry both facts at once. Kept as a source string
+// so the same code a page runs is the code a unit test runs (the harness
+// entry's `stylesheetMatchStats` precedent).
+export const COMPONENT_NODE_COUNT_SOURCE = `
+function __120fpsCountComponentNodes(doc) {
+  var INTERNAL = { SCRIPT: 1, STYLE: 1, LINK: 1, NOSCRIPT: 1, TEMPLATE: 1 };
+  var root = doc.getElementById("root");
+  var rootNodes = root ? root.querySelectorAll("*").length : 0;
+  var orphanNodes = 0;
+  var children = Array.prototype.slice.call(doc.body.children);
+  for (var i = 0; i < children.length; i++) {
+    var child = children[i];
+    if (root && child === root) continue;
+    if (INTERNAL[child.tagName]) continue;
+    if (child.localName && child.localName.indexOf("vite-") === 0) continue;
+    orphanNodes += 1 + child.querySelectorAll("*").length;
+  }
+  return { rootNodes: rootNodes, orphanNodes: orphanNodes };
+}`;
+
+export interface ComponentNodeCount {
+  // Everything the component rendered inside `#root`.
+  rootNodes: number;
+  // Everything it rendered outside `#root`, at body level: portals.
+  orphanNodes: number;
+}
+
+// `page.evaluate` parses a string as an EXPRESSION, so a bare function
+// declaration followed by a call is a syntax error at `eval`. Every source
+// string above is handed over wrapped in an IIFE, and the wrapped form is
+// exported so a unit test can assert it parses.
+function asEvaluateExpression(source: string, call: string): string {
+  return `(() => { ${source}
+return ${call}; })()`;
+}
+
+export const COMPONENT_NODE_COUNT_EXPRESSION = asEvaluateExpression(
+  COMPONENT_NODE_COUNT_SOURCE,
+  "__120fpsCountComponentNodes(document)",
+);
+
+export async function countComponentNodes(page: Page): Promise<ComponentNodeCount> {
+  return page.evaluate<ComponentNodeCount>(COMPONENT_NODE_COUNT_EXPRESSION);
+}
+
+export function totalComponentNodes(count: ComponentNodeCount): number {
+  return count.rootNodes + count.orphanNodes;
+}
+
+// M106 B5 (calcom-F5): `<use href="#calendar">` is a same-document fragment
+// reference. Nothing is requested, so M70's network capture is blind to it, and
+// the `<svg>` plus the `<use>` count as two real nodes -- a component that
+// renders visibly nothing measures as a component that rendered. calcom's
+// sprite is injected by `apps/web/app/layout.tsx`, which the harness never
+// mounts.
+//
+// Same-document fragments only. An external `<use href="/icons.svg#id">` is
+// fetched by the browser and its target never enters `document`, so
+// `getElementById` cannot decide it and checking it would report every valid
+// external sprite as unresolved.
+export const UNRESOLVED_SPRITE_REFS_SOURCE = `
+function __120fpsUnresolvedSpriteRefs(doc) {
+  var INTERNAL = { SCRIPT: 1, STYLE: 1, LINK: 1, NOSCRIPT: 1, TEMPLATE: 1 };
+  var scopes = [];
+  var root = doc.getElementById("root");
+  if (root) scopes.push(root);
+  var children = Array.prototype.slice.call(doc.body.children);
+  for (var i = 0; i < children.length; i++) {
+    var child = children[i];
+    if (root && child === root) continue;
+    if (INTERNAL[child.tagName]) continue;
+    if (child.localName && child.localName.indexOf("vite-") === 0) continue;
+    scopes.push(child);
+  }
+  var missing = [];
+  var seen = {};
+  for (var s = 0; s < scopes.length; s++) {
+    var nodes = Array.prototype.slice.call(scopes[s].querySelectorAll("*"));
+    for (var n = 0; n < nodes.length; n++) {
+      var node = nodes[n];
+      if (!node.localName || node.localName.toLowerCase() !== "use") continue;
+      var ref = node.getAttribute("href");
+      if (!ref) ref = node.getAttribute("xlink:href");
+      if (!ref || ref.charAt(0) !== "#") continue;
+      if (seen[ref]) continue;
+      seen[ref] = 1;
+      if (!doc.getElementById(ref.slice(1))) missing.push(ref);
     }
-    return count;
-  });
+  }
+  return missing;
+}`;
+
+// Bounded like every other collected list in a report: a component with a
+// hundred broken icons says so with ten of them.
+export const MAX_UNRESOLVED_SPRITE_REFS = 10;
+
+export const UNRESOLVED_SPRITE_REFS_EXPRESSION = asEvaluateExpression(
+  UNRESOLVED_SPRITE_REFS_SOURCE,
+  "__120fpsUnresolvedSpriteRefs(document)",
+);
+
+export async function collectUnresolvedSpriteRefs(page: Page): Promise<string[]> {
+  const refs = await page.evaluate<string[]>(UNRESOLVED_SPRITE_REFS_EXPRESSION);
+  return refs.slice(0, MAX_UNRESOLVED_SPRITE_REFS);
 }
 
 // M40: what scene the numbers describe. A component that fetches, suspends, or
@@ -416,12 +511,47 @@ export async function enterHarness(
 export const CONTEXT_RETRY_WARNING =
   "the dev server reloaded the page mid-measurement; the affected sample was retried once";
 
+// M106 B2 (calcom-F3): `isContextLostError` matches three signatures and only
+// one of them is a dev-server reload. A tracing stall printed "the dev server
+// reloaded the page mid-measurement" for a reload that did not happen, and the
+// reader had no way to tell which of the two had occurred.
+export const TRACING_STALL_RETRY_WARNING =
+  "the cost-attribution trace stalled (Tracing.tracingComplete never arrived); the affected sample " +
+  "was retried once against a fresh CDP session";
+
+export const TARGET_CLOSED_RETRY_WARNING =
+  "the browser target closed mid-measurement; the affected sample was retried once after re-entering " +
+  "the harness page";
+
+export function contextRetryWarningFor(err: unknown): string {
+  if (isTracingTimeoutError(err)) return TRACING_STALL_RETRY_WARNING;
+  if (isTargetClosedError(err)) return TARGET_CLOSED_RETRY_WARNING;
+  return CONTEXT_RETRY_WARNING;
+}
+
 // Promoted to user-facing text (M56): the retry above absorbs one reload, but
 // exhausting the shared budget means the pattern kept recurring across the
 // run: that points at the environment, not the component under test.
 export const RETRY_BUDGET_EXHAUSTED_NOTE =
   " The context-retry budget is exhausted: repeated dev-server reloads (environment), not the " +
   "component, are the likely cause.";
+
+// M106 B2: the same distinction on the exhaustion path. Naming reloads for a
+// run that never reloaded sends a reader at the dev server instead of at the
+// trace pipeline.
+export const TRACING_BUDGET_EXHAUSTED_NOTE =
+  " The context-retry budget is exhausted: the cost-attribution trace kept stalling (environment), " +
+  "not the component.";
+
+export const TARGET_CLOSED_BUDGET_EXHAUSTED_NOTE =
+  " The context-retry budget is exhausted: the browser target kept closing (environment), not the " +
+  "component.";
+
+export function retryBudgetExhaustedNoteFor(err: unknown): string {
+  if (isTracingTimeoutError(err)) return TRACING_BUDGET_EXHAUSTED_NOTE;
+  if (isTargetClosedError(err)) return TARGET_CLOSED_BUDGET_EXHAUSTED_NOTE;
+  return RETRY_BUDGET_EXHAUSTED_NOTE;
+}
 
 // Vite's dependency optimizer can full-reload the page while a sample is in
 // flight. Two signatures, one cause: the evaluation context and the control API
@@ -489,6 +619,187 @@ export async function rafFence(page: Page): Promise<void> {
       }),
     RAF_FENCE_TIMEOUT_MS,
   );
+}
+
+// M89: taxonomy's control — `button.tsx` dies in the delta pass with this
+// exact message, and the fence had no retry at all: one 10s timeout and the
+// whole pass threw, uncaught until the CLI's top-level handler. Matches
+// `rafFence`'s own thrown text.
+const FRAME_STARVATION_PATTERN = /frame starvation/i;
+
+export function isFrameStarvationError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : typeof err === "string" ? err : "";
+  return FRAME_STARVATION_PATTERN.test(message);
+}
+
+// M89 defect 1 (live taxonomy proof): the same run that correctly degraded
+// two starved combos then still died with `browserContext.newCDPSession:
+// Target page, context or browser has been closed` -- a closed target is
+// exactly as recoverable as a starved fence (both are fixed by replacing the
+// CDP session via `enter`), but only frame starvation was guarded here.
+// `Tracing.tracingComplete timed out` fails the same way (a wedged CDP
+// trace pipeline, also fixed by `enter` replacing the session). Patterns
+// mirror `STALL_SIGNATURES` in page-errors.ts and the two matching entries
+// already in this file's own `CONTEXT_LOST` list above -- kept as separate
+// literals rather than shared, since page-errors.ts's list also carries
+// hint-selection concerns this module has no reason to depend on, and
+// `CONTEXT_LOST` is a disjoint retry layer (`withContextRetry`) this one
+// composes around, not merges into.
+const TRACING_TIMEOUT_PATTERN = /Tracing\.tracingComplete timed out/i;
+const TARGET_CLOSED_PATTERN = /Target (page|closed|crashed)/i;
+
+export function isTracingTimeoutError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : typeof err === "string" ? err : "";
+  return TRACING_TIMEOUT_PATTERN.test(message);
+}
+
+export function isTargetClosedError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : typeof err === "string" ? err : "";
+  return TARGET_CLOSED_PATTERN.test(message);
+}
+
+// The three signatures `withFrameStarvationRetry` recovers from, sharing one
+// bounded budget (`MAX_FRAME_STARVATION_RETRIES`). No shutdown/abort signal
+// is observable anywhere in this codebase (no SIGINT/SIGTERM handler and no
+// AbortController threaded through measurement), so a target closed by a
+// genuine process teardown cannot be distinguished, from here, from one
+// closed by a transient crash. The small fixed budget is the safeguard
+// either way: a real teardown costs at most two quick, already-failing
+// attempts before this degrades the combo and returns, rather than hanging
+// or looping.
+type StallKind = "starvation" | "tracing-timeout" | "target-closed";
+
+function classifyStall(err: unknown): StallKind | undefined {
+  if (isFrameStarvationError(err)) return "starvation";
+  if (isTracingTimeoutError(err)) return "tracing-timeout";
+  if (isTargetClosedError(err)) return "target-closed";
+  return undefined;
+}
+
+export const MAX_FRAME_STARVATION_RETRIES = 2;
+
+export const frameStarvationRetryWarning = (comboIndex: number): string =>
+  `combo ${comboIndex}: rAF fence starved for frames; retrying against a freshly re-entered harness session`;
+
+export const frameStarvationDegradedWarning = (comboIndex: number): string =>
+  `combo ${comboIndex}: measurement did not complete after ${MAX_FRAME_STARVATION_RETRIES} retries ` +
+  `(frame starvation); omitted from the report rather than failing the run`;
+
+export const tracingTimeoutRetryWarning = (comboIndex: number): string =>
+  `combo ${comboIndex}: cost-attribution trace stalled (Tracing.tracingComplete timed out); ` +
+  `retrying against a freshly re-entered harness session`;
+
+export const tracingTimeoutDegradedWarning = (comboIndex: number): string =>
+  `combo ${comboIndex}: measurement did not complete after ${MAX_FRAME_STARVATION_RETRIES} retries ` +
+  `(tracing timeout); omitted from the report rather than failing the run`;
+
+export const targetClosedRetryWarning = (comboIndex: number): string =>
+  `combo ${comboIndex}: browser target closed mid-measurement; retrying against a freshly re-entered harness session`;
+
+export const targetClosedDegradedWarning = (comboIndex: number): string =>
+  `combo ${comboIndex}: measurement did not complete after ${MAX_FRAME_STARVATION_RETRIES} retries ` +
+  `(target closed); omitted from the report rather than failing the run`;
+
+function retryWarningFor(kind: StallKind, comboIndex: number): string {
+  if (kind === "tracing-timeout") return tracingTimeoutRetryWarning(comboIndex);
+  if (kind === "target-closed") return targetClosedRetryWarning(comboIndex);
+  return frameStarvationRetryWarning(comboIndex);
+}
+
+function degradedWarningFor(kind: StallKind, comboIndex: number): string {
+  if (kind === "tracing-timeout") return tracingTimeoutDegradedWarning(comboIndex);
+  if (kind === "target-closed") return targetClosedDegradedWarning(comboIndex);
+  return frameStarvationDegradedWarning(comboIndex);
+}
+
+// M89: a bounded, disclosed retry for failure signatures the fence itself
+// (and, per defect 1, a closed target or a wedged trace pipeline) has no
+// recovery from — orthogonal to `withContextRetry` (a disjoint signature
+// list, its own escalate-and-throw behavior on exhaustion, unchanged by
+// this). On exhaustion this does NOT throw: it discloses and returns
+// `undefined`, so the caller can omit the one combo that stalled rather
+// than failing every other combo in the same pass. `enter` is the same
+// session-refresh (`refreshCdpSession` + `enterHarness`) the context-lost
+// retry already uses — it replaces the CDP session the frame pump reads on
+// every loop iteration, which is the most plausible recovery path for all
+// three signatures alike.
+export async function withFrameStarvationRetry<T>(
+  comboIndex: number,
+  enter: () => Promise<void>,
+  body: () => Promise<T>,
+  onWarning?: (warning: string) => void,
+): Promise<T | undefined> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await body();
+    } catch (err) {
+      const kind = classifyStall(err);
+      if (!kind) throw err;
+      if (attempt >= MAX_FRAME_STARVATION_RETRIES) {
+        onWarning?.(degradedWarningFor(kind, comboIndex));
+        return undefined;
+      }
+      onWarning?.(retryWarningFor(kind, comboIndex));
+      try {
+        await enter();
+      } catch (enterErr) {
+        // M92 (1.5a, regression): enter() re-runs enterHarness's own
+        // independent style-settle fence (measure.ts's settleStyles). Left
+        // unguarded, a stall there escaped this function entirely -- the
+        // exact failure this retry exists to prevent, relocated one frame
+        // up. Counts against the same bounded budget as a body() stall
+        // (this iteration already consumed one `attempt`) and falls through
+        // to retry body() on the next iteration rather than throwing; that
+        // retry's own stall, if any, degrades normally through the branch
+        // above once the budget is exhausted.
+        const enterKind = classifyStall(enterErr);
+        if (!enterKind) throw enterErr;
+        if (attempt >= MAX_FRAME_STARVATION_RETRIES) {
+          onWarning?.(degradedWarningFor(enterKind, comboIndex));
+          return undefined;
+        }
+        onWarning?.(retryWarningFor(enterKind, comboIndex));
+      }
+    }
+  }
+}
+
+// M89 (2, live taxonomy proof continued): combo 2 correctly degraded via its
+// sample loop's withFrameStarvationRetry composition; the very next combo
+// then still failed the whole run with a raw, unwrapped `frame starvation`
+// error -- and no preceding "retrying against a freshly re-entered harness
+// session" warning at all, which withFrameStarvationRetry can never omit on
+// a classified failure (it always warns before its first retry). That is
+// proof the failure never reached withFrameStarvationRetry: the cause is not
+// budget scoping (`withFrameStarvationRetry`'s own `attempt` counter is a
+// fresh local on every call, already isolated per invocation), it is a
+// coverage gap. `measureRerender`'s and `measureMount`'s warmup calls
+// (`mountAndWait`, `rerenderAndTrace`, `runMountUnmount`) touch the same
+// rafFence-guarded page as the sample loops but ran directly, outside any
+// retry wrapper -- whichever combo happened to starve during its warmup
+// (rather than during a sample) escaped retry/degrade entirely and took the
+// whole pass down. `withWarmupRetry` closes that gap with the identical
+// composition the sample loops already use (`withFrameStarvationRetry`
+// around `withContextRetry`, sharing the pass's `retryBudget`), so a
+// warmup-time stall degrades the combo exactly like a sample-time one
+// instead of escaping unguarded.
+export async function withWarmupRetry(
+  comboIndex: number,
+  enter: () => Promise<void>,
+  warmup: () => Promise<void>,
+  retryBudget: RetryBudget,
+  onWarning?: (warning: string) => void,
+): Promise<boolean> {
+  const completed = await withFrameStarvationRetry(
+    comboIndex,
+    enter,
+    async () => {
+      await withContextRetry(enter, warmup, { onRetry: onWarning, budget: retryBudget });
+      return true as const;
+    },
+    onWarning,
+  );
+  return completed === true;
 }
 
 // Structural subset of CDPSession so the pump is testable without a browser.
@@ -730,11 +1041,12 @@ export async function withContextRetry<T>(
     if (budget) {
       if (budget.remaining <= 0) {
         const original = err instanceof Error ? err : new Error(String(err));
-        throw new Error(original.message + RETRY_BUDGET_EXHAUSTED_NOTE, { cause: err });
+        throw new Error(original.message + retryBudgetExhaustedNoteFor(err), { cause: err });
       }
       budget.remaining--;
     }
-    options?.onRetry?.(CONTEXT_RETRY_WARNING);
+    // M106 B2: the warning names the signature that actually fired.
+    options?.onRetry?.(contextRetryWarningFor(err));
     await enter();
     return await body();
   }
@@ -790,7 +1102,7 @@ export async function measureWrapperOverhead(
     await rafFence(page);
   };
   const unmount = () => page.evaluate(() => (window as any).__120fps.unmount());
-  const countNodes = () => countComponentNodes(page);
+  const countNodes = async () => totalComponentNodes(await countComponentNodes(page));
 
   for (let w = 0; w < WRAPPER_OVERHEAD_WARMUP; w++) {
     await mountWrapper();
@@ -882,6 +1194,13 @@ export interface MountResult {
   // M59: everything the page threw or logged as an error while this combo was
   // measured. Absent when the page stayed quiet.
   pageErrors?: PageErrorDrain;
+  // M106 B4 (dub-F6): how much of `domNodeCount` was rendered outside `#root`.
+  // Absent when the component rendered no portal content, so a report that
+  // never had portals is byte-identical.
+  orphanNodes?: number;
+  // M106 B5 (calcom-F5): `<use href="#id">` references whose id no element in
+  // the document defines. Absent when every sprite reference resolved.
+  unresolvedSpriteRefs?: string[];
 }
 
 export interface TraceEvent {
@@ -905,7 +1224,16 @@ const SCRIPT_EVENT_NAMES = new Set([
   "v8.run",
 ]);
 
-const TRACE_TIMEOUT_MS = 60_000;
+// M106 B1 (calcom-F3): this bounds the FLUSH -- the window between
+// `Tracing.end` and `Tracing.tracingComplete` -- and nothing else. It used to
+// be armed before `Tracing.start`, so it covered the traced action too: an
+// `open-close-10` stress pattern on a Radix portal spends 20 clicks at a 3 s
+// `page.click` timeout each, and Radix `modal`'s `body { pointer-events: none }`
+// made 19 of them time out. 57 s of interaction inside a 60 s window reported
+// itself as a tracing stall, and the raw CDP error ended the run at exit 2. The
+// action is bounded by its caller (the explore pass's remaining wall clock, the
+// rAF fence elsewhere), which is where an action budget belongs.
+export const TRACE_FLUSH_TIMEOUT_MS = 60_000;
 
 export function computeMedian(values: number[]): number {
   if (values.length === 0) return 0;
@@ -998,16 +1326,30 @@ export async function collectTrace(
   cdp.on("Tracing.dataCollected", onData);
 
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let completed = false;
+  // M106 B1: armed at `Tracing.end`, not here. Declared now because the
+  // listener has to be attached before the action runs, or a fast flush would
+  // resolve into nothing.
+  let armFlushTimeout: () => void = () => {};
+  // Review B-10: removed in the `finally` too. A trace that throws before the
+  // flush never fires this listener, and consecutive failures accumulated them
+  // on the same CDP session.
+  let onComplete: (() => void) | undefined;
   const traceComplete = new Promise<void>((resolve, reject) => {
-    timer = setTimeout(
-      () => reject(new Error("Tracing.tracingComplete timed out")),
-      TRACE_TIMEOUT_MS,
-    );
-    cdp.once("Tracing.tracingComplete", () => {
-      clearTimeout(timer);
+    armFlushTimeout = () => {
+      if (completed || timer !== undefined) return;
+      timer = setTimeout(
+        () => reject(new Error("Tracing.tracingComplete timed out")),
+        TRACE_FLUSH_TIMEOUT_MS,
+      );
+    };
+    onComplete = () => {
+      completed = true;
+      if (timer !== undefined) clearTimeout(timer);
       timer = undefined;
       resolve();
-    });
+    };
+    cdp.once("Tracing.tracingComplete", onComplete);
   });
 
   // Prevent unhandled rejection if timeout fires before await
@@ -1023,6 +1365,8 @@ export async function collectTrace(
     try {
       await action();
     } finally {
+      // The flush window opens here: `Tracing.end` and everything after it.
+      armFlushTimeout();
       await cdp.send("Tracing.end");
     }
     await traceComplete;
@@ -1032,6 +1376,7 @@ export async function collectTrace(
   } finally {
     if (timer !== undefined) clearTimeout(timer);
     cdp.off("Tracing.dataCollected", onData);
+    if (onComplete) cdp.off("Tracing.tracingComplete", onComplete);
     // A trace that never completed leaves the session started, and the next
     // Tracing.start then fails with "already been started": turning one lost
     // sample into a dead run. Recovery is best-effort and never masks the
@@ -1114,6 +1459,10 @@ export async function runMountUnmount(
   mountDur: number;
   unmountDur: number;
   domNodeCount: number;
+  // M106 B4: the portal half of `domNodeCount`.
+  orphanNodes: number;
+  // M106 B5: same-document sprite ids nothing in the page defines.
+  unresolvedSpriteRefs: string[];
   hasAnimation: boolean;
   measuredState: MeasuredState;
   mountEvents: TraceEvent[];
@@ -1127,7 +1476,14 @@ export async function runMountUnmount(
   // to the component, not to a gap in our instrumentation.
   if (collectDomInfo) await beginMutationWatch(page);
 
-  const domNodeCount = collectDomInfo ? await countComponentNodes(page) : 0;
+  const nodeCount = collectDomInfo
+    ? await countComponentNodes(page)
+    : { rootNodes: 0, orphanNodes: 0 };
+  const domNodeCount = totalComponentNodes(nodeCount);
+
+  // M106 B5 (calcom-F5): read in the same between-traces window as the node
+  // count, on the same `collectDomInfo` gate, so no traced sample pays for it.
+  const unresolvedSpriteRefs = collectDomInfo ? await collectUnresolvedSpriteRefs(page) : [];
 
   const hasAnimation = collectDomInfo ? await detectAnimations(page) : false;
 
@@ -1155,10 +1511,28 @@ export async function runMountUnmount(
     mountDur: mountParsed.totalDuration,
     unmountDur: unmountParsed.totalDuration,
     domNodeCount,
+    orphanNodes: nodeCount.orphanNodes,
+    unresolvedSpriteRefs,
     hasAnimation,
     measuredState,
     mountEvents,
   };
+}
+
+// M99 (I4): errors raised while this combo's props were rerendered into
+// `combos[toComboIndex]`'s props. Neither combo rendered those props on its
+// own, so the errors belong to the transition between the two.
+export interface TransitionPageErrors {
+  toComboIndex: number;
+  errors: PageErrorDrain;
+}
+
+// M99 (I4): the prop-change rerender for one combo. `run` receives a callback
+// that closes the combo's OWN error window again, for the mounts of its own
+// props that the rerender loop performs.
+export interface TransitionWindow {
+  toComboIndex: number;
+  run: (claimOwnWindow: () => void) => Promise<void>;
 }
 
 export interface RerenderResult {
@@ -1171,6 +1545,46 @@ export interface RerenderResult {
   pacing?: MeasurementPacing;
   // M59: page errors raised while this combo's rerenders were measured.
   pageErrors?: PageErrorDrain;
+  // M99 (I4): errors raised by the prop-change rerender only.
+  transitionPageErrors?: TransitionPageErrors;
+}
+
+// M99 (I4): the combo's own error window closes before any rerender into the
+// next combo's props opens the transition's window. One window over both made
+// an error the next combo's props raised read as this combo's own (V1: radix
+// Label combos #1 and #6 carried a Slot error with no `asChild` of their own).
+// The sequencing lives here so the attribution is verifiable without a browser.
+export async function runWithSplitErrorWindows(
+  capture: Pick<PageErrorCapture, "drain">,
+  result: RerenderResult,
+  transition: TransitionWindow | undefined,
+): Promise<RerenderResult> {
+  let own = capture.drain();
+  if (hasPageErrors(own)) result.pageErrors = own;
+  if (!transition) return result;
+  // M99: a transition body may close the combo's own window again when it can
+  // prove a sub-step belongs to the combo itself. The rerender pass does not
+  // call it -- see the spec's Design note -- but the seam is what makes the
+  // window boundary testable at all.
+  const claimOwnWindow = (): void => {
+    const drained = capture.drain();
+    if (!hasPageErrors(drained)) return;
+    own = mergeDrains(own, drained) ?? drained;
+    result.pageErrors = own;
+  };
+  await transition.run(claimOwnWindow);
+  const drained = capture.drain();
+  if (hasPageErrors(drained)) {
+    result.transitionPageErrors = { toComboIndex: transition.toComboIndex, errors: drained };
+  }
+  return result;
+}
+
+// M99 (I4): the combo that follows `ci`, wrapping at the end of the list, so
+// the last row reports its transition to combo 0 rather than to a row that
+// does not exist.
+export function nextComboIndex(comboIndex: number, comboCount: number): number {
+  return comboCount > 0 ? (comboIndex + 1) % comboCount : 0;
 }
 
 export interface MeasureRerenderOptions {
@@ -1266,28 +1680,68 @@ export async function measureRerender(
       const props = combos[ci];
 
       // Warmup on this combo's own props (results discarded, never recorded).
+      // M89 (2): guarded by withWarmupRetry the same way the sample loops
+      // below are — a starvation during warmup previously escaped retry
+      // entirely and failed the whole pass instead of omitting just this
+      // combo. An exhausted warmup omits the combo (its slot in `results`
+      // stays unset) rather than propagating.
       const warmups = warmupsForPosition(position, warmupRuns);
       if (warmups > 0) {
-        await mountAndWait(ms.page, props);
-        for (let w = 0; w < warmups; w++) {
-          await rerenderAndTrace(ms.page, ms.session.cdp, props);
+        const warmed = await withWarmupRetry(
+          ci,
+          enter,
+          async () => {
+            await mountAndWait(ms.page, props);
+            for (let w = 0; w < warmups; w++) {
+              await rerenderAndTrace(ms.page, ms.session.cdp, props);
+            }
+          },
+          retryBudget,
+          options.onWarning,
+        );
+        if (!warmed) {
+          ms.errorCapture.drain();
+          continue;
         }
       }
 
-      // Stable rerender: mount with props, then rerender with same props N times
+      // Stable rerender: mount with props, then rerender with same props N times.
+      // M89: a frame-starvation failure retries (bounded) against a freshly
+      // re-entered session; a sample that still starves after the bound is
+      // omitted (not pushed), not thrown — the delta pass's extra rerender
+      // calls are exactly where this fires (taxonomy's control).
       const stableSamples: number[] = [];
       for (let s = 0; s < sampleCount; s++) {
-        stableSamples.push(
-          await withContextRetry(
-            enter,
-            async () => {
-              await suspendThrottle(ms.session.cdp, cpuThrottle, () => tryCollectGarbage(ms.session.cdp));
-              await mountAndWait(ms.page, props);
-              return rerenderAndTrace(ms.page, ms.session.cdp, props);
-            },
-            { onRetry: options.onWarning, budget: retryBudget },
-          ),
+        const sample = await withFrameStarvationRetry(
+          ci,
+          enter,
+          () =>
+            withContextRetry(
+              enter,
+              async () => {
+                await suspendThrottle(ms.session.cdp, cpuThrottle, () => tryCollectGarbage(ms.session.cdp));
+                await mountAndWait(ms.page, props);
+                return rerenderAndTrace(ms.page, ms.session.cdp, props);
+              },
+              { onRetry: options.onWarning, budget: retryBudget },
+            ),
+          options.onWarning,
         );
+        if (sample !== undefined) stableSamples.push(sample);
+      }
+
+      // Every sample for this combo starved out even after retrying: the
+      // combo is omitted entirely (a disclosed partial result — the pass
+      // continues to the rest of the combos) rather than reporting a
+      // misleading all-zero timing for a combo nothing was actually measured
+      // on.
+      if (stableSamples.length === 0) {
+        // M99 (review B-9): a combo nothing was measured on still opened an
+        // error window. Leaving it undrained would attribute its errors to the
+        // next combo's own window, the exact mis-attribution I4 exists to
+        // prevent. The warmup path above already drains before its `continue`.
+        ms.errorCapture.drain();
+        continue;
       }
 
       const result: RerenderResult = {
@@ -1301,32 +1755,53 @@ export async function measureRerender(
       // The pairing follows the full combo list, so partitioning by pacing
       // cannot change which combo rerenders into which.
       // Skip when either combo is a scale combo: cross-scale rerenders are not meaningful
+      let transition: TransitionWindow | undefined;
       if (combos.length > 1) {
-        const nextProps = combos[(ci + 1) % combos.length];
+        const nextIndex = nextComboIndex(ci, combos.length);
+        const nextProps = combos[nextIndex];
         const isScale = "__120fps_scaleN" in props;
         const nextIsScale = "__120fps_scaleN" in nextProps;
         if (!isScale && !nextIsScale) {
-          const changeSamples: number[] = [];
-          for (let s = 0; s < sampleCount; s++) {
-            changeSamples.push(
-              await withContextRetry(
-                enter,
-                async () => {
-                  await suspendThrottle(ms.session.cdp, cpuThrottle, () => tryCollectGarbage(ms.session.cdp));
-                  await mountAndWait(ms.page, props);
-                  return rerenderAndTrace(ms.page, ms.session.cdp, nextProps);
-                },
-                { onRetry: options.onWarning, budget: retryBudget },
-              ),
-            );
-          }
-          result.change = buildTimingResult(changeSamples);
-          result.changeToProps = nextProps;
+          transition = {
+            toComboIndex: nextIndex,
+            run: async () => {
+              const changeSamples: number[] = [];
+              for (let s = 0; s < sampleCount; s++) {
+                const sample = await withFrameStarvationRetry(
+                  ci,
+                  enter,
+                  () =>
+                    withContextRetry(
+                      enter,
+                      async () => {
+                        await suspendThrottle(ms.session.cdp, cpuThrottle, () => tryCollectGarbage(ms.session.cdp));
+                        // M99: no own-window claim here. This mount lands on
+                        // the page state the PREVIOUS sample's rerender left
+                        // behind (combo ci+1's props), so an error it raises is
+                        // a `ci+1 -> ci` transition artefact, not this combo's
+                        // own. The whole delta-loop window is transition by
+                        // construction; see the spec's Design note.
+                        await mountAndWait(ms.page, props);
+                        return rerenderAndTrace(ms.page, ms.session.cdp, nextProps);
+                      },
+                      { onRetry: options.onWarning, budget: retryBudget },
+                    ),
+                  options.onWarning,
+                );
+                if (sample !== undefined) changeSamples.push(sample);
+              }
+              if (changeSamples.length > 0) {
+                result.change = buildTimingResult(changeSamples);
+                result.changeToProps = nextProps;
+              }
+            },
+          };
         }
       }
 
-      const drained = ms.errorCapture.drain();
-      if (hasPageErrors(drained)) result.pageErrors = drained;
+      // M99 (I4): two windows, not one — this combo's own renders, then the
+      // rerender into `combos[ci+1]`'s props.
+      await runWithSplitErrorWindows(ms.errorCapture, result, transition);
 
       results[ci] = result;
     }
@@ -1406,14 +1881,36 @@ export async function measureMount(
 
       // Warmup: JIT + module cache stabilization, on this combo's own props
       // (results discarded, never recorded).
-      for (let w = 0; w < warmupsForPosition(position, warmupRuns); w++) {
-        await runMountUnmount(ms.page, ms.session.cdp, props, false);
+      // M89 (2): guarded by withWarmupRetry the same way the sample loop
+      // below is — a starvation during warmup previously escaped retry
+      // entirely and failed the whole pass instead of omitting just this
+      // combo. An exhausted warmup omits the combo (its slot in `results`
+      // stays unset) rather than propagating.
+      const warmupCount = warmupsForPosition(position, warmupRuns);
+      if (warmupCount > 0) {
+        const warmed = await withWarmupRetry(
+          ci,
+          enter,
+          async () => {
+            for (let w = 0; w < warmupCount; w++) {
+              await runMountUnmount(ms.page, ms.session.cdp, props, false);
+            }
+          },
+          retryBudget,
+          options.onWarning,
+        );
+        if (!warmed) {
+          ms.errorCapture.drain();
+          continue;
+        }
       }
 
       const mountSamples: number[] = [];
       const unmountSamples: number[] = [];
       const mountTraces: TraceEvent[][] = [];
       let domNodeCount = 0;
+      let orphanNodes = 0;
+      let unresolvedSpriteRefs: string[] = [];
       let hasAnimation = false;
       let measuredState: MeasuredState = "settled";
       let bailed = false;
@@ -1424,15 +1921,26 @@ export async function measureMount(
         heapBefore = pre.usedSize;
       } catch { /* CDP method may not be available */ }
 
+      // M89: a frame-starvation failure retries (bounded) against a freshly
+      // re-entered session; a sample that still starves after the bound is
+      // skipped, not thrown — the delta pass's own extra mount calls are one
+      // of the two places this fires.
       for (let s = 0; s < sampleCount; s++) {
-        const run = await withContextRetry(
+        const run = await withFrameStarvationRetry(
+          ci,
           enter,
-          async () => {
-            await suspendThrottle(ms.session.cdp, cpuThrottle, () => tryCollectGarbage(ms.session.cdp));
-            return runMountUnmount(ms.page, ms.session.cdp, props, s === 0);
-          },
-          { onRetry: options.onWarning, budget: retryBudget },
+          () =>
+            withContextRetry(
+              enter,
+              async () => {
+                await suspendThrottle(ms.session.cdp, cpuThrottle, () => tryCollectGarbage(ms.session.cdp));
+                return runMountUnmount(ms.page, ms.session.cdp, props, s === 0);
+              },
+              { onRetry: options.onWarning, budget: retryBudget },
+            ),
+          options.onWarning,
         );
+        if (run === undefined) continue;
         if (s === 0 && bailOnAnimation && run.hasAnimation) {
           vsyncQueue.push(ci);
           bailed = true;
@@ -1443,6 +1951,8 @@ export async function measureMount(
         mountTraces.push(run.mountEvents);
         if (s === 0) {
           domNodeCount = run.domNodeCount;
+          orphanNodes = run.orphanNodes;
+          unresolvedSpriteRefs = run.unresolvedSpriteRefs;
           hasAnimation = run.hasAnimation;
           measuredState = run.measuredState;
         }
@@ -1455,6 +1965,10 @@ export async function measureMount(
         carriedErrors.set(ci, mergeDrains(carriedErrors.get(ci), drained));
         continue;
       }
+      // M89: every sample for this combo starved out even after retrying —
+      // omitted entirely (a disclosed partial result), not reported as an
+      // all-zero mount that nothing was actually measured on.
+      if (mountSamples.length === 0) continue;
       const pageErrors = mergeDrains(carriedErrors.get(ci), drained);
 
       let heapDelta = 0;
@@ -1475,6 +1989,10 @@ export async function measureMount(
         mountTraces,
         pacing: ms.pacing,
         ...(hasPageErrors(pageErrors) ? { pageErrors: pageErrors! } : {}),
+        // M106 B4/B5: additive, and absent when there is nothing to say, so a
+        // component with no portals and no broken sprites reports as before.
+        ...(orphanNodes > 0 ? { orphanNodes } : {}),
+        ...(unresolvedSpriteRefs.length > 0 ? { unresolvedSpriteRefs } : {}),
       };
     }
   };

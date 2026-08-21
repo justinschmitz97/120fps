@@ -78,6 +78,20 @@ describe("H4: --explain-props with a <stem>.props.tsx preset", () => {
     // measured run would push.
     expect(explained.warnings.join("\n")).toContain("notAProp");
   });
+
+  // M92 (1.5d, heroui): onSelect's preset entry is a function literal, which
+  // cannot be read as a real value from the preset file's AST alone -- it
+  // becomes a PresetRef sentinel ({__120fps_preset, index}) resolved only
+  // once the real preset module loads in the browser. The displayed value
+  // must not leak that internal marker.
+  it("does not leak the internal PresetRef marker for a non-literal preset entry", async () => {
+    const explained = await explainProps(fixture("m44-preset-card.tsx"));
+    const onSelect = explained.props.find((p) => p.name === "onSelect");
+    expect(onSelect?.values).toHaveLength(1);
+    const text = formatExplainProps(explained);
+    expect(text).not.toContain("__120fps_preset");
+    expect(text).toContain("[preset value]");
+  });
 });
 
 // H5: explain is a dry run whatever else was typed.
@@ -252,6 +266,14 @@ describe("H14: wall-clock formatting boundaries", () => {
     expect(formatWallClock(60_499)).toBe("Total: 1m 0s");
     expect(formatWallClock(89_000)).toBe("Total: 1m 29s");
   });
+
+  // commerce/material-ui printed `Total: 2m 60s`: the seconds were rounded
+  // after the minutes had already been split off, so a carry had nowhere to go.
+  it("carries a rounded-up second into the minutes", () => {
+    expect(formatWallClock(119_600)).toBe("Total: 2m 0s");
+    expect(formatWallClock(179_700)).toBe("Total: 3m 0s");
+    expect(formatWallClock(59_960)).toBe("Total: 1m 0s");
+  });
 });
 
 // H15: a wide value pool is a sample, not a dump.
@@ -262,7 +284,15 @@ describe("H15: explain truncates long value pools", () => {
     expect(country?.values.length).toBeGreaterThan(4);
     const text = formatExplainProps(explained);
     expect(text).toMatch(/\+\d+ more/);
-    expect(text.split("\n").every((l) => l.length < 200)).toBe(true);
+    // M91: explainProps now also surfaces pre-build warnings the full run
+    // already computes (framework/CSS/wrap resolution), matching parity —
+    // this fixture's shared `fixtures/` project root has an unrelated CSS
+    // fallback pick whose prose warning is legitimately long (matching what
+    // a full run against the same file already prints). The 200-char cap
+    // is this test's own concern (the truncated value-pool line specifically
+    // does not balloon), not a blanket limit on every line in the output.
+    const valuesLine = text.split("\n").find((l) => /\+\d+ more/.test(l));
+    expect(valuesLine!.length).toBeLessThan(200);
   });
 });
 

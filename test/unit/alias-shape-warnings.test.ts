@@ -48,12 +48,20 @@ describe("wildcard shape mismatch in tsconfig paths", () => {
     expect(warnings[0]).toContain("./src/*");
   });
 
-  it("warns about a wildcard that is not a trailing path segment", () => {
+  // M93: a pattern-side wildcard that is not the whole trailing segment used
+  // to warn (this exact fixture). Both sides carry exactly one wildcard, so
+  // it now builds a working capture-group alias instead -- see
+  // test/unit/wildcard-alias-capture.test.ts for the mid-path and
+  // extension-suffixed target shapes (mantine, material-ui) this milestone
+  // was written to fix.
+  it("no longer warns about a wildcard that is not a trailing path segment: both sides have exactly one, so it builds an alias", () => {
     const dir = mkProject({ "@*": ["./src/*"] });
     const warnings: string[] = [];
 
-    expect(loadTsconfigAliases(dir, warnings)).toEqual([]);
-    expect(warnings).toHaveLength(1);
+    const aliases = loadTsconfigAliases(dir, warnings);
+    expect(warnings).toEqual([]);
+    expect(aliases).toHaveLength(1);
+    expect(aliases[0].find.test("@thing")).toBe(true);
   });
 
   it("keeps the sound entries of a config that also has a broken one", () => {

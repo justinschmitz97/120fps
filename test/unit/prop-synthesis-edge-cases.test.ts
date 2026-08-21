@@ -144,16 +144,31 @@ describe("prop synthesis: degeneracy warnings", () => {
   // H15 a required prop with no enumerable values is a guaranteed crash.
   it("H15: a required unenumerable prop is reported", async () => {
     const stderr = captureStderr();
+    const props = await extractProps(fixture("unsynthesizable.tsx"));
+    expect(get(props, "store").degenerate).toBeDefined();
+    expect(stderr.lines().find((l) => l.includes("store"))).toBeDefined();
+  });
+
+  // M98 (element-plus-F3): `string | number` is a union of two primitive
+  // shapes, so it now carries one synthesized member per branch and the same
+  // disclosure every other union gets, where it used to be an opaque
+  // `unknown` with an empty pool.
+  it("a required string | number prop is enumerable and disclosed", async () => {
+    const stderr = captureStderr();
     const props = await extractProps(fixture("required-unknown.tsx"));
-    expect(get(props, "token").degenerate).toBeDefined();
-    expect(stderr.lines().find((l) => l.includes("token"))).toBeDefined();
+    const token = get(props, "token");
+    expect(token.kind).toBe("union");
+    expect(token.degenerate).toBeUndefined();
+    expect(token.values.some((v) => typeof v === "string")).toBe(true);
+    expect(token.values.some((v) => typeof v === "number")).toBe(true);
+    expect(stderr.lines().find((l) => l.includes('prop "token"'))).toBeDefined();
   });
 
   // H16 an optional unenumerable prop is measured absent, which is legitimate.
   it("H16: an optional unenumerable prop warns about nothing", async () => {
     const stderr = captureStderr();
     await extractProps(fixture("optional-unknown.tsx"));
-    expect(stderr.lines()).toEqual([]);
+    expect(stderr.lines().find((l) => l.includes("span"))).toBeUndefined();
   });
 
   // H17 a props type wide enough to be a DOM surface is capped, out loud.

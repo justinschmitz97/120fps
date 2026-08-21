@@ -64,6 +64,13 @@ describe("stylesheetRuleCount", () => {
     expect(stylesheetRuleCount(path.join(tmpDir, "gone.css"))).toBe(0);
   });
 
+  it("counts zero for bare at-rules with no body (dub-F2 shape)", () => {
+    // Three @tailwind directives: zero comments, zero @import/@charset/@use,
+    // and no `{`. Rule count 0 here is not "only comments and imports".
+    const file = write("a.css", "@tailwind base;\n@tailwind components;\n@tailwind utilities;\n");
+    expect(stylesheetRuleCount(file)).toBe(0);
+  });
+
   it("treats a file above 2MB as plausible without reading it", () => {
     const file = path.join(tmpDir, "huge.css");
     fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -161,7 +168,7 @@ describe("fallback candidate disqualification inside discoverGlobalCss", () => {
       noEntryInPackage: true,
     });
     expect(
-      warnings.some((w) => w.includes("styles.css") && w.includes("no rules of its own")),
+      warnings.some((w) => w.includes("styles.css") && w.includes("no CSS rule with a body")),
     ).toBe(true);
     expect(warnings.some((w) => w.includes("tokens.css"))).toBe(true);
   });
@@ -181,6 +188,28 @@ describe("CSS_PLACEHOLDER_SKIPPED_WARNING / CSS_RESET_SKIPPED_WARNING", () => {
   it("names the file in each warning", () => {
     expect(CSS_PLACEHOLDER_SKIPPED_WARNING("src/styles.css")).toContain("src/styles.css");
     expect(CSS_RESET_SKIPPED_WARNING("reset.css")).toContain("reset.css");
+  });
+
+  // M92 regression (dub-F2): the message must not claim a file's content is
+  // "only comments and imports" when rule count 0 came from something else.
+  it("does not claim the file is only comments and imports", () => {
+    expect(CSS_PLACEHOLDER_SKIPPED_WARNING("src/styles.css")).not.toContain(
+      "only comments and imports",
+    );
+  });
+
+  it("skips a pure @tailwind passthrough without misdescribing its content (dub-F2)", () => {
+    const placeholder = write(
+      "src/styles.css",
+      "@tailwind base;\n@tailwind components;\n@tailwind utilities;\n",
+    );
+    const warnings: string[] = [];
+    const result = discoverGlobalCss(tmpDir, warnings);
+    expect(result).toEqual({ files: [], source: "none" });
+    expect(warnings).toEqual([
+      CSS_PLACEHOLDER_SKIPPED_WARNING(path.relative(tmpDir, placeholder).replace(/\\/g, "/")),
+    ]);
+    expect(warnings[0]).not.toContain("only comments and imports");
   });
 });
 
@@ -216,5 +245,19 @@ describe("CSS_FALLBACK_WARNING opts", () => {
       noEntryInPackage: false,
     });
     expect(warning).not.toContain("this package has no application entry");
+  });
+
+  // M92 regression (excalidraw-F6): the pick is ranked by size, not
+  // arbitrary, even when no import chain corroborates it -- the wording must
+  // not read as "no evidence at all" for a pick the run demonstrably ranked.
+  it("does not claim the pick has no evidence when it was ranked by size", () => {
+    const warning = CSS_FALLBACK_WARNING("css/styles.scss", {
+      onlyCandidate: false,
+      noEntryInPackage: true,
+    });
+    expect(warning).not.toContain("no evidence behind it at all");
+    expect(warning).not.toContain("no import evidence");
+    expect(warning).toContain("the largest stylesheet found under this project");
+    expect(warning).toContain("ranked by size alone");
   });
 });

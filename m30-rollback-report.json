@@ -1,0 +1,395 @@
+{
+  "version": 1,
+  "timestamp": "2026-08-21T01:20:19.011Z",
+  "machine": {
+    "cpu": "AMD Ryzen 9 5900X 12-Core Processor            ",
+    "cores": 24,
+    "ramMb": 32693,
+    "os": "Windows_NT 10.0.26100",
+    "nodeVersion": "v24.15.0",
+    "chromiumVersion": "147.0.7727.15"
+  },
+  "componentPath": "./fixtures/m30-strict-compound.tsx",
+  "componentName": "Panel",
+  "calibration": {
+    "totalDuration": 52.73499999999998,
+    "scriptDuration": 0
+  },
+  "combos": [
+    {
+      "comboIndex": 0,
+      "props": {
+        "children": "120fps-placeholder"
+      },
+      "mount": {
+        "samples": [
+          7.888999999999999,
+          5.1930000000000005
+        ],
+        "median": 6.541,
+        "p95": 7.754199999999999,
+        "cv": 29.144777282967908,
+        "unstable": true
+      },
+      "unmount": {
+        "samples": [
+          1.9069999999999998,
+          3.230999999999999
+        ],
+        "median": 2.5689999999999995,
+        "p95": 3.1647999999999987,
+        "cv": 36.44256046286448,
+        "unstable": true
+      },
+      "rerender": {
+        "samples": [
+          3.1969999999999996,
+          3.5710000000000006
+        ],
+        "median": 3.3840000000000003,
+        "p95": 3.5523000000000007,
+        "cv": 7.814950832262692,
+        "unstable": false
+      },
+      "domNodeCount": 0,
+      "heapDelta": -566740,
+      "interactions": [],
+      "scalingCurve": null,
+      "relativeMount": 0.12403527069308815,
+      "verdict": "warn",
+      "measuredState": "settled",
+      "rerenderChange": {
+        "samples": [
+          2.36,
+          2.714999999999999
+        ],
+        "median": 2.5374999999999996,
+        "p95": 2.697249999999999,
+        "cv": 9.892528367338867,
+        "unstable": false
+      },
+      "pageErrors": [
+        "response 404: GET http://localhost:5182/fonts/settle-probe.woff2",
+        "Failed to load resource: the server responded with a status of 404 (Not Found)",
+        "request failed: GET http://localhost:5182/fonts/settle-probe.woff2 (net::ERR_ABORTED)"
+      ],
+      "renderHealth": "empty",
+      "tier": "T1",
+      "hasAnimation": false
+    },
+    {
+      "comboIndex": 1,
+      "props": {},
+      "mount": {
+        "samples": [
+          2.8369999999999997,
+          2.9209999999999985
+        ],
+        "median": 2.878999999999999,
+        "p95": 2.9167999999999985,
+        "cv": 2.0631111364942383,
+        "unstable": false
+      },
+      "unmount": {
+        "samples": [
+          0.605,
+          0.8760000000000001
+        ],
+        "median": 0.7405,
+        "p95": 0.8624500000000002,
+        "cv": 25.877911911080954,
+        "unstable": false
+      },
+      "rerender": {
+        "samples": [
+          1.188,
+          1.6549999999999998
+        ],
+        "median": 1.4215,
+        "p95": 1.6316499999999998,
+        "cv": 23.23031071502762,
+        "unstable": false
+      },
+      "domNodeCount": 0,
+      "heapDelta": 83684,
+      "interactions": [],
+      "scalingCurve": null,
+      "relativeMount": 0.05459372333364938,
+      "verdict": "pass",
+      "measuredState": "settled",
+      "renderHealth": "empty",
+      "tier": "T1",
+      "hasAnimation": false
+    },
+    {
+      "comboIndex": 2,
+      "props": {},
+      "mount": {
+        "samples": [
+          4.6339999999999995,
+          5.402
+        ],
+        "median": 5.018,
+        "p95": 5.3636,
+        "cv": 10.822200238167975,
+        "unstable": false
+      },
+      "unmount": {
+        "samples": [
+          3.4749999999999996,
+          2.6590000000000003
+        ],
+        "median": 3.067,
+        "p95": 3.4341999999999997,
+        "cv": 18.813144227199945,
+        "unstable": true
+      },
+      "rerender": {
+        "samples": [
+          2.426,
+          2.918999999999999
+        ],
+        "median": 2.6724999999999994,
+        "p95": 2.8943499999999993,
+        "cv": 13.044102642655464,
+        "unstable": false
+      },
+      "domNodeCount": 1,
+      "heapDelta": 65172,
+      "interactions": [],
+      "scalingCurve": {
+        "slope": 0.1346804993252362,
+        "intercept": 4.440695512820512,
+        "r2": 0.6305852640686483,
+        "growthClass": "linear"
+      },
+      "relativeMount": 0.09515502038494363,
+      "verdict": "warn",
+      "measuredState": "settled",
+      "scaleProbe": 1,
+      "rerenderScalingCurve": {
+        "slope": 0.1889153171390014,
+        "intercept": 2.8156089743589727,
+        "r2": 0.9862234229018637,
+        "growthClass": "linear"
+      },
+      "tier": "T1",
+      "hasAnimation": false,
+      "disclosureReason": "uncomposed"
+    },
+    {
+      "comboIndex": 3,
+      "props": {},
+      "mount": {
+        "samples": [
+          0.8580000000000002,
+          4.477999999999999
+        ],
+        "median": 2.6679999999999997,
+        "p95": 4.296999999999999,
+        "cv": 95.94177465874442,
+        "unstable": true
+      },
+      "unmount": {
+        "samples": [
+          0.989,
+          2.0559999999999996
+        ],
+        "median": 1.5224999999999997,
+        "p95": 2.0026499999999996,
+        "cv": 49.5555294269981,
+        "unstable": true
+      },
+      "rerender": {
+        "samples": [
+          3.6379999999999995,
+          3.6279999999999997
+        ],
+        "median": 3.6329999999999996,
+        "p95": 3.6374999999999993,
+        "cv": 0.1946344016478207,
+        "unstable": false
+      },
+      "domNodeCount": 1,
+      "heapDelta": -9724,
+      "interactions": [],
+      "scalingCurve": {
+        "slope": 0.1346804993252362,
+        "intercept": 4.440695512820512,
+        "r2": 0.6305852640686483,
+        "growthClass": "linear"
+      },
+      "relativeMount": 0.05059258556935623,
+      "verdict": "warn",
+      "measuredState": "settled",
+      "scaleProbe": 5,
+      "rerenderScalingCurve": {
+        "slope": 0.1889153171390014,
+        "intercept": 2.8156089743589727,
+        "r2": 0.9862234229018637,
+        "growthClass": "linear"
+      },
+      "tier": "T1",
+      "hasAnimation": false,
+      "disclosureReason": "uncomposed"
+    },
+    {
+      "comboIndex": 4,
+      "props": {},
+      "mount": {
+        "samples": [
+          10.27,
+          9.891000000000002
+        ],
+        "median": 10.0805,
+        "p95": 10.25105,
+        "cv": 2.6585335059739093,
+        "unstable": false
+      },
+      "unmount": {
+        "samples": [
+          2.601,
+          0.20500000000000002
+        ],
+        "median": 1.403,
+        "p95": 2.4812,
+        "cv": 120.7575087471823,
+        "unstable": true
+      },
+      "rerender": {
+        "samples": [
+          1.6989999999999998,
+          12.954999999999998
+        ],
+        "median": 7.326999999999999,
+        "p95": 12.392199999999997,
+        "cv": 108.62827799966944,
+        "unstable": true
+      },
+      "domNodeCount": 1,
+      "heapDelta": 13276,
+      "interactions": [],
+      "scalingCurve": {
+        "slope": 0.1346804993252362,
+        "intercept": 4.440695512820512,
+        "r2": 0.6305852640686483,
+        "growthClass": "linear"
+      },
+      "relativeMount": 0.1911538826206505,
+      "verdict": "warn",
+      "measuredState": "settled",
+      "scaleProbe": 20,
+      "rerenderScalingCurve": {
+        "slope": 0.1889153171390014,
+        "intercept": 2.8156089743589727,
+        "r2": 0.9862234229018637,
+        "growthClass": "linear"
+      },
+      "tier": "T1",
+      "hasAnimation": false,
+      "disclosureReason": "uncomposed"
+    },
+    {
+      "comboIndex": 5,
+      "props": {},
+      "mount": {
+        "samples": [
+          17.424000000000003,
+          3.0399999999999996
+        ],
+        "median": 10.232000000000001,
+        "p95": 16.704800000000002,
+        "cv": 99.40406509565383,
+        "unstable": true
+      },
+      "unmount": {
+        "samples": [
+          1.489,
+          2.098
+        ],
+        "median": 1.7934999999999999,
+        "p95": 2.0675499999999998,
+        "cv": 24.010483955539854,
+        "unstable": false
+      },
+      "rerender": {
+        "samples": [
+          16.442000000000004,
+          7.533
+        ],
+        "median": 11.987500000000002,
+        "p95": 15.996550000000003,
+        "cv": 52.55152712067531,
+        "unstable": true
+      },
+      "domNodeCount": 1,
+      "heapDelta": -83128,
+      "interactions": [],
+      "scalingCurve": {
+        "slope": 0.1346804993252362,
+        "intercept": 4.440695512820512,
+        "r2": 0.6305852640686483,
+        "growthClass": "linear"
+      },
+      "relativeMount": 0.19402673746088944,
+      "verdict": "fail",
+      "measuredState": "settled",
+      "scaleProbe": 50,
+      "rerenderScalingCurve": {
+        "slope": 0.1889153171390014,
+        "intercept": 2.8156089743589727,
+        "r2": 0.9862234229018637,
+        "growthClass": "linear"
+      },
+      "tier": "T1",
+      "hasAnimation": false,
+      "disclosureReason": "uncomposed"
+    }
+  ],
+  "thresholds": {
+    "mountMs": 50,
+    "interactionMs": 400,
+    "interactionStepMs": 67,
+    "relativeMount": 2,
+    "rerenderMs": 16
+  },
+  "pass": false,
+  "warnings": [
+    "combo(s) #0, #1 rendered 0 DOM nodes while combo(s) #2, #3, #4, #5 rendered a nonzero count in the same run: this disagreement was not resolved, so it is reported rather than asserted as 'the component renders nothing'.",
+    "no entry stylesheet import and no conventional global stylesheet were found, so fixtures/css-font/app/globals.css was injected because it is the largest stylesheet found under this project; this package has no application entry (index.html or Next.js app/pages stem) of its own, so no import chain corroborates the pick -- it is ranked by size alone; pass --css to name the right one",
+    "font-face failed to load: SettleProbe; the measured metrics reflect the fallback font.",
+    "auto-composed scene for Panel rendered no elements; measured the bare export instead. Write a fixture that renders the real composition and pass --fixture <path>.",
+    "Panel declares sibling parts (PanelGroup, PanelContent, PanelItem, PanelTrigger) recognized by auto-composition, but none were composed in: every combo measured the bare Panel export alone. Try --init-fixture to scaffold a fixture, or compose them yourself and pass --fixture.",
+    "The machine was too busy to measure against. Budget verdicts still print, but treat every number as provisional."
+  ],
+  "tieredBudgets": true,
+  "css": {
+    "files": [
+      "fixtures/css-font/app/globals.css"
+    ],
+    "autoDetected": true,
+    "layer": "largest-fallback",
+    "details": [
+      {
+        "file": "fixtures/css-font/app/globals.css",
+        "bytes": 216,
+        "rules": 3
+      }
+    ],
+    "onlyCandidate": false,
+    "noEntryInPackage": true
+  },
+  "noise": {
+    "level": "hostile",
+    "signals": {
+      "probeCv": 48.09978736362819,
+      "probeMedianMs": 2.5999999046325684,
+      "unstableFraction": 0.5,
+      "contextRetries": 0
+    }
+  },
+  "hints": [
+    "budgetBreach"
+  ],
+  "mode": "combo"
+}

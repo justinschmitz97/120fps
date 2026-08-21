@@ -152,7 +152,11 @@ describe("naming the config data the harness cannot honor", () => {
         "});",
       ].join("\n"),
     );
-    expect(readViteConfigData(tmpDir).ignoredKeys).toEqual(["css.preprocessorOptions", "plugins"]);
+    // M106 A3: a literal additionalData is folded and replayed now, so it is
+    // no longer an ignored key; plugins still are.
+    const data = readViteConfigData(tmpDir);
+    expect(data.ignoredKeys).toEqual(["plugins"]);
+    expect(data.preprocessorOptions?.scss?.additionalData).toBe('@use "vars";');
   });
 
   it("reports nothing for an empty plugin list", () => {

@@ -59,7 +59,10 @@ describe("H1: kebab-case SFC filenames", () => {
 
   it("reaches the entry as a real import binding", () => {
     const src = entry("my-button.vue");
-    expect(src).toContain('import MyButton from "/my-button.vue"');
+    // M106 A4: the entry imports the module as a namespace and selects the
+    // export at runtime, so a type-only name cannot break the ESM link.
+    expect(src).toContain('import * as __120fps_mod from "/my-button.vue"');
+    expect(src).toContain('const MyButton = __120fps_selectExport("default");');
     expect(src).toContain("h(MyButton,");
     expect(src).not.toContain("my-button from");
   });
@@ -116,8 +119,10 @@ describe("H5: factory defaults in withDefaults", () => {
 describe("H6: inline props type", () => {
   it("resolves the same way", async () => {
     const schemas = await extractProps(path.join(VUE, "Text.vue"));
+    // M84: PropSchema gained an additive `provenance` field, populated for
+    // every schema; a plain "test" placeholder string carries "placeholder".
     expect(schemas).toEqual([
-      { name: "text", kind: "string", required: true, values: ["test"] },
+      { name: "text", kind: "string", required: true, values: ["test"], provenance: "placeholder" },
     ]);
   });
 });
@@ -225,7 +230,9 @@ describe("H11: auto-scale fan-out", () => {
       hasScale: true,
       renderer: "vue",
     });
-    expect(src).toContain('import Grid, { scale as __120fps_scale } from "/Grid.vue"');
+    // M106 A4: namespace import; `scale` is read off the module, not imported.
+    expect(src).toContain('import * as __120fps_mod from "/Grid.vue"');
+    expect(src).toContain("const __120fps_scale = (__120fps_mod as any).scale;");
     expect(src).toContain("return __120fps_scale(props.__120fps_scaleN);");
     expect(src).not.toContain("Array.from({ length:");
   });
@@ -400,9 +407,12 @@ describe("H20: React entry is unchanged", () => {
       wrapRelative: "120fps.setup.tsx",
       cssImports: ["/app/globals.css"],
     });
-    for (const token of ["createApp", "nextTick", "shallowRef", "h(", "default: () =>"]) {
+    for (const token of ["createApp", "nextTick", "shallowRef", "default: () =>"]) {
       expect(src).not.toContain(token);
     }
+    // Vue's hyperscript call, as its own identifier: a bare "h(" substring also
+    // occurs inside ordinary method names ("push("), which says nothing.
+    expect(src).not.toMatch(/\bh\(/);
     expect(src).toContain("createRoot(container)");
     expect(src).toContain("__120fpsInStrict");
   });

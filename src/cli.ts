@@ -1,15 +1,225 @@
 #!/usr/bin/env node
 
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
-import { analyze, explainProps, formatExplainProps } from "./analyze.js";
+import { analyze, explainProps, formatExplainProps, resolveProjectPaths, formatAccumulatedWarnings } from "./analyze.js";
 import { compareAgainstRef, formatCompare, validateCompareOptions } from "./compare.js";
 import { formatMarkdown, formatJUnit } from "./ci-report.js";
 import { createBrowserPool } from "./measure.js";
-import { createServerPool } from "./harness.js";
+import {
+  createServerPool,
+  presentBundlerFailure,
+  refreshHarnessDirMarkers,
+  sweepActiveHarnessDirs,
+} from "./harness.js";
 import { scanExports } from "./prop-gen.js";
 import { parseIsolationPhases, strictModeUnsupported, VUE_STRICTMODE_ERROR } from "./isolation.js";
+import { setPreflightBypassed } from "./preflight.js";
 import { formatTable, DEFAULT_THRESHOLDS } from "./report.js";
+
+// M88: the taxonomy hang -- a fatal error printed in full, then the process
+// stayed alive until an external `timeout` killed it (EXIT=124). Pool/server
+// teardown (browser pool, dev-server pool) that never settles must never
+// block the documented exit code from actually being delivered. Arms an
+// unref'd timer that calls process.exit(exitCode) directly; unref'd so it
+// never by itself keeps an otherwise-idle process alive, but a genuinely hung
+// teardown leaves other handles open regardless, so the timer still fires.
+export const FATAL_EXIT_WATCHDOG_MS = 8000;
+
+export function armExitWatchdog(
+  exitCode: number,
+  timeoutMs: number = FATAL_EXIT_WATCHDOG_MS,
+): NodeJS.Timeout {
+  const timer = setTimeout(() => process.exit(exitCode), timeoutMs);
+  timer.unref();
+  return timer;
+}
+
+// Best-effort, bounded teardown of both pools: allSettled means one pool
+// hanging or throwing never blocks awaiting the other, and this function's
+// own promise resolves within timeoutMs regardless of whether either pool's
+// closeAll() ever settles on its own. Never calls process.exit itself: the
+// caller pairs this with armExitWatchdog (armed before, cleared after) so a
+// still-hanging call site is caught by that outer, harder guarantee.
+//
+// M92 (1.5b, investigated, not implemented): a timed-out closeAll() is
+// abandoned here, not force-killed. Fixing that requires reaching the
+// underlying Chromium OS process, and Playwright's public API gives no way
+// to do that from a `Browser` obtained via `chromium.launch()` (what
+// createBrowserPool uses) -- `.process()`/`.kill()` exist only on
+// `BrowserServer`, the return type of the unrelated `chromium.launchServer()`
+// API (confirmed by reading playwright-core@1.59.1's own
+// types/types.d.ts:9723-9840 vs :19194-19233), and the client-side `Browser`
+// object (lib/client/browser.js) holds no process handle at all -- the
+// actual spawn happens through playwright-core's private server-side
+// internals, not reachable from here without importing a non-exported
+// module path. Switching createBrowserPool to launchServer()+connect() would
+// fix this properly but is a larger change to a path every measurement goes
+// through, and this task's constraints (no `pnpm build`, no corpus runs)
+// mean it could not be verified against a real hang. Left as a documented
+// limitation rather than shipped as an unverified or fragile private-API
+// reach-in.
+export async function closePoolsBounded(
+  pool: Pick<import("./measure.js").BrowserPool, "closeAll">,
+  serverPool: Pick<import("./harness.js").ServerPool, "closeAll">,
+  timeoutMs: number = FATAL_EXIT_WATCHDOG_MS,
+): Promise<void> {
+  // Promise.resolve().then(...) turns a hostile closeAll() that throws
+  // synchronously (a contract violation of its own Promise<void> return type,
+  // but not this function's to trust) into a rejection Promise.allSettled can
+  // actually catch, instead of that throw escaping before allSettled is even
+  // constructed.
+  await Promise.race([
+    Promise.allSettled([
+      Promise.resolve().then(() => pool.closeAll()),
+      Promise.resolve().then(() => serverPool.closeAll()),
+    ]),
+    new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, timeoutMs);
+      timer.unref();
+    }),
+  ]);
+}
+
+// M101 (V2). Node emits no "exit" event for a process a signal terminates, so
+// the `process.on("exit")` sweep in src/harness.ts — the only last-resort
+// removal site — is bypassed by every external kill, and the harness directory
+// then waits out an age gate in a later run. These three signals are the ones a
+// shell, a CI runner and a closing terminal actually send.
+export const TERMINATION_SIGNALS: NodeJS.Signals[] = ["SIGINT", "SIGTERM", "SIGHUP"];
+
+// The shell's own convention for a signalled process: 130 for SIGINT, 143 for
+// SIGTERM, 129 for SIGHUP.
+export function terminationExitCode(signal: NodeJS.Signals): number {
+  return 128 + (os.constants.signals[signal as keyof typeof os.constants.signals] ?? 0);
+}
+
+type ClosablePools = {
+  pool: Pick<import("./measure.js").BrowserPool, "closeAll">;
+  serverPool: Pick<import("./harness.js").ServerPool, "closeAll">;
+};
+
+// The one teardown every abrupt exit path shares. Directories go first: that
+// removal is synchronous and depends on nothing settling, so it survives a pool
+// close that never returns. Closing the browser pool is what ends Chromium, and
+// the dev-server pool takes its esbuild workers with it; when either hangs,
+// armExitWatchdog still delivers the exit code, by which point nothing is left
+// on disk.
+export async function abortRun(
+  exitCode: number,
+  pools?: ClosablePools,
+  hooks: {
+    sweep?: () => void;
+    exit?: (code: number) => void;
+    timeoutMs?: number;
+  } = {},
+): Promise<void> {
+  (hooks.sweep ?? sweepActiveHarnessDirs)();
+  const timeoutMs = hooks.timeoutMs ?? FATAL_EXIT_WATCHDOG_MS;
+  const exit = hooks.exit ?? ((code: number) => process.exit(code));
+  // The exit happens once, whether the bounded close finishes or the deadline
+  // beats it. armExitWatchdog is not reused here because its exit is hardwired
+  // to process.exit: the deadline has to leave through the same door as the
+  // ordinary path, so a caller (and a test) sees exactly one exit.
+  let exited = false;
+  const exitOnce = (): void => {
+    if (exited) return;
+    exited = true;
+    exit(exitCode);
+  };
+  // Review A8: both this deadline and closePoolsBounded's own timer are
+  // unref'd, so if every handle closes while a pool close is still pending the
+  // loop drains and Node exits on its own. Recording the code first makes that
+  // exit the documented one instead of 0.
+  process.exitCode = exitCode;
+  const deadline = setTimeout(exitOnce, timeoutMs);
+  deadline.unref();
+  if (pools) await closePoolsBounded(pools.pool, pools.serverPool, timeoutMs);
+  clearTimeout(deadline);
+  exitOnce();
+}
+
+// M101: the M88 watchdog bounds teardown *after* runOne returns; nothing
+// bounded a hang inside analyze() itself, so an interrupted run kept its
+// directory and its children alive indefinitely (V2: 11+ min, 20 s CPU).
+// Budget: an exploration the user asked for, plus a fixed margin for everything
+// around it, and never less than twenty minutes.
+export const RUN_WATCHDOG_MARGIN_MS = 10 * 60_000;
+export const RUN_WATCHDOG_MIN_MS = 20 * 60_000;
+export const DEFAULT_EXPLORE_BUDGET_SECONDS = 300;
+
+export function runWatchdogBudgetMs(exploreBudgetSeconds?: number): number {
+  const explore = (exploreBudgetSeconds ?? DEFAULT_EXPLORE_BUDGET_SECONDS) * 1000;
+  return Math.max(explore + RUN_WATCHDOG_MARGIN_MS, RUN_WATCHDOG_MIN_MS);
+}
+
+// Re-armed by every phase line the run prints, so the budget bounds one phase
+// making no progress rather than the run's total honest work. Unref'd: it never
+// keeps an otherwise-finished process alive on its own.
+export function createRunWatchdog(
+  budgetMs: number,
+  onExpire: () => void,
+): { heartbeat: () => void; clear: () => void } {
+  let timer: NodeJS.Timeout | undefined;
+  const arm = (): void => {
+    timer = setTimeout(onExpire, budgetMs);
+    timer.unref();
+  };
+  arm();
+  return {
+    heartbeat: () => {
+      if (timer === undefined) return;
+      clearTimeout(timer);
+      arm();
+    },
+    clear: () => {
+      if (timer !== undefined) clearTimeout(timer);
+      timer = undefined;
+    },
+  };
+}
+
+let activePools: ClosablePools | undefined;
+
+export function setActivePools(pools: ClosablePools | undefined): void {
+  activePools = pools;
+}
+
+// Registered on the real CLI process only, never when cli.ts is imported by a
+// test — the same reasoning the unhandledRejection/uncaughtException handlers
+// below carry: a global handler that exits the process would take a whole test
+// suite with it.
+export function registerTerminationHandlers(): void {
+  for (const signal of TERMINATION_SIGNALS) {
+    process.on(signal, () => {
+      void abortRun(terminationExitCode(signal), activePools);
+    });
+  }
+}
+
+// M101 (review A2): under --ci the progress reporter is a no-op by design
+// (`resolveProgressReporter`, analyze.ts), so no phase line arrives and this
+// timer bounds the whole run rather than one phase of it. Two different facts,
+// two different sentences: "made no progress" is false of a --ci run that was
+// working the entire time.
+export function RUN_WATCHDOG_ABORT_ERROR(
+  componentPath: string,
+  budgetMs: number,
+  bound: "stalled" | "total",
+): string {
+  const minutes = Math.round(budgetMs / 60_000);
+  const lead =
+    bound === "stalled"
+      ? `${componentPath} made no progress for ${minutes} minutes`
+      : `${componentPath} exceeded its total budget of ${minutes} minutes (no phase boundaries ` +
+        "were reported, so the whole run is bounded rather than each phase)";
+  return (
+    `Error: ${lead}; aborting the run, removing its harness directory and closing its browser. ` +
+    "Re-run with --explore-budget to allow a longer exploration, or with --no-deltas / " +
+    "--max-combos to measure less.\n"
+  );
+}
 
 const ISOLATE_USAGE_ERROR =
   "--isolate requires a comma-separated list of phases (mount,rerender,unmount,memory,strictmode,all)";
@@ -141,11 +351,16 @@ export function splitTargetSpec(arg: string): { path: string; target?: string } 
 
 // M65: one line at the end of every terminal report, so a long run is a number
 // rather than a memory.
+// M104 (I11, commerce-F3/material-ui-F3): rounding the seconds *after*
+// splitting them off the minutes printed `2m 60s` for anything from 119.5s up,
+// a number no clock shows. Each branch rounds once, to the unit it prints, so
+// a carry lands in the minutes instead of overflowing the seconds.
 export function formatWallClock(elapsedMs: number): string {
-  const seconds = elapsedMs / 1000;
-  if (seconds < 60) return `Total: ${seconds.toFixed(1)}s`;
-  const minutes = Math.floor(seconds / 60);
-  return `Total: ${minutes}m ${Math.round(seconds - minutes * 60)}s`;
+  const tenthsOfSecond = Math.round(elapsedMs / 100);
+  if (tenthsOfSecond < 600) return `Total: ${(tenthsOfSecond / 10).toFixed(1)}s`;
+  const wholeSeconds = Math.round(elapsedMs / 1000);
+  const minutes = Math.floor(wholeSeconds / 60);
+  return `Total: ${minutes}m ${wholeSeconds - minutes * 60}s`;
 }
 
 export function parseArgs(argv: string[]): CliArgs {
@@ -695,16 +910,79 @@ export function formatCliError(err: unknown, debugEnv: string | undefined): stri
 // only the thin wrapper below performs those.
 let fatalProcessErrorFired = false;
 
+// M92 (ant-design-F5/F7/F9): the project root of whichever component is
+// currently being measured, so a truly detached async rejection (surface 3
+// of the shared pipeline, src/harness.ts's presentBundlerFailure -- a
+// fire-and-forget Vite dependency-optimizer scan that rejects after
+// buildAndServe's own try/catch already exited successfully) can still be
+// diagnosed. Set by main()'s loop before each runOne call; undefined before
+// the first component starts or once none is in flight.
+let currentRunProjectRoot: string | undefined;
+
+export function setCurrentRunProjectRoot(root: string | undefined): void {
+  currentRunProjectRoot = root;
+}
+
+// Item A (M90 follow-up): the same shape as currentRunProjectRoot above, for
+// the same reason -- surface 3 (a detached async rejection reaching
+// process.on("unhandledRejection") directly) runs on a call stack with no
+// access to analyze()'s own `runWarnings`/`cssDecisionWarning` locals.
+// analyze() cannot report back through an import of this module (cli.ts
+// already imports analyze.ts; the reverse would be a cycle), so this is
+// populated the same way onProgress already is: a callback threaded through
+// AnalyzeOptions, wired to this accumulator at the one call site
+// (runOne, below) and read here by ordinary closure, not by importing
+// anything back. `pushCurrentRunWarning` is exported directly as the
+// callback runOne passes, so nothing here needs re-wrapping.
+let currentRunWarnings: string[] = [];
+
+export function pushCurrentRunWarning(warning: string): void {
+  if (!currentRunWarnings.includes(warning)) currentRunWarnings.push(warning);
+}
+
+export function resetCurrentRunWarnings(): void {
+  currentRunWarnings = [];
+}
+
+// Rebuilds the error only when presentBundlerFailure actually changed the
+// message, so the common case (an ordinary render/setup error, already
+// diagnosed by surface 1 or 2, or simply not bundler-shaped) keeps the
+// original object -- and its real .stack -- untouched.
+function presentDiagnosedProcessError(err: unknown, projectRoot: string): unknown {
+  if (!(err instanceof Error)) return err;
+  const diagnosed = presentBundlerFailure(err.message, projectRoot);
+  if (diagnosed === err.message) return err;
+  return new Error(diagnosed, { cause: err });
+}
+
+// Item A (M90 follow-up): appends the identical "Warnings recorded before
+// this failure:" block analyze()'s own local catch already builds for
+// surfaces 1 and 2 (src/analyze.ts) -- this is the same information, made
+// reachable here through currentRunWarnings instead of a closure this
+// function has no access to. Applied after diagnosis, not before: a
+// diagnosed message's own remedy text must stay the lead sentence.
+function withAccumulatedWarnings(presented: unknown, warnings: readonly string[]): unknown {
+  if (warnings.length === 0) return presented;
+  const message = presented instanceof Error ? presented.message : String(presented);
+  return new Error(message + formatAccumulatedWarnings([...warnings]), { cause: presented });
+}
+
 export function resolveFatalProcessError(
   err: unknown,
   debugEnv: string | undefined,
+  projectRoot: string | undefined = currentRunProjectRoot,
+  warnings: readonly string[] = currentRunWarnings,
 ): { output: string; exitCode: number } | undefined {
   // process.exit does not stop already-scheduled work synchronously, so a
   // second rejection arriving before the process actually exits must not
   // print or decide again.
   if (fatalProcessErrorFired) return undefined;
   fatalProcessErrorFired = true;
-  return { output: formatCliError(err, debugEnv), exitCode: 2 };
+  // M92: surface 3 of the shared diagnosis pipeline -- see
+  // currentRunProjectRoot's own comment above.
+  const presented = projectRoot ? presentDiagnosedProcessError(err, projectRoot) : err;
+  const withWarnings = withAccumulatedWarnings(presented, warnings);
+  return { output: formatCliError(withWarnings, debugEnv), exitCode: 2 };
 }
 
 // Test-only escape hatch for the module-level guard above, matching this
@@ -737,7 +1015,8 @@ Options:
   --max-combos <n>               Prop combos to measure (default: 8)
   --explore-budget <seconds>     Total interaction exploration budget (default: 300)
   --init-fixture                 Write a starter fixture when auto-composition is rolled back
-  --scale <n,n,...>              Scale points for parameterized fixtures (default: 1,5,20,50)
+  --scale <n,n,...>              Scale points, overriding both defaults: combo-mode scale probes
+                                 (default: 1,5,20,50) and curve-mode points (default: 1,3,5,10,20,50)
   --no-deltas                    Skip pairwise prop delta analysis
   --no-auto-scale                Disable auto-scaling prop detection
   --no-attribution               Disable cost attribution analysis
@@ -951,6 +1230,40 @@ export function nodeVersionError(version: string): string | undefined {
   return `Node ${MIN_NODE_MAJOR}+ required, found ${version}`;
 }
 
+// I3a (element-plus-F2): every flag the dry run can honour, in one place a
+// test can read. `--framework` used to stop here: the real run forwards it and
+// discloses that it does not change how a file mounts, while the dry run
+// dropped it and was a silent no-op instead of a disclosed one.
+export function explainPropsOptions(
+  args: CliArgs,
+  componentPath: string,
+): {
+  target?: string;
+  noPreflight?: boolean;
+  framework?: "react" | "vue" | "vanilla" | "auto";
+  curveMode?: ReturnType<typeof resolveCurveOption>;
+  matrixMode?: ReturnType<typeof resolveMatrixOption>;
+  isolation?: ReturnType<typeof resolveIsolationOption>;
+  fixturePath?: string;
+} {
+  // C-5: the four flags below decide which mode the real run takes, and the
+  // dry run's whole job is to predict that mode. They are resolved with the
+  // same functions runOne uses, so the two paths cannot disagree about what a
+  // flag combination means.
+  const curveMode = resolveCurveOption(args);
+  const matrixMode = resolveMatrixOption(args);
+  const isolation = resolveIsolationOption(args);
+  return {
+    ...(args.targets?.[componentPath] ? { target: args.targets[componentPath] } : {}),
+    ...(args.noPreflight ? { noPreflight: true } : {}),
+    ...(args.framework ? { framework: args.framework } : {}),
+    ...(curveMode !== undefined ? { curveMode } : {}),
+    ...(matrixMode !== undefined ? { matrixMode } : {}),
+    ...(isolation !== undefined ? { isolation } : {}),
+    ...(args.fixturePath ? { fixturePath: args.fixturePath } : {}),
+  };
+}
+
 async function main(): Promise<void> {
   const versionError = nodeVersionError(process.version);
   if (versionError) {
@@ -959,6 +1272,9 @@ async function main(): Promise<void> {
   }
 
   const args = parseArgs(process.argv.slice(2));
+  // M105 (solid-ui-F1): a remedy must not advise the flag this run already
+  // passed. Set once, before anything can fail.
+  setPreflightBypassed(args.noPreflight === true);
 
   if (args.help) {
     printHelp();
@@ -1000,10 +1316,7 @@ async function main(): Promise<void> {
       const componentPath = componentPaths[idx];
       if (componentPaths.length > 1) process.stdout.write(`\n=== ${componentPath} ===\n`);
       try {
-        const explained = await explainProps(componentPath, {
-          ...(args.targets?.[componentPath] ? { target: args.targets[componentPath] } : {}),
-          ...(args.noPreflight ? { noPreflight: true } : {}),
-        });
+        const explained = await explainProps(componentPath, explainPropsOptions(args, componentPath));
         process.stdout.write(formatExplainProps(explained) + "\n");
       } catch (err: unknown) {
         failed = true;
@@ -1072,32 +1385,84 @@ async function main(): Promise<void> {
   // M38: one dev server per project/config tuple serves every harness dir.
   const pool = createBrowserPool();
   const serverPool = createServerPool();
-  try {
-    for (let idx = 0; idx < componentPaths.length; idx++) {
-      const componentPath = componentPaths[idx];
-      if (multi && !args.ci) {
-        process.stdout.write(`\n=== ${componentPath} ===\n`);
-      }
-      const started = Date.now();
-      try {
-        const report = await runOne(componentPath, reportPaths[idx], args, pool, serverPool);
-        if (!args.ci) {
-          process.stdout.write(formatTable(report) + "\n");
-          process.stdout.write(formatWallClock(Date.now() - started) + "\n");
-        }
-        if (!report.pass) anyFail = true;
-      } catch (err: unknown) {
-        if (!multi) {
-          process.stderr.write(formatCliError(err, process.env.DEBUG));
-          process.exit(2);
-        }
-        anyFail = true;
-        process.stderr.write(`[${componentPath}] ` + formatCliError(err, process.env.DEBUG));
-      }
+  // M101: what a signal handler outside this function has to close. Published
+  // as soon as both pools exist, so a kill arriving one millisecond later still
+  // reaches them.
+  setActivePools({ pool, serverPool });
+  // M88: a fatal error on a single-component run previously called
+  // process.exit(2) synchronously right here, which never runs a pending
+  // `finally` block -- pool/server teardown was skipped outright. It now
+  // attempts that same teardown, bounded (closePoolsBounded, armExitWatchdog):
+  // a hung Vite dev-server close can no longer keep either the teardown or
+  // the process itself from finishing within the documented exit code's
+  // 10-second budget.
+  for (let idx = 0; idx < componentPaths.length; idx++) {
+    const componentPath = componentPaths[idx];
+    if (multi && !args.ci) {
+      process.stdout.write(`\n=== ${componentPath} ===\n`);
     }
-  } finally {
-    await pool.closeAll();
-    await serverPool.closeAll();
+    const started = Date.now();
+    // M92: set before the harness build a fire-and-forget dep-optimizer
+    // rejection (surface 3) could still fail on, cleared once this component
+    // is done -- see resolveFatalProcessError's own comment.
+    setCurrentRunProjectRoot(resolveProjectPaths(path.resolve(componentPath)).projectRoot);
+    // Item A: same lifecycle as the project root above -- reset before this
+    // component's own run() populates it via AnalyzeOptions.onWarning, so a
+    // surface-3 rejection on component 2 of a multi-component sweep never
+    // reports component 1's warnings.
+    resetCurrentRunWarnings();
+    // M101: armed before the run, re-armed by every phase line it prints, so a
+    // phase that stops making progress cannot hold this directory and this
+    // browser forever. Cleared in the same iteration's finally.
+    const budgetMs = runWatchdogBudgetMs(args.exploreBudgetSeconds);
+    // Every run passes onPhase, so the timer is re-armed at each phase on
+    // every path, --ci included. The total-budget wording stays for a caller
+    // that omits it.
+    const bound = "stalled" as const;
+    const runWatchdog = createRunWatchdog(budgetMs, () => {
+      process.stderr.write(RUN_WATCHDOG_ABORT_ERROR(componentPath, budgetMs, bound));
+      void abortRun(2, { pool, serverPool });
+    });
+    try {
+      const report = await runOne(
+        componentPath,
+        reportPaths[idx],
+        args,
+        pool,
+        serverPool,
+        () => {
+          runWatchdog.heartbeat();
+          // M101 (review A6): the marker is what tells another process this
+          // directory is still in use; the directory's own mtime stopped
+          // advancing when the build finished writing into it.
+          refreshHarnessDirMarkers();
+        },
+      );
+      if (!args.ci) {
+        process.stdout.write(formatTable(report) + "\n");
+        process.stdout.write(formatWallClock(Date.now() - started) + "\n");
+      }
+      if (!report.pass) anyFail = true;
+    } catch (err: unknown) {
+      if (!multi) {
+        process.stderr.write(formatCliError(err, process.env.DEBUG));
+        const watchdog = armExitWatchdog(2);
+        await closePoolsBounded(pool, serverPool);
+        clearTimeout(watchdog);
+        process.exit(2);
+      }
+      anyFail = true;
+      process.stderr.write(`[${componentPath}] ` + formatCliError(err, process.env.DEBUG));
+    } finally {
+      runWatchdog.clear();
+      setCurrentRunProjectRoot(undefined);
+      resetCurrentRunWarnings();
+    }
+  }
+  {
+    const watchdog = armExitWatchdog(anyFail ? 1 : 0);
+    await closePoolsBounded(pool, serverPool);
+    clearTimeout(watchdog);
   }
 
   const jsonNotice = formatJsonSplitNotice(reportPaths);
@@ -1136,8 +1501,18 @@ async function runOne(
   args: CliArgs,
   browserPool?: import("./measure.js").BrowserPool,
   serverPool?: import("./harness.js").ServerPool,
+  // M101: every phase boundary is a liveness heartbeat for the run watchdog.
+  // Review A2 follow-up: it rides `onPhase`, which analyze fires before the
+  // --ci gate that silences console progress, so a CI run is bounded per phase
+  // like any other instead of by a bare total.
+  onPhase?: () => void,
 ): Promise<import("./report.js").Report> {
   return analyze(componentPath, {
+      ...(onPhase ? { onPhase } : {}),
+      // Item A: threads this run's warnings out to the same accumulator
+      // resolveFatalProcessError reads, so a surface-3 async rejection can
+      // disclose them -- see currentRunWarnings's own comment.
+      onWarning: pushCurrentRunWarning,
       browserPool,
       serverPool,
       ...(args.targets?.[componentPath] ? { target: args.targets[componentPath] } : {}),
@@ -1387,5 +1762,8 @@ if (isDirectRun) {
   };
   process.on("unhandledRejection", handleFatalProcessError);
   process.on("uncaughtException", handleFatalProcessError);
+  // M101: Node runs no "exit" listener for a signalled process, so without
+  // these three the harness directory of every killed run stays on disk.
+  registerTerminationHandlers();
   main();
 }

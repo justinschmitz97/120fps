@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -30,8 +30,19 @@ beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "120fps-wrap-test-"));
 });
 
+// Deletion is deferred to the end of the file, not done per test: Vite's
+// dependency optimizer keeps reading this project's node_modules after
+// cleanup() returns, and removing it underneath that read is what produced the
+// leaked esbuild rejection this file now guards against. Each test still gets
+// its own fresh directory from beforeEach.
+const finishedDirs: string[] = [];
+
 afterEach(() => {
-  fs.rmSync(tmpDir, { recursive: true, force: true });
+  finishedDirs.push(tmpDir);
+});
+
+afterAll(() => {
+  for (const dir of finishedDirs) fs.rmSync(dir, { recursive: true, force: true });
 });
 
 function makeReport(overrides: Partial<Report> = {}): Report {
@@ -86,6 +97,24 @@ function countOccurrences(haystack: string, needle: string): number {
 // ====================================================================
 // W1: resolution: CLI flags
 // ====================================================================
+
+// Every test in this file that boots a real dev server owns a temp
+// node_modules that afterEach deletes. Vite's dependency optimizer runs
+// detached from listen(), so a test that cleans up before the optimizer
+// settles makes esbuild read a deleted file and rejects into the run — a
+// rejection that leaks past the suite instead of failing a test. This guard
+// turns any such leak from this file into a failure.
+const leakedRejections: unknown[] = [];
+const recordRejection = (reason: unknown): void => {
+  leakedRejections.push(reason);
+};
+beforeAll(() => process.on("unhandledRejection", recordRejection));
+afterAll(() => {
+  process.off("unhandledRejection", recordRejection);
+  expect(
+    leakedRejections.map((r) => (r instanceof Error ? r.message : String(r))),
+  ).toEqual([]);
+});
 
 describe("W1: --wrap / --no-wrap parsing", () => {
   it("parses --wrap with a path", () => {
@@ -384,6 +413,13 @@ describe("W5: wrapper deps join optimizeDeps.include", () => {
       expect(include).toContain("component-only-pkg");
       expect(include).toContain("wrapper-only-pkg");
     } finally {
+      // Vite's dependency optimizer is fire-and-forget by design (it must not
+      // block listen()), and this project's node_modules is a temp directory
+      // afterEach deletes. Letting the optimizer settle first is what keeps its
+      // esbuild pass from reading a file that has just been removed and
+      // rejecting into the run — the same detached surface M94's
+      // resolveFatalProcessError exists for in production.
+      await harness.server.waitForRequestsIdle();
       await harness.cleanup();
     }
   });
@@ -416,6 +452,7 @@ describe("W5: wrapper deps join optimizeDeps.include", () => {
       expect(include).not.toContain("@ui/theme");
       expect(include).toContain("theme-pkg");
     } finally {
+      await harness.server.waitForRequestsIdle();
       await harness.cleanup();
     }
   });

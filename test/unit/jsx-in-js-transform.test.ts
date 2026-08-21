@@ -1,6 +1,8 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterAll } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
-import { jsxInJsPlugin, buildAndServe } from "../../src/harness.js";
+import { jsxInJsPlugin, resolveJsxImportSource, buildAndServe } from "../../src/harness.js";
 
 // M77: Vite's default esbuild.include (`/\.(m?ts|[jt]sx)$/`) excludes plain
 // `.js`, and forcing config.esbuild.loader to "jsx" globally would break
@@ -59,6 +61,89 @@ describe("jsxInJsPlugin", () => {
   it("is registered ahead of Vite's own transform pipeline", () => {
     expect(plugin.enforce).toBe("pre");
     expect(plugin.name).toBe("120fps-jsx-in-js");
+  });
+});
+
+const jsxRuntimeDirs: string[] = [];
+
+afterAll(() => {
+  for (const dir of jsxRuntimeDirs) fs.rmSync(dir, { recursive: true, force: true });
+});
+
+function mkProject(files: Record<string, string>): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "120fps-jsxsrc-"));
+  jsxRuntimeDirs.push(dir);
+  for (const [rel, content] of Object.entries(files)) {
+    const full = path.join(dir, rel);
+    fs.mkdirSync(path.dirname(full), { recursive: true });
+    fs.writeFileSync(full, content);
+  }
+  return dir;
+}
+
+// material-ui's `internal/svg-icons/Cancel.js`: module-scope JSX, no React
+// binding anywhere in the file, compiled under the repo's `"jsx": "react-jsx"`.
+const NO_REACT_BINDING =
+  "import createSvgIcon from './createSvgIcon';\n" +
+  "export default createSvgIcon(<path d='M12 2' />, 'Cancel');\n";
+
+describe("JSX in a project .js file compiles for the automatic runtime", () => {
+  it("emits a jsx-runtime import instead of a bare React.createElement call", async () => {
+    const result = await jsxInJsPlugin().transform(
+      NO_REACT_BINDING,
+      path.join("project", "Cancel.js"),
+    );
+    expect(result).not.toBeNull();
+    expect(result!.code).toContain("react/jsx-runtime");
+    expect(result!.code).not.toContain("React.createElement");
+  });
+
+  it("compiles a file that imports React itself through the same runtime", async () => {
+    const code =
+      "import * as React from 'react';\n" +
+      "export default function Badge() { return <span>{React.version}</span>; }\n";
+    const result = await jsxInJsPlugin().transform(code, path.join("project", "Badge.js"));
+    expect(result).not.toBeNull();
+    expect(result!.code).toContain("react/jsx-runtime");
+    expect(result!.code).not.toContain("React.createElement");
+  });
+
+  it("imports the runtime the project's own tsconfig names", async () => {
+    const result = await jsxInJsPlugin("preact").transform(
+      NO_REACT_BINDING,
+      path.join("project", "Cancel.js"),
+    );
+    expect(result!.code).toContain("preact/jsx-runtime");
+  });
+
+  it("reads jsxImportSource from the config that governs the project", () => {
+    const dir = mkProject({
+      "package.json": JSON.stringify({ name: "p" }),
+      "tsconfig.json": JSON.stringify({ compilerOptions: { jsx: "react-jsx", jsxImportSource: "preact" } }),
+    });
+    expect(resolveJsxImportSource(dir)).toBe("preact");
+  });
+
+  it("inherits jsxImportSource through an extends chain", () => {
+    const dir = mkProject({
+      "package.json": JSON.stringify({ name: "p" }),
+      "base.json": JSON.stringify({ compilerOptions: { jsxImportSource: "@emotion/react" } }),
+      "tsconfig.json": JSON.stringify({ extends: "./base.json" }),
+    });
+    expect(resolveJsxImportSource(dir)).toBe("@emotion/react");
+  });
+
+  it("falls back to react when no config declares one", () => {
+    const dir = mkProject({
+      "package.json": JSON.stringify({ name: "p" }),
+      "tsconfig.json": JSON.stringify({ compilerOptions: { jsx: "react-jsx" } }),
+    });
+    expect(resolveJsxImportSource(dir)).toBe("react");
+  });
+
+  it("falls back to react when the config cannot be parsed", () => {
+    const dir = mkProject({ "package.json": JSON.stringify({ name: "p" }), "tsconfig.json": "{ not json" });
+    expect(resolveJsxImportSource(dir)).toBe("react");
   });
 });
 

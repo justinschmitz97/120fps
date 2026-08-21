@@ -31,12 +31,17 @@ import {
   projectSourceFiles,
   VUE_OPTIONS_API_PROPS_WARNING,
   isVueOptionsApiPropsWarning,
+  VUE_RUNTIME_DEFINE_PROPS_WARNING,
+  isVueRuntimeDefinePropsWarning,
+  isVuePropsScopeExclusionWarning,
 } from "../../src/prop-gen.js";
 import { detectFramework } from "../../src/react-profiler.js";
 import {
   resolveFramework,
   isFixturePath,
   detectFixture,
+  explainProps,
+  ZERO_PROPS_WARNING,
 } from "../../src/analyze.js";
 import { runPreflight, recognizeTransform } from "../../src/preflight.js";
 import {
@@ -323,13 +328,25 @@ describe("extractProps discloses the excluded Options-API form via onWarning", (
     expect(warnings).toEqual([]);
   });
 
-  it("does not warn for a <script setup> runtime defineProps(...) call (RuntimeProps.vue, ADR 0002's own already-silent Vue case, out of this milestone's scope)", async () => {
+  // M92 (element-plus-F3): previously silent (ADR 0002's own case, out of
+  // M80's scope) -- a runtime-object `defineProps({...})` call inside
+  // <script setup> is a deliberate scope exclusion exactly like the
+  // Options-API forms above, and must be worded as one, not left to fall
+  // through to the generic "extraction may have failed" message.
+  it("names a <script setup> runtime defineProps(...) call as a scope exclusion (RuntimeProps.vue, element-plus's split-bar.vue shape)", async () => {
     const warnings: string[] = [];
     const schemas = await extractProps(path.join(VUE_ROOT, "RuntimeProps.vue"), {
       onWarning: (w) => warnings.push(w),
     });
     expect(schemas).toEqual([]);
-    expect(warnings).toEqual([]);
+    expect(warnings).toHaveLength(1);
+    expect(isVueRuntimeDefinePropsWarning(warnings[0])).toBe(true);
+    expect(isVuePropsScopeExclusionWarning(warnings[0])).toBe(true);
+    expect(warnings[0]).toBe(VUE_RUNTIME_DEFINE_PROPS_WARNING(path.join(VUE_ROOT, "RuntimeProps.vue")));
+    expect(warnings[0]).toContain("RuntimeProps.vue");
+    expect(warnings[0]).toContain("RuntimeProps.props.tsx");
+    expect(warnings[0]).toMatch(/did not fail/i);
+    expect(warnings[0]).toMatch(/not broken/i);
   });
 
   // The mandated control case: a typed <script setup> defineProps<T>() SFC
@@ -370,6 +387,33 @@ describe("extractSchemas' onWarning wiring (src/analyze.ts) is the same call pro
   });
 });
 
+// M92 (element-plus-F3): a Vue scope exclusion's zero-prop count must not
+// also carry the generic "extraction may have failed" text -- that phrase
+// implies a possible malfunction the run already knows is not what happened.
+// explainProps is --explain-props's own code path, exercised directly since
+// it needs no browser/harness.
+describe("explainProps does not stack the generic zero-props warning on a Vue scope exclusion (M92)", () => {
+  it("shows only the scope-exclusion warning for a runtime defineProps({...}) call", async () => {
+    const explained = await explainProps(path.join(VUE_ROOT, "RuntimeProps.vue"));
+    expect(explained.props).toEqual([]);
+    expect(explained.warnings.some(isVueRuntimeDefinePropsWarning)).toBe(true);
+    expect(explained.warnings).not.toContain(ZERO_PROPS_WARNING);
+  });
+
+  it("shows only the scope-exclusion warning for an Options-API props object", async () => {
+    const explained = await explainProps(path.join(VUE_ROOT, "OptionsProps.vue"));
+    expect(explained.props).toEqual([]);
+    expect(explained.warnings.some(isVueOptionsApiPropsWarning)).toBe(true);
+    expect(explained.warnings).not.toContain(ZERO_PROPS_WARNING);
+  });
+
+  it("still shows the generic warning for a genuinely propless Options-API component", async () => {
+    const explained = await explainProps(path.join(VUE_ROOT, "OptionsPropless.vue"));
+    expect(explained.props).toEqual([]);
+    expect(explained.warnings).toContain(ZERO_PROPS_WARNING);
+  });
+});
+
 // C5: the renderer adapter. React's entry is untouched; Vue's mounts an SFC.
 describe("renderer adapter", () => {
   const vueOpts = {
@@ -389,7 +433,8 @@ describe("renderer adapter", () => {
     const entry = generateEntry(vueOpts);
     expect(entry).toContain('from "vue"');
     expect(entry).toContain("createApp");
-    expect(entry).toContain('import Button from "/Button.vue"');
+    // M106 A4: namespace import, runtime selection.
+    expect(entry).toContain('import * as __120fps_mod from "/Button.vue"');
     expect(entry).not.toContain("react");
     expect(entry).not.toContain("StrictMode");
   });

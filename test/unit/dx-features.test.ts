@@ -16,7 +16,10 @@ import {
 import {
   runPreflight,
   detectProviderImport,
+  detectWrapperProviderModule,
   providerCandidateLabels,
+  providersFromEntry,
+  isDirectProviderHit,
   HARD_REMEDY,
 } from "../../src/preflight.js";
 import { detectComponentExport, BUNDLER_PREACT_ALIAS_WARNING } from "../../src/harness.js";
@@ -501,6 +504,246 @@ describe("provider detection", () => {
       entries: [fixture("m65/healthy-consumer.tsx")],
     });
     expect(result.providers).toEqual([]);
+  });
+
+  // M92 (dub button.tsx): entries can name the measured component AND a
+  // wrapper in one combined walk; a provider hit reached only through the
+  // wrapper is not something the component imports. providersFromEntry keeps
+  // only hits whose chain[0] (the seed chainTo walked back to) matches the
+  // given entry, so a component with its own no-provider graph gets none of
+  // the wrapper's hits attributed to it.
+  describe("providersFromEntry (M92)", () => {
+    it("excludes a hit discovered only through a second (wrapper) entry", () => {
+      const componentFile = fixture("m65/healthy-consumer.tsx");
+      const wrapperFile = fixture("m65/workbench-consumer.tsx");
+      const result = runPreflight({
+        projectRoot: path.resolve("fixtures"),
+        entries: [componentFile, wrapperFile],
+      });
+      // Ground truth: the combined walk still finds the real hit.
+      expect(result.providers.some((p) => p.source.match(/workbench-store\.tsx$/))).toBe(true);
+
+      const componentRelative = path
+        .relative(path.resolve("fixtures"), componentFile)
+        .replace(/\\/g, "/");
+      const wrapperRelative = path
+        .relative(path.resolve("fixtures"), wrapperFile)
+        .replace(/\\/g, "/");
+
+      expect(providersFromEntry(result.providers, componentRelative)).toEqual([]);
+      expect(
+        providersFromEntry(result.providers, wrapperRelative).some((p) =>
+          p.source.match(/workbench-store\.tsx$/),
+        ),
+      ).toBe(true);
+    });
+
+    it("has no effect with a single entry (the common, no-wrapper case)", () => {
+      const componentFile = fixture("m65/workbench-consumer.tsx");
+      const result = runPreflight({
+        projectRoot: path.resolve("fixtures"),
+        entries: [componentFile],
+      });
+      const componentRelative = path
+        .relative(path.resolve("fixtures"), componentFile)
+        .replace(/\\/g, "/");
+      expect(providersFromEntry(result.providers, componentRelative)).toEqual(result.providers);
+    });
+
+    // Item B (dub button.tsx follow-up, corrected against dub's real
+    // source): tooltip.tsx wraps @radix-ui/react-tooltip's Provider directly
+    // (no local createContext, no local throw -- detectWrapperProviderModule's
+    // shape, not detectLocalProviderModule's), and separately wrapper.tsx's
+    // own rich-text-provider.tsx hit is reachable only through the wrapper,
+    // not the component -- the shape that needs both halves (keep and
+    // correctly label the component's own real candidates -- both the local
+    // wrapper file and the external package it wraps -- while excluding the
+    // unrelated wrapper-only one) working together, run end to end through
+    // the same analyze.ts call shape (runPreflight with both entries, then
+    // providersFromEntry + providerCandidateLabels on the component's own
+    // entry) and through formatHints, the way a real report renders it.
+    it("a component's own provider hits (local wrapper + the package it wraps) survive scoping while an unrelated wrapper-only hit is excluded", () => {
+      const root = fixture("m92-item-b");
+      const componentFile = path.join(root, "button.tsx");
+      const wrapperFile = path.join(root, "wrapper.tsx");
+      const result = runPreflight({
+        projectRoot: root,
+        entries: [componentFile, wrapperFile],
+        componentName: "Button",
+      });
+      // Ground truth: the combined walk finds all three real hits.
+      expect(result.providers.some((p) => p.source === "tooltip.tsx")).toBe(true);
+      expect(result.providers.some((p) => p.source === "@radix-ui/react-tooltip")).toBe(true);
+      expect(result.providers.some((p) => p.source === "rich-text-provider.tsx")).toBe(true);
+
+      const componentRelative = path.relative(root, componentFile).replace(/\\/g, "/");
+      const own = providersFromEntry(result.providers, componentRelative);
+      const labels = providerCandidateLabels(own);
+      expect(labels).toEqual(["tooltip.tsx (TooltipProvider)", "@radix-ui/react-tooltip"]);
+      expect(labels.some((l) => l.includes("rich-text-provider"))).toBe(false);
+
+      const report = {
+        combos: [{ renderHealth: "error", pageErrors: ["Tooltip must be used within TooltipProvider"] }],
+        providerCandidates: labels,
+      } as unknown as Report;
+      const text = formatHints(["renderError"], report);
+      expect(text).toContain("component imports tooltip.tsx (TooltipProvider)");
+      expect(text).not.toContain("rich-text-provider");
+    });
+
+    // Item B, second half: a thrown error naming a symbol exported by a
+    // module the component does import must rank that module first, even
+    // when discovery order (menu.tsx imported before tooltip.tsx in this
+    // fixture) would otherwise put a different real candidate first.
+    // Discovery-produced labels, not hand-typed ones (hints-captured-error.
+    // test.ts already covers the ranking function in isolation on a
+    // hand-typed list; this closes the gap to what runPreflight actually
+    // produces).
+    it("ranks the candidates matching a named symbol in the captured error first, on discovery-produced labels", () => {
+      const root = fixture("m92-item-b");
+      const componentFile = path.join(root, "button-with-menu.tsx");
+      const result = runPreflight({ projectRoot: root, entries: [componentFile] });
+
+      const componentRelative = path.relative(root, componentFile).replace(/\\/g, "/");
+      const own = providersFromEntry(result.providers, componentRelative);
+      const labels = providerCandidateLabels(own);
+      // Discovery order: menu.tsx is imported first in the fixture, so it
+      // leads before any ranking is applied.
+      expect(labels[0]).toBe("menu.tsx (useMenuContext)");
+      expect(labels).toContain("tooltip.tsx (TooltipProvider)");
+
+      const report = {
+        combos: [{ renderHealth: "error", pageErrors: ["`Tooltip` must be used within `TooltipProvider`"] }],
+        providerCandidates: labels,
+      } as unknown as Report;
+      const text = formatHints(["renderError"], report);
+      const tooltipIdx = text.indexOf("component imports tooltip.tsx");
+      const menuIdx = text.indexOf("component imports menu.tsx");
+      expect(tooltipIdx).toBeGreaterThan(-1);
+      expect(menuIdx).toBeGreaterThan(-1);
+      expect(tooltipIdx).toBeLessThan(menuIdx);
+    });
+
+    // Item B, third half (dub, corrected): tooltip.tsx:12 imports
+    // PROSE_STYLES from ./rich-text-area -- rich-text-provider.tsx really is
+    // reachable from the component's own graph, two hops out, so it must
+    // NOT be filtered away (it is real evidence). What must change is the
+    // wording: "component imports X" is false for a two-hop reach.
+    // deep-entry.tsx -> deep-middle.tsx -> deep-provider.tsx is the same
+    // shape in isolation (a plain passthrough file importing an unrelated
+    // named export, with no wrapper entry in the mix, so there is no
+    // discovery-order ambiguity about which entry "wins" the hit).
+    it("a two-hop transitive reach is kept as a candidate but worded as 'import graph reaches', not 'component imports'", () => {
+      const root = fixture("m92-item-b");
+      const componentFile = path.join(root, "deep-entry.tsx");
+      const result = runPreflight({ projectRoot: root, entries: [componentFile], componentName: "DeepEntry" });
+      const componentRelative = path.relative(root, componentFile).replace(/\\/g, "/");
+      const own = providersFromEntry(result.providers, componentRelative);
+      expect(own).toHaveLength(1);
+      expect(isDirectProviderHit(own[0])).toBe(false);
+
+      const labels = providerCandidateLabels(own);
+      const transitiveLabels = providerCandidateLabels(own.filter((h) => !isDirectProviderHit(h)));
+      expect(labels).toEqual(["deep-provider.tsx (useDeepContext)"]);
+      expect(transitiveLabels).toEqual(labels);
+
+      const report = {
+        combos: [{ renderHealth: "error", pageErrors: ["useDeepContext must be used within DeepProvider"] }],
+        providerCandidates: labels,
+        transitiveProviderCandidates: transitiveLabels,
+      } as unknown as Report;
+      const text = formatHints(["renderError"], report);
+      expect(text).toContain("component's import graph reaches deep-provider.tsx (useDeepContext)");
+      expect(text).not.toContain("component imports deep-provider.tsx");
+    });
+  });
+
+  describe("detectWrapperProviderModule (M92 gap 2)", () => {
+    it("recognizes a thin wrapper around a headless-kit primitive (dub tooltip.tsx's real shape)", () => {
+      const source =
+        'import * as TooltipPrimitive from "@radix-ui/react-tooltip";\n' +
+        "export function TooltipProvider({ children }) {\n" +
+        "  return <TooltipPrimitive.Provider delayDuration={150}>{children}</TooltipPrimitive.Provider>;\n" +
+        "}\n";
+      expect(detectWrapperProviderModule(source)).toEqual({ hook: "TooltipProvider" });
+    });
+
+    it("recognizes a bare (non-namespaced) exported provider component too", () => {
+      const source =
+        'import { Provider } from "some-kit";\n' +
+        "export const ThemeProvider = ({ children }) => <Provider>{children}</Provider>;\n";
+      expect(detectWrapperProviderModule(source)).toEqual({ hook: "ThemeProvider" });
+    });
+
+    it("does not match a file with no exported *Provider component", () => {
+      const source = "export function Button({ children }) { return <button>{children}</button>; }\n";
+      expect(detectWrapperProviderModule(source)).toBeUndefined();
+    });
+
+    it("does not match an exported *Provider component with no Provider-shaped JSX (negative case: not a wrapper)", () => {
+      const source = "export function TooltipProvider({ children }) { return <div>{children}</div>; }\n";
+      expect(detectWrapperProviderModule(source)).toBeUndefined();
+    });
+
+    // Regression: a file with its own createContext (React's own
+    // Context.Provider also ends in "Provider") is detectLocalProviderModule's
+    // exclusive territory, throw-gated or not -- must not double-flag a
+    // context with a benign default that never throws (fixtures/m65/
+    // theme-store.tsx's exact, deliberate "healthy" shape).
+    it("does not match a file with its own local createContext, even one that never throws (defers entirely to detectLocalProviderModule)", () => {
+      const source =
+        'import { createContext, useContext } from "react";\n' +
+        'const ThemeContext = createContext("light");\n' +
+        "export function useTheme() { return useContext(ThemeContext); }\n" +
+        "export function ThemeProvider({ children }) {\n" +
+        '  return <ThemeContext.Provider value="light">{children}</ThemeContext.Provider>;\n' +
+        "}\n";
+      expect(detectWrapperProviderModule(source)).toBeUndefined();
+    });
+  });
+
+  describe("detectProviderImport scope matching (M92 gap 2)", () => {
+    it("matches an evidenced headless-kit package by scope, with no invented hook", () => {
+      expect(detectProviderImport("@radix-ui/react-tooltip")).toEqual({ source: "@radix-ui/react-tooltip" });
+      expect(detectProviderImport("@radix-ui/react-dialog")).toEqual({ source: "@radix-ui/react-dialog" });
+    });
+
+    it("does not match an un-evidenced package outside PROVIDER_LIBRARIES and PROVIDER_LIBRARY_SCOPES", () => {
+      expect(detectProviderImport("@headlessui/react")).toBeUndefined();
+      expect(detectProviderImport("some-random-package")).toBeUndefined();
+    });
+
+    it("an exact PROVIDER_LIBRARIES entry still wins over scope matching (unaffected)", () => {
+      expect(detectProviderImport("next-intl")).toEqual({ source: "next-intl", hook: "useTranslations" });
+    });
+  });
+
+  describe("isDirectProviderHit (M92 gap 3)", () => {
+    it("a local hit one hop from the entry is direct", () => {
+      expect(isDirectProviderHit({ source: "tooltip.tsx", local: true, chain: ["button.tsx", "tooltip.tsx"] })).toBe(
+        true,
+      );
+    });
+
+    it("a local hit two or more hops from the entry is not direct", () => {
+      expect(
+        isDirectProviderHit({
+          source: "deep-provider.tsx",
+          local: true,
+          chain: ["entry.tsx", "middle.tsx", "deep-provider.tsx"],
+        }),
+      ).toBe(false);
+    });
+
+    it("an external package hit imported by the entry itself is direct", () => {
+      expect(isDirectProviderHit({ source: "next-intl", local: false, chain: ["entry.tsx"] })).toBe(true);
+    });
+
+    it("an external package hit imported by an intermediate file is not direct", () => {
+      expect(
+        isDirectProviderHit({ source: "@radix-ui/react-tooltip", local: false, chain: ["button.tsx", "tooltip.tsx"] }),
+      ).toBe(false);
+    });
   });
 
   it("names the candidates in the render-error hint", () => {

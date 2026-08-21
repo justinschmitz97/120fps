@@ -162,3 +162,57 @@ export { Combo as default };`,
     });
   });
 });
+
+// chakra-ui declares the controlled variant first in every compound file
+// (`tabs.ts:35` TabsRootProvider, `:52` TabsRoot), so source order alone
+// measured the variant that additionally requires an externally-managed
+// `value` object — for select/combobox, a class instance nothing synthesizes.
+describe("choosing between a controlled provider export and its sibling", () => {
+  it("prefers the sibling declared after a *Provider export", () => {
+    const file = writeFixture(
+      "tabs.ts",
+      `export const TabsRootProvider = (props) => null;
+export const TabsRoot = (props) => null;
+export const TabsList = (props) => null;`,
+    );
+    expect(detectComponentExport(file)).toEqual({ name: "TabsRoot", isDefaultOnly: false });
+  });
+
+  it("keeps the *Provider export when the file has no other component", () => {
+    const file = writeFixture(
+      "only-provider.ts",
+      `export const ThemeProvider = (props) => null;`,
+    );
+    expect(detectComponentExport(file)).toEqual({ name: "ThemeProvider", isDefaultOnly: false });
+  });
+
+  it("honours an explicit target naming the provider", () => {
+    const file = writeFixture(
+      "dialog.tsx",
+      `export const DialogRootProvider = (props) => null;
+export const DialogRoot = (props) => null;`,
+    );
+    expect(detectComponentExport(file, "DialogRootProvider")).toEqual({
+      name: "DialogRootProvider",
+      isDefaultOnly: false,
+    });
+  });
+
+  it("does not second-guess a default-exported provider", () => {
+    const file = writeFixture(
+      "app-provider.tsx",
+      `export const Inner = (props) => null;
+export default function AppProvider() { return null; }`,
+    );
+    expect(detectComponentExport(file)).toEqual({ name: "AppProvider", isDefaultOnly: true });
+  });
+
+  it("does not second-guess a provider the file is named after", () => {
+    const file = writeFixture(
+      "mantine-provider.tsx",
+      `export const MantineProvider = (props) => null;
+export const Inner = (props) => null;`,
+    );
+    expect(detectComponentExport(file)).toEqual({ name: "MantineProvider", isDefaultOnly: false });
+  });
+});

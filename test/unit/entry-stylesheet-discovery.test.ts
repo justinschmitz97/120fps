@@ -145,6 +145,39 @@ describe("collecting an entry's own stylesheet imports", () => {
     expect(warnings).toEqual([]);
   });
 
+  it("resolves a bare package subpath stylesheet through its exports map", () => {
+    write(
+      "node_modules/twenty-ui/package.json",
+      JSON.stringify({
+        name: "twenty-ui",
+        exports: {
+          "./style.css": "./dist/style.css",
+          "./theme-light.css": "./dist/theme-light.css",
+          "./theme-dark.css": "./dist/theme-dark.css",
+        },
+      }),
+    );
+    const light = write("node_modules/twenty-ui/dist/theme-light.css", ":root{}");
+    const dark = write("node_modules/twenty-ui/dist/theme-dark.css", ":root{}");
+    // dist/style.css is intentionally never written: genuinely missing.
+    const entry = write(
+      "src/main.tsx",
+      'import "twenty-ui/style.css";\n' +
+        'import "twenty-ui/theme-light.css";\n' +
+        'import "twenty-ui/theme-dark.css";\n',
+    );
+    const warnings: string[] = [];
+    expect(entryStylesheetImports(entry, tmpDir, [], warnings)).toEqual([light, dark]);
+    expect(warnings).toEqual([CSS_IMPORT_SKIPPED_WARNING(["twenty-ui/style.css"])]);
+  });
+
+  it("resolves a scoped package subpath stylesheet with no exports map via a direct join", () => {
+    write("node_modules/@fontsource/dm-mono/package.json", JSON.stringify({ name: "@fontsource/dm-mono" }));
+    const css = write("node_modules/@fontsource/dm-mono/400.css", "@font-face{}");
+    const entry = write("src/main.tsx", 'import "@fontsource/dm-mono/400.css";');
+    expect(entryStylesheetImports(entry, tmpDir, [])).toEqual([css]);
+  });
+
   it("names a relative stylesheet import whose file is missing", () => {
     const entry = write("src/main.tsx", 'import "./gone.css";');
     const warnings: string[] = [];
@@ -201,5 +234,55 @@ describe("discovery on a create-vite shaped project", () => {
     write("src/main.tsx", 'import "./style.css";');
     const result = discoverGlobalCss(tmpDir);
     expect(result).toEqual({ files: [chosen], source: "entry" });
+  });
+});
+
+// A wrapper module the harness mounts through is an entry for stylesheet
+// purposes: its own side-effect imports are loaded on every measured run, and
+// a package with no application entry of its own (a monorepo library member)
+// otherwise fell straight to the size-ranked guess.
+describe("stylesheets a mounted wrapper module imports", () => {
+  it("reads a wrapper's own stylesheet imports when the package has no entry", () => {
+    write("package.json", JSON.stringify({ name: "lib" }));
+    const baseline = write("src/baseline.css", "body{margin:0}");
+    const wrapper = write("120fps.setup.tsx", 'import "./src/baseline.css";\nexport default null;');
+    const result = discoverGlobalCss(tmpDir, [], { extraEntryFiles: [wrapper] });
+    expect(result).toEqual({ files: [baseline], source: "entry" });
+  });
+
+  it("keeps the project entry's stylesheets first and appends the wrapper's", () => {
+    write("package.json", JSON.stringify({ name: "app" }));
+    const appCss = write("src/style.css", "body{}");
+    const wrapperCss = write("src/baseline.css", "html{}");
+    write("index.html", '<script type="module" src="/src/main.tsx"></script>');
+    write("src/main.tsx", 'import "./style.css";');
+    const wrapper = write("120fps.setup.tsx", 'import "./src/baseline.css";\nexport default null;');
+    const result = discoverGlobalCss(tmpDir, [], { extraEntryFiles: [wrapper] });
+    expect(result.files).toEqual([appCss, wrapperCss]);
+  });
+
+  it("lists a stylesheet both files import exactly once", () => {
+    write("package.json", JSON.stringify({ name: "app" }));
+    const shared = write("src/style.css", "body{}");
+    write("index.html", '<script type="module" src="/src/main.tsx"></script>');
+    write("src/main.tsx", 'import "./style.css";');
+    const wrapper = write("120fps.setup.tsx", 'import "./src/style.css";\nexport default null;');
+    expect(discoverGlobalCss(tmpDir, [], { extraEntryFiles: [wrapper] }).files).toEqual([shared]);
+  });
+
+  it("falls through to the ranked walk when the wrapper imports no stylesheet", () => {
+    write("package.json", JSON.stringify({ name: "lib" }));
+    write("src/theme.css", ".a{color:red}");
+    const wrapper = write("120fps.setup.tsx", 'import "./provider";\nexport default null;');
+    const result = discoverGlobalCss(tmpDir, [], { extraEntryFiles: [wrapper] });
+    expect(result.source).toBe("fallback");
+    expect(result.noEntryInPackage).toBe(true);
+  });
+
+  it("discovers exactly what it did before when no wrapper is passed", () => {
+    write("package.json", JSON.stringify({ name: "lib" }));
+    write("src/baseline.css", "body{margin:0}");
+    write("120fps.setup.tsx", 'import "./src/baseline.css";\nexport default null;');
+    expect(discoverGlobalCss(tmpDir, []).source).toBe("fallback");
   });
 });

@@ -167,22 +167,70 @@ export interface AppliedPresets {
   unknown: string[];
 }
 
+// M98 (primevue-F1): the kind a preset value implies, for a prop no extraction
+// produced a schema for. Values of differing kinds make the pool a union, the
+// same word the schema uses for a declared multi-shape prop.
+function inferPresetKind(values: unknown[]): PropSchema["kind"] {
+  const kinds = new Set<PropSchema["kind"]>();
+  for (const value of values) {
+    if (isPresetRef(value)) kinds.add("unknown");
+    else if (Array.isArray(value)) kinds.add("array");
+    else if (value === null || value === undefined) kinds.add("unknown");
+    else if (typeof value === "boolean") kinds.add("boolean");
+    else if (typeof value === "number") kinds.add("number");
+    else if (typeof value === "string") kinds.add("string");
+    else if (typeof value === "object") kinds.add("object");
+    else kinds.add("unknown");
+  }
+  if (kinds.size === 0) return "unknown";
+  if (kinds.size > 1) return "union";
+  return [...kinds][0];
+}
+
 // Presets replace a prop's value pool rather than extending it: the point is to
 // measure the values the user says are representative, not those plus three
 // synthesized ones.
+//
+// M98 (primevue-F1): the one case where a preset also ADDS. When extraction
+// produced nothing -- an Options-API `extends` component, whose own warning
+// names `<stem>.props.tsx` as the remedy -- there is no schema to replace, and
+// routing every preset key to `unknown` told the user the props they had just
+// supplied "are not a prop of the measured component". With extraction
+// succeeding, an absent key is still genuinely absent and still reported:
+// silently measuring a mistyped key as a prop would drop a disclosure this
+// codebase does not drop.
 export function applyPropPresets(
   schemas: PropSchema[],
   presets: PropPresets,
 ): AppliedPresets {
+  if (schemas.length === 0) {
+    const added: PropSchema[] = [];
+    const appliedNames: string[] = [];
+    for (const [name, values] of presets.entries) {
+      if (values.length === 0) continue;
+      appliedNames.push(name);
+      added.push({
+        name,
+        kind: inferPresetKind(values),
+        required: false,
+        values: [...values],
+        provenance: "preset",
+      });
+    }
+    return { schemas: added, applied: appliedNames, unknown: [] };
+  }
+
   const applied: string[] = [];
   const next = schemas.map((schema) => {
     const values = presets.entries.get(schema.name);
     if (values === undefined || values.length === 0) return schema;
     applied.push(schema.name);
     // Whatever synthesis could not build, the preset now supplies: the prop is
-    // no longer measured with a stand-in (M60).
+    // no longer measured with a stand-in (M60). M84: a preset always wins the
+    // provenance question the same way it already wins the value question —
+    // this is the only place `provenance: "preset"` is ever assigned.
     const { degenerate: _replaced, ...rest } = schema;
-    return { ...rest, values: [...values] };
+    return { ...rest, values: [...values], provenance: "preset" as const };
   });
 
   const known = new Set(schemas.map((s) => s.name));

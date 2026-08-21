@@ -21,7 +21,9 @@ export interface VueSfcCompiler {
   parse(
     source: string,
     options?: { filename?: string },
-  ): { descriptor: { scriptSetup?: SfcBlock | null; script?: SfcBlock | null } };
+  ): {
+    descriptor: { scriptSetup?: SfcBlock | null; script?: SfcBlock | null; template?: SfcBlock | null };
+  };
 }
 
 export interface SfcScript {
@@ -75,9 +77,31 @@ export function VUE_COMPILER_MISSING(projectRoot: string): string {
   );
 }
 
-// `<script setup>` only. The Options API and plain-`<script>` SFCs mount fine
-// (the plugin compiles them) but carry no `defineProps` type argument, so they
-// extract no props: the same outcome as an untyped React component.
+// The stronger of two block languages: the virtual file needs the script kind
+// that parses both blocks.
+function strongerLang(setupLang: string | undefined, companionLang: string | undefined): string {
+  const langs = [setupLang, companionLang].filter((lang): lang is string => typeof lang === "string");
+  if (langs.includes("tsx")) return "tsx";
+  // Review B-11: `<script setup lang="jsx">` beside `<script lang="ts">` needs
+  // a `.tsx` virtual file. Handing that JSX to a `.ts` one stops it parsing.
+  if (langs.includes("jsx") && langs.includes("ts")) return "tsx";
+  if (langs.includes("ts")) return "ts";
+  return setupLang ?? companionLang ?? "js";
+}
+
+// A `<script setup>` block is still what makes an SFC readable: the Options API
+// and plain-`<script>` SFCs mount fine (the plugin compiles them) but carry no
+// `defineProps` type argument, so they extract no props, the same outcome as an
+// untyped React component. Returning `undefined` for them is load-bearing —
+// `extractVueProps` (src/prop-gen.ts) reads it as "this is an Options-API
+// candidate" and `preflight.ts` reads it as "contributes no module".
+//
+// M98 (nuxt-ui-F1): when a companion `<script>` block sits beside the setup
+// block, its content is prepended. That is the only place an SFC can
+// `export interface` its props type, and 122 of nuxt-ui's 124 components do
+// exactly that, so without it `defineProps<BadgeProps>()` named a type nothing
+// in the program declared. Companion first matches Vue's own `compileScript`
+// order.
 export function parseSfcScript(
   source: string,
   filename: string,
@@ -92,9 +116,14 @@ export function parseSfcScript(
   }
   const block = descriptor?.scriptSetup;
   if (!block || typeof block.content !== "string") return undefined;
+  const companion = descriptor?.script;
+  const companionContent = typeof companion?.content === "string" ? companion.content : "";
   return {
-    content: block.content,
-    lang: typeof block.lang === "string" ? block.lang : "js",
+    content: companionContent.trim() ? `${companionContent}\n${block.content}` : block.content,
+    lang: strongerLang(
+      typeof block.lang === "string" ? block.lang : undefined,
+      typeof companion?.lang === "string" ? companion.lang : undefined,
+    ),
   };
 }
 
@@ -108,11 +137,16 @@ export function parseSfcScript(
 // already accept for a same-file, parse-only scan. Priority props > extends >
 // mixins when more than one key is present: a component's own runtime props
 // object is the most direct evidence, inheritance the fallback signal.
+// M98 (element-plus-F5): `defineComponent({ props: selectProps, setup(props, ...) })`
+// is Vue's Composition API reading a runtime props object, not the classic
+// Options API. `"setup-props"` names that shape so the warning can. An
+// inheritance form stays `"extends"`/`"mixins"` whatever the body uses:
+// inheritance is the Options-API mechanism either way.
 export function detectOptionsApiProps(
   source: string,
   filename: string,
   compiler: VueSfcCompiler,
-): "props" | "extends" | "mixins" | undefined {
+): "props" | "setup-props" | "extends" | "mixins" | undefined {
   let descriptor;
   try {
     descriptor = compiler.parse(source, { filename }).descriptor;
@@ -133,7 +167,7 @@ export function detectOptionsApiProps(
     if (name) keys.add(name);
   }
 
-  if (keys.has("props")) return "props";
+  if (keys.has("props")) return keys.has("setup") ? "setup-props" : "props";
   if (keys.has("extends")) return "extends";
   if (keys.has("mixins")) return "mixins";
   return undefined;
@@ -168,6 +202,35 @@ function defaultExportObjectLiteral(
     }
   }
   return undefined;
+}
+
+// M87: a component whose template root carries none of these directives
+// always produces a real root element once mounted -- an unconditional root
+// reporting zero DOM in the harness's combo phase is the harness's own
+// miscount (see generateVueEntry), not the component legitimately rendering
+// nothing. A root gated by one of these can legitimately render nothing, so
+// detection stays conservative: only the confirmed-unconditional shape is
+// reported true, matching detectOptionsApiProps's own shallow, parse-only
+// style (inspects the first tag's own attributes, not a full template AST).
+const CONDITIONAL_ROOT_DIRECTIVE = /\bv-if\s*=|\bv-show\s*=|\bv-for\s*=/;
+
+export function templateHasUnconditionalRoot(
+  source: string,
+  filename: string,
+  compiler: VueSfcCompiler,
+): boolean {
+  let descriptor;
+  try {
+    descriptor = compiler.parse(source, { filename }).descriptor;
+  } catch {
+    // A malformed SFC is the plugin's error to report; no special handling.
+    return false;
+  }
+  const template = descriptor?.template;
+  if (!template || typeof template.content !== "string") return false;
+  const match = /<([a-zA-Z][\w-]*)\b([^>]*)>/.exec(template.content);
+  if (!match) return false;
+  return !CONDITIONAL_ROOT_DIRECTIVE.test(match[2]);
 }
 
 // The virtual module the script block is type-checked as. Named `<sfc>.ts` in

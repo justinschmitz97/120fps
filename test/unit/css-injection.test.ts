@@ -100,6 +100,7 @@ describe("detectGlobalCss", () => {
       "src/index.css",
       "src/global.css",
       "src/style.css",
+      "src/styles.css",
       "app/globals.scss",
       "app/global.scss",
       "src/app/globals.scss",

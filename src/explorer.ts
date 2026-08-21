@@ -14,6 +14,7 @@ import {
   executeStressPattern,
   findAriaGroupSiblings,
   countPatternEvents,
+  type StressPatternRun,
 } from "./stress-patterns.js";
 import {
   applyWrapperViewport,
@@ -26,6 +27,7 @@ import {
   tryCollectGarbage,
   suspendThrottle,
   withContextRetry,
+  withFrameStarvationRetry,
   createRetryBudget,
   createPhaseTracker,
   refreshCdpSession,
@@ -69,7 +71,13 @@ export interface StateEdge {
   p95: number;
   traces: TraceEvent[][];
   stressPattern?: string;
+  // M106 C2 fix-up (C-2): the steps that actually ran, not the pattern's
+  // planned count. A truncated `open-close-10` used to report 20 and a
+  // per-step cost understated by up to 6.7x.
   stressSteps?: number;
+  // Set when the wall-clock budget cut the pattern short; carries the planned
+  // count so the row can say how much of the cycle ran.
+  stressTruncatedFrom?: number;
 }
 
 export interface StateGraph {
@@ -517,6 +525,7 @@ export async function explore(
           seed,
           cpuThrottle,
           observerTiming: options.observerTiming === true,
+          comboIndex: ci,
         },
         enter,
         options.onWarning,
@@ -547,7 +556,31 @@ interface InternalOptions {
   seed: number;
   cpuThrottle: number;
   observerTiming: boolean;
+  // M106 C1: only for the degrade warning's wording — a reader needs to know
+  // which combo stopped exploring.
+  comboIndex: number;
 }
+
+// M106 C1 (calcom-F3): the explore phase had no degrade path at all.
+// `withFrameStarvationRetry` already classifies a `tracing-timeout`, and its
+// only call sites were in measure.ts, so a second stall inside explore's
+// `withContextRetry` body threw raw and ended the run at exit 2 with no
+// report — after 124 s on a Radix Popover whose `open-close-10` pattern spent
+// 57 s of it in click timeouts. The combo keeps whatever it explored.
+// C-7: thrown by the retried body when the explore budget runs out mid-retry.
+// `withFrameStarvationRetry` does not classify it as a stall, so it propagates
+// out of the retry loop unretried; the call site catches this type and only
+// this type, which is what turns "budget gone" into a degrade instead of a
+// crash.
+class ExploreBudgetSpent extends Error {
+  constructor() {
+    super("explore wall-clock budget spent");
+  }
+}
+
+export const EXPLORE_STALLED_WARNING = (comboIndex: number, edgeCount: number): string =>
+  `combo ${comboIndex}: explore skipped (tracing stalled); ${edgeCount} interaction` +
+  `${edgeCount === 1 ? "" : "s"} measured before the stall are kept and the report still prints`;
 
 async function exploreCombo(
   page: Page,
@@ -606,7 +639,15 @@ async function exploreCombo(
     normalQueue.push({ stateId: initialHash, interaction, depth: 0 });
   }
 
+  // M106 C1/C2: one clock for the whole combo. The stress pattern reads what
+  // is left of it so a pattern whose every click times out cannot outlive the
+  // budget that was supposed to bound it.
+  const remainingWallClock = (): number =>
+    Math.max(0, opts.maxWallClockMs - (Date.now() - startTime));
+  let stalled = false;
+
   while (priorityQueue.length > 0 || normalQueue.length > 0) {
+    if (stalled) break;
     if (Date.now() - startTime >= opts.maxWallClockMs) break;
     if (nodes.size >= opts.maxNodes) break;
 
@@ -635,6 +676,10 @@ async function exploreCombo(
     const samples: number[] = [];
     const traces: TraceEvent[][] = [];
     let targetHash: string | null = null;
+    // M106 C2 (C-2): what the pattern actually did on the last sample. Both
+    // bodies below write it, so a truncated run reaches the edge instead of
+    // being discarded at the call site.
+    let patternRun: StressPatternRun | undefined;
 
     for (let s = 0; s < opts.sampleCount; s++) {
       if (Date.now() - startTime >= opts.maxWallClockMs) break;
@@ -643,18 +688,42 @@ async function exploreCombo(
       // per-sample trace lifecycle, which is what dominates explore's wall
       // clock; the trace path stays the default until the A/B says otherwise.
       if (opts.observerTiming) {
-        const observed = await withContextRetry(
-          enter,
-          async () => {
-            await suspendThrottle(session.cdp, opts.cpuThrottle, () => tryCollectGarbage(session.cdp));
-            await navigateToState(page, props, sourceNode.pathFromRoot);
-            await installObservers(page);
-            await beginObservedWindow(page);
-            await executeStressPattern(page, pattern);
-            return readObservedWindow(page);
-          },
-          { onRetry: onWarning, budget },
-        );
+        // C-12: the same degrade the trace path gets. This path cannot stall on
+        // tracing (it starts none), but a `Target closed` still classifies as a
+        // stall, and without this it threw raw out of the whole run.
+        let observed: Awaited<ReturnType<typeof readObservedWindow>> | undefined;
+        if (remainingWallClock() > 0) {
+          try {
+            observed = await withFrameStarvationRetry(
+              opts.comboIndex,
+              enter,
+              () => {
+                if (remainingWallClock() <= 0) throw new ExploreBudgetSpent();
+                return withContextRetry(
+                  enter,
+                  async () => {
+                    await suspendThrottle(session.cdp, opts.cpuThrottle, () => tryCollectGarbage(session.cdp));
+                    await navigateToState(page, props, sourceNode.pathFromRoot);
+                    await installObservers(page);
+                    await beginObservedWindow(page);
+                    patternRun = await executeStressPattern(page, pattern, remainingWallClock());
+                    return readObservedWindow(page);
+                  },
+                  { onRetry: onWarning, budget: createRetryBudget(0) },
+                );
+              },
+              onWarning,
+            );
+          } catch (err) {
+            if (!(err instanceof ExploreBudgetSpent)) throw err;
+          }
+        }
+        if (observed === undefined) {
+          const kept = edges.length + (samples.length > 0 ? 1 : 0);
+          onWarning?.(EXPLORE_STALLED_WARNING(opts.comboIndex, kept));
+          stalled = true;
+          break;
+        }
         samples.push(observedInteractionMs(observed));
         traces.push([]);
         if (s === 0) {
@@ -663,17 +732,57 @@ async function exploreCombo(
         continue;
       }
 
-      const traceEvents = await withContextRetry(
-        enter,
-        async () => {
-          await suspendThrottle(session.cdp, opts.cpuThrottle, () => tryCollectGarbage(session.cdp));
-          await navigateToState(page, props, sourceNode.pathFromRoot);
-          return collectTrace(session.cdp, async () => {
-            await executeStressPattern(page, pattern);
-          });
-        },
-        { onRetry: onWarning, budget },
-      );
+      // M106 C1 (calcom-F3): the same bounded retry the mount and rerender
+      // sample loops already compose around their own bodies. A
+      // `tracing-timeout` is one of the stalls it classifies, and explore was
+      // the one phase with no call site — so a second stall threw raw out of
+      // the whole run instead of degrading this combo.
+      // M106 C1 fix-up (C-7): the two retry layers are not disjoint --
+      // `CONTEXT_LOST` (src/measure.ts) matches the same `tracing-timeout` and
+      // `Target closed` signatures `classifyStall` recovers from, so nesting
+      // them multiplied the attempts (5 traced actions per stalled sample,
+      // each bounded only by the 60 s trace flush timeout, roughly five
+      // minutes past `--explore-budget`). The inner layer gets no budget on
+      // this path: the outer one owns the retry, and the wall clock is
+      // re-checked before every attempt so the phase cannot outlive the budget
+      // it printed.
+      let traceEvents: TraceEvent[] | undefined;
+      if (remainingWallClock() > 0) {
+        try {
+          traceEvents = await withFrameStarvationRetry(
+            opts.comboIndex,
+            enter,
+            () => {
+              if (remainingWallClock() <= 0) throw new ExploreBudgetSpent();
+              return withContextRetry(
+                enter,
+                async () => {
+                  await suspendThrottle(session.cdp, opts.cpuThrottle, () => tryCollectGarbage(session.cdp));
+                  await navigateToState(page, props, sourceNode.pathFromRoot);
+                  return collectTrace(session.cdp, async () => {
+                    patternRun = await executeStressPattern(page, pattern, remainingWallClock());
+                  });
+                },
+                // C-7: zero inner retries. The outer layer owns the retry for
+                // the two signatures both layers recognize, so the attempt
+                // count is `MAX_FRAME_STARVATION_RETRIES + 1`, not its square.
+                { onRetry: onWarning, budget: createRetryBudget(0) },
+              );
+            },
+            onWarning,
+          );
+        } catch (err) {
+          if (!(err instanceof ExploreBudgetSpent)) throw err;
+        }
+      }
+      if (traceEvents === undefined) {
+        // C-11: the partially sampled edge below is still pushed whenever any
+        // sample survived, so the count has to include it.
+        const kept = edges.length + (samples.length > 0 ? 1 : 0);
+        onWarning?.(EXPLORE_STALLED_WARNING(opts.comboIndex, kept));
+        stalled = true;
+        break;
+      }
 
       const parsed = parseTraceDuration(traceEvents);
       samples.push(parsed.totalDuration);
@@ -700,7 +809,10 @@ async function exploreCombo(
       p95: computeP95(samples),
       traces,
       stressPattern: pattern.name,
-      stressSteps: countPatternEvents(pattern),
+      stressSteps: patternRun ? patternRun.stepsRun : countPatternEvents(pattern),
+      ...(patternRun?.budgetExhausted
+        ? { stressTruncatedFrom: patternRun.stepsPlanned }
+        : {}),
     };
     edges.push(edge);
 

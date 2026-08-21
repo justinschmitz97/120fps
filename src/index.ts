@@ -206,6 +206,7 @@ export {
   type ProviderHit,
 } from "./preflight.js";
 export { targetNotFoundMessage } from "./harness.js";
+export { collectStaticPreBuildWarnings, assertRendererSupported, VUE_PROJECT_REACT_FILE_ERROR, resolveJsxImportSource, type StaticPreBuild } from "./harness.js";
 export { PROVIDER_HINT_LINE } from "./hints.js";
 export { detectScaleExport, loadTsconfigAliases, findProjectRoot, sweepStaleHarnessDirs, detectComponentExport, createServerPool, SWEEP_DEP_WARNING, ALIAS_SHAPE_WARNING, BROKEN_ALIAS_WARNING, fsAllowDirs, type ServerPool } from "./harness.js";
 export {
@@ -251,6 +252,9 @@ export {
   type StressStep,
   type StressPattern,
 } from "./stress-patterns.js";
+// M106 C1/C2
+export { type StressPatternRun } from "./stress-patterns.js";
+export { EXPLORE_STALLED_WARNING } from "./explorer.js";
 export {
   detectFramework,
   diffSnapshots,
@@ -426,6 +430,8 @@ export {
   type Hint,
   type HintId,
 } from "./hints.js";
+// M105 I12
+export { hintsForMountAbort } from "./hints.js";
 
 // M52
 export {
@@ -441,6 +447,14 @@ export {
 
 // M53
 export { warmupsForPosition } from "./measure.js";
+export { runWithSplitErrorWindows, type TransitionPageErrors } from "./measure.js";
+export { countComponentNodes, totalComponentNodes, collectUnresolvedSpriteRefs, COMPONENT_NODE_COUNT_SOURCE, UNRESOLVED_SPRITE_REFS_SOURCE, COMPONENT_NODE_COUNT_EXPRESSION, UNRESOLVED_SPRITE_REFS_EXPRESSION, MAX_UNRESOLVED_SPRITE_REFS, type ComponentNodeCount } from "./measure.js";
+export { matrixValues, matrixDeclaredValues, matrixAxesFor, matrixHeldAbsentProps, MAX_MATRIX_AXIS_VALUES, type MatrixAxisValues } from "./prop-gen-values.js";
+export { TRACE_FLUSH_TIMEOUT_MS, TRACING_STALL_RETRY_WARNING, TARGET_CLOSED_RETRY_WARNING, contextRetryWarningFor, retryBudgetExhaustedNoteFor, TRACING_BUDGET_EXHAUSTED_NOTE, TARGET_CLOSED_BUDGET_EXHAUSTED_NOTE } from "./measure.js";
+export { selectMeasuredExport } from "./prop-gen.js";
+export { UNTYPED_JS_COMPONENT_WARNING, isUntypedJsComponentWarning } from "./prop-gen.js";
+export { SYNTHESIZED_REQUIRED_OBJECT_WARNING, isSynthesizedRequiredObjectWarning } from "./prop-gen.js";
+export { VUE_SETUP_RUNTIME_PROPS_WARNING, isVueSetupRuntimePropsWarning, VUE_UNRESOLVED_PROPS_TYPE_WARNING, isVueUnresolvedPropsTypeWarning } from "./prop-gen.js";
 export { churnParitySeries, buildChurnTiming } from "./isolation.js";
 export { EFFECTIVE_SAMPLES_WARNING } from "./analyze.js";
 
@@ -466,3 +480,16 @@ export {
   type Renderer,
 } from "./harness.js";
 export { strictModeUnsupported, VUE_STRICTMODE_ERROR } from "./isolation.js";
+
+// M100
+export {
+  alternativeExportNote,
+  NO_PROPS_MEASURED_WARNING,
+  ALTERNATIVE_EXPORT_WITHOUT_DEGENERATE_PROPS_NOTE,
+  predictMode,
+  DRY_RUN_RUNTIME_ONLY_NOTE,
+  type PredictedMode,
+} from "./analyze.js";
+
+// M106 C4
+export { UNRESOLVED_SPRITE_REFS_WARNING } from "./analyze.js";

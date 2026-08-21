@@ -3,6 +3,7 @@ import path from "node:path";
 import { builtinModules } from "node:module";
 import ts from "typescript";
 import { projectCompilerOptions } from "./prop-gen.js";
+import { setImportCycleReported } from "./page-errors.js";
 import { isVueFile, parseSfcScript, type VueSfcCompiler } from "./vue-sfc.js";
 import {
   detectPnP,
@@ -36,7 +37,11 @@ export type PreflightKind =
   // M78: no level from the member up through the workspace root has ever
   // been installed. Checked after the PnP check (a legitimate PnP project
   // never has node_modules by design) so the two are not confused.
-  | "not-installed";
+  | "not-installed"
+  // M106 A2 (excalidraw-F1): the import graph returns to the measured module.
+  // Soft: the cycle is the application's own and usually mounts; it only
+  // fails when the entry enters it at a point the application never does.
+  | "import-cycle";
 
 // The harness never loads the project's vite.config (M30): its plugins target
 // its own Vite major and its server options are not measurement-safe. That is
@@ -124,6 +129,8 @@ export interface PreflightHit {
   chain: string[];
   // The offending module specifier, for import-edge hits.
   specifier?: string;
+  // M106 A2: every chain that returned to an entry module, first one first.
+  cycleChains?: string[][];
   // M48: recognizer code and the plugin family that owns the transform.
   transformCode?: string;
   transformOwner?: string;
@@ -157,6 +164,18 @@ export const PROVIDER_LIBRARIES: Record<string, string> = {
   "@tanstack/react-start": "useRouter",
 };
 
+// M92 gap 2 (dub tooltip.tsx, verified against real source): headless-UI
+// kits ship many separate packages, each with its own `.Provider` component
+// rather than one shared hook (`@radix-ui/react-tooltip`,
+// `@radix-ui/react-dialog`, ...) -- PROVIDER_LIBRARIES's one-exact-name,
+// one-known-hook shape does not fit. Matched by scope prefix instead, with
+// no invented hook name (the label is the bare package name, same as any
+// PROVIDER_LIBRARIES entry would be without a configured hook). Only the
+// one scope actually evidenced in the corpus (dub's own
+// `@radix-ui/react-tooltip` import) is listed here -- no other headless kit
+// is added without the same kind of evidence.
+const PROVIDER_LIBRARY_SCOPES = ["@radix-ui/"];
+
 export interface ProviderHit {
   // Package name, or the projectRoot-relative path of a local module.
   source: string;
@@ -173,11 +192,13 @@ function packageOf(specifier: string): string {
 
 export function detectProviderImport(
   specifier: string,
-): { source: string; hook: string } | undefined {
+): { source: string; hook?: string } | undefined {
   if (specifier.startsWith(".") || specifier.startsWith("/")) return undefined;
   const pkg = packageOf(specifier);
   const hook = PROVIDER_LIBRARIES[pkg];
-  return hook ? { source: pkg, hook } : undefined;
+  if (hook) return { source: pkg, hook };
+  if (PROVIDER_LIBRARY_SCOPES.some((scope) => pkg.startsWith(scope))) return { source: pkg };
+  return undefined;
 }
 
 // The shape of a context hook that refuses to run outside its provider: a
@@ -192,6 +213,85 @@ export function detectLocalProviderModule(
   return hook ? { hook } : {};
 }
 
+// M92 gap 2 (dub tooltip.tsx, verified against real source): the extremely
+// common "thin wrapper around a headless-kit primitive" shape --
+// `export function TooltipProvider({ children }) { return
+// <TooltipPrimitive.Provider ...>{children}</TooltipPrimitive.Provider>; }`
+// -- has no local createContext and no local throw (dub's real tooltip.tsx:
+// `grep -c createContext` and `grep -c "throw new Error"` both 0; Radix's
+// own hook throws, not this file's), so detectLocalProviderModule's shape
+// never matches it. Every Radix/headless-kit consumer wraps primitives
+// exactly this way, so this is handled generically (any package whose
+// default export ends in "Provider" JSX, or a `.Provider` member access) --
+// not by naming one library. Text only, same convention and same reason as
+// detectLocalProviderModule: the point is to name a suspect, not to prove
+// it. The exported component's own name (e.g. "TooltipProvider") is
+// returned as the hook slot -- not a literal `use*` hook, but the same
+// place providerCandidateLabels reads for the parenthetical, and the same
+// symbol rankProviderCandidates matches a thrown error's named symbol
+// against.
+const EXPORTED_PROVIDER_COMPONENT =
+  /export\s+(?:default\s+)?(?:async\s+)?function\s+(\w*Provider)\b|export\s+const\s+(\w*Provider)\s*[:=]/;
+// A JSX tag name (bare `TooltipProvider` or namespaced `TooltipPrimitive.
+// Provider`) whose own final segment ends in "Provider". Captured as a whole
+// tag name and checked with `.endsWith()` in JS, not asserted purely in the
+// regex: a fixed-length trailing-literal alternation
+// (`(?:\.\w*Provider|Provider)\b` appended after a greedy `[\w$]*`) back-
+// tracks incorrectly for the namespaced case -- greedy `[\w$]*` already
+// consumes the whole bare identifier, leaving nothing left for a second
+// "Provider" to match against, and produces a false negative exactly on
+// `<TooltipPrimitive.Provider` (dub's own shape).
+const JSX_ELEMENT_NAME = /<([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)?)/g;
+
+function hasJsxProviderElement(sourceText: string): boolean {
+  for (const match of sourceText.matchAll(JSX_ELEMENT_NAME)) {
+    if (match[1].endsWith("Provider")) return true;
+  }
+  return false;
+}
+
+export function detectWrapperProviderModule(
+  sourceText: string,
+): { hook?: string } | undefined {
+  // A file that creates its own context is detectLocalProviderModule's
+  // exclusive territory, throw-gated or not: React's own Context.Provider
+  // (`<XxxContext.Provider>`) also ends in "Provider" and would otherwise
+  // false-positive here on exactly the shape detectLocalProviderModule
+  // deliberately withholds (a context with a benign default that never
+  // throws) -- regressing "does not flag a local context module that never
+  // throws". This detector is for a file with no local context of its own
+  // at all: a re-export/wrapper around another package's already-created
+  // Provider.
+  if (/createContext\s*[(<]/.test(sourceText)) return undefined;
+  const exported = EXPORTED_PROVIDER_COMPONENT.exec(sourceText);
+  if (!exported) return undefined;
+  if (!hasJsxProviderElement(sourceText)) return undefined;
+  const name = exported[1] ?? exported[2];
+  return name ? { hook: name } : {};
+}
+
+// M92 gap 3 (dub tooltip.tsx -> rich-text-provider.tsx, verified against
+// real source): tooltip.tsx:12 imports PROSE_STYLES from ./rich-text-area,
+// an unrelated named export -- rich-text-provider.tsx is genuinely
+// reachable from the component's own graph, two hops out, so
+// providersFromEntry correctly keeps it (it must NOT be filtered away: the
+// candidate is real). What is false is calling that reach "component
+// imports X" (hints.ts's PROVIDER_HINT_LINE) -- the component imports
+// tooltip.tsx, which imports rich-text-provider.tsx; the component itself
+// never does. A hit's chain always ends at the file the detector actually
+// inspected: for a local hit (detectLocalProviderModule /
+// detectWrapperProviderModule) that IS the provider file itself, so
+// chain.length - 1 counts the hops from the entry to it. For an external
+// package hit (detectProviderImport) the chain ends at the file whose OWN
+// import statement named the package -- the package sits one hop beyond
+// that file, so the hop count is chain.length, not chain.length - 1.
+// "Direct" (the entry's own import statement names it, or is the file
+// itself) is exactly one hop either way.
+export function isDirectProviderHit(hit: ProviderHit): boolean {
+  const hops = hit.local ? hit.chain.length - 1 : hit.chain.length;
+  return hops === 1;
+}
+
 export function providerCandidateLabels(hits: ProviderHit[]): string[] {
   const seen = new Set<string>();
   const labels: string[] = [];
@@ -202,6 +302,20 @@ export function providerCandidateLabels(hits: ProviderHit[]): string[] {
     labels.push(label);
   }
   return labels;
+}
+
+// M92 (dub button.tsx): runPreflight's entries[] can name more than one seed
+// (the measured component plus an auto-detected or explicit --wrap file),
+// and its one combined walk does not otherwise distinguish which seed
+// discovered which provider hit. hints.ts's PROVIDER_HINT_LINE wording
+// ("component imports X") is only true of a hit whose own chain started at
+// the component's own entry -- chainTo (this file) always walks a hit's
+// chain back to whichever entries[] seed has no parent, so chain[0] is
+// exactly that root, with no extra field needed. A hit reached only through
+// the wrapper's graph is real evidence, just not evidence about the
+// component, so it is excluded here rather than mislabeled.
+export function providersFromEntry(hits: ProviderHit[], entryRelative: string): ProviderHit[] {
+  return hits.filter((hit) => hit.chain[0] === entryRelative);
 }
 
 function scriptKind(fileName: string): ts.ScriptKind {
@@ -377,6 +491,9 @@ export function runPreflight(options: PreflightOptions): PreflightResult {
   const providers: ProviderHit[] = [];
   const providerSources = new Set<string>();
   const parents = new Map<string, string>();
+  const cycleReported = new Set<string>();
+  const cycleChains: string[][] = [];
+  setImportCycleReported(false);
   const seen = new Set<string>();
   const queue: string[] = [];
   const entryFiles = new Set<string>();
@@ -435,8 +552,13 @@ export function runPreflight(options: PreflightOptions): PreflightResult {
 
     // M65: only *imported* modules are provider candidates: a component that
     // creates its own context supplies it too.
+    // M92 gap 2: detectLocalProviderModule's own createContext+throw shape
+    // tried first; detectWrapperProviderModule (a thin re-export/wrapper
+    // around another package's Provider, no local context of its own) is
+    // the fallback, not a second independent hit -- one file is one
+    // candidate, whichever shape it actually matches.
     if (!entryFiles.has(file)) {
-      const local = detectLocalProviderModule(sf.text);
+      const local = detectLocalProviderModule(sf.text) ?? detectWrapperProviderModule(sf.text);
       const source = relative(projectRoot, file);
       if (local && !providerSources.has(source)) {
         providerSources.add(source);
@@ -503,6 +625,22 @@ export function runPreflight(options: PreflightOptions): PreflightResult {
       // the bundler's problem, and walking them would cost more than the check.
       if (resolved.isExternalLibraryImport || /[\\/]node_modules[\\/]/.test(target)) continue;
       if (target.endsWith(".d.ts")) continue;
+      // M106 A2: a back-edge to the measured module itself. The generated
+      // entry is the graph's only root, so it enters this cycle from the
+      // component's own file — backwards, compared with the application,
+      // whose own root enters it somewhere else — and a module-scope read of
+      // a binding that has not initialized yet throws.
+      if (entryFiles.has(target) && target !== file && !cycleReported.has(file)) {
+        cycleReported.add(file);
+        // Review A3: page-errors claims a cycle for a TDZ page error only
+        // when one was really found here.
+        setImportCycleReported(true);
+        // Review A7: one hit per run. A barrel with several importers of the
+        // measured module produced one ~500-character warning each, all
+        // describing the same situation; the chains are what differ, so they
+        // accumulate into the single hit's own list.
+        cycleChains.push([...chainTo(file), relative(projectRoot, target)]);
+      }
       if (seen.has(target)) continue;
       if (!fs.existsSync(target)) continue;
 
@@ -510,6 +648,13 @@ export function runPreflight(options: PreflightOptions): PreflightResult {
       parents.set(target, file);
       queue.push(target);
     }
+  }
+
+  // Review A7: one `import-cycle` hit for the run, carrying every chain that
+  // returned to an entry. `chain` stays the first one so every existing
+  // consumer (chainText, the report) reads the same shape as any other hit.
+  if (cycleChains.length > 0) {
+    soft.push({ kind: "import-cycle", chain: cycleChains[0], cycleChains });
   }
 
   // An async function component is a React Server Component. Vue has no such
@@ -532,7 +677,7 @@ function chainText(hit: PreflightHit): string {
 
 // Only the kinds that can be a hard failure. Node builtins and project
 // transforms are reported, never fatal.
-type HardKind = Exclude<PreflightKind, "node-builtin" | "project-transform">;
+type HardKind = Exclude<PreflightKind, "node-builtin" | "project-transform" | "import-cycle">;
 
 const HARD_CAUSE: Record<HardKind, string> = {
   "server-only": "imports the server-only marker package",
@@ -575,6 +720,26 @@ export const HARD_REMEDY: Record<HardKind, string> = {
     "measure again.",
 };
 
+// M105 (solid-ui-F1): the escape hatch every hard remedy offers is useless
+// advice to a run that already took it — the same output prints
+// "--no-preflight bypassed 1 ... finding" two lines above. Process-level
+// state, set once from the parsed flag, for the same reason
+// `setCurrentRunProjectRoot` is: the remedy text is built three call layers
+// below the arguments, and one of its call sites is in another module's
+// failure path.
+let preflightBypassed = false;
+
+export function setPreflightBypassed(bypassed: boolean): void {
+  preflightBypassed = bypassed;
+}
+
+const BYPASS_ADVICE = /\s*Pass --no-preflight to attempt the run anyway\./g;
+
+export function hardRemedyFor(kind: HardKind): string {
+  const remedy = HARD_REMEDY[kind];
+  return preflightBypassed ? remedy.replace(BYPASS_ADVICE, "").trim() : remedy;
+}
+
 // M78/M79 (excalidraw-F3's compounding note): marks a thrown error as a
 // preflight hard-rejection — nothing has been built yet, so the diagnosis is
 // already complete. analyze.ts's outer catch checks for this marker and skips
@@ -599,13 +764,37 @@ export function preflightFailureMessage(hits: PreflightHit[]): string {
     "",
     `  ${chainText(hit)}`,
     "",
-    HARD_REMEDY[kind],
+    hardRemedyFor(kind),
   ].join("\n");
 }
 
-export const NODE_BUILTIN_WARNING = (hit: PreflightHit): string =>
+// M106 A2: the remedy is the one shape that reliably re-enters a cycle where
+// the application does — a wrapper module that imports the package's own root
+// first, which the generated entry emits before the component import.
+export const IMPORT_CYCLE_WARNING = (hit: PreflightHit): string => {
+  const chains = hit.cycleChains ?? [hit.chain];
+  const listed = chains.map((chain) => chain.join(" → ")).join("; ");
+  return (
+    `${listed}: the import graph returns to the measured module (a cycle). The generated entry is ` +
+    "a root of this graph, so it enters the cycle at the component's own file rather than where " +
+    "the application enters it; a module-scope read of a binding that has not initialized yet then " +
+    "fails with \"Cannot access 'X' before initialization\". If the run does not become ready with " +
+    "that error, add a 120fps.setup.tsx (or pass --wrap) that imports this package's own root " +
+    "module first."
+  );
+};
+
+const NODE_BUILTIN_TEXT = (hit: PreflightHit): string =>
   `${chainText(hit)}: a Node builtin in the component graph. ` +
   "Vite may externalize it; if the run fails to boot, this is the first place to look.";
+
+// One formatter for every soft hit, dispatching on the hit's own kind. The
+// historical name is kept because it is what both call sites in src/analyze.ts
+// import; SOFT_HIT_WARNING is the name to migrate to.
+export const SOFT_HIT_WARNING = (hit: PreflightHit): string =>
+  hit.kind === "import-cycle" ? IMPORT_CYCLE_WARNING(hit) : NODE_BUILTIN_TEXT(hit);
+
+export const NODE_BUILTIN_WARNING = SOFT_HIT_WARNING;
 
 // M79 (twenty-F3, half 2). The css-preprocessor recognizer above performs no
 // availability check by design (recognizeTransform's return shape is
@@ -680,6 +869,29 @@ export const transformFailureNote = (hits: PreflightHit[]): string =>
     "The harness deliberately does not load your vite.config, so those plugins are absent.",
   ].join("\n");
 
-export const PREFLIGHT_BYPASSED_WARNING = (hits: PreflightHit[]): string =>
-  `--no-preflight bypassed ${hits.length} server-boundary ${hits.length === 1 ? "finding" : "findings"}: ` +
-  hits.map(chainText).join("; ");
+// M105 (pnp-app-F1): one template used to call every hard kind a
+// "server-boundary finding", including the two this file's own HARD_CAUSE
+// table describes in completely different terms. Each kind is named as
+// itself; the three that really are one boundary keep sharing that name.
+const BYPASS_KIND_LABEL: Record<HardKind, string> = {
+  "server-only": "server-boundary",
+  "use-server": "server-boundary",
+  "async-component": "server-boundary",
+  "unsupported-framework": "solid",
+  "yarn-pnp": "yarn-pnp",
+  "not-installed": "not-installed",
+};
+
+export const PREFLIGHT_BYPASSED_WARNING = (hits: PreflightHit[]): string => {
+  const counts = new Map<string, number>();
+  for (const hit of hits) {
+    const label = BYPASS_KIND_LABEL[hit.kind as HardKind] ?? "preflight";
+    counts.set(label, (counts.get(label) ?? 0) + 1);
+  }
+  const noun = hits.length === 1 ? "finding" : "findings";
+  const head =
+    counts.size === 1
+      ? `${hits.length} ${[...counts.keys()][0]} ${noun}`
+      : `${hits.length} ${noun} (${[...counts.entries()].map(([label, n]) => `${n} ${label}`).join(", ")})`;
+  return `--no-preflight bypassed ${head}: ${hits.map(chainText).join("; ")}`;
+};
