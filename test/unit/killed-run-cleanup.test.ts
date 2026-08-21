@@ -332,6 +332,36 @@ describe("a harness directory whose owner is gone", () => {
     expect(fs.statSync(marker).mtimeMs).toBeGreaterThan(Date.now() - 60_000);
   });
 
+  // The dub leftover: a marker naming a foreign, *live* pid, two hours without
+  // a refresh, surviving three full runs on the same project root.
+  it("is removed when a foreign live pid let its marker go two hours stale", () => {
+    const root = mkRoot();
+    const dir = mkHarnessDir(root, ".120fps-harness-dub", 4);
+    fs.writeFileSync(path.join(dir, "entry.tsx"), "export default null;");
+    const then = new Date(Date.now() - 2 * 60 * 60_000);
+    fs.utimesSync(path.join(dir, HARNESS_PID_FILE), then, then);
+    fs.utimesSync(dir, then, then);
+    sweepStaleHarnessDirs(root);
+    expect(fs.existsSync(dir)).toBe(false);
+  });
+
+  it("says which directory it could not remove instead of failing silently", () => {
+    const root = mkRoot();
+    const dir = mkHarnessDir(root, ".120fps-harness-locked", DEAD_PID);
+    const warnings: string[] = [];
+    // A directory whose removal cannot succeed: the name exists as a file the
+    // recursive remove will refuse (stand-in for a Windows lock).
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.mkdirSync(dir);
+    fs.writeFileSync(path.join(dir, HARNESS_PID_FILE), String(DEAD_PID));
+    sweepStaleHarnessDirs(root, warnings, () => {
+      throw Object.assign(new Error("EBUSY: resource busy or locked"), { code: "EBUSY" });
+    });
+    expect(fs.existsSync(dir)).toBe(true);
+    expect(warnings.join(" ")).toContain(".120fps-harness-locked");
+    expect(warnings.join(" ")).toContain("EBUSY");
+  });
+
   it("keeps the one-hour gate for a directory with no marker", () => {
     const root = mkRoot();
     const unmarked = mkHarnessDir(root, ".120fps-harness-unmarked");

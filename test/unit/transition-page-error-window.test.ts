@@ -148,74 +148,78 @@ describe("page errors around a prop-change rerender", () => {
   });
 });
 
-// Review B-6: the prop-change loop mounts combo `ci`'s OWN props before each
-// rerender into the next combo's, and every error those mounts raised was
-// attributed to the transition — which M99 excludes from the verdict. M99's
-// MUST NOT is "move an error to a different combo's verdict".
+// The whole delta-loop window is transition by construction. The loop's
+// `mountAndWait(props)` re-mounts combo N's props over the page state the
+// PREVIOUS sample's `rerenderAndTrace(nextProps)` left behind, so an error it
+// raises is an N+1 -> N artefact (radix Label: leaving `asChild: true` throws a
+// Slot error while mounting N's props). Attributing that mount to N produced
+// both `[1 page error]` and `[-> #3: 1 page error]` on the same row. N's own
+// deterministic errors are already captured by the stable-sample pass that runs
+// before this window opens.
 
 describe("the mounts the prop-change loop performs with the combo's own props", () => {
-  it("keeps an own-props mount error on the combo, not on the transition", async () => {
+  it("attributes an error raised anywhere in the delta loop to the transition", async () => {
     const capture = createFakeCapture();
     const result = comboResult(2);
 
     await runWithSplitErrorWindows(capture, result, {
       toComboIndex: 3,
-      run: async (claimOwnWindow) => {
-        capture.raise("own mount threw");
-        claimOwnWindow();
+      run: async () => {
+        capture.raise("Primitive.label failed to slot onto its children.");
       },
     });
 
-    expect(result.pageErrors?.messages).toEqual(["own mount threw"]);
-    expect(result.transitionPageErrors).toBeUndefined();
+    expect(result.pageErrors).toBeUndefined();
+    expect(result.transitionPageErrors?.errors.messages).toEqual([
+      "Primitive.label failed to slot onto its children.",
+    ]);
   });
 
-  it("splits a loop that throws on both the mount and the rerender", async () => {
+  it("does not tag a row with both its own and a transition error for one throw", async () => {
     const capture = createFakeCapture();
     const result = comboResult(2);
 
     await runWithSplitErrorWindows(capture, result, {
       toComboIndex: 3,
-      run: async (claimOwnWindow) => {
-        capture.raise("own mount threw");
-        claimOwnWindow();
-        capture.raise("transition threw");
+      run: async () => {
+        capture.raise("Primitive.label failed to slot onto its children.");
       },
     });
 
-    expect(result.pageErrors?.messages).toEqual(["own mount threw"]);
-    expect(result.transitionPageErrors?.errors.messages).toEqual(["transition threw"]);
+    const tagged = [result.pageErrors, result.transitionPageErrors?.errors].filter(Boolean);
+    expect(tagged).toHaveLength(1);
   });
 
-  it("merges an own-props mount error with what the stable samples raised", async () => {
+  it("keeps what the stable pass raised on the combo's own window", async () => {
     const capture = createFakeCapture();
     capture.raise("stable threw");
     const result = comboResult(1);
 
     await runWithSplitErrorWindows(capture, result, {
       toComboIndex: 2,
-      run: async (claimOwnWindow) => {
-        capture.raise("own mount threw");
-        claimOwnWindow();
+      run: async () => {
+        capture.raise("delta threw");
       },
     });
 
-    expect(result.pageErrors?.messages).toEqual(["stable threw", "own mount threw"]);
+    expect(result.pageErrors?.messages).toEqual(["stable threw"]);
+    expect(result.transitionPageErrors?.errors.messages).toEqual(["delta threw"]);
   });
 
-  it("claims nothing when the own-props mounts stayed quiet", async () => {
+  it("still lets a transition body claim a sub-step for the combo when it can prove it", async () => {
     const capture = createFakeCapture();
     const result = comboResult(1);
 
     await runWithSplitErrorWindows(capture, result, {
       toComboIndex: 2,
       run: async (claimOwnWindow) => {
+        capture.raise("provably own");
         claimOwnWindow();
         capture.raise("transition threw");
       },
     });
 
-    expect(result.pageErrors).toBeUndefined();
+    expect(result.pageErrors?.messages).toEqual(["provably own"]);
     expect(result.transitionPageErrors?.errors.messages).toEqual(["transition threw"]);
   });
 });

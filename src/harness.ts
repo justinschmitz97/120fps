@@ -3376,7 +3376,8 @@ export async function buildAndServe(
   }
 
   // Crash leftovers from previous runs: best-effort removal (M24 D8)
-  sweepStaleHarnessDirs(projectRoot);
+  const sweepWarnings: string[] = [];
+  sweepStaleHarnessDirs(projectRoot, sweepWarnings);
 
   // Place harness files inside the target project so Vite resolves aliases
   // (createHarnessDir adds it to activeHarnessDirs itself).
@@ -3586,7 +3587,11 @@ export async function buildAndServe(
 
   let server: ViteDevServer;
   let ownsServer = true;
-  const buildWarnings: string[] = [...transformWarnings, ...new Set(configWarnings)];
+  const buildWarnings: string[] = [
+    ...transformWarnings,
+    ...sweepWarnings,
+    ...new Set(configWarnings),
+  ];
   try {
     if (options?.serverPool) {
       // The tuple that shapes a server; anything else is per-component and
@@ -3718,7 +3723,25 @@ export const LIVE_PID_HARNESS_MAX_AGE_MS = 10 * 60 * 1000;
 // marked owner is gone is removed at any age — that is exactly the leftover an
 // external kill produces (V2 repro 5), and waiting an hour for it served no
 // purpose once the owner is known.
-export function sweepStaleHarnessDirs(projectRoot: string): void {
+// M101 (dub leftover): a removal that cannot succeed used to be swallowed with
+// the same `catch` that covers "already gone", so a directory another process
+// still holds open looked identical to one nothing was wrong with. The reason
+// is now the run's own disclosure.
+export function HARNESS_DIR_UNREMOVABLE_WARNING(dir: string, reason: string): string {
+  return (
+    `${dir} is a leftover harness directory this run could not remove (${reason}). It belongs to a ` +
+    "120fps process that is gone or idle; remove it by hand, or close whatever still holds a file " +
+    "inside it open."
+  );
+}
+
+export function sweepStaleHarnessDirs(
+  projectRoot: string,
+  warningsOut?: string[],
+  // Injected so the failure path is testable without contriving a real
+  // Windows lock; every caller uses the default.
+  remove: (dir: string) => void = (dir) => fs.rmSync(dir, { recursive: true, force: true }),
+): void {
   try {
     const now = Date.now();
     for (const entry of fs.readdirSync(projectRoot, { withFileTypes: true })) {
@@ -3734,9 +3757,20 @@ export function sweepStaleHarnessDirs(projectRoot: string): void {
             ? now - fs.statSync(full).mtimeMs > STALE_HARNESS_MAX_AGE_MS
             : !isProcessAlive(owner) ||
               now - (harnessDirHeartbeatMs(full) ?? 0) > LIVE_PID_HARNESS_MAX_AGE_MS;
-        if (abandoned) fs.rmSync(full, { recursive: true, force: true });
+        if (!abandoned) continue;
+        try {
+          remove(full);
+        } catch (err) {
+          const reason = (err as NodeJS.ErrnoException).code ?? (err as Error).message;
+          warningsOut?.push(
+            HARNESS_DIR_UNREMOVABLE_WARNING(
+              path.relative(projectRoot, full).replace(/\\/g, "/") || entry.name,
+              reason,
+            ),
+          );
+        }
       } catch {
-        // best-effort: dir may be in use or already gone
+        // best-effort: the directory may have vanished between readdir and stat
       }
     }
   } catch {

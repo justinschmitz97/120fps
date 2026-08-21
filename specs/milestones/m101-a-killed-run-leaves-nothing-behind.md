@@ -1,6 +1,6 @@
 ---
 kind: milestone
-status: draft
+status: approved
 tests:
   - test/unit/killed-run-cleanup.test.ts
   - test/unit/harness-sweep.test.ts
@@ -136,6 +136,35 @@ The timer is `unref()`d, so it never keeps an otherwise-finished process alive, 
   (`logs/fix-a-review-calcom2.log`): `Result: PASS`, `Total: 8m 31s`, `EXIT=0`; five seconds later a
   WMI query for `node.exe` whose CommandLine matches this run returns nothing, `packages/ui` holds no
   `.120fps-harness-*`, and `git status --porcelain` is empty.
+
+## Windows: shell timeouts and the dub leftover (investigated 2026-08-21)
+
+**A shell `timeout` does terminate the run.** Measured from Git Bash against the shipped dist:
+`timeout 5 node dist/cli.js packages/react/separator/src/separator.tsx --samples 3 --max-combos 1`
+in `/e/repositories/radix-primitives` returned `TIMEOUT_EXIT=124`, and a per-3-second WMI poll for
+`node.exe` with that command line showed it present at t=3 s and t=6 s and **absent from t=9 s
+through t=60 s**. The run's own log records what it saw on the way out
+(`combo 4: measurement did not complete after 2 retries (target closed)`). So msys `timeout` is not
+an orphan source here. What does produce one is a parent-shell kill that never signals the native
+child — a tool-call timeout, a closed terminal, `Stop-Process` on the shell — which is V2 repro 5's
+shape, and is why the pid marker and the per-phase watchdog both exist.
+
+**The dub leftover (`packages/ui/.120fps-harness-sLy6s8`, marker 63632 written 20:03:49, three full
+runs on that root at ~22:20 did not sweep it) is not reproducible from the code as shipped.** At
+fixture level, against the same dist: a directory whose marker names a live foreign pid and whose
+marker *and* directory mtimes are two hours old is swept on the next call, and a plain `rmSync`
+succeeds even while another live process holds a file inside it open for reading (Windows shares
+read handles). The predicate does not short-circuit on liveness (`!isProcessAlive(owner) || marker
+older than the gate`), `findProjectRoot` for `packages/ui/src/badge.tsx` is `packages/ui` — the
+directory that held it — and the sweep runs inside `buildAndServe` before `createHarnessDir`, on
+every run. The two explanations left are outside what is still observable (the directory was removed
+at 22:45): those runs used a lane scratch build predating the A6 marker-heartbeat fix, or they never
+reached `buildAndServe`.
+
+What changed as a result: a removal that *fails* is no longer swallowed by the same `catch` that
+covers "already gone". `sweepStaleHarnessDirs(projectRoot, warningsOut?, remove?)` reports
+`HARNESS_DIR_UNREMOVABLE_WARNING(dir, reason)` into the run's warnings, so the next occurrence names
+itself and its errno instead of looking like a directory nothing was wrong with.
 
 ## Open questions
 

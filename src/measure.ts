@@ -1562,11 +1562,10 @@ export async function runWithSplitErrorWindows(
   let own = capture.drain();
   if (hasPageErrors(own)) result.pageErrors = own;
   if (!transition) return result;
-  // M99 (review B-6): the prop-change loop mounts THIS combo's own props before
-  // each rerender into the next combo's. Those mounts belong to this combo, so
-  // the body closes the own window again over them; only what the rerender
-  // itself raises reaches `transitionPageErrors`, which is what M99 excludes
-  // from the verdict.
+  // M99: a transition body may close the combo's own window again when it can
+  // prove a sub-step belongs to the combo itself. The rerender pass does not
+  // call it -- see the spec's Design note -- but the seam is what makes the
+  // window boundary testable at all.
   const claimOwnWindow = (): void => {
     const drained = capture.drain();
     if (!hasPageErrors(drained)) return;
@@ -1765,7 +1764,7 @@ export async function measureRerender(
         if (!isScale && !nextIsScale) {
           transition = {
             toComboIndex: nextIndex,
-            run: async (claimOwnWindow) => {
+            run: async () => {
               const changeSamples: number[] = [];
               for (let s = 0; s < sampleCount; s++) {
                 const sample = await withFrameStarvationRetry(
@@ -1776,10 +1775,13 @@ export async function measureRerender(
                       enter,
                       async () => {
                         await suspendThrottle(ms.session.cdp, cpuThrottle, () => tryCollectGarbage(ms.session.cdp));
+                        // M99: no own-window claim here. This mount lands on
+                        // the page state the PREVIOUS sample's rerender left
+                        // behind (combo ci+1's props), so an error it raises is
+                        // a `ci+1 -> ci` transition artefact, not this combo's
+                        // own. The whole delta-loop window is transition by
+                        // construction; see the spec's Design note.
                         await mountAndWait(ms.page, props);
-                        // This combo's own mount closed; what follows is the
-                        // transition.
-                        claimOwnWindow();
                         return rerenderAndTrace(ms.page, ms.session.cdp, nextProps);
                       },
                       { onRetry: options.onWarning, budget: retryBudget },

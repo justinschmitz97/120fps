@@ -1,6 +1,6 @@
 ---
 kind: milestone
-status: draft
+status: approved
 tests:
   - test/unit/vue-dual-block-props.test.ts
   - test/unit/preset-adds-missing-props.test.ts

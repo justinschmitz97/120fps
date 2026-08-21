@@ -1,6 +1,6 @@
 ---
 kind: milestone
-status: draft
+status: approved
 tests:
   - test/unit/static-prebuild-warning-parity.test.ts
   - test/unit/mode-prediction-parity.test.ts

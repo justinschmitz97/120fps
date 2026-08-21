@@ -1,6 +1,6 @@
 ---
 kind: milestone
-status: draft
+status: approved
 tests:
   - test/unit/js-sibling-declaration-props.test.ts
   - test/unit/prop-extraction.test.ts

@@ -1,6 +1,6 @@
 ---
 kind: milestone
-status: draft
+status: approved
 tests:
   - test/unit/own-props-outrank-inherited.test.ts
   - test/unit/prop-default-disclosure.test.ts

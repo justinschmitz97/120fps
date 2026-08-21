@@ -1,6 +1,6 @@
 ---
 kind: milestone
-status: draft
+status: approved
 tests:
   # Lane A
   - test/unit/explore-stall-hint-names-effective-flags.test.ts

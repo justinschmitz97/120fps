@@ -1,6 +1,6 @@
 ---
 kind: milestone
-status: draft
+status: approved
 tests:
   - test/unit/matrix-axis-coverage.test.ts
   - test/unit/mode-prediction-parity.test.ts

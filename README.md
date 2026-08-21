@@ -49,7 +49,7 @@ Options:
   --max-combos <n>               Prop combos to measure (default: 8)
   --explore-budget <seconds>     Total interaction exploration budget (default: 300)
   --init-fixture                 Write a starter fixture when auto-composition is rolled back
-  --scale <n,n,...>              Scale points, ≥2 distinct positive integers (default: 1,5,20,50)
+  --scale <n,n,...>              Scale points, ≥2 distinct positive integers, overriding both defaults: combo-mode scale probes (default: 1,5,20,50) and curve-mode points (default: 1,3,5,10,20,50)
   --threshold-mount <ms>         Mount budget (overrides tier budget)
   --threshold-rerender <ms>      Rerender budget (overrides tier budget)
   --threshold-interaction <ms>   Interaction budget (overrides tier budget)
@@ -106,7 +106,7 @@ npx 120fps ./kbd.tsx#KbdCombo
 
 Unknown names error, listing the file's exports.
 
-`--explain-props` shows what a run *would* measure: resolved component, its `file:line`, every prop with kind and value pool, unsynthesizable props, whether curve/matrix would activate: without starting a browser.
+`--explain-props` shows what a run *would* measure: resolved component, its `file:line`, every prop with kind, required/default, and value pool, unsynthesizable props, whether curve/matrix would activate: without starting a browser. The `default` column prints only when at least one prop carries one.
 
 Runs print one line per phase (`mount: 8 combos x 10 samples`) and end with `Total: 4m 12s`. `--ci` prints JSON only.
 

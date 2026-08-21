@@ -1,6 +1,6 @@
 ---
 kind: milestone
-status: draft
+status: approved
 tests:
   - test/unit/package-declared-stylesheets.test.ts
   - test/unit/stylesheet-match-stats.test.ts

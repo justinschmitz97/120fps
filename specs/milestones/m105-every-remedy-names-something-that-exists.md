@@ -1,6 +1,6 @@
 ---
 kind: milestone
-status: draft
+status: approved
 tests:
   - test/unit/remedies-name-real-things.test.ts
   - test/unit/preflight-bypass-and-remedies.test.ts

@@ -1,6 +1,6 @@
 ---
 kind: milestone
-status: draft
+status: approved
 tests:
   - test/unit/transition-page-error-attribution.test.ts
   - test/unit/harness-fault.test.ts
@@ -89,6 +89,27 @@ now closes before the prop-change block, and a new
 `RerenderResult.transitionPageErrors?: TransitionPageErrors` (`measure.ts:1348`, `:1364`, helper
 `runWithSplitErrorWindows` `:1372`, call site `:1589`) closes after it, carrying
 `{ toComboIndex, errors: PageErrorDrain }`.
+
+**Where the boundary sits, and why the delta loop is entirely on the transition side.** The
+prop-change loop runs `mountAndWait(props)` before each `rerenderAndTrace(nextProps)`, so it does
+touch combo `ci`'s own props inside the transition window. An adversarial review raised that as a
+possible violation of this milestone's MUST NOT ("move an error to a different combo's verdict"), and
+a first fix closed the own window again between the two calls. Re-verification on radix Label
+overturned it: that `mountAndWait` re-mounts `ci`'s props **over the page state the previous sample's
+rerender left behind** -- `combos[ci+1]`'s props. Leaving `asChild: true` throws
+`Primitive.label failed to slot onto its children.` while `ci`'s own props are being mounted, so the
+error is a `ci+1 -> ci` artefact. Claiming that window as "own" tagged one row with both
+`[1 page error]` and `[-> #3: 1 page error]` for a single throw, on two zero-config runs.
+
+The whole delta-loop window is therefore transition **by construction**, and nothing of combo `ci`'s
+own is lost by saying so: every mount of `ci`'s own props from clean state already happened in the
+stable-sample pass that runs immediately before this window opens, and that pass's drain is the own
+window. A deterministic own-props error is captured there; only an error that needs the *previous
+combo's leftover state* to appear lands here, which is exactly what a transition is.
+
+`runWithSplitErrorWindows` still passes a `claimOwnWindow` callback to the transition body, and the
+rerender pass deliberately does not call it. The seam is what makes the window boundary testable
+without a browser (`test/unit/transition-page-error-window.test.ts`).
 
 Lane C consumes it:
 
