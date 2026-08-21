@@ -116,8 +116,10 @@ describe("H5: factory defaults in withDefaults", () => {
 describe("H6: inline props type", () => {
   it("resolves the same way", async () => {
     const schemas = await extractProps(path.join(VUE, "Text.vue"));
+    // M84: PropSchema gained an additive `provenance` field, populated for
+    // every schema; a plain "test" placeholder string carries "placeholder".
     expect(schemas).toEqual([
-      { name: "text", kind: "string", required: true, values: ["test"] },
+      { name: "text", kind: "string", required: true, values: ["test"], provenance: "placeholder" },
     ]);
   });
 });

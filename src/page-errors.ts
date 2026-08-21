@@ -322,7 +322,13 @@ export async function gotoWithErrorContext(
   }
 }
 
-export type MeasurementPhase = "mount" | "rerender" | "explore" | "attribution";
+// M89 gap (taxonomy control failure): "delta" is the prop-delta pass's own
+// extra mount/rerender calls (src/analyze.ts's measureStandardPropDeltas) —
+// distinct from the ordinary "mount"/"rerender" phases those same
+// measure.ts functions tag themselves with, because the right remediation
+// flag differs (see stallHintForPhase below) even though the underlying
+// measurement code is shared.
+export type MeasurementPhase = "mount" | "rerender" | "explore" | "attribution" | "delta";
 
 export interface PhaseContext {
   phase: MeasurementPhase;
@@ -333,6 +339,36 @@ export interface PhaseContext {
 export const HARNESS_STALL_HINT =
   "A Worker, a long-lived timer or a running animation can keep the page busy so the trace " +
   "never completes; retry with --no-attribution, a shorter --explore-budget, or fewer --samples.";
+
+// M89 gap: --no-attribution only disables cost-attribution tracing, a pass
+// the delta measurement never runs — it cannot be the remedy for a stall
+// inside the delta pass's own mount/rerender calls. --no-deltas is the flag
+// that actually skips that code path (taxonomy's control: --no-attribution
+// stalled identically, --no-deltas produced a clean PASS in 4m 8s).
+export const DELTA_PHASE_STALL_HINT =
+  "A Worker, a long-lived timer or a running animation can keep the page busy so the trace " +
+  "never completes; retry with --no-deltas, a shorter --explore-budget, or fewer --samples.";
+
+// M89 defect 2 (live taxonomy proof): the same false-remediation problem the
+// delta phase had reaches the rerender phase directly, not only through the
+// delta pass's retagging -- taxonomy's run failed with `rerender phase
+// failed on combo 1 of button.tsx: ... Target page, context or browser has
+// been closed` and still carried `retry with --no-attribution, ...`.
+// --no-attribution only disables react-profiler.ts's separate
+// cost-attribution pass (the "attribution" phase); it does not touch
+// anything measureRerender does. --samples and --max-combos are the flags
+// that actually shrink the rerender pass's own workload (measure.ts).
+// --explore-budget is left out for the same reason --no-attribution is: it
+// governs explorer.ts's interaction exploration, not the rerender pass.
+export const RERENDER_PHASE_STALL_HINT =
+  "A Worker, a long-lived timer or a running animation can keep the page busy so the trace " +
+  "never completes; retry with fewer --samples or a lower --max-combos.";
+
+function stallHintForPhase(phase: MeasurementPhase): string {
+  if (phase === "delta") return DELTA_PHASE_STALL_HINT;
+  if (phase === "rerender") return RERENDER_PHASE_STALL_HINT;
+  return HARNESS_STALL_HINT;
+}
 
 // Failures whose cause is the page never going idle. Everything else keeps its
 // own message and gets no hint: a wrong hint costs more than no hint.
@@ -357,9 +393,21 @@ export function enrichPhaseError(err: unknown, context: PhaseContext): Error {
   if ((base as unknown as Record<symbol, unknown>)[PHASE_TAGGED]) return base;
 
   const hint = STALL_SIGNATURES.some((pattern) => pattern.test(base.message))
-    ? ` ${HARNESS_STALL_HINT}`
+    ? ` ${stallHintForPhase(context.phase)}`
     : "";
   const enriched = new Error(`${describePhase(context)}: ${base.message}${hint}`, { cause: err });
   (enriched as unknown as Record<symbol, unknown>)[PHASE_TAGGED] = true;
   return enriched;
+}
+
+// M89 gap: a caller whose own context is more specific than the phase an
+// inner measurement call already tagged (the delta pass's own extra
+// mount/rerender calls, tagged "mount"/"rerender" by measure.ts) cannot
+// just call enrichPhaseError again — its PHASE_TAGGED guard makes a second
+// call on an already-enriched error a no-op. Re-enriches `.cause` instead,
+// which enrichPhaseError always sets to the untagged original error, so the
+// stall-signature check and hint selection run fresh under the new phase.
+export function retagPhaseError(err: unknown, context: PhaseContext): Error {
+  const cause = err instanceof Error ? err.cause : undefined;
+  return enrichPhaseError(cause ?? err, context);
 }

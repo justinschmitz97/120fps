@@ -21,7 +21,9 @@ export interface VueSfcCompiler {
   parse(
     source: string,
     options?: { filename?: string },
-  ): { descriptor: { scriptSetup?: SfcBlock | null; script?: SfcBlock | null } };
+  ): {
+    descriptor: { scriptSetup?: SfcBlock | null; script?: SfcBlock | null; template?: SfcBlock | null };
+  };
 }
 
 export interface SfcScript {
@@ -168,6 +170,35 @@ function defaultExportObjectLiteral(
     }
   }
   return undefined;
+}
+
+// M87: a component whose template root carries none of these directives
+// always produces a real root element once mounted -- an unconditional root
+// reporting zero DOM in the harness's combo phase is the harness's own
+// miscount (see generateVueEntry), not the component legitimately rendering
+// nothing. A root gated by one of these can legitimately render nothing, so
+// detection stays conservative: only the confirmed-unconditional shape is
+// reported true, matching detectOptionsApiProps's own shallow, parse-only
+// style (inspects the first tag's own attributes, not a full template AST).
+const CONDITIONAL_ROOT_DIRECTIVE = /\bv-if\s*=|\bv-show\s*=|\bv-for\s*=/;
+
+export function templateHasUnconditionalRoot(
+  source: string,
+  filename: string,
+  compiler: VueSfcCompiler,
+): boolean {
+  let descriptor;
+  try {
+    descriptor = compiler.parse(source, { filename }).descriptor;
+  } catch {
+    // A malformed SFC is the plugin's error to report; no special handling.
+    return false;
+  }
+  const template = descriptor?.template;
+  if (!template || typeof template.content !== "string") return false;
+  const match = /<([a-zA-Z][\w-]*)\b([^>]*)>/.exec(template.content);
+  if (!match) return false;
+  return !CONDITIONAL_ROOT_DIRECTIVE.test(match[2]);
 }
 
 // The virtual module the script block is type-checked as. Named `<sfc>.ts` in

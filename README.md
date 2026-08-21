@@ -329,6 +329,10 @@ Scale points measured but DOM count never moved: the curve describes nothing ren
 
 Page errors during a combo are printed under `Page errors`; zero DOM + a throw = `FAIL [render error]`: the timings describe a broken tree, not your component. Usual causes: missing provider (`--wrap`), unpopulatable prop (`<stem>.props.tsx` preset). Rendering nothing *without* throwing is legal and only annotated.
 
+### Harness fault
+
+A combo can crash on a value 120fps chose for you rather than a value your code passed — most often a boolean like `asChild`/`as`/`render` whose `true` branch requires a specific `children` shape the synthesizer could not guarantee, or a placeholder value that turns out to appear verbatim in the thrown error. That combo is marked `[harness fault: <prop>]`, its verdict is never `FAIL`, and `Result: PASS` is unaffected even when it is the only combo that crashed. Add a `<stem>.props.tsx` preset naming the prop if you want that combo measured with a real value instead of excluded.
+
 ### Async wrapper setup
 
 A component still fetching when the window closed is measured as its skeleton (and disclosed). Stub requests before first render:

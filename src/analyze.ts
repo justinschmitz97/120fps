@@ -1,16 +1,18 @@
+import ts from "typescript";
 import os from "node:os";
 import fs from "node:fs";
 import path from "node:path";
-import { buildAndServe, detectComponentExport, detectProjectTransforms, discoverGlobalCss, detectScaleExport, detectWrapper, findProjectRoot, resolveReactCompilerState, assertReactDomClient, rendererFor, detectBundlerReactDomAlias, BUNDLER_PREACT_ALIAS_WARNING, stylesheetRuleCount, hasAnyEnvFile, NO_ENV_FILE_REMEDY_NOTE, type HarnessResult } from "./harness.js";
+import { buildAndServe, detectComponentExport, detectProjectTransforms, discoverGlobalCss, detectScaleExport, detectWrapper, findProjectRoot, resolveReactCompilerState, assertReactDomClient, rendererFor, detectBundlerReactDomAlias, BUNDLER_PREACT_ALIAS_WARNING, stylesheetRuleCount, hasAnyEnvFile, NO_ENV_FILE_REMEDY_NOTE, loadTsconfigAliases, presentBundlerFailure, stylesheetReadFailureTarget, CSS_UNREADABLE_DROPPED_WARNING, type HarnessResult } from "./harness.js";
 import {
   attachPageErrorCapture,
   gotoWithErrorContext,
   hasPageErrors,
   mergeDrains,
   renderDrain,
+  retagPhaseError,
   waitForReadyOrFatal,
 } from "./page-errors.js";
-import { extractProps, extractPropsDetailed, extractExports, extractAllProps, detectScalingProps, projectSourceFiles, isVueOptionsApiPropsWarning, type PropSchema, type ScalingPropMatch } from "./prop-gen.js";
+import { extractProps, extractPropsDetailed, extractExports, extractAllProps, detectScalingProps, projectSourceFiles, isVuePropsScopeExclusionWarning, projectCompilerOptions, type PropSchema, type ScalingPropMatch } from "./prop-gen.js";
 import { hintsForReport } from "./hints.js";
 import {
   probeMachineNoise,
@@ -22,12 +24,15 @@ import {
   detectPropPresets,
   loadPropPresets,
   applyPropPresets,
+  isPresetRef,
   UNKNOWN_PRESET_PROPS_WARNING,
 } from "./prop-presets.js";
 import {
   runPreflight,
   preflightFailureMessage,
   providerCandidateLabels,
+  providersFromEntry,
+  isDirectProviderHit,
   NODE_BUILTIN_WARNING,
   PROJECT_TRANSFORM_WARNING,
   PREFLIGHT_BYPASSED_WARNING,
@@ -42,6 +47,7 @@ import {
   COMPOSITION_EMPTY_WARNING,
   declaredCompositionSiblings,
   extractRelativeTypeImports,
+  scanJsxComposedLocalImports,
   UNCOMPOSED_SIBLINGS_WARNING,
   type CompositionTree,
 } from "./composition.js";
@@ -137,6 +143,8 @@ import {
   type CssReport,
   type EnvFingerprint,
   type WrapperReport,
+  type PropProvenance,
+  formatStylesheetsLine,
 } from "./report.js";
 
 // M40: the numbers are real, but they describe a transient scene. Warn, never
@@ -360,6 +368,14 @@ export interface AnalyzeOptions {
   // M65: one line per pipeline phase boundary. Defaulted by the CLI to stdout,
   // silenced entirely in CI mode.
   onProgress?: (line: string) => void;
+  // Item A (M90 follow-up): mirrors every warning this run discovers (the
+  // `Stylesheets:` decision line, then each `runWarnings` entry as it is
+  // pushed) out to a caller-supplied sink in real time, not only at the end
+  // -- so a caller that also owns a *different* failure-arrival surface
+  // (cli.ts's process-level `unhandledRejection` handler, which runs on a
+  // separate call stack with no access to this function's own locals) can
+  // still disclose everything discovered before whatever crashed it.
+  onWarning?: (warning: string) => void;
 }
 
 // M65: `--ci` owns stdout for JSON (M22), so it wins over an explicit sink.
@@ -398,6 +414,91 @@ export interface BuildReportInput {
   nextJsShims?: string[];
   scalingCurveReport?: ScalingCurveReport;
   matrixReport?: import("./report.js").MatrixReport;
+  // M85: consumed to attribute a fatal render crash to a harness-synthesized
+  // value rather than the component (see detectHarnessFault). Optional and
+  // read defensively — `provenance` is Lane B's field (src/prop-gen.ts,
+  // M84) and may not exist on a given schema; when it is absent everywhere,
+  // no combo is ever exonerated (see detectHarnessFault).
+  schemas?: Array<PropSchema & { provenance?: PropProvenance }>;
+}
+
+// M85: mirrors isHarnessInternalNoise's (src/page-errors.ts) principle for a
+// network request — a harness-caused failure is not the component's — but
+// generalized to a render crash. Requires positive evidence per provenance
+// class, never fires on presence alone: most placeholder/heuristic values
+// never cause a crash, so a schema's risky provenance is necessary but not
+// sufficient. Returns undefined whenever no schema explains the crash,
+// including when `schemas` is absent entirely (M84 not yet landed, or a
+// caller that never had a schema list to begin with, e.g. a fixture/matrix
+// path this milestone does not touch).
+function detectHarnessFault(
+  combo: ComboReport,
+  schemas: Array<PropSchema & { provenance?: PropProvenance }> | undefined,
+): ComboReport["harnessFault"] | undefined {
+  if (!schemas || schemas.length === 0) return undefined;
+  const errorText = (combo.pageErrors ?? []).join(" ");
+
+  // Contract props first: a prop whose truthiness imposes a requirement on
+  // sibling props (asChild, as, render...) is inherently a harness risk once
+  // truthy, by M84's own definition of "contract" provenance — the
+  // synthesizer flagged this exact uncertainty when it chose the value.
+  for (const schema of schemas) {
+    if (schema.provenance !== "contract") continue;
+    if (!(schema.name in combo.props)) continue;
+    const value = combo.props[schema.name];
+    if (!value) continue;
+    return {
+      propName: schema.name,
+      value,
+      provenance: "contract",
+      evidence:
+        errorText ||
+        `${schema.name} was synthesized truthy with no value supplied for the props it constrains`,
+    };
+  }
+
+  // Placeholder/heuristic props: only when the synthesized value (or, for an
+  // object/array prop, one of its own scalar descendant values) shows up
+  // verbatim in the page's own captured error text — presence of a risky
+  // value in the combo is not by itself evidence it caused this crash.
+  for (const schema of schemas) {
+    if (schema.provenance !== "placeholder" && schema.provenance !== "heuristic") continue;
+    if (!(schema.name in combo.props)) continue;
+    if (!errorText) continue;
+    const value = combo.props[schema.name];
+    if (valueEvidencedInText(value, errorText)) {
+      return { propName: schema.name, value, provenance: schema.provenance, evidence: errorText };
+    }
+  }
+
+  return undefined;
+}
+
+function stringifyLeaf(value: unknown): string | undefined {
+  if (typeof value === "string" && value.length > 0) return value;
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  return undefined;
+}
+
+// Word-boundary, not plain substring: a short/generic value ("0", "1", "id")
+// must not "match" merely because it happens to appear inside an unrelated
+// number or identifier in the error text (e.g. a placeholder `0` matching
+// "...at line 10"). Evidence has to be the value appearing as itself.
+function matchesAsWord(needle: string, haystack: string): boolean {
+  const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(?<![A-Za-z0-9_])${escaped}(?![A-Za-z0-9_])`).test(haystack);
+}
+
+// Depth-bounded (object/array props are shallow prop-shaped data, not
+// arbitrary trees) so this cannot loop on a cyclic or pathological value.
+function valueEvidencedInText(value: unknown, errorText: string, depth = 0): boolean {
+  const leaf = stringifyLeaf(value);
+  if (leaf && matchesAsWord(leaf, errorText)) return true;
+  if (depth >= 3 || value === null || typeof value !== "object") return false;
+  for (const child of Object.values(value as Record<string, unknown>)) {
+    if (valueEvidencedInText(child, errorText, depth + 1)) return true;
+  }
+  return false;
 }
 
 export function buildReport(input: BuildReportInput): Report {
@@ -563,7 +664,23 @@ export function buildReport(input: BuildReportInput): Report {
     }
   }
 
-  const pass = combos.every((c) => c.verdict !== "fail");
+  // M85: a fatal crash traceable to a harness-synthesized value is not
+  // charged to the component. Runs after the tier pass so it sees the same
+  // verdict a reader would; only ever narrows a "fail" it can positively
+  // explain, never a general crash-suppressor (see detectHarnessFault).
+  for (const combo of combos) {
+    if (combo.verdict !== "fail" || combo.renderHealth !== "error") continue;
+    const fault = detectHarnessFault(combo, input.schemas);
+    if (fault) {
+      combo.harnessFault = fault;
+      combo.verdict = "warn";
+    }
+  }
+
+  // M85: stated directly, not just left to follow from the verdict demotion
+  // above — a future verdict mutation between here and this line must not
+  // silently start charging a harnessFault combo again.
+  const pass = combos.every((c) => c.verdict !== "fail" || c.harnessFault !== undefined);
 
   const report: Report = {
     version: 1,
@@ -1247,6 +1364,7 @@ async function runMatrixMode(ctx: ModeContext, matrixAutoActivated: boolean): Pr
     flatThresholds: options.flatThresholds,
     explicitThresholds,
     skipAttribution: options.skipAttribution,
+    ...(schemas ? { schemas } : {}),
     ...(ctx.disclosureReason !== undefined ? { disclosureReason: ctx.disclosureReason } : {}),
     ...(harness.nextJsShims && harness.nextJsShims.length > 0 ? { nextJsShims: harness.nextJsShims } : {}),
   });
@@ -1309,23 +1427,40 @@ async function measureStandardPropDeltas(
   }
 
   if (needed.length > 0) {
-    const extraMounts = await measureMount(harness, {
-      samples: effectiveSamples,
-      cpuThrottle,
-      warmupRuns,
-      combos: needed,
-      pool,
-      onWarning,
-    });
-    const extraRerenders = await measureRerender(harness, {
-      samples: effectiveSamples,
-      cpuThrottle,
-      warmupRuns,
-      combos: needed,
-      animatedComboIndices: animatedIndices(extraMounts),
-      pool,
-      onWarning,
-    });
+    // M89 gap (taxonomy control failure): measureMount/measureRerender tag
+    // their own thrown errors "mount"/"rerender" (measure.ts), which caps
+    // any stall hint at --no-attribution regardless of who called them —
+    // wrong here, since this pass never runs attribution tracing at all.
+    // retagPhaseError re-enriches the untagged original cause under "delta"
+    // so the hint names the flag that actually skips this code path.
+    const deltaPhaseContext = { phase: "delta" as const, component: path.basename(harness.componentPath) };
+    let extraMounts: MountResult[];
+    try {
+      extraMounts = await measureMount(harness, {
+        samples: effectiveSamples,
+        cpuThrottle,
+        warmupRuns,
+        combos: needed,
+        pool,
+        onWarning,
+      });
+    } catch (err) {
+      throw retagPhaseError(err, deltaPhaseContext);
+    }
+    let extraRerenders: RerenderResult[];
+    try {
+      extraRerenders = await measureRerender(harness, {
+        samples: effectiveSamples,
+        cpuThrottle,
+        warmupRuns,
+        combos: needed,
+        animatedComboIndices: animatedIndices(extraMounts),
+        pool,
+        onWarning,
+      });
+    } catch (err) {
+      throw retagPhaseError(err, deltaPhaseContext);
+    }
     for (const m of extraMounts) {
       measured.set(JSON.stringify(m.props), { mount: m.mount.median, rerender: 0 });
     }
@@ -1570,6 +1705,7 @@ async function runComboMode(ctx: ModeContext, fixtureHasScale: boolean): Promise
     flatThresholds: options.flatThresholds,
     explicitThresholds,
     skipAttribution: options.skipAttribution,
+    ...(schemas ? { schemas } : {}),
     ...(ctx.disclosureReason !== undefined ? { disclosureReason: ctx.disclosureReason } : {}),
     ...(useFixture
       ? {
@@ -1586,7 +1722,12 @@ async function runComboMode(ctx: ModeContext, fixtureHasScale: boolean): Promise
     nextJsShims: harness.nextJsShims,
   });
 
-  if (zeroPropsExtracted) {
+  // M92 (element-plus-F3): a zero-prop count already explained by a Vue
+  // scope-exclusion disclosure ("declares props through ... a runtime form
+  // ADR 0002 deliberately does not read") must not also get the generic
+  // "extraction may have failed" text stacked on top -- that phrase floats a
+  // possible malfunction the run already knows is not what happened.
+  if (zeroPropsExtracted && ctx.disclosureReason !== "propsExcluded") {
     report.warnings = [...(report.warnings ?? []), ZERO_PROPS_WARNING];
   }
 
@@ -1712,6 +1853,80 @@ export function detectComponentName(componentPath: string, target?: string): str
   return detectComponentExport(componentPath, target).name;
 }
 
+const JSX_COMPOSED_CHILD_EXTENSIONS = [".tsx", ".ts", ".jsx", ".js"];
+
+// Plain extension-probe resolution for an already-resolved (extensionless)
+// candidate base path.
+function resolveJsxChildCandidates(base: string): string | undefined {
+  const candidates = [
+    ...JSX_COMPOSED_CHILD_EXTENSIONS.map((ext) => base + ext),
+    ...JSX_COMPOSED_CHILD_EXTENSIONS.map((ext) => path.join(base, "index" + ext)),
+  ];
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) return candidate;
+  }
+  return undefined;
+}
+
+// M91 (commerce-F3) / M92: a relative specifier resolves against the
+// importing file's own directory by plain extension probing. A bare
+// specifier -- commerce's real app/page.tsx composes its async children as
+// baseUrl-relative bare specifiers ("components/carousel", no leading "./"),
+// which the old dot-prefix check excluded outright, so the one-hop walk
+// found zero composed children for exactly the file it exists to cover --
+// resolves through the same tsconfig baseUrl/paths machinery runPreflight's
+// own import-graph walk already uses (ts.resolveModuleName), not a string
+// match on a leading dot. A bare specifier that resolves into node_modules
+// is a real dependency, not a local composed child, and is excluded exactly
+// like the rest of the graph walk excludes package internals.
+function resolveRelativeJsxChild(fromFile: string, specifier: string): string | undefined {
+  if (specifier.startsWith(".") || specifier.startsWith("/")) {
+    return resolveJsxChildCandidates(path.resolve(path.dirname(fromFile), specifier));
+  }
+  const compilerOptions = projectCompilerOptions(fromFile);
+  const resolved = ts.resolveModuleName(specifier, fromFile, compilerOptions, ts.sys).resolvedModule;
+  if (!resolved) return undefined;
+  const target = path.normalize(resolved.resolvedFileName);
+  if (resolved.isExternalLibraryImport || /[\\/]node_modules[\\/]/.test(target)) return undefined;
+  return fs.existsSync(target) ? target : undefined;
+}
+
+// M91 (commerce-F3): runPreflight's async-component check only inspects
+// entries[0] — a sync component whose JSX composes an async server
+// component one hop away is invisible to it. Reused unmodified (Lane A's
+// file, src/preflight.ts): each JSX-composed local import gets its own
+// preflight pass, entries[0] set to the child, reproducing exactly the
+// rejection a direct `120fps ./child.tsx` invocation already produces
+// correctly. Only hard hits are merged back — soft/transform/provider
+// signals one hop into a child's own graph are not this milestone's concern.
+function composedChildPreflightHits(
+  targetFile: string,
+  projectRoot: string,
+): import("./preflight.js").PreflightHit[] {
+  if (isVueFile(targetFile)) return [];
+  let sourceText: string;
+  try {
+    sourceText = fs.readFileSync(targetFile, "utf-8");
+  } catch {
+    return [];
+  }
+  const composed = scanJsxComposedLocalImports(sourceText, targetFile);
+  if (composed.length === 0) return [];
+
+  const targetRel = path.relative(projectRoot, targetFile).replace(/\\/g, "/");
+  const hits: import("./preflight.js").PreflightHit[] = [];
+  for (const { specifier } of composed) {
+    const resolved = resolveRelativeJsxChild(targetFile, specifier);
+    if (!resolved || isVueFile(resolved)) continue;
+    const childName = detectComponentExport(resolved).name;
+    const childResult = runPreflight({ projectRoot, entries: [resolved], componentName: childName });
+    for (const hit of childResult.hard) {
+      hits.push({ ...hit, chain: [targetRel, ...hit.chain] });
+    }
+  }
+  return hits;
+}
+
 // --- M65 C1: --explain-props ---------------------------------------------
 
 export interface ExplainedProp {
@@ -1761,6 +1976,26 @@ export async function explainProps(
 
   const warnings: string[] = [];
 
+  // M91 (preact-app-F2): computed here, in the same order the full run
+  // computes them, so a dry run's warnings are the same set a real run would
+  // print for everything decidable without a browser. All four resolvers
+  // are read-only filesystem probes (existing detection functions the full
+  // run already calls) with no build/browser cost, so this function's own
+  // "no side effect" contract (no harness dir, no dev server, no browser) is
+  // unaffected.
+  const framework = resolveFramework("auto", projectRoot, resolvedPath, (w) => warnings.push(w));
+  resolveCssFiles({}, projectRoot, warnings);
+  resolveWrapPath({}, projectRoot, framework, warnings);
+  // M92/M95 (nuxt-ui-F2): the full run's harness build always calls this
+  // (src/harness.ts:2464) and its TSCONFIG_EXTENDS_BROKEN_WARNING is what
+  // connects a broken `extends` chain to the empty prop schema it causes; a
+  // dry run never called it at all, so nuxt-ui's --explain-props reported "0
+  // props" on every candidate with no cause named while the full run (once
+  // it got far enough) correctly joined the two. extractPropsDetailed below
+  // uses a separate, checker-only tsconfig read (src/prop-gen.ts) that never
+  // saw this diagnostic either.
+  loadTsconfigAliases(projectRoot, warnings);
+
   // M78: the comment at this function's cli.ts call site has always promised
   // "before every check that exists to protect a measurement, because it
   // never starts one" — this call is what makes that true. Same gate order
@@ -1769,15 +2004,34 @@ export async function explainProps(
   // cost (no harness dir, no dev server), matching this function's own
   // "measures nothing" contract.
   const preflight = runPreflight({ projectRoot, entries: [resolvedPath], componentName });
+  // M91 (commerce-F3): folded in before the hard/soft handling below runs,
+  // so a one-hop-composed async server component gates identically here and
+  // in the full run.
+  preflight.hard.push(...composedChildPreflightHits(resolvedPath, projectRoot));
+  for (const hit of preflight.soft) warnings.push(NODE_BUILTIN_WARNING(hit));
   if (preflight.hard.length > 0) {
     if (options.noPreflight) warnings.push(PREFLIGHT_BYPASSED_WARNING(preflight.hard));
     else throw new Error(preflightFailureMessage(preflight.hard));
   }
   if (rendererFor(resolvedPath) === "react") {
-    assertReactDomClient(projectRoot);
     const bundlerAlias = detectBundlerReactDomAlias(projectRoot);
     if (bundlerAlias) {
       warnings.push(BUNDLER_PREACT_ALIAS_WARNING(bundlerAlias.configFile, bundlerAlias.target));
+    }
+    // M91 (preact-app-F2): the alias warning above must be computed and
+    // pushed before this call, not after — assertReactDomClient throws
+    // before a dry run ever reaches a later check, so the old ordering
+    // (assert first, alias second) meant the alias note was never seen
+    // whenever the version gate itself also failed, exactly preact-app's
+    // repro. Wrapped so the throw still carries every warning collected so
+    // far, matching the full run's own accumulated-warnings behavior.
+    try {
+      assertReactDomClient(projectRoot);
+    } catch (err) {
+      if (err instanceof Error) {
+        throw new Error(err.message + formatAccumulatedWarnings(warnings), { cause: err });
+      }
+      throw err;
     }
   }
 
@@ -1798,7 +2052,12 @@ export async function explainProps(
       warnings.push(UNKNOWN_PRESET_PROPS_WARNING(presets.path, applied.unknown));
     }
   }
-  if (schemas.length === 0) warnings.push(ZERO_PROPS_WARNING);
+  // M92 (element-plus-F3): same suppression as runComboMode -- a zero-prop
+  // count `detail.warnings` already attributes to a Vue scope exclusion does
+  // not also get the generic "extraction may have failed" text.
+  if (schemas.length === 0 && !detail.warnings.some(isVuePropsScopeExclusionWarning)) {
+    warnings.push(ZERO_PROPS_WARNING);
+  }
 
   const exports = isVueFile(resolvedPath)
     ? [componentName]
@@ -1867,6 +2126,14 @@ const EXPLAIN_VALUE_WIDTH = 40;
 function explainValue(value: unknown): string {
   if (value === undefined) return "undefined";
   if (typeof value === "function") return "[Function]";
+  // M92 (1.5d, heroui): a preset pool's non-literal entry (a function/JSX/
+  // variable reference, which cannot cross the CDP boundary) is stored as a
+  // PresetRef sentinel -- {__120fps_preset, index} -- resolved from the real
+  // preset module only at render time inside the browser. A dry run has no
+  // browser to resolve it against, so the real value genuinely is not known
+  // here; the internal marker itself must never be the displayed value in
+  // its place, matching the [Function] convention just above.
+  if (isPresetRef(value)) return "[preset value]";
   let text: string;
   try {
     text = JSON.stringify(value) ?? String(value);
@@ -2094,6 +2361,20 @@ async function tryReuseStoredVerdict(args: {
   return report;
 }
 
+// M79 (1b): generalizes the old transformHits-only special case. Every
+// warning already computed by the time of a throw is worth as much on the
+// way out as it would have been in a successful report — a
+// preprocessor-config-ignored or unsupported-style-engine warning explains a
+// crash the bare error message alone would not. Module-level (not a closure
+// inside analyze()) so M91's explainProps can reuse the identical format for
+// its own dry-run parity fix. Exported (Item A, M90 follow-up) so cli.ts's
+// surface-3 (async unhandledRejection) handler can build the identical
+// block from the warnings it independently accumulated via
+// AnalyzeOptions.onWarning, instead of duplicating the wording.
+export function formatAccumulatedWarnings(warnings: string[]): string {
+  return ["", "", "Warnings recorded before this failure:", ...warnings.map((w) => `  ${w}`)].join("\n");
+}
+
 export async function analyze(
   componentPath: string,
   options: AnalyzeOptions = {},
@@ -2242,12 +2523,29 @@ export async function analyze(
       ? { noEntryInPackage: resolvedCss.noEntryInPackage }
       : {}),
   };
+  // M90 (ant-design-F6, dub-F3, nuxt-ui-F4, mantine-F5, calcom-F6,
+  // shadcn-ui-F3): computed once, right where the decision is made, so it
+  // survives any later throw regardless of where in the pipeline it lands.
+  // Deliberately kept out of `runWarnings`/`cssWarnings` (which become
+  // `report.warnings` on a successful run): the decision already has its own
+  // dedicated `Stylesheets:` line there, and folding this in too would print
+  // it twice. It is threaded only into the crash-path catch below.
+  const cssDecisionWarning = formatStylesheetsLine(cssReport);
+  // Item A (ant-design-F5/F7/F9 follow-up): mirrored out immediately, same
+  // reasoning as the internal `onWarning` closure below -- a surface-3 async
+  // rejection needs this available before this function's own local catch
+  // ever gets a chance to build `combined`, since that catch's stack frame
+  // is exactly what a detached rejection never reaches.
+  options.onWarning?.(cssDecisionWarning);
   // M44: a fixture already owns its scene, so presets never apply there.
   const presetPath = useFixture ? undefined : detectPropPresets(resolvedPath);
   const presets = presetPath ? loadPropPresets(presetPath, projectRoot) : undefined;
 
   // M65: provider-dependent imports found by the preflight walk.
   let providerCandidates: string[] = [];
+  // M92 gap 3: the subset of providerCandidates reached only transitively --
+  // see isDirectProviderHit (src/preflight.ts) and report.ts's own comment.
+  let transitiveProviderCandidates: string[] = [];
   // M48: kept outside the try so a failure on the way out can still name them.
   let transformHits: import("./preflight.js").PreflightHit[] = [];
   let activeTransforms: string[] | undefined;
@@ -2264,7 +2562,18 @@ export async function analyze(
   const onWarning = (warning: string): void => {
     if (warning === CONTEXT_RETRY_WARNING) contextRetries++;
     // Deduped: a reload during a 27-combo run would otherwise print 27 times.
-    if (!runWarnings.includes(warning)) runWarnings.push(warning);
+    if (!runWarnings.includes(warning)) {
+      runWarnings.push(warning);
+      // M90/Item A: mirrors the warning out to a caller-supplied sink as it
+      // is discovered, not only at the end -- a fire-and-forget async
+      // rejection (surface 3, cli.ts's unhandledRejection handler) can crash
+      // this run's promise chain from outside this closure entirely, after
+      // this point has already run but before this function ever returns
+      // (or throws) normally. That handler has no other way to see anything
+      // accumulated here: it runs on a separate call stack with no access to
+      // this closure's locals.
+      options.onWarning?.(warning);
+    }
   };
 
   // Preset values replace a prop's pool everywhere schemas are read, so combos,
@@ -2274,11 +2583,15 @@ export async function analyze(
     // M80 scope 2: extractPropsDetailed's warnings (not just the Vue one)
     // used to be dropped on this, the real measurement path, even though
     // --explain-props's extractPropsDetailed call already passed onWarning.
-    let sawOptionsApiExclusion = false;
+    // M92 (element-plus-F3): covers both Vue scope exclusions ADR 0002
+    // defines -- Options-API props and a <script setup> runtime-object
+    // defineProps({...}) call -- so either one downgrades to the same
+    // disclosure instead of the generic "extraction may have failed" text.
+    let sawPropsScopeExclusion = false;
     const raw = await extractProps(file, {
       ...(options.target ? { target: options.target } : {}),
       onWarning: (warning) => {
-        if (isVueOptionsApiPropsWarning(warning)) sawOptionsApiExclusion = true;
+        if (isVuePropsScopeExclusionWarning(warning)) sawPropsScopeExclusion = true;
         onWarning(warning);
       },
     });
@@ -2287,7 +2600,7 @@ export async function analyze(
     // until now). `disclosureReason` is untouched by the auto-composition
     // guard above for a Vue run (rendererIsVue skips it entirely), so this is
     // the only place a Vue run can set it.
-    if (raw.length === 0 && sawOptionsApiExclusion && disclosureReason === undefined) {
+    if (raw.length === 0 && sawPropsScopeExclusion && disclosureReason === undefined) {
       disclosureReason = "propsExcluded";
     }
     if (!presets) return raw;
@@ -2302,19 +2615,26 @@ export async function analyze(
   // M39: everything that shapes what gets measured, hashed together with the
   // measured sources. Feature drift lives here, so the environment probe only
   // has to guard the machine.
-  const fingerprintConfig = JSON.stringify({
-    // M48: a transform changes the code that gets measured, exactly like the
-    // React Compiler does, so it belongs in the identity of a cached verdict.
-    transforms: options.noTransforms ? [] : detectProjectTransforms(projectRoot).map((t) => t.code),
-    css: cssReport?.files ?? [],
-    wrap: wrapPath ? path.relative(projectRoot, wrapPath).replace(/\\/g, "/") : null,
-    reactCompiler: options.reactCompiler ?? "auto",
-    // Only present when targeted, so an untargeted run's fingerprint: and
-    // every baseline already stored against it: is byte-identical.
-    ...(options.target ? { target: options.target } : {}),
-    samples,
-    cpuThrottle,
-  });
+  // M89 defect 3: a thunk, not a frozen value -- `resolvedCss.files`/
+  // `cssReport.files` can still change after this point (a stylesheet
+  // dropped mid-run because it could not be read), and a verdict cached or
+  // saved under a fingerprint that still names the dropped file would be
+  // indistinguishable from one measured with it. Read fresh on every actual
+  // (non-memoized) call instead of captured once here.
+  const buildFingerprintConfig = (): string =>
+    JSON.stringify({
+      // M48: a transform changes the code that gets measured, exactly like the
+      // React Compiler does, so it belongs in the identity of a cached verdict.
+      transforms: options.noTransforms ? [] : detectProjectTransforms(projectRoot).map((t) => t.code),
+      css: cssReport?.files ?? [],
+      wrap: wrapPath ? path.relative(projectRoot, wrapPath).replace(/\\/g, "/") : null,
+      reactCompiler: options.reactCompiler ?? "auto",
+      // Only present when targeted, so an untargeted run's fingerprint: and
+      // every baseline already stored against it: is byte-identical.
+      ...(options.target ? { target: options.target } : {}),
+      samples,
+      cpuThrottle,
+    });
   let fingerprintValue: string | undefined;
   const getSourceFingerprint = async (): Promise<string> => {
     if (fingerprintValue) return fingerprintValue;
@@ -2332,7 +2652,7 @@ export async function analyze(
     fingerprintValue = computeSourceFingerprint(
       projectRoot,
       [...graph, ...extras],
-      fingerprintConfig,
+      buildFingerprintConfig(),
     );
     return fingerprintValue;
   };
@@ -2347,6 +2667,11 @@ export async function analyze(
     // actually failed, which is what keeps a healthy run's report unchanged.
     if (providerCandidates.length > 0 && renderFailed(report)) {
       report.providerCandidates = providerCandidates;
+      // M92 gap 3: additive, only when there is at least one -- a report
+      // whose every candidate is direct stays exactly as it printed before.
+      if (transitiveProviderCandidates.length > 0) {
+        report.transitiveProviderCandidates = transitiveProviderCandidates;
+      }
     }
 
     // M46: assembled from signals the run already produced, plus the one probe.
@@ -2398,15 +2723,6 @@ export async function analyze(
   let harness: HarnessResult | undefined;
   let msession: MeasurementSession | undefined;
 
-  // M79 (1b): generalizes the old transformHits-only special case. Every
-  // warning already computed by the time of a throw (the same array
-  // attachHarnessContext would have used on success) is worth as much on the
-  // way out as it would have been in a successful report — a
-  // preprocessor-config-ignored or unsupported-style-engine warning explains
-  // a crash the bare error message alone would not.
-  const formatAccumulatedWarnings = (warnings: string[]): string =>
-    ["", "", "Warnings recorded before this failure:", ...warnings.map((w) => `  ${w}`)].join("\n");
-
   try {
     const reused = await tryReuseStoredVerdict({
       options,
@@ -2444,8 +2760,27 @@ export async function analyze(
       componentName: detectComponentExport(harnessPath, options.target).name,
       ...(vueCompiler ? { vueCompiler } : {}),
     });
+    // M91 (commerce-F3): folded in before the hard-hit check below runs, so
+    // a sync component whose JSX composes an async server component one hop
+    // away gates identically to targeting that child directly.
+    preflight.hard.push(...composedChildPreflightHits(harnessPath, projectRoot));
+    // M92 (dub button.tsx): entries above is [harnessPath, wrapPath?] -- see
+    // providersFromEntry's own comment (src/preflight.ts) for why a hit
+    // discovered only through the wrapper is excluded here rather than
+    // mislabeled as something the component imports.
+    const componentEntryRelative = path
+      .relative(projectRoot, path.resolve(harnessPath))
+      .replace(/\\/g, "/");
+    const componentOwnProviders = providersFromEntry(preflight.providers, componentEntryRelative);
     // M65: recorded now, published only if a combo actually fails to render.
-    providerCandidates = providerCandidateLabels(preflight.providers);
+    providerCandidates = providerCandidateLabels(componentOwnProviders);
+    // M92 gap 3: the same labels, restricted to hits reached only
+    // transitively -- providerCandidateLabels' own dedup runs independently
+    // over this filtered subset, so a label present in both arrays is
+    // byte-identical between them (hints.ts matches by exact string).
+    transitiveProviderCandidates = providerCandidateLabels(
+      componentOwnProviders.filter((hit) => !isDirectProviderHit(hit)),
+    );
     for (const hit of preflight.soft) runWarnings.push(NODE_BUILTIN_WARNING(hit));
 
     // M48: only warn about transforms the harness will not apply. A project
@@ -2561,7 +2896,48 @@ export async function analyze(
       reportFontSettle(await settleStyles(page, harness!), onWarning);
     };
 
-    await enterHarnessPage();
+    try {
+      await enterHarnessPage();
+    } catch (err) {
+      // M89 defect 3 (shadcn-ui, live proof): a discovered stylesheet can
+      // resolve fine on disk and still fail to compile because something
+      // IT references internally does not (Tailwind v4's generated
+      // tailwind.css, gitignored/build-only) -- entryStylesheetImports'
+      // own resolution never sees that nested reference, only Vite's real
+      // PostCSS pipeline does, at this first real request. Governing
+      // policy (specs/milestones/m95-*.md): skip unresolvable build
+      // artifacts and measure anyway wherever possible -- the component
+      // still renders, just unstyled. Scoped to ENOENT alone
+      // (stylesheetReadFailureTarget), so a stylesheet that resolves and
+      // then fails to *compile* (a real project error, e.g. twenty's sass
+      // "Undefined mixin") is untouched and still fails the run loudly.
+      const message = err instanceof Error ? err.message : String(err);
+      const missingTarget =
+        resolvedCss.files.length > 0 ? stylesheetReadFailureTarget(message) : undefined;
+      if (!missingTarget) throw err;
+      const droppedFiles = [...cssReport.files];
+      onWarning(CSS_UNREADABLE_DROPPED_WARNING(missingTarget, droppedFiles));
+      resolvedCss.files = [];
+      cssReport.files = [];
+      cssReport.layer = "unreadable";
+      cssReport.details = [];
+      delete cssReport.onlyCandidate;
+      delete cssReport.noEntryInPackage;
+      delete cssReport.runtimeEngines;
+      // The early cache-lookup fingerprint (tryReuseStoredVerdict, above)
+      // may already have memoized a value computed with the now-dropped
+      // file still in it; un-memoize so a later --save-baseline call
+      // recomputes against the stylesheet this run actually measured with
+      // (none), not the one it started out intending to use.
+      fingerprintValue = undefined;
+      await harness!.cleanup();
+      harness = await buildAndServe(harnessPath, { ...composedHarnessOpts, cssFiles: undefined });
+      if (harness.warnings) runWarnings.push(...harness.warnings);
+      // Not wrapped again: a second failure here is a different, genuine
+      // problem (or the same page never recovering for an unrelated
+      // reason) and must propagate and fail the run like any other.
+      await enterHarnessPage();
+    }
 
     // A structurally inferred tree can violate a library's nesting rules and
     // mount to an empty root. Measuring that produces confident numbers about
@@ -2736,14 +3112,27 @@ export async function analyze(
     // transformHits's own warnings are already in runWarnings (pushed above),
     // and 1a's harness.ts throw sites attach their own buildWarnings on the
     // error itself, so both sources fold into one block here.
-    if (err instanceof Error) {
-      const carried = (err as Error & { warnings?: string[] }).warnings ?? [];
-      const combined = [...new Set([...runWarnings, ...carried])];
-      if (combined.length > 0) {
-        throw new Error(err.message + formatAccumulatedWarnings(combined), { cause: err });
-      }
-    }
-    throw err;
+    // M90 (ant-design-F5): `cssDecisionWarning` is always a non-empty
+    // string, so `combined` is never empty and every throw that reaches here
+    // gets the block — including a thrown value that is not `instanceof
+    // Error` (ant-design's raw esbuild resolve failure took exactly this
+    // shape, and the old `if (err instanceof Error)` guard silently dropped
+    // accumulation for it).
+    const carried =
+      err instanceof Error ? ((err as Error & { warnings?: string[] }).warnings ?? []) : [];
+    const combined = [...new Set([cssDecisionWarning, ...runWarnings, ...carried])];
+    const message = err instanceof Error ? err.message : String(err);
+    // M92: surface 2 of the shared pipeline (presentBundlerFailure,
+    // src/harness.ts) -- the dev server booted fine (buildAndServe's own
+    // catch, surface 1, never saw this) and a transform failed afterwards on
+    // a real request, arriving as page-error text inside a "did not become
+    // ready" / fatal-page-error message (twenty's sass "Undefined mixin",
+    // shadcn-ui's postcss ENOENT and Vite import-resolve failure). Harmless
+    // to run on every other throw that reaches this catch too: the diagnosers
+    // match only specific raw bundler shapes, and the fallback stripper is
+    // conservative (keeps a frame pointing into the target repo).
+    const presented = presentBundlerFailure(message, projectRoot, combined);
+    throw new Error(presented + formatAccumulatedWarnings(combined), { cause: err });
   } finally {
     if (msession) await msession.close();
     if (ownsPool) await pool.closeAll();

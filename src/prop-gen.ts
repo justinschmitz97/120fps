@@ -11,7 +11,7 @@ import {
   type SfcScript,
   type VueSfcCompiler,
 } from "./vue-sfc.js";
-import { detectPropPresets, literalValue } from "./prop-presets.js";
+import { detectPropPresets, loadPropPresets, literalValue } from "./prop-presets.js";
 import { findCompilerConfig, findProjectRoot, findWorkspaceRoot } from "./project-model.js";
 
 // M36: a fresh ts.Program per extraction re-parses lib.d.ts and the project's
@@ -137,6 +137,15 @@ function createCachedProgram(
   return program;
 }
 
+// M84 cross-lane interface: how a schema's value(s) were chosen. Lane C (M85)
+// keys a combo's `harnessFault` on this. "declared": a real literal or union
+// member from the type. "preset": from a `<stem>.props.tsx` (set only by
+// `applyPropPresets`, never assigned in this file). "heuristic": a name-based
+// special case such as `currencyCode`. "placeholder": a generic, type-agnostic
+// fill such as `"test"`. "contract": a value whose truthiness imposes a
+// requirement on other props, such as `asChild`.
+export type PropProvenance = "declared" | "preset" | "heuristic" | "placeholder" | "contract";
+
 export interface PropSchema {
   name: string;
   kind:
@@ -157,6 +166,8 @@ export interface PropSchema {
   // M60: why the generated value is not a faithful stand-in for the declared
   // type. Set means the component is measured with something it cannot use.
   degenerate?: string;
+  // M84: how the value(s) above were chosen. See `PropProvenance`.
+  provenance?: PropProvenance;
 }
 
 export interface ScalingPropMatch {
@@ -266,7 +277,7 @@ export async function extractPropsDetailed(
       collecting ? sink : undefined,
     );
     schemas = binding.type
-      ? typeToSchema(binding.type, checker, absolutePath, collecting ? sink : undefined)
+      ? typeToSchema(binding.type, checker, absolutePath, collecting ? sink : undefined, binding.fn)
       : [];
   } catch (error) {
     if (!(error instanceof RangeError)) throw error;
@@ -446,6 +457,34 @@ export function isVueOptionsApiPropsWarning(message: string): boolean {
   return message.includes(OPTIONS_API_WARNING_MARK);
 }
 
+// M92 (element-plus-F3): the <script setup> sibling of the Options-API case
+// above -- a runtime-object `defineProps({...})` call (element-plus's
+// split-bar.vue shape) is also an ADR 0002 scope exclusion, not a possible
+// extraction failure. Previously this shape produced no warning at all
+// (extractVueProps returned [] silently), so analyze.ts's generic "No props
+// extracted ... extraction may have failed" fallback fired instead and
+// implied a malfunction for a deliberate decision. Same register as
+// VUE_OPTIONS_API_PROPS_WARNING on purpose.
+const RUNTIME_DEFINE_PROPS_WARNING_MARK = "a runtime defineProps({...}) call";
+
+export const VUE_RUNTIME_DEFINE_PROPS_WARNING = (absolutePath: string): string =>
+  `${absolutePath} declares props through ${RUNTIME_DEFINE_PROPS_WARNING_MARK}, a runtime form ADR ` +
+  `0002 deliberately does not read: extraction did not fail and the component is not broken. Add ` +
+  `${presetFileName(absolutePath)} next to it to supply typed values for measurement, or switch to ` +
+  "defineProps<T>() for automatic extraction.";
+
+export function isVueRuntimeDefinePropsWarning(message: string): boolean {
+  return message.includes(RUNTIME_DEFINE_PROPS_WARNING_MARK);
+}
+
+// Either Vue scope exclusion ADR 0002 defines: Options-API props or a
+// <script setup> runtime-object defineProps({...}) call. What analyze.ts
+// checks to decide disclosureReason: "propsExcluded" for a Vue component that
+// extracted zero props, so it never has to know the two forms apart.
+export function isVuePropsScopeExclusionWarning(message: string): boolean {
+  return isVueOptionsApiPropsWarning(message) || isVueRuntimeDefinePropsWarning(message);
+}
+
 // Per ADR 0002 this stays TypeScript-only: the runtime object form
 // (`defineProps({ label: String })`) carries no types and yields no schemas,
 // exactly as an untyped React component does.
@@ -466,13 +505,19 @@ async function extractVueProps(
 
   const call = findDefineProps(sourceFile);
   if (!call?.typeNode) {
-    // M80 scope 2: this branch is also where a `.vue` file with NO <script
-    // setup> at all lands (an empty virtual entry parses to zero calls), and
-    // where a <script setup> runtime `defineProps({...})` call lands (call is
-    // defined but carries no type argument, ADR 0002:26's own Vue case,
-    // e.g. fixtures/vue-project/RuntimeProps.vue). Only the first is in this
-    // milestone's scope: detectOptionsApiProps reads a plain <script> block,
-    // so it is consulted only when there was no <script setup> to read from.
+    // M80 scope 2 / M92 (element-plus-F3): this branch is reached three ways
+    // -- a `.vue` file with NO <script setup> at all (an empty virtual entry
+    // parses to zero calls, `call` undefined), a <script setup> with no
+    // `defineProps` call at all (genuinely propless, `call` also undefined),
+    // and a <script setup> runtime `defineProps({...})` call (ADR 0002:26's
+    // own Vue case, e.g. fixtures/vue-project/RuntimeProps.vue -- `call` IS
+    // defined, just with no type argument). `call` being defined is exactly
+    // what tells the third shape apart from the first two: only a real
+    // `defineProps` call site can be a runtime-form exclusion to disclose.
+    if (call) {
+      sink?.(VUE_RUNTIME_DEFINE_PROPS_WARNING(absolutePath));
+      return [];
+    }
     const source = ts.sys.readFile(absolutePath);
     if (source !== undefined && parseSfcScript(source, absolutePath, compiler) === undefined) {
       const form = detectOptionsApiProps(source, absolutePath, compiler);
@@ -772,6 +817,49 @@ function overlapsDestructuring(bound: BoundProps, names: string[]): boolean {
   return names.some((name) => keys.has(name));
 }
 
+// M86 MUST 1: a prop the component's own source references by name outranks
+// an inherited prop it does not — a source-TEXT signal, not a type-flow one.
+// ant-design's Button calls `props.onClick?.(...)` (Button.tsx:294) and wires
+// `onClick={handleClick}` while `onClick`'s type is purely inherited through
+// `MergedHTMLAttributes` with no local redeclaration; M81's tiers only ever
+// look at where a prop's TYPE is declared, so they cannot see this. Walks the
+// bound function's own body once for `<param>.name` member access and any
+// local `const { name } = <param>` destructuring, in addition to the
+// destructured-parameter names `destructuredParameterNames` already finds.
+function sourceReferencedPropNames(fn: ts.SignatureDeclaration | undefined): Set<string> {
+  const names = new Set(destructuredParameterNames(fn));
+  const param = fn?.parameters[0];
+  const body = fn && "body" in fn ? fn.body : undefined;
+  if (!param || !body || !ts.isIdentifier(param.name)) return names;
+  const paramName = param.name.text;
+
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isPropertyAccessExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === paramName
+    ) {
+      names.add(node.name.text);
+    }
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isObjectBindingPattern(node.name) &&
+      node.initializer &&
+      ts.isIdentifier(node.initializer) &&
+      node.initializer.text === paramName
+    ) {
+      for (const element of node.name.elements) {
+        if (element.dotDotDotToken) continue;
+        const source = element.propertyName ?? element.name;
+        if (ts.isIdentifier(source) || ts.isStringLiteral(source)) names.add(source.text);
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(body);
+  return names;
+}
+
 // Whether the target declares a parameter at all. A component that takes none
 // has no props to miss, so its empty schema is an answer rather than a failure.
 function expectsProps(candidate: ComponentCandidate): boolean {
@@ -839,6 +927,26 @@ function warnPropCap(fileName: string, total: number): void {
     `${path.resolve(fileName)}::cap`,
     `Warning: ${total} props were extracted from ${fileName}; measuring the first ${MAX_PROPS}. ` +
       `Add ${presetFileName(fileName)} to choose the props that matter.\n`,
+  );
+}
+
+// M84: a union with more than one non-undefined member collapses to one
+// representative kind/value; a user reading only the schema cannot see what
+// the other branches were. Names every branch's printed type and which kind
+// the prop was measured as.
+function warnCollapsedUnion(
+  fileName: string,
+  propName: string,
+  branches: string[],
+  chosenKind: string,
+  sink?: (message: string) => void,
+): void {
+  emit(
+    `${path.resolve(fileName)}::union::${propName}`,
+    `Warning: prop "${propName}" in ${fileName} is a union of ${branches.length} different shapes ` +
+      `(${branches.join(" | ")}); measured as ${chosenKind}. Add ${presetFileName(fileName)} to choose ` +
+      `a different branch.\n`,
+    sink,
   );
 }
 
@@ -917,6 +1025,10 @@ interface PropsBinding {
   // The target's first-parameter annotation, when it is a computed type: the
   // only case where an empty schema is a resolution failure rather than a fact.
   computedAnnotation?: string;
+  // M86: the function the props type was bound to, when one was reachable —
+  // threaded through so `typeToSchema` can read which prop names the
+  // component's own body references by name.
+  fn?: ts.SignatureDeclaration;
 }
 
 // A type reference with arguments (`ComponentProps<typeof X>`,
@@ -1006,7 +1118,7 @@ function findComponentPropsType(
     ...(computedAnnotation ? { computedAnnotation } : {}),
   };
 
-  if (bound) return { type: bound.type, ...context };
+  if (bound) return { type: bound.type, fn: bound.fn, ...context };
 
   if (expectsProps(target)) {
     const hijacker = candidates.some(
@@ -1018,9 +1130,39 @@ function findComponentPropsType(
   return context;
 }
 
+// M92 (M86's own motivating case, ant-design Button.tsx:294): a same-file,
+// top-level `const NAME = <expr>` initializer for the given identifier --
+// shallow and parse-only, matching this codebase's existing precedent for a
+// same-file, top-level alias lookup (no cross-file/scope resolution, no
+// checker). `identifier` names could theoretically collide across nested
+// scopes; only a top-level match is trusted, the same tradeoff
+// `detectOptionsApiProps`/`scanRelativeTypeImports` already accept elsewhere.
+function findTopLevelVariableInitializer(identifier: ts.Identifier): ts.Expression | undefined {
+  for (const statement of identifier.getSourceFile().statements) {
+    if (!ts.isVariableStatement(statement)) continue;
+    for (const decl of statement.declarationList.declarations) {
+      if (ts.isIdentifier(decl.name) && decl.name.text === identifier.text && decl.initializer) {
+        return decl.initializer;
+      }
+    }
+  }
+  return undefined;
+}
+
 function extractFunctionFromInitializer(
   node: ts.Expression,
+  depth = 0,
 ): ts.ArrowFunction | ts.FunctionExpression | undefined {
+  // M92: an `as`/`satisfies` assertion is erased at runtime and asserts
+  // nothing about the VALUE, only a claim about its type -- ant-design's
+  // `const Button = InternalCompoundedButton as CompoundedComponent` is
+  // exactly InternalCompoundedButton at runtime. Unwrapped before every other
+  // check, so it composes with the HOC-chain and identifier-alias cases below
+  // regardless of where the assertion sits.
+  if (ts.isAsExpression(node) || ts.isSatisfiesExpression(node) || ts.isParenthesizedExpression(node)) {
+    return extractFunctionFromInitializer(node.expression, depth);
+  }
+
   if (ts.isArrowFunction(node) || ts.isFunctionExpression(node)) {
     return node;
   }
@@ -1029,8 +1171,19 @@ function extractFunctionFromInitializer(
   if (ts.isCallExpression(node)) {
     const args = node.arguments;
     if (args.length > 0) {
-      return extractFunctionFromInitializer(args[0]);
+      return extractFunctionFromInitializer(args[0], depth);
     }
+  }
+
+  // M92: a bare identifier alias points at a different declaration, often in
+  // the same file (ant-design's Button.tsx:294 own motivating shape) --
+  // follow it once so Tier-0's source-reference scan (sourceReferencedPropNames)
+  // sees the real implementation's body instead of an empty alias with none
+  // of its own. Depth-bounded against a pathological `const A = B; const B
+  // = A;` cycle; five hops is far more than any real alias chain needs.
+  if (ts.isIdentifier(node) && depth < 5) {
+    const target = findTopLevelVariableInitializer(node);
+    if (target) return extractFunctionFromInitializer(target, depth + 1);
   }
 
   return undefined;
@@ -1113,8 +1266,22 @@ function nonUndefinedMembers(type: ts.Type): ts.Type[] {
     : [type];
 }
 
-// M81 section 1: three-tier rank computed over `kept`, before the `MAX_PROPS`
-// cap, stable within each tier.
+// M86: props the cap must never rank away — the target's own source
+// referenced them by name, or a `<stem>.props.tsx` preset names them. Both
+// are read once per extraction and merged into one promoted-name set;
+// `propRank` checks it before any type-shape test.
+function presetPropNames(fileName: string): Set<string> {
+  const presetPath = detectPropPresets(fileName);
+  if (!presetPath) return new Set();
+  const presets = loadPropPresets(presetPath, path.dirname(presetPath));
+  return presets ? new Set(presets.entries.keys()) : new Set();
+}
+
+// M81 section 1 (M86 adds Tier 0): four-tier rank computed over the props the
+// cap has to choose among, stable within each tier.
+// Tier 0 - promoted: the target's own source references this name, or a
+//          preset names it. Neither signal depends on how the prop's TYPE
+//          resolves, so an unresolved generic parameter cannot defeat it.
 // Tier 1 - variant surface: a plain boolean or finite literal union on the
 //          prop's own type - reuses the same cheap type-flag tests
 //          `classifyType` uses later, so it is affordable to run over every
@@ -1125,7 +1292,14 @@ function nonUndefinedMembers(type: ts.Type): ts.Type[] {
 //          through an ambient declaration.
 // Tier 3 - everything else: declared exclusively in node_modules, not
 //          variant-shaped - today's tail behavior, unchanged.
-function propRank(prop: ts.Symbol, checker: ts.TypeChecker): 1 | 2 | 3 {
+function propRank(
+  prop: ts.Symbol,
+  checker: ts.TypeChecker,
+  promotedNames: Set<string>,
+): 0 | 1 | 2 | 3 {
+  const name = prop.getName();
+  if (promotedNames.has(name)) return 0;
+
   const decls = prop.getDeclarations();
   const decl = decls?.[0];
   const type = decl ? checker.getTypeOfSymbolAtLocation(prop, decl) : checker.getTypeOfSymbol(prop);
@@ -1144,10 +1318,22 @@ function propRank(prop: ts.Symbol, checker: ts.TypeChecker): 1 | 2 | 3 {
   const locallyMeaningful = !decls || decls.length === 0 || decls.some(isLocalDeclaration);
   if (locallyMeaningful) return 2;
 
-  const name = prop.getName();
+  // M86 mechanism 1: an unresolved generic parameter can make
+  // `getCallSignatures()` report zero for a genuinely callable type (a
+  // handler prop typed through `IntrinsicElements[E]`-style indirection with
+  // `E` unbound). Extensive probing against polymorphic-element and
+  // conditional-type shapes did not reproduce a real function type losing its
+  // call signatures this way — see `m86-prop-selection-keeps-what-matters.md`
+  // `## open` — but the failure signature such a defeat would most plausibly
+  // produce (the type resolving to `any`/`unknown` rather than a concrete
+  // non-callable type) is cheap and low-risk to also promote: a
+  // deliberately-non-function prop named `/^on[A-Z]/` resolves to a concrete
+  // type, not `any`/`unknown`.
   const isHandlerOrChildren =
     name === "children" ||
-    (EVENT_HANDLER_NAME.test(name) && nonUndefined.some((t) => t.getCallSignatures().length > 0));
+    (EVENT_HANDLER_NAME.test(name) &&
+      (nonUndefined.some((t) => t.getCallSignatures().length > 0) ||
+        nonUndefined.some((t) => t.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown))));
   if (isHandlerOrChildren) return 2;
 
   return 3;
@@ -1158,33 +1344,51 @@ function typeToSchema(
   checker: ts.TypeChecker,
   fileName?: string,
   sink?: (message: string) => void,
+  fn?: ts.SignatureDeclaration,
 ): PropSchema[] {
   const kept = type.getProperties().filter((prop) => !isNoiseName(prop.getName()));
+
+  // M86: required props are never dropped by the cap — a missing required
+  // prop is not a degraded test case, it is a guaranteed crash (shadcn's
+  // `chart.tsx` loses its required `config: ChartConfig` this way today).
+  // They bypass ranking entirely; only the optional pool is ranked and
+  // capped to whatever budget remains.
+  const requiredProps = kept.filter((prop) => !(prop.flags & ts.SymbolFlags.Optional));
+  const optionalProps = kept.filter((prop) => !!(prop.flags & ts.SymbolFlags.Optional));
+
+  const promotedNames = new Set([
+    ...sourceReferencedPropNames(fn),
+    ...(fileName ? presetPropNames(fileName) : []),
+  ]);
 
   // A single checker call (`getTypeOfSymbolAtLocation`) can recurse arbitrarily
   // deep inside TypeScript's own instantiation machinery for a self-referential
   // generic member (M81 section 6); ranking runs this over every kept prop, not
   // just the 32 survivors, so it needs the same guard as classification below.
-  const ranked: { prop: ts.Symbol; rank: 1 | 2 | 3 }[] = [];
-  for (const prop of kept) {
+  const ranked: { prop: ts.Symbol; rank: 0 | 1 | 2 | 3 }[] = [];
+  for (const prop of optionalProps) {
     try {
-      ranked.push({ prop, rank: propRank(prop, checker) });
+      ranked.push({ prop, rank: propRank(prop, checker, promotedNames) });
     } catch (error) {
       if (!(error instanceof RangeError)) throw error;
       if (fileName) warnRecursiveProp(fileName, prop.getName(), sink);
     }
   }
-  const ordered = ranked
+  const orderedOptional = ranked
     .map((r, index) => ({ ...r, index }))
     .sort((a, b) => a.rank - b.rank || a.index - b.index)
     .map((r) => r.prop);
 
-  if (ordered.length > MAX_PROPS && fileName) {
-    warnPropCap(fileName, ordered.length);
+  const totalKept = requiredProps.length + orderedOptional.length;
+  if (totalKept > MAX_PROPS && fileName) {
+    warnPropCap(fileName, totalKept);
   }
 
+  const optionalBudget = Math.max(0, MAX_PROPS - requiredProps.length);
+  const ordered = [...requiredProps, ...orderedOptional.slice(0, optionalBudget)];
+
   const schemas: PropSchema[] = [];
-  for (const prop of ordered.slice(0, MAX_PROPS)) {
+  for (const prop of ordered) {
     try {
       const decl = prop.getDeclarations()?.[0];
       const propType = decl
@@ -1192,7 +1396,17 @@ function typeToSchema(
         : checker.getTypeOfSymbol(prop);
       const required = !(prop.flags & ts.SymbolFlags.Optional);
 
-      schemas.push(classifyType(prop.getName(), propType, required, checker));
+      const schema = classifyType(prop.getName(), propType, required, checker);
+      schemas.push(schema);
+      // M84: a genuine multi-branch union (mixed primitive+literal, or
+      // structurally different shapes like `string | ReactElement`) collapses
+      // to one representative value/kind above; disclose every branch it had
+      // and which one won, on the same warnings channel every other
+      // extraction warning uses.
+      const branches = collapsedUnionBranches(propType, checker);
+      if (branches && fileName) {
+        warnCollapsedUnion(fileName, prop.getName(), branches, schema.kind, sink);
+      }
     } catch (error) {
       if (!(error instanceof RangeError)) throw error;
       if (fileName) warnRecursiveProp(fileName, prop.getName(), sink);
@@ -1202,7 +1416,26 @@ function typeToSchema(
   return schemas;
 }
 
+// M84: a boolean whose name is a known contract convention (`asChild`, `as`,
+// `render`) always reports provenance:"contract", regardless of which kind
+// branch below actually classified it (boolean, function, a degenerate
+// object via `isElementOrCallableUnion`, or a string-literal union for a
+// polymorphic `as`). Applied once, at the end, so no individual branch needs
+// to know about the override.
 function classifyType(
+  name: string,
+  type: ts.Type,
+  required: boolean,
+  checker: ts.TypeChecker,
+): PropSchema {
+  const schema = classifyTypeByShape(name, type, required, checker);
+  if (CONTRACT_PROP_NAME.test(name)) {
+    return { ...schema, provenance: "contract" };
+  }
+  return schema;
+}
+
+function classifyTypeByShape(
   name: string,
   type: ts.Type,
   required: boolean,
@@ -1223,7 +1456,7 @@ function classifyType(
   // a plain `ReactNode` renders a placeholder string fine; `ReactElement` does
   // not, because callers run `React.isValidElement()` on it.
   if (isReactNodeMember(type, checker)) {
-    return { name, kind: "reactnode", required, values: [] };
+    return { name, kind: "reactnode", required, values: [], provenance: "placeholder" };
   }
 
   // M81 3b: `ReactElement | (props) => ReactElement` (Base UI's `render`, and
@@ -1237,7 +1470,7 @@ function classifyType(
 
   // Function/callback: check all non-undefined members
   if (nonUndefinedTypes.some((t) => t.getCallSignatures().length > 0)) {
-    return { name, kind: "function", required, values: [] };
+    return { name, kind: "function", required, values: [], provenance: "placeholder" };
   }
 
   // Boolean: either BooleanLike flag or union of true|false literals
@@ -1245,7 +1478,7 @@ function classifyType(
     classifyTarget.flags & ts.TypeFlags.BooleanLike ||
     isBooleanUnion(nonUndefinedTypes)
   ) {
-    return { name, kind: "boolean", required, values: [true, false] };
+    return { name, kind: "boolean", required, values: [true, false], provenance: "declared" };
   }
 
   // String literal union
@@ -1259,7 +1492,7 @@ function classifyType(
       if (m.isStringLiteral()) return m.value;
       return checker.typeToString(m).replace(/^"(.*)"$/, "$1");
     });
-    return { name, kind: "union", required, values };
+    return { name, kind: "union", required, values, provenance: "declared" };
   }
 
   // Number literal union
@@ -1273,27 +1506,26 @@ function classifyType(
       if (m.isNumberLiteral()) return m.value;
       return Number(checker.typeToString(m));
     });
-    return { name, kind: "union", required, values };
+    return { name, kind: "union", required, values, provenance: "declared" };
   }
 
   // Plain string. M81 3d: `classifyType` has no way to see that a runtime
   // validator (`Intl.NumberFormat`'s `currency` option, a BCP 47 locale tag)
-  // will reject the generic placeholder; a narrow, named allowlist of
-  // prop-name conventions closes the one repeatedly-observed false-FAIL class
-  // without claiming every runtime-validated string is now safe.
+  // will reject the generic placeholder; `namedStringValue` (M84: the single
+  // shared definition with `synthesizeValue`'s nested branch) closes the
+  // repeatedly-observed false-FAIL classes without claiming every
+  // runtime-validated string is now safe.
   if (classifyTarget.flags & ts.TypeFlags.String) {
-    if (CURRENCY_PROP_NAME.test(name)) {
-      return { name, kind: "string", required, values: ["USD"] };
+    const named = namedStringValue(name);
+    if (named !== undefined) {
+      return { name, kind: "string", required, values: [named], provenance: "heuristic" };
     }
-    if (LOCALE_PROP_NAME.test(name)) {
-      return { name, kind: "string", required, values: ["en-US"] };
-    }
-    return { name, kind: "string", required, values: ["test"] };
+    return { name, kind: "string", required, values: ["test"], provenance: "placeholder" };
   }
 
   // Plain number
   if (classifyTarget.flags & ts.TypeFlags.Number) {
-    return { name, kind: "number", required, values: [1, 5, 20] };
+    return { name, kind: "number", required, values: [1, 5, 20], provenance: "placeholder" };
   }
 
   // Tuple: fixed arity, so it is neither an open array nor a bag of fields.
@@ -1301,15 +1533,40 @@ function classifyType(
     return tupleSchema(name, classifyTarget, required, checker);
   }
 
-  // Array
+  // Array. M84: when the element type cannot be resolved (commonly an
+  // unbound generic) and the name identifies an identity-keyed collection
+  // (rows/items a component may key a WeakMap on), the fallback element is a
+  // real object, not the generic bare string "item" — see
+  // `identityCollectionElement`.
   if (checker.isArrayType(classifyTarget)) {
     const elementTemplate = synthesizeElement(classifyTarget, checker);
+    if (elementTemplate !== undefined) {
+      return {
+        name,
+        kind: "array",
+        required,
+        values: [[], [elementTemplate]],
+        elementTemplate,
+        provenance: "declared",
+      };
+    }
+    const identityElement = identityCollectionElement(name);
+    if (identityElement !== undefined) {
+      return {
+        name,
+        kind: "array",
+        required,
+        values: [[], [identityElement]],
+        elementTemplate: identityElement,
+        provenance: "heuristic",
+      };
+    }
     return {
       name,
       kind: "array",
       required,
-      values: [[], [elementTemplate === undefined ? "item" : elementTemplate]],
-      ...(elementTemplate === undefined ? {} : { elementTemplate }),
+      values: [[], ["item"]],
+      provenance: "placeholder",
     };
   }
 
@@ -1322,11 +1579,68 @@ function classifyType(
     return objectSchema(name, nonUndefinedTypes[0], required, checker);
   }
 
+  // M84: a union mixing a primitive type with a literal member (`boolean |
+  // 'trap-focus'`, `number | 'any'`) matches none of the pure-kind checks
+  // above (not a pure literal union, not boolean-only, not reactnode,
+  // element-or-callable, function, or object-like). Pick the first member
+  // with a synthesizable primitive kind — a literal preferred over a bare
+  // boolean/string/number, since a literal is the more informative sample —
+  // so the schema carries a real value instead of falling to "unknown" with
+  // an empty value and no disclosure (base-ui's `modal?: boolean |
+  // 'trap-focus'` and `step?: number | 'any'`, both silently dropped today).
+  // The value comes directly from a real member of the declared type, so
+  // provenance is "declared" like any other union-member pick. Gated on at
+  // least one member actually being a literal: a union of two bare primitive
+  // types with no literal anywhere (`string | number`) has no finite,
+  // meaningfully-preferred member to pick over any other — that shape stays
+  // the pre-existing "unknown"/degenerate behavior below, unchanged.
+  const hasLiteralMember = nonUndefinedTypes.some(
+    (m) => m.isStringLiteral() || m.isNumberLiteral() || !!(m.flags & ts.TypeFlags.BooleanLiteral),
+  );
+  // A single non-undefined member that IS a literal (an optional prop typed
+  // exactly `"solo" | undefined`, which strips to one member) reaches here
+  // too — the pure-literal-union checks above require 2+ members, and a
+  // literal's own flags never overlap the generic String/Number flags the
+  // plain-string/-number checks test — so it is a real, if lone, union
+  // member the same way a 2+ member literal union is: reported by its own
+  // primitive kind rather than the "union" framing multiple choices imply.
+  if (nonUndefinedTypes.length >= 1 && hasLiteralMember) {
+    for (const member of nonUndefinedTypes) {
+      if (member.isStringLiteral()) {
+        const kind = nonUndefinedTypes.length === 1 ? "string" : "union";
+        return { name, kind, required, values: [member.value], provenance: "declared" };
+      }
+      if (member.isNumberLiteral()) {
+        const kind = nonUndefinedTypes.length === 1 ? "number" : "union";
+        return { name, kind, required, values: [member.value], provenance: "declared" };
+      }
+    }
+    for (const member of nonUndefinedTypes) {
+      if (member.flags & ts.TypeFlags.BooleanLike) {
+        return { name, kind: "boolean", required, values: [true, false], provenance: "declared" };
+      }
+      if (member.flags & ts.TypeFlags.String) {
+        const named = namedStringValue(name);
+        return {
+          name,
+          kind: "string",
+          required,
+          values: [named ?? "test"],
+          provenance: named !== undefined ? "heuristic" : "declared",
+        };
+      }
+      if (member.flags & ts.TypeFlags.Number) {
+        return { name, kind: "number", required, values: [1], provenance: "declared" };
+      }
+    }
+  }
+
   return {
     name,
     kind: "unknown",
     required,
     values: [],
+    provenance: "placeholder",
     ...(required
       ? { degenerate: `no value can be enumerated from ${checker.typeToString(type)}` }
       : {}),
@@ -1359,6 +1673,7 @@ function tupleSchema(
     kind: "object",
     required,
     values: [value],
+    provenance: "declared",
     ...(missing ? { degenerate: `tuple positions of ${checker.typeToString(type)}` } : {}),
   };
 }
@@ -1376,30 +1691,37 @@ function objectSchema(
       kind: "object",
       required,
       values: [collection.value],
+      provenance: "declared",
       ...(collection.reason ? { degenerate: collection.reason } : {}),
     };
   }
 
   const instance = instanceValue(type);
   if (instance !== undefined) {
-    return { name, kind: "object", required, values: [instance] };
+    return { name, kind: "object", required, values: [instance], provenance: "declared" };
   }
 
   const opaque = opaqueReason(type, checker);
   if (opaque) {
-    return { name, kind: "object", required, values: [{}], degenerate: opaque };
+    return { name, kind: "object", required, values: [{}], degenerate: opaque, provenance: "placeholder" };
   }
 
   const synth = newSynth(PROP_SYNTH_MAX_DEPTH);
   const shaped = synthesizeValue(type, checker, 0, synth);
   if (isShapedObject(shaped)) {
     // A member the browser cannot receive makes the whole object a stand-in,
-    // however well the rest of it synthesized.
+    // however well the rest of it synthesized. M84: the outer object's
+    // provenance takes the riskiest thing any nested field used — heuristic
+    // beats placeholder beats declared — so a consumer deciding whether a
+    // crash traces to a harness-supplied value (M85) can read one field on
+    // this prop instead of walking the synthesized object itself.
+    const provenance = synth.usedHeuristic ? "heuristic" : synth.usedPlaceholder ? "placeholder" : "declared";
     return {
       name,
       kind: "object",
       required,
       values: [shaped],
+      provenance,
       ...(synth.notes.length > 0 ? { degenerate: [...new Set(synth.notes)].join("; ") } : {}),
     };
   }
@@ -1410,6 +1732,7 @@ function objectSchema(
     required,
     values: [{}],
     degenerate: `no synthesizable members on ${checker.typeToString(type)}`,
+    provenance: "placeholder",
   };
 }
 
@@ -1431,10 +1754,16 @@ interface SynthContext {
   stack: ts.Type[];
   // Members that could not be reproduced faithfully, for the caller's warning.
   notes: string[];
+  // M84: whether any nested member's value came from a name-based heuristic
+  // (`namedStringValue`) or a generic type-agnostic fallback, so the outer
+  // object schema's own `provenance` can reflect the riskiest thing it
+  // contains rather than always reading "declared".
+  usedHeuristic: boolean;
+  usedPlaceholder: boolean;
 }
 
 function newSynth(maxDepth = SYNTH_MAX_DEPTH): SynthContext {
-  return { maxDepth, stack: [], notes: [] };
+  return { maxDepth, stack: [], notes: [], usedHeuristic: false, usedPlaceholder: false };
 }
 
 const MAP_TYPES = new Set(["Map", "WeakMap", "ReadonlyMap"]);
@@ -1568,6 +1897,39 @@ function isElementOrCallableUnion(type: ts.Type, checker: ts.TypeChecker): boole
   return hasElement && hasCallable && !hasPrimitive;
 }
 
+// M84: every printed branch of a union `classifyType` collapsed to one
+// representative kind/value, or `undefined` when the union is a case that is
+// already fully self-explanatory (a pure string- or number-literal union, a
+// boolean union, a plain `ReactNode`) or already disclosed by M81's own
+// `degenerate` warning (an element-or-callable union routes through
+// `opaqueReason`, which `warnDegenerateProps` already names).
+function collapsedUnionBranches(type: ts.Type, checker: ts.TypeChecker): string[] | undefined {
+  const nonUndefined = nonUndefinedMembers(type);
+  if (nonUndefined.length <= 1) return undefined;
+  if (isReactNodeMember(type, checker)) return undefined;
+  const classifyTarget = nonUndefined.length === 1 ? nonUndefined[0] : type;
+  if (isElementOrCallableUnion(classifyTarget, checker)) return undefined;
+  if (isBooleanUnion(nonUndefined)) return undefined;
+  if (nonUndefined.every((m) => m.isStringLiteral() || !!(m.flags & ts.TypeFlags.StringLiteral))) {
+    return undefined;
+  }
+  if (nonUndefined.every((m) => m.isNumberLiteral() || !!(m.flags & ts.TypeFlags.NumberLiteral))) {
+    return undefined;
+  }
+  // A union of bare primitive types with no literal member anywhere
+  // (`string | number`) has nothing classifyType actually collapsed: the
+  // mixed-union fallback above requires a literal to pick from and leaves
+  // this shape as the pre-existing "unknown"/degenerate value, unchanged by
+  // M84. Disclosing "branches" for a value that stayed empty would describe
+  // a collapse that never happened.
+  const hasObjectMember = nonUndefined.some(isObjectLike);
+  const hasLiteralMember = nonUndefined.some(
+    (m) => m.isStringLiteral() || m.isNumberLiteral() || !!(m.flags & ts.TypeFlags.BooleanLiteral),
+  );
+  if (!hasObjectMember && !hasLiteralMember) return undefined;
+  return nonUndefined.map((m) => checker.typeToString(m));
+}
+
 // An array whose elements are strings satisfies no object-shaped element type,
 // so a scaling sweep over it renders nothing and reports constant growth.
 // Build one value shaped like the declared element instead.
@@ -1577,11 +1939,22 @@ export function synthesizeElement(arrayType: ts.Type, checker: ts.TypeChecker): 
   return synthesizeValue(element, checker, 0, newSynth());
 }
 
+// M84: `name` is the prop or field this value is being synthesized for, when
+// one is known — the object-property loop below passes `prop.name`; every
+// other recursive call (union members, tuple positions, array elements,
+// Map/Set/Iterable entries) has no single field name to offer and passes
+// `undefined`, where the generic fallback is correct because there is no
+// name to test a heuristic against. This is the ONLY place besides
+// `classifyType`'s own top-level string branch that decides a string value,
+// and both call the same `namedStringValue`, so a heuristic added there
+// applies at every depth without a second copy to keep in sync (M84's
+// depth-independence invariant).
 function synthesizeValue(
   type: ts.Type,
   checker: ts.TypeChecker,
   depth: number,
   synth: SynthContext,
+  name?: string,
 ): unknown {
   if (depth >= synth.maxDepth) return undefined;
 
@@ -1590,7 +1963,15 @@ function synthesizeValue(
   if (type.flags & ts.TypeFlags.BooleanLiteral) {
     return checker.typeToString(type) === "true";
   }
-  if (type.flags & ts.TypeFlags.String) return "text";
+  if (type.flags & ts.TypeFlags.String) {
+    const named = namedStringValue(name);
+    if (named !== undefined) {
+      synth.usedHeuristic = true;
+      return named;
+    }
+    synth.usedPlaceholder = true;
+    return "text";
+  }
   if (type.flags & ts.TypeFlags.Number) return 1;
   if (type.flags & (ts.TypeFlags.Boolean | ts.TypeFlags.BooleanLike)) return true;
   if (type.flags & (ts.TypeFlags.Null | ts.TypeFlags.Undefined | ts.TypeFlags.Void)) {
@@ -1600,7 +1981,7 @@ function synthesizeValue(
   if (type.isUnion()) {
     for (const member of type.types) {
       if (member.flags & (ts.TypeFlags.Undefined | ts.TypeFlags.Null)) continue;
-      const value = synthesizeValue(member, checker, depth, synth);
+      const value = synthesizeValue(member, checker, depth, synth, name);
       if (value !== undefined) return value;
     }
     return undefined;
@@ -1657,6 +2038,7 @@ function synthesizeValue(
           checker,
           depth + 1,
           synth,
+          prop.name,
         );
       }
       return record;
@@ -1699,6 +2081,54 @@ function isReactNodeMember(type: ts.Type, checker: ts.TypeChecker): boolean {
 // not a general claim that every runtime-validated string is now safe.
 const CURRENCY_PROP_NAME = /^currency(code)?$/i;
 const LOCALE_PROP_NAME = /^(locale|language)$/i;
+// M84: element-plus-F2. A `src`/`srcSet`/`poster` string synthesized as the
+// generic "test" placeholder relative-resolves against the harness origin
+// and 404s, and the 404 is then wrongly charged to the component. An inline
+// `data:` URI (a real, valid 1x1 transparent GIF) resolves with no network
+// request at all.
+const IMAGE_SRC_PROP_NAME = /^(src|srcset|poster)$/i;
+const DATA_URI_PLACEHOLDER =
+  "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==";
+
+// M84: the single place a name-based string heuristic is defined. Both
+// `classifyType`'s top-level string branch and `synthesizeValue`'s nested
+// object-member branch call this, so a heuristic that works one level deep
+// works at every level (commerce's control: top-level `currencyCode`
+// synthesizes "USD", nested `label.currencyCode` must synthesize the same
+// value, not the generic "test" placeholder it fell back to before this
+// milestone). Returns `undefined` when no convention matches, meaning the
+// caller falls back to its own generic placeholder.
+function namedStringValue(name: string | undefined): string | undefined {
+  if (!name) return undefined;
+  if (CURRENCY_PROP_NAME.test(name)) return "USD";
+  if (LOCALE_PROP_NAME.test(name)) return "en-US";
+  if (IMAGE_SRC_PROP_NAME.test(name)) return DATA_URI_PLACEHOLDER;
+  return undefined;
+}
+
+// M84 cross-lane interface: a boolean whose truthiness imposes a contract on
+// another prop (M85's asChild/as/render examples). Deliberately narrow, the
+// same allowlist shape as the string heuristics above: these three names are
+// the one convention observed across Radix, Base UI, react-aria and shadcn
+// corpora. A general "any boolean whose true branch changes what another
+// prop must be" detector needs cross-prop analysis this milestone does not
+// attempt.
+const CONTRACT_PROP_NAME = /^(asChild|as|render)$/;
+
+// M84: element-plus-F4. An array whose element type could not be resolved
+// (commonly an unbound generic, `T[]`) and whose name identifies it as a
+// row/item collection gets a real object element instead of the generic
+// bare string "item", so a component keying a `WeakMap`/`Map` on its own
+// rows (identity, not content) does not throw `TypeError: Invalid value
+// used as weak map key`. A dedicated pattern, not `ITEMS_PATTERN` itself:
+// it shares that constant's vocabulary plus "rows", but stays separate so
+// this fallback can never change `detectScalingProps`'s existing reason
+// text or sort priority for an unrelated, already-resolvable array prop.
+const IDENTITY_COLLECTION_NAME = /items|options|data|rows|entries|records|elements|list/i;
+
+function identityCollectionElement(name: string): unknown | undefined {
+  return IDENTITY_COLLECTION_NAME.test(name) ? { id: 1 } : undefined;
+}
 
 export type { ExportInfo } from "./composition.js";
 

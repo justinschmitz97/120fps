@@ -157,6 +157,18 @@ export const PROVIDER_LIBRARIES: Record<string, string> = {
   "@tanstack/react-start": "useRouter",
 };
 
+// M92 gap 2 (dub tooltip.tsx, verified against real source): headless-UI
+// kits ship many separate packages, each with its own `.Provider` component
+// rather than one shared hook (`@radix-ui/react-tooltip`,
+// `@radix-ui/react-dialog`, ...) -- PROVIDER_LIBRARIES's one-exact-name,
+// one-known-hook shape does not fit. Matched by scope prefix instead, with
+// no invented hook name (the label is the bare package name, same as any
+// PROVIDER_LIBRARIES entry would be without a configured hook). Only the
+// one scope actually evidenced in the corpus (dub's own
+// `@radix-ui/react-tooltip` import) is listed here -- no other headless kit
+// is added without the same kind of evidence.
+const PROVIDER_LIBRARY_SCOPES = ["@radix-ui/"];
+
 export interface ProviderHit {
   // Package name, or the projectRoot-relative path of a local module.
   source: string;
@@ -173,11 +185,13 @@ function packageOf(specifier: string): string {
 
 export function detectProviderImport(
   specifier: string,
-): { source: string; hook: string } | undefined {
+): { source: string; hook?: string } | undefined {
   if (specifier.startsWith(".") || specifier.startsWith("/")) return undefined;
   const pkg = packageOf(specifier);
   const hook = PROVIDER_LIBRARIES[pkg];
-  return hook ? { source: pkg, hook } : undefined;
+  if (hook) return { source: pkg, hook };
+  if (PROVIDER_LIBRARY_SCOPES.some((scope) => pkg.startsWith(scope))) return { source: pkg };
+  return undefined;
 }
 
 // The shape of a context hook that refuses to run outside its provider: a
@@ -192,6 +206,85 @@ export function detectLocalProviderModule(
   return hook ? { hook } : {};
 }
 
+// M92 gap 2 (dub tooltip.tsx, verified against real source): the extremely
+// common "thin wrapper around a headless-kit primitive" shape --
+// `export function TooltipProvider({ children }) { return
+// <TooltipPrimitive.Provider ...>{children}</TooltipPrimitive.Provider>; }`
+// -- has no local createContext and no local throw (dub's real tooltip.tsx:
+// `grep -c createContext` and `grep -c "throw new Error"` both 0; Radix's
+// own hook throws, not this file's), so detectLocalProviderModule's shape
+// never matches it. Every Radix/headless-kit consumer wraps primitives
+// exactly this way, so this is handled generically (any package whose
+// default export ends in "Provider" JSX, or a `.Provider` member access) --
+// not by naming one library. Text only, same convention and same reason as
+// detectLocalProviderModule: the point is to name a suspect, not to prove
+// it. The exported component's own name (e.g. "TooltipProvider") is
+// returned as the hook slot -- not a literal `use*` hook, but the same
+// place providerCandidateLabels reads for the parenthetical, and the same
+// symbol rankProviderCandidates matches a thrown error's named symbol
+// against.
+const EXPORTED_PROVIDER_COMPONENT =
+  /export\s+(?:default\s+)?(?:async\s+)?function\s+(\w*Provider)\b|export\s+const\s+(\w*Provider)\s*[:=]/;
+// A JSX tag name (bare `TooltipProvider` or namespaced `TooltipPrimitive.
+// Provider`) whose own final segment ends in "Provider". Captured as a whole
+// tag name and checked with `.endsWith()` in JS, not asserted purely in the
+// regex: a fixed-length trailing-literal alternation
+// (`(?:\.\w*Provider|Provider)\b` appended after a greedy `[\w$]*`) back-
+// tracks incorrectly for the namespaced case -- greedy `[\w$]*` already
+// consumes the whole bare identifier, leaving nothing left for a second
+// "Provider" to match against, and produces a false negative exactly on
+// `<TooltipPrimitive.Provider` (dub's own shape).
+const JSX_ELEMENT_NAME = /<([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)?)/g;
+
+function hasJsxProviderElement(sourceText: string): boolean {
+  for (const match of sourceText.matchAll(JSX_ELEMENT_NAME)) {
+    if (match[1].endsWith("Provider")) return true;
+  }
+  return false;
+}
+
+export function detectWrapperProviderModule(
+  sourceText: string,
+): { hook?: string } | undefined {
+  // A file that creates its own context is detectLocalProviderModule's
+  // exclusive territory, throw-gated or not: React's own Context.Provider
+  // (`<XxxContext.Provider>`) also ends in "Provider" and would otherwise
+  // false-positive here on exactly the shape detectLocalProviderModule
+  // deliberately withholds (a context with a benign default that never
+  // throws) -- regressing "does not flag a local context module that never
+  // throws". This detector is for a file with no local context of its own
+  // at all: a re-export/wrapper around another package's already-created
+  // Provider.
+  if (/createContext\s*[(<]/.test(sourceText)) return undefined;
+  const exported = EXPORTED_PROVIDER_COMPONENT.exec(sourceText);
+  if (!exported) return undefined;
+  if (!hasJsxProviderElement(sourceText)) return undefined;
+  const name = exported[1] ?? exported[2];
+  return name ? { hook: name } : {};
+}
+
+// M92 gap 3 (dub tooltip.tsx -> rich-text-provider.tsx, verified against
+// real source): tooltip.tsx:12 imports PROSE_STYLES from ./rich-text-area,
+// an unrelated named export -- rich-text-provider.tsx is genuinely
+// reachable from the component's own graph, two hops out, so
+// providersFromEntry correctly keeps it (it must NOT be filtered away: the
+// candidate is real). What is false is calling that reach "component
+// imports X" (hints.ts's PROVIDER_HINT_LINE) -- the component imports
+// tooltip.tsx, which imports rich-text-provider.tsx; the component itself
+// never does. A hit's chain always ends at the file the detector actually
+// inspected: for a local hit (detectLocalProviderModule /
+// detectWrapperProviderModule) that IS the provider file itself, so
+// chain.length - 1 counts the hops from the entry to it. For an external
+// package hit (detectProviderImport) the chain ends at the file whose OWN
+// import statement named the package -- the package sits one hop beyond
+// that file, so the hop count is chain.length, not chain.length - 1.
+// "Direct" (the entry's own import statement names it, or is the file
+// itself) is exactly one hop either way.
+export function isDirectProviderHit(hit: ProviderHit): boolean {
+  const hops = hit.local ? hit.chain.length - 1 : hit.chain.length;
+  return hops === 1;
+}
+
 export function providerCandidateLabels(hits: ProviderHit[]): string[] {
   const seen = new Set<string>();
   const labels: string[] = [];
@@ -202,6 +295,20 @@ export function providerCandidateLabels(hits: ProviderHit[]): string[] {
     labels.push(label);
   }
   return labels;
+}
+
+// M92 (dub button.tsx): runPreflight's entries[] can name more than one seed
+// (the measured component plus an auto-detected or explicit --wrap file),
+// and its one combined walk does not otherwise distinguish which seed
+// discovered which provider hit. hints.ts's PROVIDER_HINT_LINE wording
+// ("component imports X") is only true of a hit whose own chain started at
+// the component's own entry -- chainTo (this file) always walks a hit's
+// chain back to whichever entries[] seed has no parent, so chain[0] is
+// exactly that root, with no extra field needed. A hit reached only through
+// the wrapper's graph is real evidence, just not evidence about the
+// component, so it is excluded here rather than mislabeled.
+export function providersFromEntry(hits: ProviderHit[], entryRelative: string): ProviderHit[] {
+  return hits.filter((hit) => hit.chain[0] === entryRelative);
 }
 
 function scriptKind(fileName: string): ts.ScriptKind {
@@ -435,8 +542,13 @@ export function runPreflight(options: PreflightOptions): PreflightResult {
 
     // M65: only *imported* modules are provider candidates: a component that
     // creates its own context supplies it too.
+    // M92 gap 2: detectLocalProviderModule's own createContext+throw shape
+    // tried first; detectWrapperProviderModule (a thin re-export/wrapper
+    // around another package's Provider, no local context of its own) is
+    // the fallback, not a second independent hit -- one file is one
+    // candidate, whichever shape it actually matches.
     if (!entryFiles.has(file)) {
-      const local = detectLocalProviderModule(sf.text);
+      const local = detectLocalProviderModule(sf.text) ?? detectWrapperProviderModule(sf.text);
       const source = relative(projectRoot, file);
       if (local && !providerSources.has(source)) {
         providerSources.add(source);

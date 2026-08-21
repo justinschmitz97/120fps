@@ -2,7 +2,11 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { scanExternalDeps, TYPE_ONLY_PACKAGE_WARNING } from "../../src/harness.js";
+import {
+  scanExternalDeps,
+  TYPE_ONLY_PACKAGE_WARNING,
+  UNBUILT_WORKSPACE_PACKAGE_NO_SOURCE_WARNING,
+} from "../../src/harness.js";
 
 let tmpDir: string;
 
@@ -229,13 +233,19 @@ describe("workspace-sibling subpath substitution", () => {
     const pkgs = scanExternalDeps(entry, member, [], undefined, warnings);
     // M76's collapse decision keeps the bare name once anything in the graph
     // imports it bare, matching today's behavior — proven here because the
-    // bare name has no resolvable root either, so it only reaches M77's
-    // separate, later type-only-package warning if M76 actually added it.
-    expect(warnings).toContain(TYPE_ONLY_PACKAGE_WARNING("@scope/ui"));
-    // M77: that bare name has no resolvable root entry, so the later,
-    // general type-only-package check removes it from the final list instead
-    // of leaving an unresolvable optimizeDeps entry there — the two fixes
-    // compose without reintroducing calcom-F1's crash.
+    // bare name has no resolvable root either, so it only reaches M77's/M94's
+    // separate, later exclusion check if M76 actually added it.
+    // M94: @scope/ui is a workspace sibling (linked via node_modules, not a
+    // real install), so the honest "no resolvable source, may still fail at
+    // request time" wording applies here, not the type-only claim — this
+    // fixture has no src/ directory either, so it falls all the way through
+    // to that no-source branch.
+    expect(warnings).toContain(UNBUILT_WORKSPACE_PACKAGE_NO_SOURCE_WARNING("@scope/ui", undefined));
+    expect(warnings).not.toContain(TYPE_ONLY_PACKAGE_WARNING("@scope/ui"));
+    // M77/M94: that bare name has no resolvable root entry or src/, so the
+    // later exclusion check removes it from the final list instead of
+    // leaving an unresolvable optimizeDeps entry there — the fixes compose
+    // without reintroducing calcom-F1's crash.
     expect(pkgs).not.toContain("@scope/ui");
   });
 

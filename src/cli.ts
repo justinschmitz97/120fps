@@ -2,14 +2,78 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { analyze, explainProps, formatExplainProps } from "./analyze.js";
+import { analyze, explainProps, formatExplainProps, resolveProjectPaths, formatAccumulatedWarnings } from "./analyze.js";
 import { compareAgainstRef, formatCompare, validateCompareOptions } from "./compare.js";
 import { formatMarkdown, formatJUnit } from "./ci-report.js";
 import { createBrowserPool } from "./measure.js";
-import { createServerPool } from "./harness.js";
+import { createServerPool, presentBundlerFailure } from "./harness.js";
 import { scanExports } from "./prop-gen.js";
 import { parseIsolationPhases, strictModeUnsupported, VUE_STRICTMODE_ERROR } from "./isolation.js";
 import { formatTable, DEFAULT_THRESHOLDS } from "./report.js";
+
+// M88: the taxonomy hang -- a fatal error printed in full, then the process
+// stayed alive until an external `timeout` killed it (EXIT=124). Pool/server
+// teardown (browser pool, dev-server pool) that never settles must never
+// block the documented exit code from actually being delivered. Arms an
+// unref'd timer that calls process.exit(exitCode) directly; unref'd so it
+// never by itself keeps an otherwise-idle process alive, but a genuinely hung
+// teardown leaves other handles open regardless, so the timer still fires.
+export const FATAL_EXIT_WATCHDOG_MS = 8000;
+
+export function armExitWatchdog(
+  exitCode: number,
+  timeoutMs: number = FATAL_EXIT_WATCHDOG_MS,
+): NodeJS.Timeout {
+  const timer = setTimeout(() => process.exit(exitCode), timeoutMs);
+  timer.unref();
+  return timer;
+}
+
+// Best-effort, bounded teardown of both pools: allSettled means one pool
+// hanging or throwing never blocks awaiting the other, and this function's
+// own promise resolves within timeoutMs regardless of whether either pool's
+// closeAll() ever settles on its own. Never calls process.exit itself: the
+// caller pairs this with armExitWatchdog (armed before, cleared after) so a
+// still-hanging call site is caught by that outer, harder guarantee.
+//
+// M92 (1.5b, investigated, not implemented): a timed-out closeAll() is
+// abandoned here, not force-killed. Fixing that requires reaching the
+// underlying Chromium OS process, and Playwright's public API gives no way
+// to do that from a `Browser` obtained via `chromium.launch()` (what
+// createBrowserPool uses) -- `.process()`/`.kill()` exist only on
+// `BrowserServer`, the return type of the unrelated `chromium.launchServer()`
+// API (confirmed by reading playwright-core@1.59.1's own
+// types/types.d.ts:9723-9840 vs :19194-19233), and the client-side `Browser`
+// object (lib/client/browser.js) holds no process handle at all -- the
+// actual spawn happens through playwright-core's private server-side
+// internals, not reachable from here without importing a non-exported
+// module path. Switching createBrowserPool to launchServer()+connect() would
+// fix this properly but is a larger change to a path every measurement goes
+// through, and this task's constraints (no `pnpm build`, no corpus runs)
+// mean it could not be verified against a real hang. Left as a documented
+// limitation rather than shipped as an unverified or fragile private-API
+// reach-in.
+export async function closePoolsBounded(
+  pool: Pick<import("./measure.js").BrowserPool, "closeAll">,
+  serverPool: Pick<import("./harness.js").ServerPool, "closeAll">,
+  timeoutMs: number = FATAL_EXIT_WATCHDOG_MS,
+): Promise<void> {
+  // Promise.resolve().then(...) turns a hostile closeAll() that throws
+  // synchronously (a contract violation of its own Promise<void> return type,
+  // but not this function's to trust) into a rejection Promise.allSettled can
+  // actually catch, instead of that throw escaping before allSettled is even
+  // constructed.
+  await Promise.race([
+    Promise.allSettled([
+      Promise.resolve().then(() => pool.closeAll()),
+      Promise.resolve().then(() => serverPool.closeAll()),
+    ]),
+    new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, timeoutMs);
+      timer.unref();
+    }),
+  ]);
+}
 
 const ISOLATE_USAGE_ERROR =
   "--isolate requires a comma-separated list of phases (mount,rerender,unmount,memory,strictmode,all)";
@@ -695,16 +759,79 @@ export function formatCliError(err: unknown, debugEnv: string | undefined): stri
 // only the thin wrapper below performs those.
 let fatalProcessErrorFired = false;
 
+// M92 (ant-design-F5/F7/F9): the project root of whichever component is
+// currently being measured, so a truly detached async rejection (surface 3
+// of the shared pipeline, src/harness.ts's presentBundlerFailure -- a
+// fire-and-forget Vite dependency-optimizer scan that rejects after
+// buildAndServe's own try/catch already exited successfully) can still be
+// diagnosed. Set by main()'s loop before each runOne call; undefined before
+// the first component starts or once none is in flight.
+let currentRunProjectRoot: string | undefined;
+
+export function setCurrentRunProjectRoot(root: string | undefined): void {
+  currentRunProjectRoot = root;
+}
+
+// Item A (M90 follow-up): the same shape as currentRunProjectRoot above, for
+// the same reason -- surface 3 (a detached async rejection reaching
+// process.on("unhandledRejection") directly) runs on a call stack with no
+// access to analyze()'s own `runWarnings`/`cssDecisionWarning` locals.
+// analyze() cannot report back through an import of this module (cli.ts
+// already imports analyze.ts; the reverse would be a cycle), so this is
+// populated the same way onProgress already is: a callback threaded through
+// AnalyzeOptions, wired to this accumulator at the one call site
+// (runOne, below) and read here by ordinary closure, not by importing
+// anything back. `pushCurrentRunWarning` is exported directly as the
+// callback runOne passes, so nothing here needs re-wrapping.
+let currentRunWarnings: string[] = [];
+
+export function pushCurrentRunWarning(warning: string): void {
+  if (!currentRunWarnings.includes(warning)) currentRunWarnings.push(warning);
+}
+
+export function resetCurrentRunWarnings(): void {
+  currentRunWarnings = [];
+}
+
+// Rebuilds the error only when presentBundlerFailure actually changed the
+// message, so the common case (an ordinary render/setup error, already
+// diagnosed by surface 1 or 2, or simply not bundler-shaped) keeps the
+// original object -- and its real .stack -- untouched.
+function presentDiagnosedProcessError(err: unknown, projectRoot: string): unknown {
+  if (!(err instanceof Error)) return err;
+  const diagnosed = presentBundlerFailure(err.message, projectRoot);
+  if (diagnosed === err.message) return err;
+  return new Error(diagnosed, { cause: err });
+}
+
+// Item A (M90 follow-up): appends the identical "Warnings recorded before
+// this failure:" block analyze()'s own local catch already builds for
+// surfaces 1 and 2 (src/analyze.ts) -- this is the same information, made
+// reachable here through currentRunWarnings instead of a closure this
+// function has no access to. Applied after diagnosis, not before: a
+// diagnosed message's own remedy text must stay the lead sentence.
+function withAccumulatedWarnings(presented: unknown, warnings: readonly string[]): unknown {
+  if (warnings.length === 0) return presented;
+  const message = presented instanceof Error ? presented.message : String(presented);
+  return new Error(message + formatAccumulatedWarnings([...warnings]), { cause: presented });
+}
+
 export function resolveFatalProcessError(
   err: unknown,
   debugEnv: string | undefined,
+  projectRoot: string | undefined = currentRunProjectRoot,
+  warnings: readonly string[] = currentRunWarnings,
 ): { output: string; exitCode: number } | undefined {
   // process.exit does not stop already-scheduled work synchronously, so a
   // second rejection arriving before the process actually exits must not
   // print or decide again.
   if (fatalProcessErrorFired) return undefined;
   fatalProcessErrorFired = true;
-  return { output: formatCliError(err, debugEnv), exitCode: 2 };
+  // M92: surface 3 of the shared diagnosis pipeline -- see
+  // currentRunProjectRoot's own comment above.
+  const presented = projectRoot ? presentDiagnosedProcessError(err, projectRoot) : err;
+  const withWarnings = withAccumulatedWarnings(presented, warnings);
+  return { output: formatCliError(withWarnings, debugEnv), exitCode: 2 };
 }
 
 // Test-only escape hatch for the module-level guard above, matching this
@@ -1072,32 +1199,54 @@ async function main(): Promise<void> {
   // M38: one dev server per project/config tuple serves every harness dir.
   const pool = createBrowserPool();
   const serverPool = createServerPool();
-  try {
-    for (let idx = 0; idx < componentPaths.length; idx++) {
-      const componentPath = componentPaths[idx];
-      if (multi && !args.ci) {
-        process.stdout.write(`\n=== ${componentPath} ===\n`);
-      }
-      const started = Date.now();
-      try {
-        const report = await runOne(componentPath, reportPaths[idx], args, pool, serverPool);
-        if (!args.ci) {
-          process.stdout.write(formatTable(report) + "\n");
-          process.stdout.write(formatWallClock(Date.now() - started) + "\n");
-        }
-        if (!report.pass) anyFail = true;
-      } catch (err: unknown) {
-        if (!multi) {
-          process.stderr.write(formatCliError(err, process.env.DEBUG));
-          process.exit(2);
-        }
-        anyFail = true;
-        process.stderr.write(`[${componentPath}] ` + formatCliError(err, process.env.DEBUG));
-      }
+  // M88: a fatal error on a single-component run previously called
+  // process.exit(2) synchronously right here, which never runs a pending
+  // `finally` block -- pool/server teardown was skipped outright. It now
+  // attempts that same teardown, bounded (closePoolsBounded, armExitWatchdog):
+  // a hung Vite dev-server close can no longer keep either the teardown or
+  // the process itself from finishing within the documented exit code's
+  // 10-second budget.
+  for (let idx = 0; idx < componentPaths.length; idx++) {
+    const componentPath = componentPaths[idx];
+    if (multi && !args.ci) {
+      process.stdout.write(`\n=== ${componentPath} ===\n`);
     }
-  } finally {
-    await pool.closeAll();
-    await serverPool.closeAll();
+    const started = Date.now();
+    // M92: set before the harness build a fire-and-forget dep-optimizer
+    // rejection (surface 3) could still fail on, cleared once this component
+    // is done -- see resolveFatalProcessError's own comment.
+    setCurrentRunProjectRoot(resolveProjectPaths(path.resolve(componentPath)).projectRoot);
+    // Item A: same lifecycle as the project root above -- reset before this
+    // component's own run() populates it via AnalyzeOptions.onWarning, so a
+    // surface-3 rejection on component 2 of a multi-component sweep never
+    // reports component 1's warnings.
+    resetCurrentRunWarnings();
+    try {
+      const report = await runOne(componentPath, reportPaths[idx], args, pool, serverPool);
+      if (!args.ci) {
+        process.stdout.write(formatTable(report) + "\n");
+        process.stdout.write(formatWallClock(Date.now() - started) + "\n");
+      }
+      if (!report.pass) anyFail = true;
+    } catch (err: unknown) {
+      if (!multi) {
+        process.stderr.write(formatCliError(err, process.env.DEBUG));
+        const watchdog = armExitWatchdog(2);
+        await closePoolsBounded(pool, serverPool);
+        clearTimeout(watchdog);
+        process.exit(2);
+      }
+      anyFail = true;
+      process.stderr.write(`[${componentPath}] ` + formatCliError(err, process.env.DEBUG));
+    } finally {
+      setCurrentRunProjectRoot(undefined);
+      resetCurrentRunWarnings();
+    }
+  }
+  {
+    const watchdog = armExitWatchdog(anyFail ? 1 : 0);
+    await closePoolsBounded(pool, serverPool);
+    clearTimeout(watchdog);
   }
 
   const jsonNotice = formatJsonSplitNotice(reportPaths);
@@ -1138,6 +1287,10 @@ async function runOne(
   serverPool?: import("./harness.js").ServerPool,
 ): Promise<import("./report.js").Report> {
   return analyze(componentPath, {
+      // Item A: threads this run's warnings out to the same accumulator
+      // resolveFatalProcessError reads, so a surface-3 async rejection can
+      // disclose them -- see currentRunWarnings's own comment.
+      onWarning: pushCurrentRunWarning,
       browserPool,
       serverPool,
       ...(args.targets?.[componentPath] ? { target: args.targets[componentPath] } : {}),

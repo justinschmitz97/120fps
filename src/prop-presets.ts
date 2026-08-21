@@ -180,9 +180,11 @@ export function applyPropPresets(
     if (values === undefined || values.length === 0) return schema;
     applied.push(schema.name);
     // Whatever synthesis could not build, the preset now supplies: the prop is
-    // no longer measured with a stand-in (M60).
+    // no longer measured with a stand-in (M60). M84: a preset always wins the
+    // provenance question the same way it already wins the value question —
+    // this is the only place `provenance: "preset"` is ever assigned.
     const { degenerate: _replaced, ...rest } = schema;
-    return { ...rest, values: [...values] };
+    return { ...rest, values: [...values], provenance: "preset" as const };
   });
 
   const known = new Set(schemas.map((s) => s.name));

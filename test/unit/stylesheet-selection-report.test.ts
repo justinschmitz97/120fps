@@ -163,6 +163,18 @@ describe("formatTable's Stylesheets line is always disclosed, keyed on layer", (
     expect(formatTable(makeReport({ css }))).toContain("Stylesheets: none (--no-css)");
   });
 
+  // M89 defect 3: a discovered stylesheet dropped mid-run because it could
+  // not be read (e.g. its own internal @import chain pointed at a file that
+  // does not exist) -- distinct wording from "disabled" (--no-css), since
+  // the user never asked for this; the run degraded to it.
+  it("unreadable", () => {
+    const css: CssReport = { files: [], autoDetected: true, layer: "unreadable" };
+    const out = formatTable(makeReport({ css }));
+    expect(out).toContain("Stylesheets: dropped after a read failure");
+    expect(out).toContain("measured unstyled");
+    expect(out).not.toContain("--no-css");
+  });
+
   it("none states the negative outcome instead of staying silent", () => {
     const css: CssReport = { files: [], autoDetected: false, layer: "none" };
     const out = formatTable(makeReport({ css }));

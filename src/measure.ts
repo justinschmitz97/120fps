@@ -491,6 +491,187 @@ export async function rafFence(page: Page): Promise<void> {
   );
 }
 
+// M89: taxonomy's control — `button.tsx` dies in the delta pass with this
+// exact message, and the fence had no retry at all: one 10s timeout and the
+// whole pass threw, uncaught until the CLI's top-level handler. Matches
+// `rafFence`'s own thrown text.
+const FRAME_STARVATION_PATTERN = /frame starvation/i;
+
+export function isFrameStarvationError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : typeof err === "string" ? err : "";
+  return FRAME_STARVATION_PATTERN.test(message);
+}
+
+// M89 defect 1 (live taxonomy proof): the same run that correctly degraded
+// two starved combos then still died with `browserContext.newCDPSession:
+// Target page, context or browser has been closed` -- a closed target is
+// exactly as recoverable as a starved fence (both are fixed by replacing the
+// CDP session via `enter`), but only frame starvation was guarded here.
+// `Tracing.tracingComplete timed out` fails the same way (a wedged CDP
+// trace pipeline, also fixed by `enter` replacing the session). Patterns
+// mirror `STALL_SIGNATURES` in page-errors.ts and the two matching entries
+// already in this file's own `CONTEXT_LOST` list above -- kept as separate
+// literals rather than shared, since page-errors.ts's list also carries
+// hint-selection concerns this module has no reason to depend on, and
+// `CONTEXT_LOST` is a disjoint retry layer (`withContextRetry`) this one
+// composes around, not merges into.
+const TRACING_TIMEOUT_PATTERN = /Tracing\.tracingComplete timed out/i;
+const TARGET_CLOSED_PATTERN = /Target (page|closed|crashed)/i;
+
+export function isTracingTimeoutError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : typeof err === "string" ? err : "";
+  return TRACING_TIMEOUT_PATTERN.test(message);
+}
+
+export function isTargetClosedError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : typeof err === "string" ? err : "";
+  return TARGET_CLOSED_PATTERN.test(message);
+}
+
+// The three signatures `withFrameStarvationRetry` recovers from, sharing one
+// bounded budget (`MAX_FRAME_STARVATION_RETRIES`). No shutdown/abort signal
+// is observable anywhere in this codebase (no SIGINT/SIGTERM handler and no
+// AbortController threaded through measurement), so a target closed by a
+// genuine process teardown cannot be distinguished, from here, from one
+// closed by a transient crash. The small fixed budget is the safeguard
+// either way: a real teardown costs at most two quick, already-failing
+// attempts before this degrades the combo and returns, rather than hanging
+// or looping.
+type StallKind = "starvation" | "tracing-timeout" | "target-closed";
+
+function classifyStall(err: unknown): StallKind | undefined {
+  if (isFrameStarvationError(err)) return "starvation";
+  if (isTracingTimeoutError(err)) return "tracing-timeout";
+  if (isTargetClosedError(err)) return "target-closed";
+  return undefined;
+}
+
+export const MAX_FRAME_STARVATION_RETRIES = 2;
+
+export const frameStarvationRetryWarning = (comboIndex: number): string =>
+  `combo ${comboIndex}: rAF fence starved for frames; retrying against a freshly re-entered harness session`;
+
+export const frameStarvationDegradedWarning = (comboIndex: number): string =>
+  `combo ${comboIndex}: measurement did not complete after ${MAX_FRAME_STARVATION_RETRIES} retries ` +
+  `(frame starvation); omitted from the report rather than failing the run`;
+
+export const tracingTimeoutRetryWarning = (comboIndex: number): string =>
+  `combo ${comboIndex}: cost-attribution trace stalled (Tracing.tracingComplete timed out); ` +
+  `retrying against a freshly re-entered harness session`;
+
+export const tracingTimeoutDegradedWarning = (comboIndex: number): string =>
+  `combo ${comboIndex}: measurement did not complete after ${MAX_FRAME_STARVATION_RETRIES} retries ` +
+  `(tracing timeout); omitted from the report rather than failing the run`;
+
+export const targetClosedRetryWarning = (comboIndex: number): string =>
+  `combo ${comboIndex}: browser target closed mid-measurement; retrying against a freshly re-entered harness session`;
+
+export const targetClosedDegradedWarning = (comboIndex: number): string =>
+  `combo ${comboIndex}: measurement did not complete after ${MAX_FRAME_STARVATION_RETRIES} retries ` +
+  `(target closed); omitted from the report rather than failing the run`;
+
+function retryWarningFor(kind: StallKind, comboIndex: number): string {
+  if (kind === "tracing-timeout") return tracingTimeoutRetryWarning(comboIndex);
+  if (kind === "target-closed") return targetClosedRetryWarning(comboIndex);
+  return frameStarvationRetryWarning(comboIndex);
+}
+
+function degradedWarningFor(kind: StallKind, comboIndex: number): string {
+  if (kind === "tracing-timeout") return tracingTimeoutDegradedWarning(comboIndex);
+  if (kind === "target-closed") return targetClosedDegradedWarning(comboIndex);
+  return frameStarvationDegradedWarning(comboIndex);
+}
+
+// M89: a bounded, disclosed retry for failure signatures the fence itself
+// (and, per defect 1, a closed target or a wedged trace pipeline) has no
+// recovery from — orthogonal to `withContextRetry` (a disjoint signature
+// list, its own escalate-and-throw behavior on exhaustion, unchanged by
+// this). On exhaustion this does NOT throw: it discloses and returns
+// `undefined`, so the caller can omit the one combo that stalled rather
+// than failing every other combo in the same pass. `enter` is the same
+// session-refresh (`refreshCdpSession` + `enterHarness`) the context-lost
+// retry already uses — it replaces the CDP session the frame pump reads on
+// every loop iteration, which is the most plausible recovery path for all
+// three signatures alike.
+export async function withFrameStarvationRetry<T>(
+  comboIndex: number,
+  enter: () => Promise<void>,
+  body: () => Promise<T>,
+  onWarning?: (warning: string) => void,
+): Promise<T | undefined> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await body();
+    } catch (err) {
+      const kind = classifyStall(err);
+      if (!kind) throw err;
+      if (attempt >= MAX_FRAME_STARVATION_RETRIES) {
+        onWarning?.(degradedWarningFor(kind, comboIndex));
+        return undefined;
+      }
+      onWarning?.(retryWarningFor(kind, comboIndex));
+      try {
+        await enter();
+      } catch (enterErr) {
+        // M92 (1.5a, regression): enter() re-runs enterHarness's own
+        // independent style-settle fence (measure.ts's settleStyles). Left
+        // unguarded, a stall there escaped this function entirely -- the
+        // exact failure this retry exists to prevent, relocated one frame
+        // up. Counts against the same bounded budget as a body() stall
+        // (this iteration already consumed one `attempt`) and falls through
+        // to retry body() on the next iteration rather than throwing; that
+        // retry's own stall, if any, degrades normally through the branch
+        // above once the budget is exhausted.
+        const enterKind = classifyStall(enterErr);
+        if (!enterKind) throw enterErr;
+        if (attempt >= MAX_FRAME_STARVATION_RETRIES) {
+          onWarning?.(degradedWarningFor(enterKind, comboIndex));
+          return undefined;
+        }
+        onWarning?.(retryWarningFor(enterKind, comboIndex));
+      }
+    }
+  }
+}
+
+// M89 (2, live taxonomy proof continued): combo 2 correctly degraded via its
+// sample loop's withFrameStarvationRetry composition; the very next combo
+// then still failed the whole run with a raw, unwrapped `frame starvation`
+// error -- and no preceding "retrying against a freshly re-entered harness
+// session" warning at all, which withFrameStarvationRetry can never omit on
+// a classified failure (it always warns before its first retry). That is
+// proof the failure never reached withFrameStarvationRetry: the cause is not
+// budget scoping (`withFrameStarvationRetry`'s own `attempt` counter is a
+// fresh local on every call, already isolated per invocation), it is a
+// coverage gap. `measureRerender`'s and `measureMount`'s warmup calls
+// (`mountAndWait`, `rerenderAndTrace`, `runMountUnmount`) touch the same
+// rafFence-guarded page as the sample loops but ran directly, outside any
+// retry wrapper -- whichever combo happened to starve during its warmup
+// (rather than during a sample) escaped retry/degrade entirely and took the
+// whole pass down. `withWarmupRetry` closes that gap with the identical
+// composition the sample loops already use (`withFrameStarvationRetry`
+// around `withContextRetry`, sharing the pass's `retryBudget`), so a
+// warmup-time stall degrades the combo exactly like a sample-time one
+// instead of escaping unguarded.
+export async function withWarmupRetry(
+  comboIndex: number,
+  enter: () => Promise<void>,
+  warmup: () => Promise<void>,
+  retryBudget: RetryBudget,
+  onWarning?: (warning: string) => void,
+): Promise<boolean> {
+  const completed = await withFrameStarvationRetry(
+    comboIndex,
+    enter,
+    async () => {
+      await withContextRetry(enter, warmup, { onRetry: onWarning, budget: retryBudget });
+      return true as const;
+    },
+    onWarning,
+  );
+  return completed === true;
+}
+
 // Structural subset of CDPSession so the pump is testable without a browser.
 interface FramePumpSession {
   send(method: string, params?: Record<string, unknown>): Promise<unknown>;
@@ -1266,29 +1447,62 @@ export async function measureRerender(
       const props = combos[ci];
 
       // Warmup on this combo's own props (results discarded, never recorded).
+      // M89 (2): guarded by withWarmupRetry the same way the sample loops
+      // below are — a starvation during warmup previously escaped retry
+      // entirely and failed the whole pass instead of omitting just this
+      // combo. An exhausted warmup omits the combo (its slot in `results`
+      // stays unset) rather than propagating.
       const warmups = warmupsForPosition(position, warmupRuns);
       if (warmups > 0) {
-        await mountAndWait(ms.page, props);
-        for (let w = 0; w < warmups; w++) {
-          await rerenderAndTrace(ms.page, ms.session.cdp, props);
+        const warmed = await withWarmupRetry(
+          ci,
+          enter,
+          async () => {
+            await mountAndWait(ms.page, props);
+            for (let w = 0; w < warmups; w++) {
+              await rerenderAndTrace(ms.page, ms.session.cdp, props);
+            }
+          },
+          retryBudget,
+          options.onWarning,
+        );
+        if (!warmed) {
+          ms.errorCapture.drain();
+          continue;
         }
       }
 
-      // Stable rerender: mount with props, then rerender with same props N times
+      // Stable rerender: mount with props, then rerender with same props N times.
+      // M89: a frame-starvation failure retries (bounded) against a freshly
+      // re-entered session; a sample that still starves after the bound is
+      // omitted (not pushed), not thrown — the delta pass's extra rerender
+      // calls are exactly where this fires (taxonomy's control).
       const stableSamples: number[] = [];
       for (let s = 0; s < sampleCount; s++) {
-        stableSamples.push(
-          await withContextRetry(
-            enter,
-            async () => {
-              await suspendThrottle(ms.session.cdp, cpuThrottle, () => tryCollectGarbage(ms.session.cdp));
-              await mountAndWait(ms.page, props);
-              return rerenderAndTrace(ms.page, ms.session.cdp, props);
-            },
-            { onRetry: options.onWarning, budget: retryBudget },
-          ),
+        const sample = await withFrameStarvationRetry(
+          ci,
+          enter,
+          () =>
+            withContextRetry(
+              enter,
+              async () => {
+                await suspendThrottle(ms.session.cdp, cpuThrottle, () => tryCollectGarbage(ms.session.cdp));
+                await mountAndWait(ms.page, props);
+                return rerenderAndTrace(ms.page, ms.session.cdp, props);
+              },
+              { onRetry: options.onWarning, budget: retryBudget },
+            ),
+          options.onWarning,
         );
+        if (sample !== undefined) stableSamples.push(sample);
       }
+
+      // Every sample for this combo starved out even after retrying: the
+      // combo is omitted entirely (a disclosed partial result — the pass
+      // continues to the rest of the combos) rather than reporting a
+      // misleading all-zero timing for a combo nothing was actually measured
+      // on.
+      if (stableSamples.length === 0) continue;
 
       const result: RerenderResult = {
         comboIndex: ci,
@@ -1308,20 +1522,27 @@ export async function measureRerender(
         if (!isScale && !nextIsScale) {
           const changeSamples: number[] = [];
           for (let s = 0; s < sampleCount; s++) {
-            changeSamples.push(
-              await withContextRetry(
-                enter,
-                async () => {
-                  await suspendThrottle(ms.session.cdp, cpuThrottle, () => tryCollectGarbage(ms.session.cdp));
-                  await mountAndWait(ms.page, props);
-                  return rerenderAndTrace(ms.page, ms.session.cdp, nextProps);
-                },
-                { onRetry: options.onWarning, budget: retryBudget },
-              ),
+            const sample = await withFrameStarvationRetry(
+              ci,
+              enter,
+              () =>
+                withContextRetry(
+                  enter,
+                  async () => {
+                    await suspendThrottle(ms.session.cdp, cpuThrottle, () => tryCollectGarbage(ms.session.cdp));
+                    await mountAndWait(ms.page, props);
+                    return rerenderAndTrace(ms.page, ms.session.cdp, nextProps);
+                  },
+                  { onRetry: options.onWarning, budget: retryBudget },
+                ),
+              options.onWarning,
             );
+            if (sample !== undefined) changeSamples.push(sample);
           }
-          result.change = buildTimingResult(changeSamples);
-          result.changeToProps = nextProps;
+          if (changeSamples.length > 0) {
+            result.change = buildTimingResult(changeSamples);
+            result.changeToProps = nextProps;
+          }
         }
       }
 
@@ -1406,8 +1627,28 @@ export async function measureMount(
 
       // Warmup: JIT + module cache stabilization, on this combo's own props
       // (results discarded, never recorded).
-      for (let w = 0; w < warmupsForPosition(position, warmupRuns); w++) {
-        await runMountUnmount(ms.page, ms.session.cdp, props, false);
+      // M89 (2): guarded by withWarmupRetry the same way the sample loop
+      // below is — a starvation during warmup previously escaped retry
+      // entirely and failed the whole pass instead of omitting just this
+      // combo. An exhausted warmup omits the combo (its slot in `results`
+      // stays unset) rather than propagating.
+      const warmupCount = warmupsForPosition(position, warmupRuns);
+      if (warmupCount > 0) {
+        const warmed = await withWarmupRetry(
+          ci,
+          enter,
+          async () => {
+            for (let w = 0; w < warmupCount; w++) {
+              await runMountUnmount(ms.page, ms.session.cdp, props, false);
+            }
+          },
+          retryBudget,
+          options.onWarning,
+        );
+        if (!warmed) {
+          ms.errorCapture.drain();
+          continue;
+        }
       }
 
       const mountSamples: number[] = [];
@@ -1424,15 +1665,26 @@ export async function measureMount(
         heapBefore = pre.usedSize;
       } catch { /* CDP method may not be available */ }
 
+      // M89: a frame-starvation failure retries (bounded) against a freshly
+      // re-entered session; a sample that still starves after the bound is
+      // skipped, not thrown — the delta pass's own extra mount calls are one
+      // of the two places this fires.
       for (let s = 0; s < sampleCount; s++) {
-        const run = await withContextRetry(
+        const run = await withFrameStarvationRetry(
+          ci,
           enter,
-          async () => {
-            await suspendThrottle(ms.session.cdp, cpuThrottle, () => tryCollectGarbage(ms.session.cdp));
-            return runMountUnmount(ms.page, ms.session.cdp, props, s === 0);
-          },
-          { onRetry: options.onWarning, budget: retryBudget },
+          () =>
+            withContextRetry(
+              enter,
+              async () => {
+                await suspendThrottle(ms.session.cdp, cpuThrottle, () => tryCollectGarbage(ms.session.cdp));
+                return runMountUnmount(ms.page, ms.session.cdp, props, s === 0);
+              },
+              { onRetry: options.onWarning, budget: retryBudget },
+            ),
+          options.onWarning,
         );
+        if (run === undefined) continue;
         if (s === 0 && bailOnAnimation && run.hasAnimation) {
           vsyncQueue.push(ci);
           bailed = true;
@@ -1455,6 +1707,10 @@ export async function measureMount(
         carriedErrors.set(ci, mergeDrains(carriedErrors.get(ci), drained));
         continue;
       }
+      // M89: every sample for this combo starved out even after retrying —
+      // omitted entirely (a disclosed partial result), not reported as an
+      // all-zero mount that nothing was actually measured on.
+      if (mountSamples.length === 0) continue;
       const pageErrors = mergeDrains(carriedErrors.get(ci), drained);
 
       let heapDelta = 0;

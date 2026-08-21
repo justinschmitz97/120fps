@@ -145,6 +145,39 @@ describe("collecting an entry's own stylesheet imports", () => {
     expect(warnings).toEqual([]);
   });
 
+  it("resolves a bare package subpath stylesheet through its exports map", () => {
+    write(
+      "node_modules/twenty-ui/package.json",
+      JSON.stringify({
+        name: "twenty-ui",
+        exports: {
+          "./style.css": "./dist/style.css",
+          "./theme-light.css": "./dist/theme-light.css",
+          "./theme-dark.css": "./dist/theme-dark.css",
+        },
+      }),
+    );
+    const light = write("node_modules/twenty-ui/dist/theme-light.css", ":root{}");
+    const dark = write("node_modules/twenty-ui/dist/theme-dark.css", ":root{}");
+    // dist/style.css is intentionally never written: genuinely missing.
+    const entry = write(
+      "src/main.tsx",
+      'import "twenty-ui/style.css";\n' +
+        'import "twenty-ui/theme-light.css";\n' +
+        'import "twenty-ui/theme-dark.css";\n',
+    );
+    const warnings: string[] = [];
+    expect(entryStylesheetImports(entry, tmpDir, [], warnings)).toEqual([light, dark]);
+    expect(warnings).toEqual([CSS_IMPORT_SKIPPED_WARNING(["twenty-ui/style.css"])]);
+  });
+
+  it("resolves a scoped package subpath stylesheet with no exports map via a direct join", () => {
+    write("node_modules/@fontsource/dm-mono/package.json", JSON.stringify({ name: "@fontsource/dm-mono" }));
+    const css = write("node_modules/@fontsource/dm-mono/400.css", "@font-face{}");
+    const entry = write("src/main.tsx", 'import "@fontsource/dm-mono/400.css";');
+    expect(entryStylesheetImports(entry, tmpDir, [])).toEqual([css]);
+  });
+
   it("names a relative stylesheet import whose file is missing", () => {
     const entry = write("src/main.tsx", 'import "./gone.css";');
     const warnings: string[] = [];

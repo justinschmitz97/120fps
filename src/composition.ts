@@ -466,6 +466,56 @@ export async function extractRelativeTypeImports(filePath: string): Promise<stri
   return scanRelativeTypeImports(sourceText, absolutePath);
 }
 
+// M91 (commerce-F3): the opposite direction from scanRelativeTypeImports — a
+// file's own JSX return can compose a locally-imported component (an
+// ordinary value import, not type-only) that the import-graph walk never
+// singles out for its own async-ness, because that walk only asks whether
+// entries[0] itself is async. Collects the local import actually used as a
+// JSX tag, so a caller can hand each one to runPreflight as its own
+// entries[0] and reproduce the exact rejection a direct target would get.
+// M92: every non-type-only import is collected here, not only a `.`-prefixed
+// one -- commerce's real app/page.tsx composes its async children as
+// baseUrl-relative bare specifiers ("components/carousel", no leading "./"),
+// which a dot-prefix filter here excluded outright. Whether a given
+// specifier is actually a local project file (kept) or a real npm dependency
+// (not a composed child) needs tsconfig baseUrl/paths context this
+// source-only scan does not have; that classification happens at resolution
+// time in the caller (analyze.ts's resolveRelativeJsxChild), which excludes
+// anything that resolves into node_modules.
+export function scanJsxComposedLocalImports(
+  sourceText: string,
+  fileName: string,
+): Array<{ name: string; specifier: string }> {
+  const sourceFile = ts.createSourceFile(fileName, sourceText, ts.ScriptTarget.Latest, true);
+  const localImports = new Map<string, string>();
+
+  ts.forEachChild(sourceFile, (node) => {
+    if (!ts.isImportDeclaration(node)) return;
+    if (!ts.isStringLiteral(node.moduleSpecifier)) return;
+    const clause = node.importClause;
+    if (!clause || clause.isTypeOnly) return;
+    if (clause.name) localImports.set(clause.name.text, node.moduleSpecifier.text);
+    if (clause.namedBindings && ts.isNamedImports(clause.namedBindings)) {
+      for (const element of clause.namedBindings.elements) {
+        if (element.isTypeOnly) continue;
+        localImports.set(element.name.text, node.moduleSpecifier.text);
+      }
+    }
+  });
+
+  const used = new Map<string, string>();
+  const visit = (node: ts.Node): void => {
+    if (ts.isJsxOpeningLikeElement(node) && ts.isIdentifier(node.tagName)) {
+      const specifier = localImports.get(node.tagName.text);
+      if (specifier) used.set(node.tagName.text, specifier);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+
+  return [...used.entries()].map(([name, specifier]) => ({ name, specifier }));
+}
+
 // --- M32 D2: fixture scaffolding ---
 
 export function fixtureScaffoldPath(componentPath: string): string {

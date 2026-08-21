@@ -549,8 +549,12 @@ describe("C4 enrichPhaseError", () => {
   });
 
   it("adds the hint for frame starvation and a crashed target", () => {
+    // M89 defect 2: "rerender" is excluded here -- it gets its own hint
+    // (RERENDER_PHASE_STALL_HINT, naming --samples/--max-combos, not
+    // --no-attribution) per test/unit/delta-phase-stall-hint.test.ts. "mount"
+    // is unaffected by this milestone and still keeps HARNESS_STALL_HINT.
     for (const message of ["frame starvation: rAF fence exceeded 10000ms", "Target crashed"]) {
-      const err = enrichPhaseError(new Error(message), { phase: "rerender", comboIndex: 1 });
+      const err = enrichPhaseError(new Error(message), { phase: "mount", comboIndex: 1 });
       expect(err.message).toContain(HARNESS_STALL_HINT);
     }
   });

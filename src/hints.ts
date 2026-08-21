@@ -15,7 +15,8 @@ export type HintId =
   | "budgetBreach"
   | "domFlat"
   | "measuredState"
-  | "renderError";
+  | "renderError"
+  | "harnessFault";
 
 export interface Hint {
   id: HintId;
@@ -125,6 +126,16 @@ export const HINTS: Record<HintId, Hint> = {
     ],
     anchor: "#render-errors",
   },
+  harnessFault: {
+    id: "harnessFault",
+    title: "a synthesized value, not the component, caused the crash",
+    lines: [
+      "The combo's page error traces back to a value 120fps chose for you, not something your",
+      "code passed. It is already excluded from the verdict. Add a <stem>.props.tsx preset naming",
+      "the prop if you want that combo measured with a real value instead of excluded.",
+    ],
+    anchor: "#harness-fault",
+  },
   measuredState: {
     id: "measuredState",
     title: "the numbers describe a loading state",
@@ -151,9 +162,13 @@ export function hintsForReport(report: Report): HintId[] {
 
     // A render error fails the combo without any budget being exceeded, so the
     // budget hint would send the reader to the cost attribution of a tree that
-    // never existed.
-    if (combo.renderHealth === "error") found.add("renderError");
-    else if (combo.verdict === "fail") found.add("budgetBreach");
+    // never existed. M85: a combo whose crash is already attributed to a
+    // harness-synthesized value gets its own, more specific hint instead —
+    // "an undefined prop needs a preset" is wrong for a value that is
+    // defined, just not the component's fault.
+    if (combo.renderHealth === "error") {
+      found.add(combo.harnessFault ? "harnessFault" : "renderError");
+    } else if (combo.verdict === "fail") found.add("budgetBreach");
     if (combo.measuredState && combo.measuredState !== "settled") found.add("measuredState");
 
     for (const curve of [combo.scalingCurve, combo.rerenderScalingCurve]) {
@@ -206,6 +221,15 @@ export const MEASUREMENT_BASIS_LINE =
 export const PROVIDER_HINT_LINE = (candidate: string): string =>
   `component imports ${candidate}: likely needs a provider wrapper; see --wrap / 120fps.setup.tsx`;
 
+// M92 gap 3 (dub tooltip.tsx -> rich-text-provider.tsx, verified against
+// real source): "component imports X" is false for a candidate reached only
+// transitively (an intermediate file the component imports is what imports
+// X, not the component itself) -- M92's own governing rule (a printed
+// message must be true of the run) applies here exactly as it did to the
+// stall-phase hints. Same remedy, honest verb.
+export const PROVIDER_HINT_LINE_TRANSITIVE = (candidate: string): string =>
+  `component's import graph reaches ${candidate}: likely needs a provider wrapper; see --wrap / 120fps.setup.tsx`;
+
 // M79 (4a, base-ui-F2): loose, deliberately — the goal is withholding a wrong
 // guess, not proving a right one. A captured error naming the real cause
 // (e.g. Base UI's own "The render prop was provided an invalid React
@@ -233,15 +257,59 @@ function capturedErrorTexts(report: Report): string[] {
   return texts;
 }
 
+// M92 (dub button.tsx): a thrown error frequently names the exact symbol it
+// needed ("`Tooltip` must be used within `TooltipProvider`"). Extracted so a
+// candidate whose own label plausibly matches it can lead the guess instead
+// of an unrelated candidate winning purely by discovery order.
+const NAMED_PROVIDER_SYMBOL = /\b([A-Z]\w*(?:Provider|Context))\b/;
+
+function namedProviderSymbol(texts: string[]): string | undefined {
+  for (const text of texts) {
+    const match = NAMED_PROVIDER_SYMBOL.exec(text);
+    if (match) return match[1];
+  }
+  return undefined;
+}
+
+// Alphanumeric-only, lowercased comparison: a candidate label is a file path
+// or package name ("rich-text-provider.tsx", "next-intl"), never the exact
+// PascalCase export the error names, so punctuation/case must not defeat an
+// otherwise-real match.
+function normalizeForMatch(text: string): string {
+  return text.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+// Only reorders; never adds or removes a candidate, so this can only improve
+// which genuine candidate leads, never manufacture a false one.
+function rankProviderCandidates(candidates: string[], texts: string[]): string[] {
+  const symbol = namedProviderSymbol(texts);
+  if (!symbol) return candidates;
+  const needle = normalizeForMatch(symbol.replace(/(?:Provider|Context)$/, ""));
+  if (!needle) return candidates;
+  return [...candidates].sort((a, b) => {
+    const aMatch = normalizeForMatch(a).includes(needle) ? 0 : 1;
+    const bMatch = normalizeForMatch(b).includes(needle) ? 0 : 1;
+    return aMatch - bMatch;
+  });
+}
+
 function extraHintLines(id: HintId, report: Report | undefined): string[] {
   if (id !== "renderError" || !report) return [];
+  const texts = capturedErrorTexts(report);
   // M79 (4a): only emit the provider guess when at least one captured
   // page-error message actually looks provider/context-shaped. When nothing
   // captured mentions either, the reader already has the real captured text
   // from appendPageErrors, and a wrong guess on top of a correct disclosure
   // is worse than no guess.
-  if (!capturedErrorTexts(report).some((text) => PROVIDER_ERROR_SIGNATURE.test(text))) return [];
-  return (report.providerCandidates ?? []).map(PROVIDER_HINT_LINE);
+  if (!texts.some((text) => PROVIDER_ERROR_SIGNATURE.test(text))) return [];
+  const ranked = rankProviderCandidates(report.providerCandidates ?? [], texts);
+  // M92 gap 3: a candidate the component reaches only transitively gets the
+  // honest "import graph reaches" wording instead of "component imports" --
+  // ranking (which candidate leads) is unaffected either way.
+  const transitive = new Set(report.transitiveProviderCandidates ?? []);
+  return ranked.map((candidate) =>
+    transitive.has(candidate) ? PROVIDER_HINT_LINE_TRANSITIVE(candidate) : PROVIDER_HINT_LINE(candidate),
+  );
 }
 
 export function formatHints(ids: HintId[], report?: Report): string {

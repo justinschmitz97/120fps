@@ -136,6 +136,14 @@ export interface InteractionReport {
   steps?: number;
 }
 
+// M84/M85 cross-lane interface: how a synthesized prop value was chosen
+// (`src/prop-gen.ts`, Lane B, `PropSchema.provenance`). Declared here, on
+// Lane C's side, because M85 is the first consumer and the field may not
+// exist on `PropSchema` yet; both sides read/write the identical union so a
+// later real `provenance?: PropProvenance` on `PropSchema` is a structural
+// no-op merge, not a breaking change.
+export type PropProvenance = "declared" | "preset" | "heuristic" | "placeholder" | "contract";
+
 export interface ComboReport {
   comboIndex: number;
   props: Record<string, unknown>;
@@ -180,6 +188,17 @@ export interface ComboReport {
   // never carries the `__120fps_scaleN` marker that produced it: this field
   // is where that identity now lives.
   scaleProbe?: number;
+  // M85: set when this combo's fatal render crash is attributable to a value
+  // the harness synthesized (a risky `provenance`), not to the component.
+  // The underlying facts (`renderHealth: "error"`, `pageErrors`) stay on the
+  // combo unchanged; only the verdict is demoted (never left at "fail"), and
+  // `report.pass` ignores a combo that carries this field.
+  harnessFault?: {
+    propName: string;
+    value: unknown;
+    provenance: PropProvenance;
+    evidence: string;
+  };
 }
 
 export interface PropDelta {
@@ -265,6 +284,10 @@ export interface MatrixCell {
   // Slowest interaction measured on this cell, or null when interactions were
   // not explored for it (M21 explores only the hottest cells).
   worstInteractionMs: number | null;
+  // M91: copied from the combo this cell projects — combo mode already
+  // carries this mark and JSON field for the identical underlying combo, and
+  // a matrix run over the same component must not silently drop it.
+  disclosureReason?: "uncomposed" | "propsExcluded";
 }
 
 export interface CompoundEffect {
@@ -346,7 +369,14 @@ export interface CssReport {
     | "largest-fallback"
     | "runtime"
     | "disabled"
-    | "none";
+    | "none"
+    // M89 defect 3: a stylesheet was discovered and looked resolvable, but
+    // something it references internally could not be read (Vite's real
+    // PostCSS pipeline is the only thing that ever sees that nested chain);
+    // it was dropped and the run measured unstyled instead of aborting.
+    // `files` is empty, same as "disabled" -- the dropped file names live in
+    // the warning that reported the drop, not here.
+    | "unreadable";
   // One entry per file in `files`, same order. Computed regardless of layer,
   // so a near-empty stylesheet is distinguishable from a real one even when
   // named explicitly via --css.
@@ -412,6 +442,14 @@ export interface Report {
   // when a combo actually failed to render: evidence for the render-error
   // hint, never a finding on a healthy run.
   providerCandidates?: string[];
+  // M92 gap 3: the subset of providerCandidates reached only transitively
+  // (an intermediate file the component imports is what actually reaches
+  // the candidate, not the component itself) -- additive and backward
+  // compatible, so providerCandidates keeps naming every real candidate
+  // unfiltered exactly as before, while hints.ts uses this to pick honest
+  // wording ("component's import graph reaches X" instead of "component
+  // imports X") for exactly the entries listed here.
+  transitiveProviderCandidates?: string[];
   css?: CssReport;
   reactCompiler?: ReactCompilerReport;
   warnings?: string[];
@@ -548,7 +586,11 @@ export function computeVerdict(
 // object at runtime is not type-checked), so the default branch falls back to
 // the old rendering rather than mislabeling a legacy auto-detected pick as
 // "none found".
-function formatStylesheetsLine(css: CssReport): string {
+// M90: exported so analyze.ts can format the decision once, right when
+// `cssReport` is built, and reuse the identical text as a warning that
+// survives a later crash — the same line the final report block would have
+// printed, computed early instead of only at assembly time.
+export function formatStylesheetsLine(css: CssReport): string {
   switch (css.layer) {
     case "explicit":
       return `Stylesheets: ${css.files.join(", ")} (explicit --css)`;
@@ -568,6 +610,8 @@ function formatStylesheetsLine(css: CssReport): string {
       );
     case "disabled":
       return "Stylesheets: none (--no-css)";
+    case "unreadable":
+      return "Stylesheets: dropped after a read failure -- measured unstyled (see warnings)";
     case "none":
       return (
         "Stylesheets: none found (checked the project entry, conventional filenames, and the " +
@@ -821,6 +865,10 @@ function renderHealthMarks(combo: ComboReport): string {
   else if (combo.renderHealth === "empty") marks.push("no DOM");
   else if (combo.disclosureReason === "uncomposed") marks.push("uncomposed");
   else if (combo.disclosureReason === "propsExcluded") marks.push("props excluded");
+  // M85: named separately from "render error" — the render did fail, and
+  // that mark stays, but this one is what tells the reader the failure is
+  // not being counted against the component.
+  if (combo.harnessFault) marks.push(`harness fault: ${combo.harnessFault.propName}`);
   const count = combo.pageErrors?.length ?? 0;
   if (count > 0 && combo.renderHealth !== "error") {
     marks.push(`${count} page error${count === 1 ? "" : "s"}`);
@@ -838,7 +886,17 @@ function appendPageErrors(lines: string[], report: Report): void {
   for (const combo of affected) {
     lines.push(`  Combo #${combo.comboIndex}:`);
     for (const message of combo.pageErrors!) lines.push(`    - ${message}`);
-    if (combo.renderHealth === "error") {
+    if (combo.harnessFault) {
+      // M85: the "counted as a failure" line below is specifically false for
+      // this combo — the value that caused the crash was the harness's own,
+      // not the component's, so the opposite statement belongs here instead.
+      lines.push(
+        `    combo ${combo.comboIndex} rendered 0 DOM nodes while the page threw, but the cause ` +
+        `was the harness's own synthesized value for "${combo.harnessFault.propName}" ` +
+        `(${JSON.stringify(combo.harnessFault.value)}, provenance: ${combo.harnessFault.provenance}): ` +
+        "excluded from the verdict, not counted as a component failure.",
+      );
+    } else if (combo.renderHealth === "error") {
       lines.push(
         `    combo ${combo.comboIndex} rendered 0 DOM nodes while the page threw: ` +
         "counted as a failure, not a pass.",
@@ -1374,6 +1432,7 @@ export function buildMatrixReport(input: BuildMatrixReportInput): MatrixReport {
       combo.interactions.length > 0
         ? Math.max(...combo.interactions.map((i) => i.timing.median))
         : null,
+    ...(combo.disclosureReason !== undefined ? { disclosureReason: combo.disclosureReason } : {}),
   }));
 
   const sorted = [...cells].sort((a, b) => b.mount.median - a.mount.median);
@@ -1428,6 +1487,15 @@ export function buildMatrixReport(input: BuildMatrixReportInput): MatrixReport {
   return { axes: input.axes, cells, hotCells, coldCells, failingCells, compoundEffects };
 }
 
+// M91 (primevue-F2): the same mark combo mode's renderHealthMarks prints for
+// disclosureReason, scoped to the one field a MatrixCell actually carries —
+// a cell has no renderHealth/pageErrors/harnessFault of its own to mark.
+function matrixCellDisclosureMark(cell: MatrixCell): string {
+  if (cell.disclosureReason === "uncomposed") return " [uncomposed]";
+  if (cell.disclosureReason === "propsExcluded") return " [props excluded]";
+  return "";
+}
+
 function formatMatrixOutput(lines: string[], report: Report): string {
   const mr = report.matrixReport!;
   const axisNames = mr.axes.map((a) => a.propName);
@@ -1460,7 +1528,7 @@ function formatMatrixOutput(lines: string[], report: Report): string {
       `${cell.rerender.median.toFixed(2)}ms`,
       cell.worstInteractionMs === null ? "-" : `${cell.worstInteractionMs.toFixed(2)}ms`,
       String(cell.domNodeCount),
-      `${cell.verdict.toUpperCase()} (${cell.tier})`,
+      `${cell.verdict.toUpperCase()} (${cell.tier})${matrixCellDisclosureMark(cell)}`,
     ];
     lines.push(vals.map((v, i) => v.padEnd(widths[i])).join(""));
   }
@@ -1486,7 +1554,9 @@ function formatMatrixOutput(lines: string[], report: Report): string {
   const pass = report.pass ? "PASS" : "FAIL";
   lines.push(`Result: ${pass}`);
   appendWarnRollup(lines, report, mr.cells.map((c) => c.verdict), "cells");
-  // Cells project the combos, so a gated cell's reason lives on the combo.
+  // M91 (primevue-F2): a cell's own `disclosureReason` (copied from the combo
+  // it projects, see buildMatrixReport) is what the row mark reads; page
+  // errors themselves still live only on the combo, so this block is unchanged.
   appendPageErrors(lines, report);
   appendEmptyRenderNote(lines, report);
   appendWarnings(lines, report);
