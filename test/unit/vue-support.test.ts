@@ -433,7 +433,8 @@ describe("renderer adapter", () => {
     const entry = generateEntry(vueOpts);
     expect(entry).toContain('from "vue"');
     expect(entry).toContain("createApp");
-    expect(entry).toContain('import Button from "/Button.vue"');
+    // M106 A4: namespace import, runtime selection.
+    expect(entry).toContain('import * as __120fps_mod from "/Button.vue"');
     expect(entry).not.toContain("react");
     expect(entry).not.toContain("StrictMode");
   });

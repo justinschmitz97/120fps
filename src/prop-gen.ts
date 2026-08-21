@@ -82,6 +82,9 @@ function createCachedProgram(
   rootFile: string,
   options: ts.CompilerOptions,
   virtual?: VirtualScripts,
+  // M97: a JS entry's sibling declaration, so the declaration's own symbols
+  // bind in the same program the entry is checked in.
+  extraRoots?: string[],
 ): ts.Program {
   const optionsKey = stableStringify(options);
   const host = ts.createCompilerHost(options);
@@ -130,7 +133,8 @@ function createCachedProgram(
 
   const oldProgram =
     extractionCache.lastOptionsKey === optionsKey ? extractionCache.lastProgram : undefined;
-  const program = ts.createProgram([rootFile], options, host, oldProgram);
+  const roots = extraRoots?.length ? [rootFile, ...extraRoots] : [rootFile];
+  const program = ts.createProgram(roots, options, host, oldProgram);
   extractionCache.lastProgram = program;
   extractionCache.lastOptionsKey = optionsKey;
   extractionCache.programsCreated++;
@@ -168,6 +172,11 @@ export interface PropSchema {
   degenerate?: string;
   // M84: how the value(s) above were chosen. See `PropProvenance`.
   provenance?: PropProvenance;
+  // M103 (I8, calcom-F2): the default the component itself declares, when it
+  // is a literal the AST can read. Absent means no default was declared or the
+  // declared one is not a literal — never "the default is undefined".
+  defaultValue?: unknown;
+  defaultSource?: "destructuring" | "withDefaults" | "defaultProps";
 }
 
 export interface ScalingPropMatch {
@@ -199,6 +208,13 @@ const ITEMS_PATTERN = /items|options|data|children|entries|records|elements|list
 const SCALING_NAME_PATTERN = /count|size|length|limit|max|total|depth|level|columns|rows|pages/i;
 const NUMERIC_SHORTHAND = /^n$|^num/i;
 const ARIA_PATTERN = /^aria-/;
+// M103 (base-ui-F3): a numeric prop whose name denotes a bound or a step is
+// not a quantity of rendered things. `NumberFieldRoot.max` matched
+// SCALING_NAME_PATTERN's `/max/i` and ran a whole curve mode whose own output
+// then reported that the DOM node count never moved. Exact names only: a
+// `maxItems` or `rowCount` still scales.
+const SCALING_BOUND_NAME =
+  /^(min|max|step|largeStep|smallStep|precision|decimalScale|tabIndex|zIndex|maxLength|minLength|maxWidth|minWidth|maxHeight|minHeight)$/i;
 
 export function detectScalingProps(schemas: PropSchema[]): ScalingPropMatch[] {
   const matches: ScalingPropMatch[] = [];
@@ -209,6 +225,8 @@ export function detectScalingProps(schemas: PropSchema[]): ScalingPropMatch[] {
       matches.push({ schema, kind: "array", reason: "array prop with items-like name" });
     } else if (schema.kind === "array") {
       matches.push({ schema, kind: "array", reason: "array prop" });
+    } else if (schema.kind === "number" && SCALING_BOUND_NAME.test(schema.name)) {
+      continue;
     } else if (schema.kind === "number" && SCALING_NAME_PATTERN.test(schema.name)) {
       matches.push({ schema, kind: "numeric", reason: "numeric prop name matches scaling pattern" });
     } else if (schema.kind === "number" && NUMERIC_SHORTHAND.test(schema.name)) {
@@ -253,7 +271,18 @@ export async function extractPropsDetailed(
     return { schemas, warnings };
   }
 
-  const program = createCachedProgram(absolutePath, createCompilerOptions(absolutePath));
+  const compilerOptions = createCompilerOptions(absolutePath);
+  // M97 / ADR 0004: a JavaScript entry's declared types live in a sibling
+  // `.d.ts`. It joins the program as a second root so its symbols bind.
+  const declarationPath = isJsEntry(absolutePath)
+    ? resolveEntryDeclaration(absolutePath, compilerOptions)
+    : undefined;
+  const program = createCachedProgram(
+    absolutePath,
+    compilerOptions,
+    undefined,
+    declarationPath ? [declarationPath] : undefined,
+  );
   const checker = program.getTypeChecker();
   const sourceFile = program.getSourceFile(absolutePath);
 
@@ -276,9 +305,35 @@ export async function extractPropsDetailed(
       options?.target,
       collecting ? sink : undefined,
     );
+    // M97 / ADR 0004: the sibling declaration is the published contract, so it
+    // outranks `bindProps`'s last resort (the call signatures of the binding's
+    // own type) and answers where the JavaScript source binds nothing at all.
+    // The bound function is kept: its destructured names are what the
+    // source-reference ranking reads.
+    if (declarationPath && (binding.type === undefined || binding.viaTypeFallback)) {
+      const declared = propsFromDeclaration(declarationPath, program, checker);
+      if (declared) binding = { ...binding, type: declared };
+    }
+    if (binding.type === undefined && binding.unboundTargetHijacked && binding.targetName) {
+      warnUnboundTarget(absolutePath, binding.targetName, collecting ? sink : undefined);
+    }
     schemas = binding.type
       ? typeToSchema(binding.type, checker, absolutePath, collecting ? sink : undefined, binding.fn)
       : [];
+    // M103 (I8): the component's own declared defaults, destructuring first —
+    // it is the form a reader of the source sees.
+    schemas = applyDeclaredDefaults(
+      schemas,
+      destructuredParameterDefaults(binding.fn),
+      "destructuring",
+    );
+    if (binding.targetName) {
+      schemas = applyDeclaredDefaults(
+        schemas,
+        defaultPropsAssignment(sourceFile, binding.targetName),
+        "defaultProps",
+      );
+    }
   } catch (error) {
     if (!(error instanceof RangeError)) throw error;
     recursed = true;
@@ -299,6 +354,17 @@ export async function extractPropsDetailed(
   }
   if (!recursed) {
     warnDegenerateProps(absolutePath, schemas, collecting ? sink : undefined);
+  }
+  // M97 / ADR 0004: an empty JS schema now names its own cause instead of
+  // reaching analyze.ts's generic "extraction may have failed" hedge.
+  if (
+    !recursed &&
+    schemas.length === 0 &&
+    isJsEntry(absolutePath) &&
+    binding.targetName !== undefined &&
+    binding.computedAnnotation === undefined
+  ) {
+    warnUntypedJsComponent(absolutePath, binding.targetName, collecting ? sink : undefined);
   }
 
   return {
@@ -391,12 +457,9 @@ export function applyWithDefaults(
   }
   if (byName.size === 0) return schemas;
 
-  return schemas.map((schema) => {
-    if (!byName.has(schema.name)) return schema;
-    const value = byName.get(schema.name);
-    const rest = schema.values.filter((v) => !Object.is(v, value));
-    return { ...schema, values: [value, ...rest] };
-  });
+  // M103 (I8): the value was already moved to the front of the pool; it is now
+  // also named as the default it is.
+  return applyDeclaredDefaults(schemas, byName, "withDefaults", true);
 }
 
 // Every `<x>.vue.ts` (or `.tsx`, when the block says so) in the tree resolves to
@@ -447,8 +510,17 @@ export const VUE_OPTIONS_API_PROPS_WARNING = (
   form: "props" | "extends" | "mixins",
 ): string =>
   `${absolutePath} declares props through ${OPTIONS_API_WARNING_MARK} ("${form}"), a runtime form ` +
-  `ADR 0002 deliberately does not read: extraction did not fail and the component is not broken. Add ` +
-  `${presetFileName(absolutePath)} next to it to supply typed values for measurement.`;
+  `ADR 0002 deliberately does not read: extraction did not fail and the component is not broken.` +
+  presetRemedyClause(absolutePath);
+
+// M98 (primevue-F1): the remedy half of every scope-exclusion warning. With
+// the preset file already on disk, "Add Badge.props.tsx" told a user to create
+// what the same run had just loaded and measured.
+function presetRemedyClause(absolutePath: string): string {
+  return detectPropPresets(absolutePath)
+    ? ` ${presetFileName(absolutePath)} next to it already supplies the values measured.`
+    : ` Add ${presetFileName(absolutePath)} next to it to supply typed values for measurement.`;
+}
 
 // Lets extractSchemas (src/analyze.ts) recognize this specific warning among
 // everything else onWarning may report, without parsing prose or duplicating
@@ -469,12 +541,50 @@ const RUNTIME_DEFINE_PROPS_WARNING_MARK = "a runtime defineProps({...}) call";
 
 export const VUE_RUNTIME_DEFINE_PROPS_WARNING = (absolutePath: string): string =>
   `${absolutePath} declares props through ${RUNTIME_DEFINE_PROPS_WARNING_MARK}, a runtime form ADR ` +
-  `0002 deliberately does not read: extraction did not fail and the component is not broken. Add ` +
-  `${presetFileName(absolutePath)} next to it to supply typed values for measurement, or switch to ` +
-  "defineProps<T>() for automatic extraction.";
+  `0002 deliberately does not read: extraction did not fail and the component is not broken.` +
+  presetRemedyClause(absolutePath) +
+  " Switching to defineProps<T>() gets automatic extraction.";
 
 export function isVueRuntimeDefinePropsWarning(message: string): boolean {
   return message.includes(RUNTIME_DEFINE_PROPS_WARNING_MARK);
+}
+
+// M98 (element-plus-F5): `defineComponent({ props: selectProps, setup(props, ...) })`
+// is Vue's Composition API with a runtime props object. Calling it "Vue's
+// Options API" named a mechanism the file does not use and pointed a user
+// fixing it at the wrong pattern. Same scope-exclusion register as the two
+// warnings above; the remedy is unchanged because it was already correct.
+const SETUP_RUNTIME_PROPS_WARNING_MARK = "a runtime props object read by setup()";
+
+export const VUE_SETUP_RUNTIME_PROPS_WARNING = (absolutePath: string): string =>
+  `${absolutePath} declares props through ${SETUP_RUNTIME_PROPS_WARNING_MARK} (Vue's Composition ` +
+  `API), a runtime form ADR 0002 deliberately does not read: extraction did not fail and the ` +
+  `component is not broken.` +
+  presetRemedyClause(absolutePath);
+
+export function isVueSetupRuntimePropsWarning(message: string): boolean {
+  return message.includes(SETUP_RUNTIME_PROPS_WARNING_MARK);
+}
+
+// M98 (nuxt-ui-F1): `defineProps<BadgeProps>()` on a name nothing in the
+// program declares yields TypeScript's error type, which `looksLikePropsType`
+// rejects -- and the rejection returned `[]` with no `sink?.()` call at all, so
+// the only text a user saw was analyze.ts's generic "extraction may have
+// failed". This is a resolution failure rather than an ADR 0002 scope
+// exclusion, so it deliberately stays out of
+// `isVuePropsScopeExclusionWarning`.
+const UNRESOLVED_DEFINE_PROPS_MARK = "defineProps<T>() type argument";
+
+export const VUE_UNRESOLVED_PROPS_TYPE_WARNING = (
+  absolutePath: string,
+  typeText: string,
+): string =>
+  `Warning: ${UNRESOLVED_DEFINE_PROPS_MARK} "${typeText}" in ${absolutePath} could not be resolved: ` +
+  `nothing the SFC's script blocks declare or import provides it, so no props were extracted. ` +
+  `Add ${presetFileName(absolutePath)} next to it to supply values for measurement.\n`;
+
+export function isVueUnresolvedPropsTypeWarning(message: string): boolean {
+  return message.includes(UNRESOLVED_DEFINE_PROPS_MARK);
 }
 
 // Either Vue scope exclusion ADR 0002 defines: Options-API props or a
@@ -482,7 +592,35 @@ export function isVueRuntimeDefinePropsWarning(message: string): boolean {
 // checks to decide disclosureReason: "propsExcluded" for a Vue component that
 // extracted zero props, so it never has to know the two forms apart.
 export function isVuePropsScopeExclusionWarning(message: string): boolean {
-  return isVueOptionsApiPropsWarning(message) || isVueRuntimeDefinePropsWarning(message);
+  return (
+    isVueOptionsApiPropsWarning(message) ||
+    isVueRuntimeDefinePropsWarning(message) ||
+    isVueSetupRuntimePropsWarning(message)
+  );
+}
+
+// M97 / ADR 0004: a JavaScript entry that bound no props type and had no
+// declaration file to read. material-ui-F1 is what silence here produced:
+// `React.forwardRef`'s own `ref`/`key` were reported as the contract and every
+// measured combo mounted with `{}`. Same register as the two Vue scope
+// exclusions above -- a stated cause rather than the generic
+// "extraction may have failed" hedge.
+const UNTYPED_JS_COMPONENT_MARK = "declares no props type and has no declaration file beside it";
+
+export const UNTYPED_JS_COMPONENT_WARNING = (
+  absolutePath: string,
+  targetName: string,
+  hasPresets = false,
+): string =>
+  `Warning: ${targetName} in ${absolutePath} ${UNTYPED_JS_COMPONENT_MARK}: measuring with no props. ` +
+  `A sibling <stem>.d.ts is read when one exists (ADR 0004); this JavaScript source has neither an ` +
+  `annotated props parameter nor a declaration.` +
+  (hasPresets ? "\n" : ` Add ${presetFileName(absolutePath)} next to it to supply values.\n`);
+
+// Lets src/analyze.ts recognize this specific warning, so the generic
+// ZERO_PROPS_WARNING does not stack on top of a cause already stated.
+export function isUntypedJsComponentWarning(message: string): boolean {
+  return message.includes(UNTYPED_JS_COMPONENT_MARK);
 }
 
 // Per ADR 0002 this stays TypeScript-only: the runtime object form
@@ -521,21 +659,46 @@ async function extractVueProps(
     const source = ts.sys.readFile(absolutePath);
     if (source !== undefined && parseSfcScript(source, absolutePath, compiler) === undefined) {
       const form = detectOptionsApiProps(source, absolutePath, compiler);
-      if (form) sink?.(VUE_OPTIONS_API_PROPS_WARNING(absolutePath, form));
+      // M98 (element-plus-F5): `props:` alongside `setup()` is the Composition
+      // API's runtime form, and saying "Options API" for it named a mechanism
+      // the file does not use.
+      if (form === "setup-props") sink?.(VUE_SETUP_RUNTIME_PROPS_WARNING(absolutePath));
+      else if (form) sink?.(VUE_OPTIONS_API_PROPS_WARNING(absolutePath, form));
     }
     return [];
   }
 
   const checker = program.getTypeChecker();
   const propsType = checker.getTypeFromTypeNode(call.typeNode);
-  if (!looksLikePropsType(propsType, checker)) return [];
+  if (!looksLikePropsType(propsType, checker)) {
+    // M98 (nuxt-ui-F1): the one zero-prop Vue path that used to say nothing.
+    const unresolved = unresolvedPropsTypeText(call.typeNode, propsType);
+    if (unresolved) sink?.(VUE_UNRESOLVED_PROPS_TYPE_WARNING(absolutePath, unresolved));
+    return [];
+  }
 
+  // M98: the sink reaches `typeToSchema` here the way it already does on the
+  // React path, so a Vue prop's collapsed-union, cap and recursion
+  // disclosures land in the same warnings list every other extraction
+  // warning does (element-plus-F3).
   const schemas = applyWithDefaults(
-    typeToSchema(propsType, checker, absolutePath),
+    typeToSchema(propsType, checker, absolutePath, sink),
     call.defaults,
   );
   warnDegenerateProps(absolutePath, schemas, sink);
   return schemas;
+}
+
+// M98: TypeScript's error type is `any`, and a props type that reaches this
+// point as `any`/`unknown` resolved to nothing usable. That is what tells
+// `defineProps<BadgeProps>()` on a missing declaration apart from a genuinely
+// empty `defineProps<{}>()`, whose type is an object with no members: a fact
+// rather than a failure, and one that keeps its existing silence. Checking for
+// a symbol at the type name would not work — an `import type { X } from
+// "#build/missing"` still creates a local alias symbol for `X`.
+function unresolvedPropsTypeText(typeNode: ts.TypeNode, propsType: ts.Type): string | undefined {
+  if (!(propsType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown))) return undefined;
+  return typeNode.getText();
 }
 
 // The virtual name the resolver actually serves for this SFC, or undefined when
@@ -567,11 +730,107 @@ interface ComponentCandidate {
   aliases: string[];
 }
 
+// M97 / ADR 0004 ---------------------------------------------------------------
+
+const JS_ENTRY_EXTENSION = /\.(js|jsx|mjs|cjs)$/i;
+
+function isJsEntry(absolutePath: string): boolean {
+  return JS_ENTRY_EXTENSION.test(absolutePath);
+}
+
+// The package.json whose `main`/`module`/`exports["."]` names this exact entry,
+// searched upward a bounded number of levels. Only that package.json's
+// `types`/`typings` describes this entry; a package.json further up (MUI's
+// `packages/mui-material/package.json` relative to `src/Badge/Badge.js`)
+// describes its own barrel and must not be read as this component's contract.
+function declaringPackageTypes(absolutePath: string): string | undefined {
+  let dir = path.dirname(absolutePath);
+  for (let level = 0; level < 5; level++) {
+    const manifestPath = path.join(dir, "package.json");
+    if (fs.existsSync(manifestPath)) {
+      try {
+        const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8")) as Record<string, unknown>;
+        const types = manifest.types ?? manifest.typings;
+        const entry =
+          manifest.main ??
+          manifest.module ??
+          (typeof manifest.exports === "object" && manifest.exports !== null
+            ? (manifest.exports as Record<string, unknown>)["."]
+            : undefined);
+        if (typeof types !== "string" || typeof entry !== "string") return undefined;
+        if (path.resolve(dir, entry) !== absolutePath) return undefined;
+        const declaration = path.resolve(dir, types);
+        return declaration.endsWith(".d.ts") && fs.existsSync(declaration) ? declaration : undefined;
+      } catch {
+        return undefined;
+      }
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) return undefined;
+    dir = parent;
+  }
+  return undefined;
+}
+
+// ADR 0004: the resolution every importer of `./<stem>` already performs.
+// `ts.resolveModuleName` prefers a `.d.ts` over the `.js` beside it, which is
+// exactly the ranking a consumer of the package type-checks against.
+function resolveEntryDeclaration(
+  absolutePath: string,
+  options: ts.CompilerOptions,
+): string | undefined {
+  const stem = path.basename(absolutePath, path.extname(absolutePath));
+  const resolved = ts.resolveModuleName(`./${stem}`, absolutePath, options, ts.sys).resolvedModule
+    ?.resolvedFileName;
+  if (resolved && resolved !== absolutePath && resolved.endsWith(".d.ts")) return resolved;
+  return declaringPackageTypes(absolutePath);
+}
+
+// The declared component's props, read the way an importer reads them: the
+// exported symbol's first call signature's first parameter.
+function propsFromDeclaration(
+  declarationPath: string,
+  program: ts.Program,
+  checker: ts.TypeChecker,
+): ts.Type | undefined {
+  const declarationFile = program.getSourceFile(declarationPath);
+  if (!declarationFile) return undefined;
+  const moduleSymbol = checker.getSymbolAtLocation(declarationFile);
+  if (!moduleSymbol) return undefined;
+
+  const exports = checker.getExportsOfModule(moduleSymbol);
+  const stem = normalizeComponentName(path.basename(declarationPath).replace(/\.d\.ts$/i, ""));
+  const ranked = [
+    exports.find((symbol) => symbol.getName() === "default"),
+    exports.find((symbol) => normalizeComponentName(symbol.getName()) === stem),
+    ...exports,
+  ];
+
+  for (const symbol of ranked) {
+    if (!symbol) continue;
+    const resolved =
+      symbol.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(symbol) : symbol;
+    const location = resolved.getDeclarations()?.[0] ?? declarationFile;
+    const type = checker.getTypeOfSymbolAtLocation(resolved, location);
+    for (const signature of type.getCallSignatures()) {
+      const parameter = signature.getParameters()[0];
+      if (!parameter) continue;
+      const parameterType = checker.getTypeOfSymbolAtLocation(parameter, location);
+      if (looksLikePropsType(parameterType, checker)) return parameterType;
+    }
+  }
+  return undefined;
+}
+
 interface BoundProps {
   type: ts.Type;
   // The function the type came from, when one was reachable: the source of
   // the destructured parameter names the self-consistency guard compares.
   fn?: ts.SignatureDeclaration;
+  // M97: set only by the last resort in `bindProps` — the call signatures of
+  // the binding's own type, rather than an annotated parameter. A JS entry's
+  // sibling declaration outranks this one (ADR 0004).
+  viaTypeFallback?: boolean;
 }
 
 const IDENTIFIER_HOPS = 8;
@@ -685,6 +944,7 @@ function collectComponentCandidates(sourceFile: ts.SourceFile): ComponentCandida
 function selectTargetCandidate(
   candidates: ComponentCandidate[],
   fileName: string,
+  sourceText: string,
   explicitTarget?: string,
 ): ComponentCandidate | undefined {
   // M65: `<file>#Export` names the component the harness will import, so the
@@ -706,11 +966,48 @@ function selectTargetCandidate(
     const stemMatch = exported.find((c) =>
       [c.name, ...c.aliases].some((name) => normalizeComponentName(name) === stem),
     );
-    return stemMatch ?? exported[0];
+    if (stemMatch) return stemMatch;
+
+    // M103 (heroui-F2): the header named `BadgeRoot` and the props table
+    // described `BadgeAnchor`. `detectComponentExport` reads `scanExports`'s
+    // order (heroui's `export { BadgeRoot, BadgeLabel, BadgeAnchor }`); this
+    // function read declaration order, where BadgeAnchor comes first. One
+    // selection function over one export list, so the two cannot diverge.
+    const measured = selectMeasuredExport(scanExports(sourceText, fileName), fileName);
+    const measuredMatch = measured
+      ? exported.find((c) => [c.name, ...c.aliases].includes(measured))
+      : undefined;
+    return measuredMatch ?? exported[0];
   }
 
   return candidates[0];
 }
+
+// M103: the export a run measures, from one list of exports. `scanExports`
+// lives in this file and `detectComponentExport` (src/harness.ts) already
+// imports from here, so the harness's own pick can route through this same
+// order (I9's `Provider` rule is the third clause).
+export function selectMeasuredExport(
+  exports: ExportInfo[],
+  fileName: string,
+  target?: string,
+): string | undefined {
+  if (target) return exports.find((e) => e.name === target)?.name;
+
+  const defaultExport = exports.find((e) => e.isDefault);
+  if (defaultExport) return defaultExport.name;
+
+  const stem = normalizeComponentName(path.basename(fileName, path.extname(fileName)));
+  const stemMatch = exports.find((e) => normalizeComponentName(e.name) === stem);
+  if (stemMatch) return stemMatch.name;
+
+  const uncontrolled = exports.find((e) => !PROVIDER_EXPORT_SUFFIX.test(e.name));
+  if (uncontrolled) return uncontrolled.name;
+
+  return exports[0]?.name;
+}
+
+const PROVIDER_EXPORT_SUFFIX = /Provider$/;
 
 // `memo(Inner)` / `forwardRef(Inner)` / `Inner`: the identifier a wrapper chain
 // ultimately names, when it names one.
@@ -792,10 +1089,106 @@ function bindProps(
     const param = signature.getParameters()[0];
     if (!param) continue;
     const paramType = checker.getTypeOfSymbolAtLocation(param, declaration);
-    if (looksLikePropsType(paramType, checker)) return { type: paramType };
+    if (looksLikePropsType(paramType, checker)) {
+      return { type: paramType, viaTypeFallback: true };
+    }
   }
 
   return undefined;
+}
+
+// M103 (I8, calcom-F2): the literal defaults a destructured first parameter
+// declares (`{ loading = false, color = "primary" }`). A non-literal default
+// (a call, a variable) is not recorded rather than guessed at.
+function destructuredParameterDefaults(
+  fn: ts.SignatureDeclaration | undefined,
+): Map<string, unknown> {
+  const defaults = new Map<string, unknown>();
+  const collect = (pattern: ts.ObjectBindingPattern): void => {
+    for (const element of pattern.elements) {
+      if (element.dotDotDotToken || !element.initializer) continue;
+      const source = element.propertyName ?? element.name;
+      if (!ts.isIdentifier(source) && !ts.isStringLiteral(source)) continue;
+      const literal = literalValue(element.initializer);
+      if (literal.ok) defaults.set(source.text, literal.value);
+    }
+  };
+
+  const param = fn?.parameters[0];
+  if (!param) return defaults;
+  if (ts.isObjectBindingPattern(param.name)) collect(param.name);
+
+  // calcom's Button destructures in the body, not in the parameter list
+  // (`function Button(props) { const { loading = false, ... } = props; }`), the
+  // same shape `sourceReferencedPropNames` already walks for.
+  const body = fn && "body" in fn ? fn.body : undefined;
+  if (!body || !ts.isIdentifier(param.name)) return defaults;
+  const paramName = param.name.text;
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isObjectBindingPattern(node.name) &&
+      node.initializer &&
+      ts.isIdentifier(node.initializer) &&
+      node.initializer.text === paramName
+    ) {
+      collect(node.name);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(body);
+  return defaults;
+}
+
+// M103 (I8): the pre-hooks convention, `Component.defaultProps = {...}` at the
+// top level of the component's own file. Parse-only, same shallow tradeoff
+// `detectOptionsApiProps` accepts.
+function defaultPropsAssignment(
+  sourceFile: ts.SourceFile,
+  targetName: string,
+): Map<string, unknown> {
+  const defaults = new Map<string, unknown>();
+  for (const statement of sourceFile.statements) {
+    if (!ts.isExpressionStatement(statement)) continue;
+    const expression = statement.expression;
+    if (!ts.isBinaryExpression(expression)) continue;
+    if (expression.operatorToken.kind !== ts.SyntaxKind.EqualsToken) continue;
+    const left = expression.left;
+    if (!ts.isPropertyAccessExpression(left)) continue;
+    if (left.name.text !== "defaultProps") continue;
+    if (!ts.isIdentifier(left.expression) || left.expression.text !== targetName) continue;
+    if (!ts.isObjectLiteralExpression(expression.right)) continue;
+    for (const property of expression.right.properties) {
+      if (!ts.isPropertyAssignment(property)) continue;
+      const name = property.name;
+      if (!ts.isIdentifier(name) && !ts.isStringLiteral(name)) continue;
+      const literal = literalValue(property.initializer);
+      if (literal.ok) defaults.set(name.text, literal.value);
+    }
+  }
+  return defaults;
+}
+
+// M103 (I8): the default is recorded on the schema. `reorderValues` is Vue's
+// pre-M103 `withDefaults` behavior (the declared default leads the pool) and
+// stays exactly where it was; a React default is disclosed without changing
+// which values are measured in which order, since M103 changes ranking,
+// binding and typing only.
+function applyDeclaredDefaults(
+  schemas: PropSchema[],
+  defaults: Map<string, unknown>,
+  source: NonNullable<PropSchema["defaultSource"]>,
+  reorderValues = false,
+): PropSchema[] {
+  if (defaults.size === 0) return schemas;
+  return schemas.map((schema) => {
+    if (!defaults.has(schema.name)) return schema;
+    const value = defaults.get(schema.name);
+    const values = reorderValues
+      ? [value, ...schema.values.filter((v) => !Object.is(v, value))]
+      : schema.values;
+    return { ...schema, values, defaultValue: value, defaultSource: source };
+  });
 }
 
 // Names bound out of a destructured first parameter, renames resolved to the
@@ -1017,6 +1410,18 @@ function warnRecursiveType(
   );
 }
 
+function warnUntypedJsComponent(
+  fileName: string,
+  targetName: string,
+  sink?: (message: string) => void,
+): void {
+  emit(
+    `${path.resolve(fileName)}::untyped-js::${targetName}`,
+    UNTYPED_JS_COMPONENT_WARNING(fileName, targetName, detectPropPresets(fileName) !== undefined),
+    sink,
+  );
+}
+
 interface PropsBinding {
   type?: ts.Type;
   targetName?: string;
@@ -1029,6 +1434,13 @@ interface PropsBinding {
   // threaded through so `typeToSchema` can read which prop names the
   // component's own body references by name.
   fn?: ts.SignatureDeclaration;
+  // M97: the type came from the binding's own call signatures, the last resort
+  // in `bindProps`. A JS entry's sibling declaration outranks it (ADR 0004).
+  viaTypeFallback?: boolean;
+  // M97: nothing bound to the measured target while another declaration in the
+  // same file did bind. Reported only once the declaration fallback has also
+  // come up empty.
+  unboundTargetHijacked?: boolean;
 }
 
 // A type reference with arguments (`ComponentProps<typeof X>`,
@@ -1084,7 +1496,12 @@ function findComponentPropsType(
   sink?: (message: string) => void,
 ): PropsBinding {
   const candidates = collectComponentCandidates(sourceFile);
-  const target = selectTargetCandidate(candidates, sourceFile.fileName, explicitTarget);
+  const target = selectTargetCandidate(
+    candidates,
+    sourceFile.fileName,
+    sourceFile.getFullText(),
+    explicitTarget,
+  );
   if (!target) return {};
 
   const byName = new Map<string, ComponentCandidate>();
@@ -1118,13 +1535,23 @@ function findComponentPropsType(
     ...(computedAnnotation ? { computedAnnotation } : {}),
   };
 
-  if (bound) return { type: bound.type, fn: bound.fn, ...context };
+  if (bound) {
+    return {
+      type: bound.type,
+      fn: bound.fn,
+      ...(bound.viaTypeFallback ? { viaTypeFallback: true } : {}),
+      ...context,
+    };
+  }
 
+  // M97: reported by the caller, after the sibling declaration has had its
+  // turn. Emitting here claimed "could not resolve props" on every MUI `.js`
+  // component whose declaration then resolved all sixteen.
   if (expectsProps(target)) {
     const hijacker = candidates.some(
       (candidate) => candidate !== target && bindProps(candidate, checker, byName),
     );
-    if (hijacker) warnUnboundTarget(sourceFile.fileName, target.name, sink);
+    if (hijacker) return { ...context, unboundTargetHijacked: true };
   }
 
   return context;
@@ -1189,9 +1616,28 @@ function extractFunctionFromInitializer(
   return undefined;
 }
 
+// M97 / ADR 0004: `React.forwardRef<T, P = {}>` with an unannotated render
+// parameter types the binding as `ForwardRefExoticComponent<RefAttributes<any>>`,
+// whose first call signature's parameter has exactly two properties: `ref` from
+// `RefAttributes` and `key` from `Attributes`. Neither is a prop of the
+// component. Origin matters as much as the name: a component that declares its
+// own `ref` prop in its own file keeps it, because that declaration does not
+// live in React's type packages.
+const REACT_AMBIENT_ATTRIBUTES = new Set(["ref", "key"]);
+
+function isReactAmbientAttribute(symbol: ts.Symbol): boolean {
+  if (!REACT_AMBIENT_ATTRIBUTES.has(symbol.getName())) return false;
+  const declarations = symbol.getDeclarations();
+  if (!declarations || declarations.length === 0) return true;
+  return declarations.every((declaration) =>
+    REACT_TYPE_PACKAGE.test(declaration.getSourceFile().fileName),
+  );
+}
+
 function looksLikePropsType(type: ts.Type, checker: ts.TypeChecker): boolean {
   const props = type.getProperties();
   if (props.length === 0) return false;
+  if (props.every(isReactAmbientAttribute)) return false;
 
   const typeStr = checker.typeToString(type);
   if (["string", "number", "boolean", "undefined", "null"].includes(typeStr)) {
@@ -1292,11 +1738,38 @@ function presetPropNames(fileName: string): Set<string> {
 //          through an ambient declaration.
 // Tier 3 - everything else: declared exclusively in node_modules, not
 //          variant-shaped - today's tail behavior, unchanged.
+// M103 (chakra-ui-F1, heroui-F3, dub-F7): origin decides before shape. M81's
+// Tier 1 was shape only, so an inherited `translate?: "yes" | "no"` and an
+// inherited `hidden?: boolean` outranked every prop the component itself
+// declares whose type resolves to something less tidy -- chakra's Badge
+// measured 32 props of which none were Badge's. See the rank table in
+// specs/milestones/m103-the-measured-props-are-the-components-own.md.
+type PropRank = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
+
+// M103: how many members the interface or type literal that declares a prop
+// declares. A component's own props interface is small (heroui's
+// `BadgeRootProps` has six members); a DOM attribute surface
+// (`HTMLAttributes`, ~250) and a style system's generated CSS-property surface
+// (chakra's `SystemProperties`, ~300) are not. "Declared in the project's own
+// sources" alone does not separate chakra's three recipe props from the three
+// hundred style props declared beside them in the same package; width does.
+const WIDE_DECLARATION_MEMBERS = 40;
+
+function isNarrowDeclarationSite(decl: ts.Declaration): boolean {
+  const parent = decl.parent;
+  if (!parent) return true;
+  if (ts.isInterfaceDeclaration(parent) || ts.isClassDeclaration(parent)) {
+    return parent.members.length < WIDE_DECLARATION_MEMBERS;
+  }
+  if (ts.isTypeLiteralNode(parent)) return parent.members.length < WIDE_DECLARATION_MEMBERS;
+  return true;
+}
+
 function propRank(
   prop: ts.Symbol,
   checker: ts.TypeChecker,
   promotedNames: Set<string>,
-): 0 | 1 | 2 | 3 {
+): PropRank {
   const name = prop.getName();
   if (promotedNames.has(name)) return 0;
 
@@ -1313,10 +1786,23 @@ function propRank(
       nonUndefined.every((m) => m.isStringLiteral() || !!(m.flags & ts.TypeFlags.StringLiteral))) ||
     (nonUndefined.length > 1 &&
       nonUndefined.every((m) => m.isNumberLiteral() || !!(m.flags & ts.TypeFlags.NumberLiteral)));
-  if (isVariantSurface) return 1;
 
-  const locallyMeaningful = !decls || decls.length === 0 || decls.some(isLocalDeclaration);
-  if (locallyMeaningful) return 2;
+  // Declared in the project's own sources: the component's file, a local type
+  // alias, or the package's generated recipe/variant types. A narrow
+  // declaration site is the component's own surface; a wide one is a bulk
+  // style/attribute surface that happens to live in the same package.
+  if (decls && decls.length > 0 && decls.some(isLocalDeclaration)) {
+    const narrow = decls.some((d) => isLocalDeclaration(d) && isNarrowDeclarationSite(d));
+    if (narrow) return isVariantSurface ? 1 : 2;
+    return isVariantSurface ? 4 : 5;
+  }
+
+  // A mapped or computed member has no declaration site to be third-party at,
+  // and it is exactly the shape `RecipeProps<"badge">`/`VariantProps<typeof x>`
+  // produce.
+  if (!decls || decls.length === 0) return 3;
+
+  if (isVariantSurface) return 6;
 
   // M86 mechanism 1: an unresolved generic parameter can make
   // `getCallSignatures()` report zero for a genuinely callable type (a
@@ -1334,9 +1820,9 @@ function propRank(
     (EVENT_HANDLER_NAME.test(name) &&
       (nonUndefined.some((t) => t.getCallSignatures().length > 0) ||
         nonUndefined.some((t) => t.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown))));
-  if (isHandlerOrChildren) return 2;
+  if (isHandlerOrChildren) return 7;
 
-  return 3;
+  return 8;
 }
 
 function typeToSchema(
@@ -1365,7 +1851,7 @@ function typeToSchema(
   // deep inside TypeScript's own instantiation machinery for a self-referential
   // generic member (M81 section 6); ranking runs this over every kept prop, not
   // just the 32 survivors, so it needs the same guard as classification below.
-  const ranked: { prop: ts.Symbol; rank: 0 | 1 | 2 | 3 }[] = [];
+  const ranked: { prop: ts.Symbol; rank: PropRank }[] = [];
   for (const prop of optionalProps) {
     try {
       ranked.push({ prop, rank: propRank(prop, checker, promotedNames) });
@@ -1507,6 +1993,19 @@ function classifyTypeByShape(
       return Number(checker.typeToString(m));
     });
     return { name, kind: "union", required, values, provenance: "declared" };
+  }
+
+  // M98 (element-plus-F3): `string | number` is a genuine union of two
+  // primitive shapes -- element-plus declares `value`, `width`, `height` and
+  // `maxHeight` that way. It matched no branch above and fell through to the
+  // opaque path, printing `unknown` with no disclosure while every other
+  // multi-shape prop in the same run got one. One synthesized member per
+  // branch, so the pool actually exercises both.
+  if (isBarePrimitiveUnion(nonUndefinedTypes)) {
+    const values = nonUndefinedTypes.map((member) =>
+      member.flags & ts.TypeFlags.String ? (namedStringValue(name) ?? "test") : 1,
+    );
+    return { name, kind: "union", required, values, provenance: "placeholder" };
   }
 
   // Plain string. M81 3d: `classifyType` has no way to see that a runtime
@@ -1903,6 +2402,22 @@ function isElementOrCallableUnion(type: ts.Type, checker: ts.TypeChecker): boole
 // boolean union, a plain `ReactNode`) or already disclosed by M81's own
 // `degenerate` warning (an element-or-callable union routes through
 // `opaqueReason`, which `warnDegenerateProps` already names).
+// M98 (element-plus-F3): exactly `string | number` / `number | string`. Bare
+// primitives only -- a literal member routes to the literal-union branches, and
+// every other mixed shape keeps the behavior it had.
+function isBarePrimitiveUnion(members: ts.Type[]): boolean {
+  if (members.length < 2) return false;
+  const isBare = (member: ts.Type): boolean =>
+    !!(member.flags & (ts.TypeFlags.String | ts.TypeFlags.Number)) &&
+    !member.isStringLiteral() &&
+    !member.isNumberLiteral();
+  return (
+    members.every(isBare) &&
+    members.some((m) => !!(m.flags & ts.TypeFlags.String)) &&
+    members.some((m) => !!(m.flags & ts.TypeFlags.Number))
+  );
+}
+
 function collapsedUnionBranches(type: ts.Type, checker: ts.TypeChecker): string[] | undefined {
   const nonUndefined = nonUndefinedMembers(type);
   if (nonUndefined.length <= 1) return undefined;
@@ -1916,12 +2431,15 @@ function collapsedUnionBranches(type: ts.Type, checker: ts.TypeChecker): string[
   if (nonUndefined.every((m) => m.isNumberLiteral() || !!(m.flags & ts.TypeFlags.NumberLiteral))) {
     return undefined;
   }
-  // A union of bare primitive types with no literal member anywhere
-  // (`string | number`) has nothing classifyType actually collapsed: the
-  // mixed-union fallback above requires a literal to pick from and leaves
-  // this shape as the pre-existing "unknown"/degenerate value, unchanged by
-  // M84. Disclosing "branches" for a value that stayed empty would describe
-  // a collapse that never happened.
+  // M98: `string | number` now collapses to one representative member per
+  // branch, so it gets the disclosure every other union gets. Before M98 it
+  // stayed an opaque `unknown` and there was no collapse to describe.
+  if (isBarePrimitiveUnion(nonUndefined)) return nonUndefined.map((m) => checker.typeToString(m));
+  // A union of bare primitive types with no literal member anywhere has
+  // nothing classifyType actually collapsed: the mixed-union fallback above
+  // requires a literal to pick from and leaves this shape as the pre-existing
+  // "unknown"/degenerate value, unchanged by M84. Disclosing "branches" for a
+  // value that stayed empty would describe a collapse that never happened.
   const hasObjectMember = nonUndefined.some(isObjectLike);
   const hasLiteralMember = nonUndefined.some(
     (m) => m.isStringLiteral() || m.isNumberLiteral() || !!(m.flags & ts.TypeFlags.BooleanLiteral),

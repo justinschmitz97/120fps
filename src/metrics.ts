@@ -1,5 +1,5 @@
 import type { CDPSession, Page } from "playwright";
-import { collectTrace, countComponentNodes, type TraceEvent } from "./measure.js";
+import { collectTrace, countComponentNodes, totalComponentNodes, type TraceEvent } from "./measure.js";
 
 export interface LongTask {
   startTime: number;
@@ -622,7 +622,7 @@ export async function createCalibrationTrace(
     );
   });
 
-  const domNodeCount = await countComponentNodes(page);
+  const domNodeCount = totalComponentNodes(await countComponentNodes(page));
 
   await page.evaluate(() => {
     const el = document.getElementById("__120fps_calibration");

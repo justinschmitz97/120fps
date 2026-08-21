@@ -179,7 +179,8 @@ describe("H19: injection with auto-scale rendering", () => {
     });
     expect(entry.indexOf('import "/app/globals.css";')).toBe(1);
     expect(entry).toContain("__120fps_scale");
-    expect(entry).toContain("scale as __120fps_scale");
+    // M106 A4: `scale` is read off the namespace instead of being imported.
+    expect(entry).toContain("const __120fps_scale = (__120fps_mod as any).scale;");
   });
 });
 

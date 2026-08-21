@@ -266,6 +266,14 @@ describe("H14: wall-clock formatting boundaries", () => {
     expect(formatWallClock(60_499)).toBe("Total: 1m 0s");
     expect(formatWallClock(89_000)).toBe("Total: 1m 29s");
   });
+
+  // commerce/material-ui printed `Total: 2m 60s`: the seconds were rounded
+  // after the minutes had already been split off, so a carry had nowhere to go.
+  it("carries a rounded-up second into the minutes", () => {
+    expect(formatWallClock(119_600)).toBe("Total: 2m 0s");
+    expect(formatWallClock(179_700)).toBe("Total: 3m 0s");
+    expect(formatWallClock(59_960)).toBe("Total: 1m 0s");
+  });
 });
 
 // H15: a wide value pool is a sample, not a dump.

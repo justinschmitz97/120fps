@@ -165,11 +165,31 @@ function mapTypeToAction(type: InteractionDescriptor["type"]): StressStep["actio
   }
 }
 
+// M106 C2 (calcom-F3): `open-close-10` is 20 clicks, each with a 3 s
+// `page.click` timeout. Radix's `modal` variant sets `body { pointer-events:
+// none }` while the portal is open, so 19 of those 20 clicks time out and one
+// pattern alone spends 57 s — inside a 60 s tracing window, on a phase whose
+// own `--explore-budget` was already exceeded. The remaining budget bounds the
+// step loop, and how many steps ran is returned so the caller can say so.
+export interface StressPatternRun {
+  stepsRun: number;
+  stepsPlanned: number;
+  budgetExhausted: boolean;
+}
+
 export async function executeStressPattern(
   page: Page,
   pattern: StressPattern,
-): Promise<void> {
+  remainingMs?: number,
+): Promise<StressPatternRun> {
+  const started = Date.now();
+  const budgetMs = remainingMs;
+  let stepsRun = 0;
   for (const step of pattern.steps) {
+    if (budgetMs !== undefined && Date.now() - started >= budgetMs) {
+      return { stepsRun, stepsPlanned: pattern.steps.length, budgetExhausted: true };
+    }
+    stepsRun++;
     try {
       switch (step.action) {
         case "click":
@@ -243,6 +263,7 @@ export async function executeStressPattern(
       () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))),
     );
   }
+  return { stepsRun, stepsPlanned: pattern.steps.length, budgetExhausted: false };
 }
 
 // Where to put the pointer and how far one wheel tick travels. The step size

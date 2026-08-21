@@ -250,11 +250,18 @@ describe("H10: scale-probe label composes with render-health and warn-rollup for
 
   it("WARN rollup note still prints under Result: PASS alongside a scale-probe row", () => {
     const report = makeReport({
-      combos: [makeCombo({ comboIndex: 0 }), makeCombo({ comboIndex: 1, scaleProbe: 5, verdict: "warn" })],
+      combos: [
+        makeCombo({ comboIndex: 0, verdict: "warn" }),
+        makeCombo({ comboIndex: 1, verdict: "pass" }),
+        makeCombo({ comboIndex: 2, scaleProbe: 5 }),
+      ],
     });
     const table = formatTable(report);
     expect(table).toContain("Result: PASS");
-    expect(table).toContain("warned;");
+    // dub-F5: the denominator is the prop combos, so it agrees with the
+    // "measured N of M prop combos" line the same run prints below it. The
+    // scale probe is a sibling-copies measurement, not a prop combo.
+    expect(table).toContain("1 of 2 combos warned;");
   });
 });
 

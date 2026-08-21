@@ -16,7 +16,13 @@ export type HintId =
   | "domFlat"
   | "measuredState"
   | "renderError"
-  | "harnessFault";
+  | "harnessFault"
+  // M105 I12 (primevue-F2): two mount-phase aborts whose remedy is neither a
+  // React provider nor a props preset, so `renderError`'s text fits neither.
+  | "vuePluginGlobals"
+  | "vueSlotContent"
+  // M106 C4 (calcom-F5): the numbers are real and the graphic is not.
+  | "unresolvedSprite";
 
 export interface Hint {
   id: HintId;
@@ -146,7 +152,71 @@ export const HINTS: Record<HintId, Hint> = {
     ],
     anchor: "#async-wrapper-setup",
   },
+  vuePluginGlobals: {
+    id: "vuePluginGlobals",
+    title: "the component reads a global that a Vue plugin installs",
+    lines: [
+      "The harness mounts with a bare createApp(): no app.use(...) ran, so a plugin's global",
+      "properties ($primevue and the like) and its provided values are absent, and the component",
+      "threw reading one. Add a 120fps.setup.vue wrapper and install the plugin from its own",
+      "setup: getCurrentInstance()?.appContext.app.use(Plugin). The wrapper renders inside the",
+      "same app the component mounts in.",
+    ],
+    anchor: "#provider-wrapper",
+  },
+  vueSlotContent: {
+    id: "vueSlotContent",
+    title: "the component calls a slot nothing was composed into",
+    lines: [
+      "$slots was read as content the component's own render depends on, and the harness mounted",
+      "it alone. Add the children in a <stem>.fixture.vue and pass --fixture (it is also",
+      "auto-detected next to the component): one SFC per component leaves a compound scene with",
+      "nothing to infer from.",
+    ],
+    anchor: "#vue",
+  },
+  unresolvedSprite: {
+    id: "unresolvedSprite",
+    title: "an svg reference points at a sprite the document never defines",
+    lines: [
+      "The render pays for an <svg> and a <use> element that draw nothing, because the sprite sheet",
+      "those ids live in is injected by your application shell, not by this component. Add a",
+      "120fps.setup.tsx wrapper whose top-level side effect injects the same sheet and point --wrap",
+      "at it, so the measured render draws what production draws.",
+    ],
+    anchor: "#provider-wrapper",
+  },
 };
+
+// M105 I12 (primevue-F2): a mount-phase abort throws before any report exists,
+// so `hintsForReport` — which consumes a built report — never runs for it and
+// the catalog entry for exactly this failure was unreachable. This reads the
+// one thing such a failure does have: the abort's own message text.
+//
+// The Select repro's text never contains "$primevue"; its stack frame reads
+// `at Proxy.$variant`. A `Proxy.` frame comes from Vue's own component proxy,
+// so that frame together with a read of `undefined` identifies a missing
+// injected global without needing the plugin's name to appear.
+const VUE_PLUGIN_GLOBAL_SIGNATURE = /\$primevue|app\.use\(|\binject\(\)/i;
+const VUE_PROXY_FRAME_SIGNATURE = /\bat Proxy\.\$?\w/;
+const UNDEFINED_READ_SIGNATURE = /Cannot read propert(?:y|ies) of undefined/i;
+const VUE_SLOT_SIGNATURE = /\$slots\b/;
+
+export function hintsForMountAbort(errorText: string): HintId[] {
+  const found = new Set<HintId>();
+  if (VUE_SLOT_SIGNATURE.test(errorText)) found.add("vueSlotContent");
+  if (
+    VUE_PLUGIN_GLOBAL_SIGNATURE.test(errorText) ||
+    (VUE_PROXY_FRAME_SIGNATURE.test(errorText) && UNDEFINED_READ_SIGNATURE.test(errorText))
+  ) {
+    found.add("vuePluginGlobals");
+  }
+  // The same loose provider/context signature `extraHintLines` uses, and the
+  // same rule behind it: a stack naming neither gets no guess at all.
+  if (PROVIDER_ERROR_SIGNATURE.test(errorText)) found.add("renderError");
+  const order = Object.keys(HINTS) as HintId[];
+  return order.filter((id) => found.has(id));
+}
 
 // Derived from the report alone, so a hint can never depend on a heuristic
 // about code the tool did not measure.
@@ -159,6 +229,9 @@ export function hintsForReport(report: Report): HintId[] {
     if (optimizations?.contextFanOut) found.add("contextFanOut");
     if ((optimizations?.callbackIdentityDeltas?.length ?? 0) > 0) found.add("callbackIdentity");
     if ((optimizations?.portalOrphans ?? 0) > 0) found.add("portalOrphans");
+    // M106 C4: a finding about the document the component was measured in,
+    // carried on whichever combos observed it.
+    if ((combo.unresolvedSpriteRefs?.length ?? 0) > 0) found.add("unresolvedSprite");
 
     // A render error fails the combo without any budget being exceeded, so the
     // budget hint would send the reader to the cost attribution of a tree that
@@ -197,7 +270,19 @@ export function hintsForReport(report: Report): HintId[] {
   // fails to drive rendering: domFlat's hint text is actively wrong for that
   // case, so it is suppressed whenever this same report already has a render
   // error to explain the flat curve.
-  if (curveReport?.domFlat && !curveRenderError) found.add("domFlat");
+  // M106 C3 (dub-F6), same reasoning one step further: a curve every one of
+  // whose points rendered zero nodes did not measure a prop that fails to
+  // drive the DOM — it measured a component that never rendered. domFlat's
+  // remedy ("point --curve at the prop that does") would send the reader after
+  // the wrong thing, and the run's own all-points-empty warning already states
+  // what happened.
+  // `points` is optional in practice: a hand-built or older report can carry a
+  // curve without it, and reading `.length` off it unguarded is what this
+  // predicate must never do.
+  const curvePoints = curveReport?.points ?? [];
+  const curveRenderedNothing =
+    curvePoints.length > 0 && curvePoints.every((p) => p.domNodeCount === 0);
+  if (curveReport?.domFlat && !curveRenderError && !curveRenderedNothing) found.add("domFlat");
   // Both classes are printed on the curve screen's `Growth:` line, so the hint
   // never cites a classification the reader cannot see.
   for (const curve of [curveReport?.mountCurve, curveReport?.rerenderCurve]) {

@@ -53,19 +53,114 @@ export async function detectAnimations(page: Page): Promise<boolean> {
 // that pushed small components a whole tier up. Count what the component
 // actually rendered: everything inside #root, plus portal content, which lives
 // on document.body but belongs to the component.
-export async function countComponentNodes(page: Page): Promise<number> {
-  return page.evaluate(() => {
-    const INTERNAL = new Set(["SCRIPT", "STYLE", "LINK", "NOSCRIPT", "TEMPLATE"]);
-    const root = document.getElementById("root");
-    let count = root ? root.querySelectorAll("*").length : 0;
-    for (const child of Array.from(document.body.children)) {
-      if (child === root) continue;
-      if (INTERNAL.has(child.tagName)) continue;
-      if (child.localName.startsWith("vite-")) continue;
-      count += 1 + child.querySelectorAll("*").length;
+//
+// M106 B4 (dub-F6): the two halves are reported separately. The sum is what
+// every existing caller reads and is unchanged; the split is what lets a
+// report say "this component rendered only through a portal" instead of
+// leaving `domNodeCount` to carry both facts at once. Kept as a source string
+// so the same code a page runs is the code a unit test runs (the harness
+// entry's `stylesheetMatchStats` precedent).
+export const COMPONENT_NODE_COUNT_SOURCE = `
+function __120fpsCountComponentNodes(doc) {
+  var INTERNAL = { SCRIPT: 1, STYLE: 1, LINK: 1, NOSCRIPT: 1, TEMPLATE: 1 };
+  var root = doc.getElementById("root");
+  var rootNodes = root ? root.querySelectorAll("*").length : 0;
+  var orphanNodes = 0;
+  var children = Array.prototype.slice.call(doc.body.children);
+  for (var i = 0; i < children.length; i++) {
+    var child = children[i];
+    if (root && child === root) continue;
+    if (INTERNAL[child.tagName]) continue;
+    if (child.localName && child.localName.indexOf("vite-") === 0) continue;
+    orphanNodes += 1 + child.querySelectorAll("*").length;
+  }
+  return { rootNodes: rootNodes, orphanNodes: orphanNodes };
+}`;
+
+export interface ComponentNodeCount {
+  // Everything the component rendered inside `#root`.
+  rootNodes: number;
+  // Everything it rendered outside `#root`, at body level: portals.
+  orphanNodes: number;
+}
+
+// `page.evaluate` parses a string as an EXPRESSION, so a bare function
+// declaration followed by a call is a syntax error at `eval`. Every source
+// string above is handed over wrapped in an IIFE, and the wrapped form is
+// exported so a unit test can assert it parses.
+function asEvaluateExpression(source: string, call: string): string {
+  return `(() => { ${source}
+return ${call}; })()`;
+}
+
+export const COMPONENT_NODE_COUNT_EXPRESSION = asEvaluateExpression(
+  COMPONENT_NODE_COUNT_SOURCE,
+  "__120fpsCountComponentNodes(document)",
+);
+
+export async function countComponentNodes(page: Page): Promise<ComponentNodeCount> {
+  return page.evaluate<ComponentNodeCount>(COMPONENT_NODE_COUNT_EXPRESSION);
+}
+
+export function totalComponentNodes(count: ComponentNodeCount): number {
+  return count.rootNodes + count.orphanNodes;
+}
+
+// M106 B5 (calcom-F5): `<use href="#calendar">` is a same-document fragment
+// reference. Nothing is requested, so M70's network capture is blind to it, and
+// the `<svg>` plus the `<use>` count as two real nodes -- a component that
+// renders visibly nothing measures as a component that rendered. calcom's
+// sprite is injected by `apps/web/app/layout.tsx`, which the harness never
+// mounts.
+//
+// Same-document fragments only. An external `<use href="/icons.svg#id">` is
+// fetched by the browser and its target never enters `document`, so
+// `getElementById` cannot decide it and checking it would report every valid
+// external sprite as unresolved.
+export const UNRESOLVED_SPRITE_REFS_SOURCE = `
+function __120fpsUnresolvedSpriteRefs(doc) {
+  var INTERNAL = { SCRIPT: 1, STYLE: 1, LINK: 1, NOSCRIPT: 1, TEMPLATE: 1 };
+  var scopes = [];
+  var root = doc.getElementById("root");
+  if (root) scopes.push(root);
+  var children = Array.prototype.slice.call(doc.body.children);
+  for (var i = 0; i < children.length; i++) {
+    var child = children[i];
+    if (root && child === root) continue;
+    if (INTERNAL[child.tagName]) continue;
+    if (child.localName && child.localName.indexOf("vite-") === 0) continue;
+    scopes.push(child);
+  }
+  var missing = [];
+  var seen = {};
+  for (var s = 0; s < scopes.length; s++) {
+    var nodes = Array.prototype.slice.call(scopes[s].querySelectorAll("*"));
+    for (var n = 0; n < nodes.length; n++) {
+      var node = nodes[n];
+      if (!node.localName || node.localName.toLowerCase() !== "use") continue;
+      var ref = node.getAttribute("href");
+      if (!ref) ref = node.getAttribute("xlink:href");
+      if (!ref || ref.charAt(0) !== "#") continue;
+      if (seen[ref]) continue;
+      seen[ref] = 1;
+      if (!doc.getElementById(ref.slice(1))) missing.push(ref);
     }
-    return count;
-  });
+  }
+  return missing;
+}`;
+
+// Bounded like every other collected list in a report: a component with a
+// hundred broken icons says so with ten of them.
+export const MAX_UNRESOLVED_SPRITE_REFS = 10;
+
+export const UNRESOLVED_SPRITE_REFS_EXPRESSION = asEvaluateExpression(
+  UNRESOLVED_SPRITE_REFS_SOURCE,
+  "__120fpsUnresolvedSpriteRefs(document)",
+);
+
+export async function collectUnresolvedSpriteRefs(page: Page): Promise<string[]> {
+  const refs = await page.evaluate<string[]>(UNRESOLVED_SPRITE_REFS_EXPRESSION);
+  return refs.slice(0, MAX_UNRESOLVED_SPRITE_REFS);
 }
 
 // M40: what scene the numbers describe. A component that fetches, suspends, or
@@ -416,12 +511,47 @@ export async function enterHarness(
 export const CONTEXT_RETRY_WARNING =
   "the dev server reloaded the page mid-measurement; the affected sample was retried once";
 
+// M106 B2 (calcom-F3): `isContextLostError` matches three signatures and only
+// one of them is a dev-server reload. A tracing stall printed "the dev server
+// reloaded the page mid-measurement" for a reload that did not happen, and the
+// reader had no way to tell which of the two had occurred.
+export const TRACING_STALL_RETRY_WARNING =
+  "the cost-attribution trace stalled (Tracing.tracingComplete never arrived); the affected sample " +
+  "was retried once against a fresh CDP session";
+
+export const TARGET_CLOSED_RETRY_WARNING =
+  "the browser target closed mid-measurement; the affected sample was retried once against a fresh " +
+  "browser session";
+
+export function contextRetryWarningFor(err: unknown): string {
+  if (isTracingTimeoutError(err)) return TRACING_STALL_RETRY_WARNING;
+  if (isTargetClosedError(err)) return TARGET_CLOSED_RETRY_WARNING;
+  return CONTEXT_RETRY_WARNING;
+}
+
 // Promoted to user-facing text (M56): the retry above absorbs one reload, but
 // exhausting the shared budget means the pattern kept recurring across the
 // run: that points at the environment, not the component under test.
 export const RETRY_BUDGET_EXHAUSTED_NOTE =
   " The context-retry budget is exhausted: repeated dev-server reloads (environment), not the " +
   "component, are the likely cause.";
+
+// M106 B2: the same distinction on the exhaustion path. Naming reloads for a
+// run that never reloaded sends a reader at the dev server instead of at the
+// trace pipeline.
+export const TRACING_BUDGET_EXHAUSTED_NOTE =
+  " The context-retry budget is exhausted: the cost-attribution trace kept stalling (environment), " +
+  "not the component.";
+
+export const TARGET_CLOSED_BUDGET_EXHAUSTED_NOTE =
+  " The context-retry budget is exhausted: the browser target kept closing (environment), not the " +
+  "component.";
+
+export function retryBudgetExhaustedNoteFor(err: unknown): string {
+  if (isTracingTimeoutError(err)) return TRACING_BUDGET_EXHAUSTED_NOTE;
+  if (isTargetClosedError(err)) return TARGET_CLOSED_BUDGET_EXHAUSTED_NOTE;
+  return RETRY_BUDGET_EXHAUSTED_NOTE;
+}
 
 // Vite's dependency optimizer can full-reload the page while a sample is in
 // flight. Two signatures, one cause: the evaluation context and the control API
@@ -911,11 +1041,12 @@ export async function withContextRetry<T>(
     if (budget) {
       if (budget.remaining <= 0) {
         const original = err instanceof Error ? err : new Error(String(err));
-        throw new Error(original.message + RETRY_BUDGET_EXHAUSTED_NOTE, { cause: err });
+        throw new Error(original.message + retryBudgetExhaustedNoteFor(err), { cause: err });
       }
       budget.remaining--;
     }
-    options?.onRetry?.(CONTEXT_RETRY_WARNING);
+    // M106 B2: the warning names the signature that actually fired.
+    options?.onRetry?.(contextRetryWarningFor(err));
     await enter();
     return await body();
   }
@@ -971,7 +1102,7 @@ export async function measureWrapperOverhead(
     await rafFence(page);
   };
   const unmount = () => page.evaluate(() => (window as any).__120fps.unmount());
-  const countNodes = () => countComponentNodes(page);
+  const countNodes = async () => totalComponentNodes(await countComponentNodes(page));
 
   for (let w = 0; w < WRAPPER_OVERHEAD_WARMUP; w++) {
     await mountWrapper();
@@ -1063,6 +1194,13 @@ export interface MountResult {
   // M59: everything the page threw or logged as an error while this combo was
   // measured. Absent when the page stayed quiet.
   pageErrors?: PageErrorDrain;
+  // M106 B4 (dub-F6): how much of `domNodeCount` was rendered outside `#root`.
+  // Absent when the component rendered no portal content, so a report that
+  // never had portals is byte-identical.
+  orphanNodes?: number;
+  // M106 B5 (calcom-F5): `<use href="#id">` references whose id no element in
+  // the document defines. Absent when every sprite reference resolved.
+  unresolvedSpriteRefs?: string[];
 }
 
 export interface TraceEvent {
@@ -1086,7 +1224,16 @@ const SCRIPT_EVENT_NAMES = new Set([
   "v8.run",
 ]);
 
-const TRACE_TIMEOUT_MS = 60_000;
+// M106 B1 (calcom-F3): this bounds the FLUSH -- the window between
+// `Tracing.end` and `Tracing.tracingComplete` -- and nothing else. It used to
+// be armed before `Tracing.start`, so it covered the traced action too: an
+// `open-close-10` stress pattern on a Radix portal spends 20 clicks at a 3 s
+// `page.click` timeout each, and Radix `modal`'s `body { pointer-events: none }`
+// made 19 of them time out. 57 s of interaction inside a 60 s window reported
+// itself as a tracing stall, and the raw CDP error ended the run at exit 2. The
+// action is bounded by its caller (the explore pass's remaining wall clock, the
+// rAF fence elsewhere), which is where an action budget belongs.
+export const TRACE_FLUSH_TIMEOUT_MS = 60_000;
 
 export function computeMedian(values: number[]): number {
   if (values.length === 0) return 0;
@@ -1179,13 +1326,22 @@ export async function collectTrace(
   cdp.on("Tracing.dataCollected", onData);
 
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let completed = false;
+  // M106 B1: armed at `Tracing.end`, not here. Declared now because the
+  // listener has to be attached before the action runs, or a fast flush would
+  // resolve into nothing.
+  let armFlushTimeout: () => void = () => {};
   const traceComplete = new Promise<void>((resolve, reject) => {
-    timer = setTimeout(
-      () => reject(new Error("Tracing.tracingComplete timed out")),
-      TRACE_TIMEOUT_MS,
-    );
+    armFlushTimeout = () => {
+      if (completed || timer !== undefined) return;
+      timer = setTimeout(
+        () => reject(new Error("Tracing.tracingComplete timed out")),
+        TRACE_FLUSH_TIMEOUT_MS,
+      );
+    };
     cdp.once("Tracing.tracingComplete", () => {
-      clearTimeout(timer);
+      completed = true;
+      if (timer !== undefined) clearTimeout(timer);
       timer = undefined;
       resolve();
     });
@@ -1204,6 +1360,8 @@ export async function collectTrace(
     try {
       await action();
     } finally {
+      // The flush window opens here: `Tracing.end` and everything after it.
+      armFlushTimeout();
       await cdp.send("Tracing.end");
     }
     await traceComplete;
@@ -1295,6 +1453,10 @@ export async function runMountUnmount(
   mountDur: number;
   unmountDur: number;
   domNodeCount: number;
+  // M106 B4: the portal half of `domNodeCount`.
+  orphanNodes: number;
+  // M106 B5: same-document sprite ids nothing in the page defines.
+  unresolvedSpriteRefs: string[];
   hasAnimation: boolean;
   measuredState: MeasuredState;
   mountEvents: TraceEvent[];
@@ -1308,7 +1470,14 @@ export async function runMountUnmount(
   // to the component, not to a gap in our instrumentation.
   if (collectDomInfo) await beginMutationWatch(page);
 
-  const domNodeCount = collectDomInfo ? await countComponentNodes(page) : 0;
+  const nodeCount = collectDomInfo
+    ? await countComponentNodes(page)
+    : { rootNodes: 0, orphanNodes: 0 };
+  const domNodeCount = totalComponentNodes(nodeCount);
+
+  // M106 B5 (calcom-F5): read in the same between-traces window as the node
+  // count, on the same `collectDomInfo` gate, so no traced sample pays for it.
+  const unresolvedSpriteRefs = collectDomInfo ? await collectUnresolvedSpriteRefs(page) : [];
 
   const hasAnimation = collectDomInfo ? await detectAnimations(page) : false;
 
@@ -1336,10 +1505,20 @@ export async function runMountUnmount(
     mountDur: mountParsed.totalDuration,
     unmountDur: unmountParsed.totalDuration,
     domNodeCount,
+    orphanNodes: nodeCount.orphanNodes,
+    unresolvedSpriteRefs,
     hasAnimation,
     measuredState,
     mountEvents,
   };
+}
+
+// M99 (I4): errors raised while this combo's props were rerendered into
+// `combos[toComboIndex]`'s props. Neither combo rendered those props on its
+// own, so the errors belong to the transition between the two.
+export interface TransitionPageErrors {
+  toComboIndex: number;
+  errors: PageErrorDrain;
 }
 
 export interface RerenderResult {
@@ -1352,6 +1531,29 @@ export interface RerenderResult {
   pacing?: MeasurementPacing;
   // M59: page errors raised while this combo's rerenders were measured.
   pageErrors?: PageErrorDrain;
+  // M99 (I4): errors raised by the prop-change rerender only.
+  transitionPageErrors?: TransitionPageErrors;
+}
+
+// M99 (I4): the combo's own error window closes before any rerender into the
+// next combo's props opens the transition's window. One window over both made
+// an error the next combo's props raised read as this combo's own (V1: radix
+// Label combos #1 and #6 carried a Slot error with no `asChild` of their own).
+// The sequencing lives here so the attribution is verifiable without a browser.
+export async function runWithSplitErrorWindows(
+  capture: Pick<PageErrorCapture, "drain">,
+  result: RerenderResult,
+  transition: { toComboIndex: number; run: () => Promise<void> } | undefined,
+): Promise<RerenderResult> {
+  const own = capture.drain();
+  if (hasPageErrors(own)) result.pageErrors = own;
+  if (!transition) return result;
+  await transition.run();
+  const drained = capture.drain();
+  if (hasPageErrors(drained)) {
+    result.transitionPageErrors = { toComboIndex: transition.toComboIndex, errors: drained };
+  }
+  return result;
 }
 
 export interface MeasureRerenderOptions {
@@ -1515,39 +1717,47 @@ export async function measureRerender(
       // The pairing follows the full combo list, so partitioning by pacing
       // cannot change which combo rerenders into which.
       // Skip when either combo is a scale combo: cross-scale rerenders are not meaningful
+      let transition: { toComboIndex: number; run: () => Promise<void> } | undefined;
       if (combos.length > 1) {
-        const nextProps = combos[(ci + 1) % combos.length];
+        const nextIndex = (ci + 1) % combos.length;
+        const nextProps = combos[nextIndex];
         const isScale = "__120fps_scaleN" in props;
         const nextIsScale = "__120fps_scaleN" in nextProps;
         if (!isScale && !nextIsScale) {
-          const changeSamples: number[] = [];
-          for (let s = 0; s < sampleCount; s++) {
-            const sample = await withFrameStarvationRetry(
-              ci,
-              enter,
-              () =>
-                withContextRetry(
+          transition = {
+            toComboIndex: nextIndex,
+            run: async () => {
+              const changeSamples: number[] = [];
+              for (let s = 0; s < sampleCount; s++) {
+                const sample = await withFrameStarvationRetry(
+                  ci,
                   enter,
-                  async () => {
-                    await suspendThrottle(ms.session.cdp, cpuThrottle, () => tryCollectGarbage(ms.session.cdp));
-                    await mountAndWait(ms.page, props);
-                    return rerenderAndTrace(ms.page, ms.session.cdp, nextProps);
-                  },
-                  { onRetry: options.onWarning, budget: retryBudget },
-                ),
-              options.onWarning,
-            );
-            if (sample !== undefined) changeSamples.push(sample);
-          }
-          if (changeSamples.length > 0) {
-            result.change = buildTimingResult(changeSamples);
-            result.changeToProps = nextProps;
-          }
+                  () =>
+                    withContextRetry(
+                      enter,
+                      async () => {
+                        await suspendThrottle(ms.session.cdp, cpuThrottle, () => tryCollectGarbage(ms.session.cdp));
+                        await mountAndWait(ms.page, props);
+                        return rerenderAndTrace(ms.page, ms.session.cdp, nextProps);
+                      },
+                      { onRetry: options.onWarning, budget: retryBudget },
+                    ),
+                  options.onWarning,
+                );
+                if (sample !== undefined) changeSamples.push(sample);
+              }
+              if (changeSamples.length > 0) {
+                result.change = buildTimingResult(changeSamples);
+                result.changeToProps = nextProps;
+              }
+            },
+          };
         }
       }
 
-      const drained = ms.errorCapture.drain();
-      if (hasPageErrors(drained)) result.pageErrors = drained;
+      // M99 (I4): two windows, not one — this combo's own renders, then the
+      // rerender into `combos[ci+1]`'s props.
+      await runWithSplitErrorWindows(ms.errorCapture, result, transition);
 
       results[ci] = result;
     }
@@ -1655,6 +1865,8 @@ export async function measureMount(
       const unmountSamples: number[] = [];
       const mountTraces: TraceEvent[][] = [];
       let domNodeCount = 0;
+      let orphanNodes = 0;
+      let unresolvedSpriteRefs: string[] = [];
       let hasAnimation = false;
       let measuredState: MeasuredState = "settled";
       let bailed = false;
@@ -1695,6 +1907,8 @@ export async function measureMount(
         mountTraces.push(run.mountEvents);
         if (s === 0) {
           domNodeCount = run.domNodeCount;
+          orphanNodes = run.orphanNodes;
+          unresolvedSpriteRefs = run.unresolvedSpriteRefs;
           hasAnimation = run.hasAnimation;
           measuredState = run.measuredState;
         }
@@ -1731,6 +1945,10 @@ export async function measureMount(
         mountTraces,
         pacing: ms.pacing,
         ...(hasPageErrors(pageErrors) ? { pageErrors: pageErrors! } : {}),
+        // M106 B4/B5: additive, and absent when there is nothing to say, so a
+        // component with no portals and no broken sprites reports as before.
+        ...(orphanNodes > 0 ? { orphanNodes } : {}),
+        ...(unresolvedSpriteRefs.length > 0 ? { unresolvedSpriteRefs } : {}),
       };
     }
   };

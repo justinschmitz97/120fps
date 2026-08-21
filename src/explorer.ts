@@ -26,6 +26,7 @@ import {
   tryCollectGarbage,
   suspendThrottle,
   withContextRetry,
+  withFrameStarvationRetry,
   createRetryBudget,
   createPhaseTracker,
   refreshCdpSession,
@@ -517,6 +518,7 @@ export async function explore(
           seed,
           cpuThrottle,
           observerTiming: options.observerTiming === true,
+          comboIndex: ci,
         },
         enter,
         options.onWarning,
@@ -547,7 +549,20 @@ interface InternalOptions {
   seed: number;
   cpuThrottle: number;
   observerTiming: boolean;
+  // M106 C1: only for the degrade warning's wording — a reader needs to know
+  // which combo stopped exploring.
+  comboIndex: number;
 }
+
+// M106 C1 (calcom-F3): the explore phase had no degrade path at all.
+// `withFrameStarvationRetry` already classifies a `tracing-timeout`, and its
+// only call sites were in measure.ts, so a second stall inside explore's
+// `withContextRetry` body threw raw and ended the run at exit 2 with no
+// report — after 124 s on a Radix Popover whose `open-close-10` pattern spent
+// 57 s of it in click timeouts. The combo keeps whatever it explored.
+export const EXPLORE_STALLED_WARNING = (comboIndex: number, edgeCount: number): string =>
+  `combo ${comboIndex}: explore skipped (tracing stalled); ${edgeCount} interaction` +
+  `${edgeCount === 1 ? "" : "s"} measured before the stall are kept and the report still prints`;
 
 async function exploreCombo(
   page: Page,
@@ -606,7 +621,15 @@ async function exploreCombo(
     normalQueue.push({ stateId: initialHash, interaction, depth: 0 });
   }
 
+  // M106 C1/C2: one clock for the whole combo. The stress pattern reads what
+  // is left of it so a pattern whose every click times out cannot outlive the
+  // budget that was supposed to bound it.
+  const remainingWallClock = (): number =>
+    Math.max(0, opts.maxWallClockMs - (Date.now() - startTime));
+  let stalled = false;
+
   while (priorityQueue.length > 0 || normalQueue.length > 0) {
+    if (stalled) break;
     if (Date.now() - startTime >= opts.maxWallClockMs) break;
     if (nodes.size >= opts.maxNodes) break;
 
@@ -650,7 +673,7 @@ async function exploreCombo(
             await navigateToState(page, props, sourceNode.pathFromRoot);
             await installObservers(page);
             await beginObservedWindow(page);
-            await executeStressPattern(page, pattern);
+            await executeStressPattern(page, pattern, remainingWallClock());
             return readObservedWindow(page);
           },
           { onRetry: onWarning, budget },
@@ -663,17 +686,32 @@ async function exploreCombo(
         continue;
       }
 
-      const traceEvents = await withContextRetry(
+      // M106 C1 (calcom-F3): the same bounded retry the mount and rerender
+      // sample loops already compose around their own bodies. A
+      // `tracing-timeout` is one of the stalls it classifies, and explore was
+      // the one phase with no call site — so a second stall threw raw out of
+      // the whole run instead of degrading this combo.
+      const traceEvents = await withFrameStarvationRetry(
+        opts.comboIndex,
         enter,
-        async () => {
-          await suspendThrottle(session.cdp, opts.cpuThrottle, () => tryCollectGarbage(session.cdp));
-          await navigateToState(page, props, sourceNode.pathFromRoot);
-          return collectTrace(session.cdp, async () => {
-            await executeStressPattern(page, pattern);
-          });
-        },
-        { onRetry: onWarning, budget },
+        () => withContextRetry(
+          enter,
+          async () => {
+            await suspendThrottle(session.cdp, opts.cpuThrottle, () => tryCollectGarbage(session.cdp));
+            await navigateToState(page, props, sourceNode.pathFromRoot);
+            return collectTrace(session.cdp, async () => {
+              await executeStressPattern(page, pattern, remainingWallClock());
+            });
+          },
+          { onRetry: onWarning, budget },
+        ),
+        onWarning,
       );
+      if (traceEvents === undefined) {
+        onWarning?.(EXPLORE_STALLED_WARNING(opts.comboIndex, edges.length));
+        stalled = true;
+        break;
+      }
 
       const parsed = parseTraceDuration(traceEvents);
       samples.push(parsed.totalDuration);

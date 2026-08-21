@@ -36,7 +36,11 @@ export type PreflightKind =
   // M78: no level from the member up through the workspace root has ever
   // been installed. Checked after the PnP check (a legitimate PnP project
   // never has node_modules by design) so the two are not confused.
-  | "not-installed";
+  | "not-installed"
+  // M106 A2 (excalidraw-F1): the import graph returns to the measured module.
+  // Soft: the cycle is the application's own and usually mounts; it only
+  // fails when the entry enters it at a point the application never does.
+  | "import-cycle";
 
 // The harness never loads the project's vite.config (M30): its plugins target
 // its own Vite major and its server options are not measurement-safe. That is
@@ -484,6 +488,7 @@ export function runPreflight(options: PreflightOptions): PreflightResult {
   const providers: ProviderHit[] = [];
   const providerSources = new Set<string>();
   const parents = new Map<string, string>();
+  const cycleReported = new Set<string>();
   const seen = new Set<string>();
   const queue: string[] = [];
   const entryFiles = new Set<string>();
@@ -615,6 +620,20 @@ export function runPreflight(options: PreflightOptions): PreflightResult {
       // the bundler's problem, and walking them would cost more than the check.
       if (resolved.isExternalLibraryImport || /[\\/]node_modules[\\/]/.test(target)) continue;
       if (target.endsWith(".d.ts")) continue;
+      // M106 A2: a back-edge to the measured module itself. The generated
+      // entry is the graph's only root, so it enters this cycle from the
+      // component's own file — backwards, compared with the application,
+      // whose own root enters it somewhere else — and a module-scope read of
+      // a binding that has not initialized yet throws.
+      if (entryFiles.has(target) && target !== file && !cycleReported.has(file)) {
+        cycleReported.add(file);
+        // No `specifier`: chainText would append the raw import text after the
+        // resolved file it already names, printing the same hop twice.
+        soft.push({
+          kind: "import-cycle",
+          chain: [...chainTo(file), relative(projectRoot, target)],
+        });
+      }
       if (seen.has(target)) continue;
       if (!fs.existsSync(target)) continue;
 
@@ -644,7 +663,7 @@ function chainText(hit: PreflightHit): string {
 
 // Only the kinds that can be a hard failure. Node builtins and project
 // transforms are reported, never fatal.
-type HardKind = Exclude<PreflightKind, "node-builtin" | "project-transform">;
+type HardKind = Exclude<PreflightKind, "node-builtin" | "project-transform" | "import-cycle">;
 
 const HARD_CAUSE: Record<HardKind, string> = {
   "server-only": "imports the server-only marker package",
@@ -687,6 +706,26 @@ export const HARD_REMEDY: Record<HardKind, string> = {
     "measure again.",
 };
 
+// M105 (solid-ui-F1): the escape hatch every hard remedy offers is useless
+// advice to a run that already took it — the same output prints
+// "--no-preflight bypassed 1 ... finding" two lines above. Process-level
+// state, set once from the parsed flag, for the same reason
+// `setCurrentRunProjectRoot` is: the remedy text is built three call layers
+// below the arguments, and one of its call sites is in another module's
+// failure path.
+let preflightBypassed = false;
+
+export function setPreflightBypassed(bypassed: boolean): void {
+  preflightBypassed = bypassed;
+}
+
+const BYPASS_ADVICE = /\s*Pass --no-preflight to attempt the run anyway\./g;
+
+export function hardRemedyFor(kind: HardKind): string {
+  const remedy = HARD_REMEDY[kind];
+  return preflightBypassed ? remedy.replace(BYPASS_ADVICE, "").trim() : remedy;
+}
+
 // M78/M79 (excalidraw-F3's compounding note): marks a thrown error as a
 // preflight hard-rejection — nothing has been built yet, so the diagnosis is
 // already complete. analyze.ts's outer catch checks for this marker and skips
@@ -711,13 +750,32 @@ export function preflightFailureMessage(hits: PreflightHit[]): string {
     "",
     `  ${chainText(hit)}`,
     "",
-    HARD_REMEDY[kind],
+    hardRemedyFor(kind),
   ].join("\n");
 }
 
-export const NODE_BUILTIN_WARNING = (hit: PreflightHit): string =>
+// M106 A2: the remedy is the one shape that reliably re-enters a cycle where
+// the application does — a wrapper module that imports the package's own root
+// first, which the generated entry emits before the component import.
+export const IMPORT_CYCLE_WARNING = (hit: PreflightHit): string =>
+  `${chainText(hit)}: the import graph returns to the measured module (a cycle). The generated ` +
+  "entry is this graph's only root, so it enters the cycle at the component's own file rather " +
+  "than where the application enters it; a module-scope read of a binding that has not " +
+  "initialized yet then fails with \"Cannot access 'X' before initialization\". If the run does " +
+  "not become ready with that error, add a 120fps.setup.tsx (or pass --wrap) that imports this " +
+  "package's own root module first.";
+
+const NODE_BUILTIN_TEXT = (hit: PreflightHit): string =>
   `${chainText(hit)}: a Node builtin in the component graph. ` +
   "Vite may externalize it; if the run fails to boot, this is the first place to look.";
+
+// One formatter for every soft hit, dispatching on the hit's own kind. The
+// historical name is kept because it is what both call sites in src/analyze.ts
+// import; SOFT_HIT_WARNING is the name to migrate to.
+export const SOFT_HIT_WARNING = (hit: PreflightHit): string =>
+  hit.kind === "import-cycle" ? IMPORT_CYCLE_WARNING(hit) : NODE_BUILTIN_TEXT(hit);
+
+export const NODE_BUILTIN_WARNING = SOFT_HIT_WARNING;
 
 // M79 (twenty-F3, half 2). The css-preprocessor recognizer above performs no
 // availability check by design (recognizeTransform's return shape is
@@ -792,6 +850,29 @@ export const transformFailureNote = (hits: PreflightHit[]): string =>
     "The harness deliberately does not load your vite.config, so those plugins are absent.",
   ].join("\n");
 
-export const PREFLIGHT_BYPASSED_WARNING = (hits: PreflightHit[]): string =>
-  `--no-preflight bypassed ${hits.length} server-boundary ${hits.length === 1 ? "finding" : "findings"}: ` +
-  hits.map(chainText).join("; ");
+// M105 (pnp-app-F1): one template used to call every hard kind a
+// "server-boundary finding", including the two this file's own HARD_CAUSE
+// table describes in completely different terms. Each kind is named as
+// itself; the three that really are one boundary keep sharing that name.
+const BYPASS_KIND_LABEL: Record<HardKind, string> = {
+  "server-only": "server-boundary",
+  "use-server": "server-boundary",
+  "async-component": "server-boundary",
+  "unsupported-framework": "solid",
+  "yarn-pnp": "yarn-pnp",
+  "not-installed": "not-installed",
+};
+
+export const PREFLIGHT_BYPASSED_WARNING = (hits: PreflightHit[]): string => {
+  const counts = new Map<string, number>();
+  for (const hit of hits) {
+    const label = BYPASS_KIND_LABEL[hit.kind as HardKind] ?? "preflight";
+    counts.set(label, (counts.get(label) ?? 0) + 1);
+  }
+  const noun = hits.length === 1 ? "finding" : "findings";
+  const head =
+    counts.size === 1
+      ? `${hits.length} ${[...counts.keys()][0]} ${noun}`
+      : `${hits.length} ${noun} (${[...counts.entries()].map(([label, n]) => `${n} ${label}`).join(", ")})`;
+  return `--no-preflight bypassed ${head}: ${hits.map(chainText).join("; ")}`;
+};

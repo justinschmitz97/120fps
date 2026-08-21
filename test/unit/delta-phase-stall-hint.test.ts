@@ -35,7 +35,9 @@ describe("M89 gap: delta-phase stall hint", () => {
     expect(err.message).not.toContain("--no-attribution");
   });
 
-  it.each(["mount", "explore", "attribution"] as const)(
+  // M106 A1 moved "explore" to its own hint: --no-attribution was measured
+  // against calcom's stalling component and changed nothing.
+  it.each(["mount", "attribution"] as const)(
     "enrichPhaseError still names --no-attribution for phase: %s on a stall signature",
     (phase) => {
       const err = enrichPhaseError(new Error("Tracing.tracingComplete timed out"), { phase });

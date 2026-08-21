@@ -118,9 +118,26 @@ describe("explainProps names a broken tsconfig extends chain (M92, nuxt-ui-F2)",
     });
     const explained = await explainProps(path.join(dir, "src/Untyped.jsx"));
     expect(explained.props).toEqual([]);
-    expect(
-      explained.warnings.some((w) => w.includes(fwd(dir)) && w.includes(".nuxt/tsconfig.json")),
-    ).toBe(true);
+    const broken = explained.warnings.filter(
+      (w) => w.includes(fwd(dir)) && w.includes(".nuxt/tsconfig.json"),
+    );
+    expect(broken).toHaveLength(1);
+  });
+
+  // M100 (I5): `collectStaticPreBuildWarnings` runs `loadTsconfigAliases` as
+  // its own first step, so the direct call `explainProps` used to make
+  // alongside it would have reported the identical broken chain twice.
+  it("names the broken chain once, not once per probe that reads the tsconfig", async () => {
+    const dir = mkProject({
+      "package.json": JSON.stringify({ name: "broken-extends-once" }),
+      "tsconfig.json": JSON.stringify({ extends: "./.nuxt/tsconfig.json" }),
+      "node_modules/react-dom/client.js": "module.exports = {};",
+      "src/Untyped.jsx": "export default function Untyped(props) { return null; }",
+    });
+    const explained = await explainProps(path.join(dir, "src/Untyped.jsx"));
+    const seen = new Map<string, number>();
+    for (const w of explained.warnings) seen.set(w, (seen.get(w) ?? 0) + 1);
+    expect([...seen.entries()].filter(([, n]) => n > 1)).toEqual([]);
   });
 
   it("does not fire when the extends chain fully resolves", async () => {

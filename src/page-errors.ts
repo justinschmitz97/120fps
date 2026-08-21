@@ -220,22 +220,58 @@ export function renderDrain(drain: PageErrorDrain): string[] {
 // capture.summary() text under two different lead sentences, so a genuine
 // hang (nothing captured, timeout fires) and an early fatal throw (something
 // captured almost instantly) read as two different failures, which they are.
+// M106 A2 (excalidraw-F1): "Cannot access 'DropdownMenu' before initialization"
+// is an ESM temporal-dead-zone error, not a component defect and not a
+// timeout. The preflight import-cycle warning printed above says which cycle;
+// this says why the failure the user is looking at is that cycle.
+const TDZ_PAGE_ERROR = /Cannot access '([^']+)' before initialization/;
+
+export function tdzCycleNote(capture: PageErrorCapture): string | undefined {
+  for (const error of capture.errors) {
+    const match = TDZ_PAGE_ERROR.exec(error);
+    if (!match) continue;
+    return (
+      `${match[1]} was read before its module finished initializing: an import cycle the generated ` +
+      "entry enters from the component's own file, rather than where the application enters it " +
+      "(see the import-cycle warning above). Add a 120fps.setup.tsx, or pass --wrap, that imports " +
+      "this package's own root module first."
+    );
+  }
+  return undefined;
+}
+
 function errorDetailBlock(capture: PageErrorCapture): string {
   return capture.errors.length > 0
     ? ` Page errors:\n${capture.summary()}`
     : " No page errors were captured.";
 }
 
+// M105 (taxonomy-F3): `remedyLine` is the same line buildFatalPageErrorMessage
+// already appends. It reaches this branch because the readiness wait's own
+// timeout usually beats the fatal signal (verify/V7's side finding), which left
+// the refusal a user can act on with no next step at all. Appended only when
+// the capture actually holds a page error: with nothing captured, a suggestion
+// about environment files would be a guess about a silent hang.
 export function enrichTimeoutError(
   err: unknown,
   capture: PageErrorCapture,
   context: string,
+  remedyLine?: string,
 ): Error {
   const base = err instanceof Error ? err : new Error(String(err));
   const isTimeout = base.name === "TimeoutError" || base.message.includes("Timeout");
   if (!isTimeout) return base;
 
-  return new Error(`${context} did not become ready within timeout.${errorDetailBlock(capture)}`, { cause: err });
+  const remedy = remedyLine && capture.errors.length > 0 ? `\n${remedyLine}` : "";
+  // M106 A2: a temporal-dead-zone error has a known cause, so it is attributed
+  // instead of speculated about; the env-file line would read as a guess next
+  // to it and is dropped for that one shape.
+  const cycle = tdzCycleNote(capture);
+  return new Error(
+    `${context} did not become ready within timeout.${errorDetailBlock(capture)}` +
+      (cycle ? `\n${cycle}` : remedy),
+    { cause: err },
+  );
 }
 
 // M79 gap 3b: a file with a JS/TS/Vue extension, the first such frame in the
@@ -294,7 +330,15 @@ export async function waitForReadyOrFatal(
   try {
     await Promise.race([waitForReady(), fatalSignal]);
   } catch (err) {
-    throw enrichTimeoutError(err, capture, context);
+    // M105: the readiness wait rejecting first does not mean no fatal error
+    // arrived — on taxonomy it always arrives, seconds earlier, and the race is
+    // decided by whichever promise settles first. A fatal signal that is
+    // already here still leads; otherwise the timeout carries the remedy.
+    if (fatal) throw buildFatalPageErrorMessage(fatal, capture, context, buildEnvRemedyLine?.());
+    // Still lazy: a timeout that captured nothing has nothing to attribute a
+    // remedy to, so the callback is not even called for it.
+    const remedyLine = capture.errors.length > 0 ? buildEnvRemedyLine?.() : undefined;
+    throw enrichTimeoutError(err, capture, context, remedyLine);
   }
   if (fatal) {
     throw buildFatalPageErrorMessage(fatal, capture, context, buildEnvRemedyLine?.());
@@ -364,9 +408,20 @@ export const RERENDER_PHASE_STALL_HINT =
   "A Worker, a long-lived timer or a running animation can keep the page busy so the trace " +
   "never completes; retry with fewer --samples or a lower --max-combos.";
 
+// M106 A1 (calcom-F3): the explore phase's `--no-attribution` advice was
+// measured against the failing component and produced an identical 124 s
+// failure — the stall is the exploration's own interaction budget (20 clicks
+// against a Radix portal whose `pointer-events: none` times each one out),
+// not the tracing pass. The two flags that really bound it are the budget and
+// the sample count.
+export const EXPLORE_PHASE_STALL_HINT =
+  "A Worker, a long-lived timer or a running animation can keep the page busy so the trace " +
+  "never completes; retry with a shorter --explore-budget or fewer --samples.";
+
 function stallHintForPhase(phase: MeasurementPhase): string {
   if (phase === "delta") return DELTA_PHASE_STALL_HINT;
   if (phase === "rerender") return RERENDER_PHASE_STALL_HINT;
+  if (phase === "explore") return EXPLORE_PHASE_STALL_HINT;
   return HARNESS_STALL_HINT;
 }
 
