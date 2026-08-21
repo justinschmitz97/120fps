@@ -103,6 +103,48 @@ describe("counting how many injected rules reach the rendered tree", () => {
     expect(stats).toEqual([{ file: "src/style.css", rules: 1, matched: 0 }]);
   });
 
+  it("counts a document-scoped rule as applying", () => {
+    const stats = loadCounter()(
+      ["/src/tokens.css"],
+      {
+        styleSheets: [
+          sheet("C:/repo/src/tokens.css", [
+            { selectorText: ":root" },
+            { selectorText: "html, body" },
+            { selectorText: "*" },
+          ]),
+        ],
+      },
+      root([]),
+    );
+    expect(stats).toEqual([{ file: "src/tokens.css", rules: 3, matched: 3 }]);
+  });
+
+  it("counts a rule matching the mount root itself", () => {
+    const stats = loadCounter()(
+      ["/src/style.css"],
+      { styleSheets: [sheet("C:/repo/src/style.css", [{ selectorText: "#root" }])] },
+      { querySelector: () => null, matches: (selector: string) => selector === "#root" },
+    );
+    expect(stats).toEqual([{ file: "src/style.css", rules: 1, matched: 1 }]);
+  });
+
+  it("counts a grouped selector when any one part matches under the root", () => {
+    const stats = loadCounter()(
+      ["/src/style.css"],
+      {
+        styleSheets: [
+          sheet("C:/repo/src/style.css", [
+            { selectorText: ".absent, .present" },
+            { selectorText: ".excalidraw .a, .excalidraw .b" },
+          ]),
+        ],
+      },
+      root([".present"]),
+    );
+    expect(stats).toEqual([{ file: "src/style.css", rules: 2, matched: 1 }]);
+  });
+
   it("ignores stylesheets that are not the injected ones", () => {
     const stats = loadCounter()(
       ["/src/style.css"],

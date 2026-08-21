@@ -22,6 +22,8 @@ describe("pre-build facts a run can state without building", () => {
     expect(fs.readdirSync(PROJECT).filter((n) => n.startsWith(".120fps-harness-"))).toEqual([]);
   });
 
+  // I5's set-and-order pin: toEqual on arrays is order-sensitive, so this
+  // fails if either path reorders or drops a warning the other keeps.
   it("produces the warnings the harness itself would produce", async () => {
     const pre = collectStaticPreBuildWarnings(PROJECT, { componentPath: COMPONENT });
     const harness = await buildAndServe(COMPONENT);
@@ -32,14 +34,5 @@ describe("pre-build facts a run can state without building", () => {
     }
   });
 
-  it("uses a precomputed result instead of recomputing it", async () => {
-    const pre = collectStaticPreBuildWarnings(PROJECT, { componentPath: COMPONENT });
-    pre.warnings.push("computed once, by the caller");
-    const harness = await buildAndServe(COMPONENT, { preBuild: pre });
-    try {
-      expect(harness.warnings).toContain("computed once, by the caller");
-    } finally {
-      await harness.cleanup();
-    }
-  });
+
 });

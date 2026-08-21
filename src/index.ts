@@ -449,10 +449,11 @@ export {
 export { warmupsForPosition } from "./measure.js";
 export { runWithSplitErrorWindows, type TransitionPageErrors } from "./measure.js";
 export { countComponentNodes, totalComponentNodes, collectUnresolvedSpriteRefs, COMPONENT_NODE_COUNT_SOURCE, UNRESOLVED_SPRITE_REFS_SOURCE, COMPONENT_NODE_COUNT_EXPRESSION, UNRESOLVED_SPRITE_REFS_EXPRESSION, MAX_UNRESOLVED_SPRITE_REFS, type ComponentNodeCount } from "./measure.js";
-export { matrixValues } from "./prop-gen-values.js";
+export { matrixValues, matrixDeclaredValues, matrixAxesFor, matrixHeldAbsentProps, MAX_MATRIX_AXIS_VALUES, type MatrixAxisValues } from "./prop-gen-values.js";
 export { TRACE_FLUSH_TIMEOUT_MS, TRACING_STALL_RETRY_WARNING, TARGET_CLOSED_RETRY_WARNING, contextRetryWarningFor, retryBudgetExhaustedNoteFor, TRACING_BUDGET_EXHAUSTED_NOTE, TARGET_CLOSED_BUDGET_EXHAUSTED_NOTE } from "./measure.js";
 export { selectMeasuredExport } from "./prop-gen.js";
 export { UNTYPED_JS_COMPONENT_WARNING, isUntypedJsComponentWarning } from "./prop-gen.js";
+export { SYNTHESIZED_REQUIRED_OBJECT_WARNING, isSynthesizedRequiredObjectWarning } from "./prop-gen.js";
 export { VUE_SETUP_RUNTIME_PROPS_WARNING, isVueSetupRuntimePropsWarning, VUE_UNRESOLVED_PROPS_TYPE_WARNING, isVueUnresolvedPropsTypeWarning } from "./prop-gen.js";
 export { churnParitySeries, buildChurnTiming } from "./isolation.js";
 export { EFFECTIVE_SAMPLES_WARNING } from "./analyze.js";

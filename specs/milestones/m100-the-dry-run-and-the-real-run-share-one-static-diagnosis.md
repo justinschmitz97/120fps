@@ -5,6 +5,9 @@ tests:
   - test/unit/static-prebuild-warning-parity.test.ts
   - test/unit/mode-prediction-parity.test.ts
   - test/unit/vue-project-react-file-gate.test.ts
+  - test/unit/real-run-discloses-what-the-dry-run-did.test.ts
+  - test/unit/collapsed-union-value-column.test.ts
+  - test/unit/wrapper-stylesheet-discovery.test.ts
 ---
 
 # M100: the dry run and the real run share one static diagnosis
@@ -56,6 +59,10 @@ reaching the matrix branch, which is additionally gated on `!matrixDisabled && !
   appears in both modes**; refusals that need the browser (module evaluation, provider throws) are
   listed as runtime-only, and the dry run's footer says so in one line.
 
+- The value column of `--explain-props` lists every branch of a collapsed
+  union, so the table and the collapsed-union warning below it describe the same
+  prop (excalidraw-F4).
+
 ### MUST NOT
 
 - Start a Vite server or browser from `--explain-props`.
@@ -105,17 +112,25 @@ because all three are the same subject as this milestone: what the two modes dis
 
 ## Design
 
+### Where the shared probe is called from (review gap 4)
+
+`analyze()` does **not** call `collectStaticPreBuildWarnings` itself: `buildAndServe` calls it once
+on the real-run path (`harness.ts`), and `explainProps` calls it once on the dry-run path. The
+observable contract the MUST states is met — one computation per run, the same warnings in the same
+order, no doubled cost. Lane A has since removed `BuildHarnessOptions.preBuild`, which had no
+producer: the two are different invocations, so a handed-across result could only go stale.
+
 ### Shared static pre-build probe (I5)
 
 Lane A exports `collectStaticPreBuildWarnings(projectRoot, opts)` from `src/harness.ts`, returning
 `{ warnings, viteConfig, externalDeps, styleTooling, nextModules }` — everything `buildAndServe`
-computed before starting a server that needs only the filesystem — and `buildAndServe` accepts the
-precomputed result via `opts.preBuild` instead of recomputing it.
+computed before starting a server that needs only the filesystem. `buildAndServe` calls it as the
+single computation of those facts for its own invocation.
 
 Lane C calls it from both sides:
 
-- `analyze()` at the point `buildAndServe` used to compute it, passing the result down as
-  `opts.preBuild` so the real run's warning order and text are byte-identical to today's.
+- the real run, through `buildAndServe`'s own call at the point it used to compute those facts
+  inline, so the warning order and text are byte-identical to today's.
 - `explainProps` after `loadTsconfigAliases` and before the renderer gates, pushing
   `result.warnings` into its own `warnings` array — the same position in the sequence the real run
   computes them, per M91's ordering rule.
@@ -143,6 +158,14 @@ no longer disagree; the dry run calls it with the same inputs it can compute sta
 one predicted mode plus, when a lower-precedence mode would also have qualified, the reason it loses.
 `PropsExplanation.matrixWouldActivate` keeps its meaning ("the matrix predicate is satisfied") and
 stops being the thing printed as a prediction.
+
+Review C-5 closed: `explainProps` accepts `curveMode`, `matrixMode`, `isolation` and `fixturePath`
+under the same names `AnalyzeOptions` uses, so the CLI forwards one shape to both entry points and
+the dry run predicts from the flags the dispatcher actually reads. Two sentences were split off the
+prediction because "combo" alone could not say why the matrix branch was unreachable:
+`matrixIneligibleReason` distinguishes `--no-matrix` from a fixture, and `curveSuppressedByFlag`
+stops `--no-curve` printing "no array or numeric scaling prop" over a component that has one.
+Auto-composition remains the one input no dry run can decide, and stays in the footer line.
 
 ### Composed runs emit their extraction warnings
 

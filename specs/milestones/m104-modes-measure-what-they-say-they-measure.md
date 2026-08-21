@@ -3,6 +3,7 @@ kind: milestone
 status: draft
 tests:
   - test/unit/matrix-axis-coverage.test.ts
+  - test/unit/mode-prediction-parity.test.ts
   - test/unit/matrix-cell-selection.test.ts
   - test/unit/scale-probes-are-not-prop-combos.test.ts
   - test/unit/curve-empty-render-point.test.ts
@@ -61,9 +62,16 @@ a way the reader cannot detect from the output alone:
 - A count printed anywhere in a run agrees with every other count in the same run: one derivation
   ("prop combos" = `combos.filter(c => c.scaleProbe === undefined)`), read by the mode line, the
   warn rollup, and the cap warning alike.
-- A curve whose every point renders nothing keeps its current output: excluding all points would
-  leave no fit at all, and the existing `domFlat` / `renderErrorPoints` disclosures already describe
-  that run.
+- A curve whose every point renders nothing keeps every point in the fit, because excluding all of
+  them would leave nothing to fit. **Superseded in part by M106 C3**, which is the later decision and
+  the one the code follows: such a run now fails, carries
+  `CURVE_ALL_POINTS_EMPTY_WARNING`, and gets the `curveRenderedNothing` hint instead of `domFlat`
+  (whose remedy names the scaling prop, the wrong thing when nothing rendered at any N). Exit code is
+  1, matching a combo-mode run whose every combo failed.
+- A single curve point with `domNodeCount === 0` mirrors combo mode's zero-DOM rule: nothing rendered
+  and nothing threw is `empty` and legal, so the point is tagged and excluded from the fit but does
+  not fail the run on its own; nothing rendered while the page reported something is a broken point
+  and fails it, exactly as `renderHealth: "error"` does on a combo.
 
 ## Where matrix cell selection lives (I10 finding)
 
@@ -97,8 +105,18 @@ Implemented in `src/prop-gen-values.ts`; the report half above states what this 
 - The anchor cell is present in the generated cell set under every generation path, including
   `pairwiseCover`, and is kept under every `--max-combos` value down to 1.
 - A prop the matrix does not vary holds the default the component declares, or is absent from the
-  cell. A synthesized truthy stand-in is never used for a non-axis prop. A *required* non-axis prop
-  is still present with its anchor value: an absent required prop is a guaranteed crash (M86).
+  cell. "Absent" is for a **synthesized stand-in** only — the `placeholder`/`heuristic`/`contract`
+  value dub-F1 named. Four classes stay present: a *required* prop (an absent required prop is a
+  guaranteed crash, M86), a prop with a declared default, a prop whose value came from
+  `<stem>.props.tsx` (`provenance: "preset"` — the user named that value, and M98 exists to make it
+  measurable), and a content slot (`children`, `label`, or any `reactnode`/`string` prop whose value
+  is `provenance: "declared"`). Dropping content made matrix mode measure a component with no
+  content while combo mode still measured it, so the two modes disagreed about the same component.
+- The non-axis props that *were* held absent are published as `matrixHeldAbsentProps(schemas):
+  string[]`, so the matrix header can name them. A cell that silently lost a prop reads as a cell the
+  component rendered without it.
+- A cover seed is skipped when the axis has fewer than two values, or when its second value is
+  literally `undefined` — that is the prop's own absence, not a deviation worth a cell of the budget.
 - Deviation order at a given `--max-combos`: after the anchor, cells that flip a boolean axis whose
   anchor is falsy and whose name reads as a reveal (`/^(is|has|show|open|visible|expanded|active|enabled)/i`)
   come first, then cells that deviate on the earliest-declared axis. Cartesian order alone
@@ -107,6 +125,16 @@ Implemented in `src/prop-gen-values.ts`; the report half above states what this 
   never the kept deviation (dub-F7).
 - `matrixValues` is exported, so `runMatrixMode` derives its declared axis values from the same
   function that generates the cells instead of a second inline copy of the predicate.
+- A literal union is matrix-eligible whatever its arity. dub's Badge declares `variant` with twelve
+  values, and the old 1..8 window excluded the component's only own prop while thirteen inherited
+  `<span>` attributes were crossed (dub-F7). An over-wide union is crossed over a truncated value
+  set: the anchor (the declared default when the component names one, else the first declared value)
+  plus the next declared values in declaration order, up to `MAX_MATRIX_AXIS_VALUES` (8). The
+  cell-count bound is unchanged, because `matrixValueCount` caps at 8 as well.
+- The truncation is disclosable per axis rather than presented as the whole contract:
+  `matrixAxesFor(schemas): MatrixAxisValues[]` returns `{ propName, values, declaredValues,
+  measuredValues }`, where `values === measuredValues` (so it satisfies `MatrixAxisLike`) and
+  `declaredValues` is every value the schema declares.
 - The cover path guarantees the same deviations the cartesian path does: `pairwiseCover` is seeded
   with the anchor plus one single-axis deviation per axis before greedy pair filling, so a
   distance-1 cell exists for every axis however wide the matrix is.
@@ -140,7 +168,17 @@ surfaced while testing the seeded cover: `size` is a 3-value union, so it owns t
 and a pure sort by `(reveal, axisIndex)` kept both of them ahead of every later axis. Selection is
 now one cell per axis first, remainder after.
 
-`pnpm vitest run test/unit/matrix-cell-selection.test.ts` — 22 passed. The Modal-shaped case
+Real: `cd /e/repositories/dub && node .../cli.js packages/ui/src/badge.tsx --matrix --samples 3
+--max-combos 4 --explore-budget 20` (`logs/fix-b-dub-badge-matrix.log`, exit 0). Before: thirteen
+inherited `<span>` axes and no `variant`. Now:
+
+    Prop Matrix (variant x defaultChecked x suppressContentEditableWarning x ...)
+    Axes crossed: variant: 2 of 12 values crossed, defaultChecked, suppressContentEditableWarning.
+
+`pnpm vitest run test/unit/matrix-cell-selection.test.ts` — 38 passed, including the review's B-1
+cases (a preset value, `children`, a declared `label` and a declared `reactnode` prop all survive in
+every cell; a `placeholder`-provenance `disabledTooltip` still does not) and B-12 (the seed skips an
+axis whose second value is `undefined`). The Modal-shaped case
 (`size`, `overlay`, `isOpen`, `padding`; `isOpen` required boolean, no default) keeps
 `[anchor, isOpen=true]` at `--max-combos 2`. The dub-Switch-shaped case (`checked`, `loading`,
 `disabled` as axes; `disabledTooltip` an optional `reactnode` with no declared default) produces

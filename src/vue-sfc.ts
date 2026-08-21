@@ -82,6 +82,9 @@ export function VUE_COMPILER_MISSING(projectRoot: string): string {
 function strongerLang(setupLang: string | undefined, companionLang: string | undefined): string {
   const langs = [setupLang, companionLang].filter((lang): lang is string => typeof lang === "string");
   if (langs.includes("tsx")) return "tsx";
+  // Review B-11: `<script setup lang="jsx">` beside `<script lang="ts">` needs
+  // a `.tsx` virtual file. Handing that JSX to a `.ts` one stops it parsing.
+  if (langs.includes("jsx") && langs.includes("ts")) return "tsx";
   if (langs.includes("ts")) return "ts";
   return setupLang ?? companionLang ?? "js";
 }

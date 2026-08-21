@@ -266,6 +266,65 @@ describe("a harness fault on a contract prop requires the error text to evidence
     expect(report.combos[0].harnessFault?.propName).toBe("as");
   });
 
+
+  // C-3 false negatives: the two most common Slot failures name neither
+  // `asChild` nor `slot`, so a value the harness synthesized was being charged
+  // to the component.
+  it("fires on React.Children.only, the shape Slot raises for a multi-child body", () => {
+    const report = crashed(
+      { asChild: true },
+      "React.Children.only expected to receive a single React element child.",
+      CONTRACT_SCHEMAS,
+    );
+    expect(report.combos[0].harnessFault?.propName).toBe("asChild");
+  });
+
+  it("fires when React rejects the cloned child outright", () => {
+    const report = crashed(
+      { asChild: true },
+      "Objects are not valid as a React child (found: object with keys {a, b}).",
+      CONTRACT_SCHEMAS,
+    );
+    expect(report.combos[0].harnessFault?.propName).toBe("asChild");
+  });
+
+  // C-3 false positives: ordinary JS failure prose was exonerating the
+  // component and turning a FAIL into a PASS.
+  it("does not read a property-read message as evidence about a render prop", () => {
+    const schemas: Schema[] = [
+      { name: "render", kind: "function", required: false, values: [undefined], provenance: "contract" },
+    ];
+    const report = crashed(
+      { render: () => null },
+      "TypeError: Cannot read properties of undefined (reading 'render')",
+      schemas,
+    );
+    expect(report.combos[0].harnessFault).toBeUndefined();
+    expect(report.pass).toBe(false);
+  });
+
+  it("does not read a property-read message as evidence about an as prop", () => {
+    const schemas: Schema[] = [
+      { name: "as", kind: "union", required: false, values: ["div"], provenance: "contract" },
+    ];
+    const report = crashed(
+      { as: "div" },
+      "TypeError: Cannot read properties of undefined (reading 'as')",
+      schemas,
+    );
+    expect(report.combos[0].harnessFault).toBeUndefined();
+  });
+
+  it("keeps a slot mechanism as evidence about asChild, not about as", () => {
+    const text = "Uncaught TypeError: n is undefined -- while assigning slot content";
+    const asSchemas: Schema[] = [
+      { name: "as", kind: "union", required: false, values: ["div"], provenance: "contract" },
+    ];
+    expect(crashed({ as: "div" }, text, asSchemas).combos[0].harnessFault).toBeUndefined();
+    expect(crashed({ asChild: true }, text, CONTRACT_SCHEMAS).combos[0].harnessFault?.propName)
+      .toBe("asChild");
+  });
+
   it("never fires with no captured error text at all", () => {
     const report = build({
       mounts: [makeMountResult({ props: { asChild: true }, domNodeCount: 0, pageErrors: { messages: [], fatal: true, dropped: 0 } })],

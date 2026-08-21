@@ -62,8 +62,8 @@ import {
   shouldAutoActivateMatrix,
   selectRepresentativeCombos,
   selectMatrixCombos,
-  isMatrixEligible,
-  matrixValues,
+  matrixAxesFor,
+  matrixHeldAbsentProps,
   countCombinationSpace,
   countDeltaPairSpace,
   DEFAULT_MEASURED_COMBOS,
@@ -314,8 +314,13 @@ export const EFFECTIVE_SAMPLES_WARNING = (
   requested: number,
   comboCount: number,
 ): string =>
-  `measured ${effective} samples per combo instead of the requested ${requested}: ${comboCount} combos ` +
-  `exceed the per-run sample budget. Dispersion (CV, P95) is estimated from ${effective} samples.`;
+  // C-15: `comboCount` is every measured row, scale probes included, which is
+  // the true input to the sample budget and a different number from the mode
+  // line's prop-combo count. M104's one-count invariant is about "combos"; this
+  // says "measurements" so the two numbers cannot be read as the same noun.
+  `measured ${effective} samples per measurement instead of the requested ${requested}: ` +
+  `${comboCount} measurements exceed the per-run sample budget. Dispersion (CV, P95) is ` +
+  `estimated from ${effective} samples.`;
 
 export interface AnalyzeOptions {
   samples?: number;
@@ -370,6 +375,13 @@ export interface AnalyzeOptions {
   // M65: one line per pipeline phase boundary. Defaulted by the CLI to stdout,
   // silenced entirely in CI mode.
   onProgress?: (line: string) => void;
+  // Review A2 (Lane A's run watchdog): the same phase boundaries as a signal,
+  // not as console output. `onProgress` is silenced by `--ci` because `--ci`
+  // owns stdout for JSON; a watchdog that re-arms per phase must not be
+  // silenced with it, or a CI run degrades to a single total-budget abort with
+  // no idea which phase hung. Invoked before the `ci` short-circuit and never
+  // written to any stream.
+  onPhase?: (phase: string) => void;
   // Item A (M90 follow-up): mirrors every warning this run discovers (the
   // `Stylesheets:` decision line, then each `runWarnings` entry as it is
   // pushed) out to a caller-supplied sink in real time, not only at the end
@@ -382,13 +394,27 @@ export interface AnalyzeOptions {
 
 // M65: `--ci` owns stdout for JSON (M22), so it wins over an explicit sink.
 export function resolveProgressReporter(
-  options: Pick<AnalyzeOptions, "ci" | "onProgress">,
+  options: Pick<AnalyzeOptions, "ci" | "onProgress" | "onPhase">,
   write: (chunk: string) => void = (chunk) => process.stdout.write(chunk),
 ): (line: string) => void {
-  if (options.ci) return () => {};
+  // Review A2: every phase boundary reaches `onPhase` on every path, `--ci`
+  // included. Console reporting is decided after that, not instead of it.
+  const heartbeat = options.onPhase;
+  const emit = (line: string): void => {
+    heartbeat?.(line);
+  };
+  if (options.ci) return emit;
   const sink = options.onProgress;
-  if (sink) return (line) => sink(line);
-  return (line) => write(line + "\n");
+  if (sink) {
+    return (line) => {
+      emit(line);
+      sink(line);
+    };
+  }
+  return (line) => {
+    emit(line);
+    write(line + "\n");
+  };
 }
 
 export interface BuildReportInput {
@@ -488,34 +514,47 @@ function stringifyLeaf(value: unknown): string | undefined {
   return undefined;
 }
 
-// M99: the mechanisms a truthy contract prop routes a render through. Matched
-// case-insensitively because the same mechanism is named differently by the
-// libraries that raise it (`Slottable` in Radix's own text, "failed to slot
-// onto its children" in the sentence before it). Each is a distinctive enough
-// identifier that its presence in a page's error text is itself evidence the
-// slot/clone contract is what failed.
-const CONTRACT_MECHANISM_TERMS = ["aschild", "slot", "slottable", "cloneelement"];
+// M99 (fix-up C-3): the mechanisms a truthy `asChild` routes a render
+// through, matched case-insensitively because the libraries that raise them
+// spell them differently (`Slottable` in Radix's own text, "failed to slot
+// onto its children" in the sentence before it, React's own
+// `React.Children.only` and "not valid as a React child" when a Slot receives
+// something it cannot clone). These are evidence about `asChild` specifically:
+// `as` and `render` substitute an element without going through Slot, so a
+// slot/clone failure says nothing about them.
+const SLOT_MECHANISM_TERMS = [
+  "aschild",
+  "slot",
+  "slottable",
+  "cloneelement",
+  "react.children.only",
+  "not valid as a react child",
+];
 
-// M99: `CONTRACT_PROP_NAME` (src/prop-gen.ts) is /^(asChild|as|render)$/, and
-// two of its three members are ordinary English words that appear in
-// unrelated error prose ("...undefined as the store", "...during render"). A
-// bare word-boundary match on the name is therefore not evidence; the name
-// has to appear where a prop appears — quoted, in JSX/object position, behind
-// a `props.` access, or followed by the word "prop".
+// M99 (fix-up C-3): `CONTRACT_PROP_NAME` (src/prop-gen.ts) is
+// /^(asChild|as|render)$/, and two of its three members are ordinary English
+// words. The earlier bar accepted the name merely quoted or behind a `.`,
+// which ordinary JS failure prose produces constantly -- `Cannot read
+// properties of undefined (reading 'render')` exonerated a component for its
+// own crash and turned a FAIL into a PASS. Two evidence forms survive, each
+// unambiguous on its own:
+//
+//   1. a slot/clone mechanism phrase, for `asChild` only;
+//   2. the prop's own name followed by the word "prop" (`The "as" prop must
+//      be a valid element type.`), which is about a prop by construction and
+//      cannot be produced by a property-read message.
 function contractEvidencedInText(propName: string, errorText: string): boolean {
   if (!errorText) return false;
   const lowered = errorText.toLowerCase();
-  for (const term of CONTRACT_MECHANISM_TERMS) {
-    if (matchesAsWord(term, lowered)) return true;
+  if (propName.toLowerCase() === "aschild") {
+    for (const term of SLOT_MECHANISM_TERMS) {
+      const hit = term.includes(" ") ? lowered.includes(term) : matchesAsWord(term, lowered);
+      if (hit) return true;
+    }
   }
   const escaped = propName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const propShaped = new RegExp(
-    `["'\`]${escaped}["'\`]` +
-    `|(?<![A-Za-z0-9_])${escaped}\\s*[=:]` +
-    `|\\.${escaped}(?![A-Za-z0-9_])` +
-    `|(?<![A-Za-z0-9_])${escaped}\\s+prop(?![A-Za-z0-9_])`,
-  );
-  return propShaped.test(errorText);
+  return new RegExp("[\"'`]?" + escaped + "[\"'`]?\\s+prop(?![A-Za-z0-9_])", "i")
+    .test(errorText);
 }
 
 // Word-boundary, not plain substring: a short/generic value ("0", "1", "id")
@@ -564,6 +603,8 @@ export function buildReport(input: BuildReportInput): Report {
         if (edge.interaction.portal) report.portal = true;
         if (edge.stressPattern) report.stressPattern = edge.stressPattern;
         if (edge.stressSteps) report.steps = edge.stressSteps;
+        // M106 C2 (C-2): a pattern the explore budget cut short.
+        if (edge.stressTruncatedFrom) report.stepsPlanned = edge.stressTruncatedFrom;
         interactions.push(report);
       }
     }
@@ -689,13 +730,20 @@ export function buildReport(input: BuildReportInput): Report {
   }
 
   if (!input.flatThresholds) {
+    // M104 fix-up (C-1): the exemption below describes the M61 augmentation
+    // probe -- N synthetic copies appended *beside* the real prop combos, whose
+    // cost is the copy count and not the component's. On a scale-export fixture
+    // (`runComboMode`'s `fixtureHasScale` branch) every combo is a probe, and
+    // exempting all of them made the run unfailable on any budget. The
+    // exemption applies only where the contrast it rests on exists.
+    const probesAccompanyPropCombos = combos.some((c) => c.scaleProbe === undefined);
     for (const combo of combos) {
       // M104 (dub-F5): `combo.props` has had the `__120fps_scaleN` trigger key
       // stripped since M61 (see above), so the old `"__120fps_scaleN" in
       // combo.props` test was dead and every scale probe had silently been
       // judged against a prop-combo tier budget. `scaleProbe` is the field M61
       // introduced for this identity.
-      const isScaleCombo = combo.scaleProbe !== undefined;
+      const isScaleCombo = combo.scaleProbe !== undefined && probesAccompanyPropCombos;
       const hasPortal = combo.interactions.some((i) => i.portal === true);
       const hasScaling = combo.scalingCurve != null || combo.rerenderScalingCurve != null;
       const mountResult = input.mounts.find((m) => m.comboIndex === combo.comboIndex);
@@ -1051,6 +1099,15 @@ async function runIsolationMode(
     ctx.useFixture || ctx.composed
       ? (await ctx.getSchemas(), [{}])
       : generateCombinations(await ctx.getSchemas());
+  // M100 MUST 3 covers this path too (review gap 5): --isolate on a fixture or
+  // a composed target measures `{}` exactly as combo mode does, and used to
+  // say nothing about it.
+  if (ctx.useFixture || ctx.composed) {
+    const isolationSchemas = await ctx.getSchemas();
+    if (isolationSchemas.length > 0) {
+      ctx.runWarnings.push(NO_PROPS_MEASURED_WARNING(ctx.useFixture));
+    }
+  }
   const selection = selectIsolationCombos(isolationCombos);
 
   ctx.progress(`isolation: ${phases.join(", ")}`);
@@ -1386,9 +1443,16 @@ async function runMatrixMode(ctx: ModeContext, matrixAutoActivated: boolean): Pr
   // to be the same predicate `generatePropMatrix` built the cells from. This
   // was a hand-copied duplicate of `isMatrixEligible`'s condition, free to
   // drift from it on the next change to either side.
-  const matrixAxes: MatrixAxis[] = schemas
-    .filter(isMatrixEligible)
-    .map((s) => ({ propName: s.name, values: matrixValues(s) }));
+  // M104 / I10: Lane B answers what the axes are and what each one declares
+  // versus crosses, so the header cannot describe a different set from the one
+  // `generatePropMatrix` built the cells from.
+  const matrixAxes: MatrixAxis[] = matrixAxesFor(schemas).map((axis) => ({
+    propName: axis.propName,
+    values: axis.values,
+    ...(axis.declaredValues.length > axis.measuredValues.length
+      ? { declaredValueCount: axis.declaredValues.length }
+      : {}),
+  }));
 
   // Full cartesian cell count the axes describe, independent of whichever
   // fallback generatePropMatrix used to fit MAX_MATRIX_CELLS.
@@ -1547,6 +1611,8 @@ async function runMatrixMode(ctx: ModeContext, matrixAutoActivated: boolean): Pr
 
   report.matrixReport = buildMatrixReport({
     axes: matrixAxes,
+    // M104 / I10: Lane B's own answer for which non-axis props no cell carries.
+    heldAbsentProps: matrixHeldAbsentProps(schemas),
     combos: report.combos,
     propDeltas: matrixDeltas,
   });
@@ -1790,7 +1856,10 @@ async function runComboMode(ctx: ModeContext, fixtureHasScale: boolean): Promise
     schemas = await ctx.getSchemas();
     combos = [{}];
     measuredWithoutProps = true;
-    runWarnings.push(NO_PROPS_MEASURED_WARNING(useFixture));
+    // C-13: "none of this component's own extracted props were applied" implies
+    // props were withheld. A component whose schema is genuinely empty had none
+    // to withhold, and the zero-prop chain already describes that run.
+    if (schemas.length > 0) runWarnings.push(NO_PROPS_MEASURED_WARNING(useFixture));
   } else {
     schemas = await ctx.getSchemas();
     zeroPropsExtracted = schemas.length === 0;
@@ -2129,6 +2198,18 @@ export interface ExplainedProp {
   required: boolean;
   values: unknown[];
   degenerate?: string;
+  // M100 (excalidraw-F4): every branch of a union the extractor collapsed to
+  // one measurable kind, exactly as the collapsed-union warning lists them
+  // (`number | "small" | "regular" | "wide"`). The value column renders from
+  // this so the table and the warning cannot disagree; `values` still holds
+  // only what the run would actually synthesize.
+  unionBranches?: string[];
+  // M103 / I8 (calcom-F2): the value the component itself falls back to when
+  // the prop is omitted, and where that was read from. Extraction has carried
+  // both since I8; the dry run never printed them, so the tool knew calcom
+  // Button's six defaults and said nothing about any of them.
+  defaultValue?: unknown;
+  defaultSource?: "destructuring" | "withDefaults" | "defaultProps";
 }
 
 export interface PropsExplanation {
@@ -2155,6 +2236,14 @@ export interface PropsExplanation {
   // its own narrower meaning (the matrix predicate is satisfied) and stops
   // being what gets printed as a prediction.
   predictedMode: PredictedMode;
+  // M100 (review C-5): why the matrix branch was unreachable, when it was.
+  // "combo" alone cannot say, and the two readings need different sentences:
+  // a flag the user typed, or a fixture that owns the props.
+  matrixIneligibleReason?: "no-matrix-flag" | "fixture";
+  // Set when a scaling prop was detected and `--no-curve` suppressed it, so
+  // "would not activate: no array or numeric scaling prop" is not printed over
+  // a component that has one.
+  curveSuppressedByFlag?: boolean;
   presetPath?: string;
   warnings: string[];
 }
@@ -2207,6 +2296,16 @@ export async function explainProps(
     target?: string;
     noPreflight?: boolean;
     framework?: "react" | "vue" | "vanilla" | "auto";
+    // M100 (review C-5): the four flags that decide which mode a real run
+    // takes. Without them the dry run predicted from its own detection alone,
+    // so `--no-matrix --explain-props` still promised a matrix, `--isolate`
+    // predicted curve or matrix, and `--fixture` predicted a matrix over props
+    // the fixture supplies. Same names and types as `AnalyzeOptions`, so the
+    // CLI forwards one shape to both entry points.
+    curveMode?: boolean | { propName: string; propKind: "array" | "number" };
+    matrixMode?: boolean;
+    isolation?: { phases: string[]; memoryCycles?: number };
+    fixturePath?: string;
   } = {},
 ): Promise<PropsExplanation> {
   const resolvedPath = path.resolve(componentPath);
@@ -2232,8 +2331,11 @@ export async function explainProps(
     resolvedPath,
     (w) => warnings.push(w),
   );
-  const resolvedCss = resolveCssFiles({}, projectRoot, warnings);
+  // M102 / I6: resolved before the CSS probe, and in the same order the full
+  // run resolves them (resolveWrapPath then resolveCssFiles), so a wrapper's
+  // own stylesheet imports are discoverable in both modes.
   const { wrapPath } = resolveWrapPath({}, projectRoot, framework, warnings);
+  const resolvedCss = resolveCssFiles({}, projectRoot, warnings, wrapPath ? { wrapPath } : undefined);
   // M100 (preact-app-F1): the real run formats this line the moment the CSS
   // decision is made (analyze.ts's `cssDecisionWarning`) and carries it
   // through every exit path including a crash; the dry run resolved the same
@@ -2336,6 +2438,14 @@ export async function explainProps(
     ? [componentName]
     : (await extractExports(resolvedPath)).map((e) => e.name);
   const curveMatch = detectScalingProps(schemas)[0];
+  // The fixture inputs the real run has before it dispatches: an explicit
+  // --fixture, a target that is itself a fixture, or one sitting next to the
+  // component. Auto-composition is the one input no dry run can decide, and
+  // the footer says so rather than this pretending to know.
+  const dryRunUsesFixture =
+    options.fixturePath !== undefined ||
+    isFixturePath(resolvedPath) ||
+    detectFixture(resolvedPath) !== undefined;
 
   // M83 #8 (chakra-ui-F7): detectComponentExport resolving to the file's own
   // marked `export default` is correct by JS/TS export semantics, not a bug
@@ -2358,13 +2468,21 @@ export async function explainProps(
         }
       : {}),
     exports,
-    props: schemas.map((s) => ({
-      name: s.name,
-      kind: s.kind,
-      required: s.required,
-      values: s.values,
-      ...(s.degenerate ? { degenerate: s.degenerate } : {}),
-    })),
+    props: schemas.map((s) => {
+      const branches = collapsedUnionBranchesFor(s.name, detail.warnings);
+      return {
+        name: s.name,
+        kind: s.kind,
+        required: s.required,
+        values: s.values,
+        ...(branches ? { unionBranches: branches } : {}),
+        // `defaultValue` is legitimately `false`/`0`/`""`, so presence is what
+        // decides, never truthiness.
+        ...("defaultValue" in s ? { defaultValue: s.defaultValue } : {}),
+        ...(s.defaultSource ? { defaultSource: s.defaultSource } : {}),
+        ...(s.degenerate ? { degenerate: s.degenerate } : {}),
+      };
+    }),
     ...(curveMatch
       ? { curve: { propName: curveMatch.schema.name, reason: curveMatch.reason } }
       : {}),
@@ -2382,13 +2500,28 @@ export async function explainProps(
     // cheaply, so it is assumed absent here — the same stated limit
     // `scaleProbeWillRun` already carries.
     predictedMode: predictMode({
-      isolation: false,
-      curve: curveMatch !== undefined,
-      matrixEligible:
-        !isFixturePath(resolvedPath) && detectFixture(resolvedPath) === undefined,
-      matrixRequested: false,
+      isolation: options.isolation !== undefined,
+      // `resolveCurveMatch`'s own precedence: --no-curve suppresses it
+      // entirely, an explicit --curve names the prop itself, otherwise
+      // detection answers -- and a fixture or composed scene has no curve.
+      curve:
+        options.curveMode === false || dryRunUsesFixture
+          ? false
+          : options.curveMode !== undefined && options.curveMode !== true
+            ? true
+            : curveMatch !== undefined,
+      matrixEligible: options.matrixMode !== false && !dryRunUsesFixture,
+      matrixRequested: options.matrixMode === true,
       matrixAutoActivates: shouldAutoActivateMatrix(schemas),
     }),
+    ...(options.matrixMode === false
+      ? { matrixIneligibleReason: "no-matrix-flag" as const }
+      : dryRunUsesFixture
+        ? { matrixIneligibleReason: "fixture" as const }
+        : {}),
+    ...(options.curveMode === false && curveMatch !== undefined
+      ? { curveSuppressedByFlag: true }
+      : {}),
     ...(presets ? { presetPath: presets.path } : {}),
     warnings,
   };
@@ -2417,6 +2550,45 @@ function explainValue(value: unknown): string {
   return text.length > EXPLAIN_VALUE_WIDTH
     ? text.slice(0, EXPLAIN_VALUE_WIDTH - 1) + "…"
     : text;
+}
+
+// M100 (excalidraw-F4): `ConfirmDialog.size` printed `"small"` in the value
+// column while the warning two lines below said the union has four shapes, so
+// a reader of the table alone believed `"small"` was the only accepted value.
+// The branch list lives in the warning the same extraction produced, and is
+// read back here rather than re-derived, so the two cannot drift.
+//
+// Interface request (Lane B): the source of truth belongs on `PropSchema`
+// (a `unionBranches?: string[]` beside `values`); this reads the disclosure
+// M84 already emits so the table stops contradicting it today.
+const COLLAPSED_UNION_WARNING = /^Warning: prop "([^"]+)".* is a union of \d+ different shapes \(([^)]*)\)/;
+
+export function collapsedUnionBranchesFor(
+  propName: string,
+  warnings: string[],
+): string[] | undefined {
+  for (const warning of warnings) {
+    const match = COLLAPSED_UNION_WARNING.exec(warning);
+    if (match && match[1] === propName) {
+      return match[2].split(" | ").map((b) => b.trim()).filter((b) => b.length > 0);
+    }
+  }
+  return undefined;
+}
+
+// A quoted branch is a literal the run could synthesize; anything else is a
+// whole type the collapse dropped. Both are named, and they are named
+// differently, because they are different facts about the prop.
+export function explainUnionBranches(branches: string[]): string {
+  const literals = branches.filter((b) => /^["'`]/.test(b));
+  const others = branches.filter((b) => !/^["'`]/.test(b));
+  const shownLiterals = literals.slice(0, EXPLAIN_VALUE_CAP);
+  const restCount = literals.length - shownLiterals.length;
+  const parts: string[] = [];
+  if (shownLiterals.length > 0) parts.push(shownLiterals.join(", "));
+  if (restCount > 0) parts.push(`+${restCount} more`);
+  const head = parts.join(", ");
+  return others.length > 0 ? `${head || "(no literal values)"} (+ ${others.join(", ")})` : head;
 }
 
 function explainValues(values: unknown[]): string {
@@ -2448,9 +2620,35 @@ export function formatExplainProps(explained: PropsExplanation): string {
   } else {
     const nameWidth = Math.max(...explained.props.map((p) => p.name.length));
     const kindWidth = Math.max(...explained.props.map((p) => p.kind.length));
+    // M103 / I8 (calcom-F2): the column appears whenever any prop declares a
+    // default, and the header names it so a blank cell reads as "no default"
+    // rather than as a missing number.
+    const anyDefault = explained.props.some((p) => p.defaultValue !== undefined);
+    const defaultWidth = anyDefault
+      ? Math.max(
+          "default".length,
+          ...explained.props.map((p) =>
+            p.defaultValue === undefined ? 0 : explainValue(p.defaultValue).length,
+          ),
+        )
+      : 0;
+    if (anyDefault) {
+      lines.push(
+        `  ${"prop".padEnd(nameWidth)}  ${"type".padEnd(kindWidth)}  ${"required".padEnd(8)}  ` +
+        `${"default".padEnd(defaultWidth)}  value`,
+      );
+    }
     for (const prop of explained.props) {
       const required = prop.required ? "required" : "optional";
-      let line = `  ${prop.name.padEnd(nameWidth)}  ${prop.kind.padEnd(kindWidth)}  ${required}  ${explainValues(prop.values)}`;
+      const defaultColumn = anyDefault
+        ? `${(prop.defaultValue === undefined ? "" : explainValue(prop.defaultValue)).padEnd(defaultWidth)}  `
+        : "";
+      // M100 (excalidraw-F4): a collapsed union renders its whole branch list,
+      // so the row and the warning below describe the same prop.
+      const valueColumn = prop.unionBranches
+        ? explainUnionBranches(prop.unionBranches)
+        : explainValues(prop.values);
+      let line = `  ${prop.name.padEnd(nameWidth)}  ${prop.kind.padEnd(kindWidth)}  ${required}  ${defaultColumn}${valueColumn}`;
       if (prop.degenerate) line += `  [degenerate: ${prop.degenerate}]`;
       lines.push(line);
     }
@@ -2458,9 +2656,11 @@ export function formatExplainProps(explained: PropsExplanation): string {
 
   lines.push("");
   lines.push(
-    explained.curve
-      ? `Curve mode:   would activate on ${explained.curve.propName} (${explained.curve.reason})`
-      : "Curve mode:   would not activate: no array or numeric scaling prop",
+    explained.curveSuppressedByFlag
+      ? "Curve mode:   would not activate: --no-curve, though this component has a scaling prop"
+      : explained.curve
+        ? `Curve mode:   would activate on ${explained.curve.propName} (${explained.curve.reason})`
+        : "Curve mode:   would not activate: no array or numeric scaling prop",
   );
   // M83 #5 (base-ui-F6): a separate mechanism from curve mode above — the M61
   // sibling-copies scale probe runs unconditionally on a non-fixture target
@@ -2481,7 +2681,17 @@ export function formatExplainProps(explained: PropsExplanation): string {
     explained.matrixWouldActivate
       ? explained.predictedMode === "matrix"
         ? "Matrix mode:  would auto-activate"
-        : `Matrix mode:  predicate matches, but ${explained.predictedMode} mode takes precedence and is what this run would use`
+        // C-6: combo mode takes no precedence over matrix -- when the
+        // prediction is `combo` the matrix branch was *ineligible*, which on a
+        // dry run means a fixture (given or sitting next to the component)
+        // supplies the props. Naming precedence there would be false.
+        : explained.matrixIneligibleReason === "no-matrix-flag"
+          ? "Matrix mode:  predicate matches, but --no-matrix was passed, so this run would measure prop combos"
+        : explained.matrixIneligibleReason === "fixture"
+          ? "Matrix mode:  predicate matches, but a fixture supplies the props, so this run would measure the fixture's single combo"
+        : explained.predictedMode === "combo"
+          ? "Matrix mode:  predicate matches, but this run would measure prop combos"
+          : `Matrix mode:  predicate matches, but ${explained.predictedMode} mode takes precedence and is what this run would use`
       : "Matrix mode:  would not auto-activate",
   );
 
@@ -2572,11 +2782,18 @@ async function probeStylesheetMatchStats(
 // M102 / I7: names the file and what the reader would otherwise have to infer
 // from a styled-looking report — that the render was measured as if the
 // stylesheet were not there at all.
+// C-8: the probe asks `#root.querySelector(selectorText)`, which searches
+// descendants of the component's container only. A rule selecting `:root`,
+// `html` or `body` can never match there even though its custom properties do
+// cascade in, so the old wording ("the measurement describes an unstyled
+// render") was false for a design-token sheet. This states what was observed
+// and names both readings.
 export const STYLESHEET_MATCHED_NOTHING_WARNING = (file: string, rules: number): string =>
-  `${file} was injected and none of its ${rules} rules matched anything the component rendered: ` +
-  "the measurement describes an unstyled render. A stylesheet scoped under an ancestor class or " +
-  "id the harness does not render (a theme root, an app shell wrapper) needs a --wrap module that " +
-  "renders that ancestor.";
+  `${file} was injected and none of its ${rules} rules matched an element inside the component's ` +
+  "own tree. Either the sheet is scoped under an ancestor the harness does not render (a theme " +
+  "root, an app shell wrapper), in which case the render measured unstyled and a --wrap module " +
+  "that renders that ancestor fixes it, or the sheet only declares custom properties on :root, " +
+  "which do cascade in and are not counted here.";
 
 async function collectMachineInfo(
   chromiumVersion: string,
@@ -2827,7 +3044,12 @@ export async function analyze(
   const { wrapPath, wrapAutoDetected } = resolveWrapPath(options, projectRoot, framework, wrapWarnings);
   // M71: what discovery had to guess at, folded into the run's warnings below.
   const cssWarnings: string[] = [];
-  const resolvedCss = resolveCssFiles(options, projectRoot, cssWarnings);
+  const resolvedCss = resolveCssFiles(
+    options,
+    projectRoot,
+    cssWarnings,
+    wrapPath ? { wrapPath } : undefined,
+  );
   const cssReport = buildCssReport(resolvedCss, projectRoot);
   // M90 (ant-design-F6, dub-F3, nuxt-ui-F4, mantine-F5, calcom-F6,
   // shadcn-ui-F3): computed once, right where the decision is made, so it
@@ -2920,7 +3142,14 @@ export async function analyze(
     // M100 (chakra-ui-F4): the same note --explain-props prints, from the same
     // function, on the same schemas the run will measure. A fixture owns its
     // scene, so retargeting an export inside it is not the remedy there.
-    if (!useFixture) {
+    // C-10: a composed scene owns the render exactly as a fixture does, and it
+    // now reaches getSchemas(), so the retarget note would print beside
+    // NO_PROPS_MEASURED_WARNING and contradict it -- advising a retarget
+    // because of a required degenerate prop the run never applied.
+    // Read live, not captured: this closure runs lazily (getSchemas), long
+    // after `compositionTree` is decided, and a rolled-back composition clears
+    // it again.
+    if (!useFixture && compositionTree === undefined) {
       const note = await alternativeExportNote(
         file,
         detectComponentExport(file, options.target).name,
@@ -3245,12 +3474,23 @@ export async function analyze(
       // was dropped — indistinguishable from a project that had none. Each
       // dropped file keeps its entry and carries the path that was actually
       // tried plus the reason it was dropped.
-      cssReport.details = droppedFiles.map((file) => ({
-        file,
-        bytes: 0,
-        rules: 0,
-        unreadable: `not readable at ${missingTarget}; dropped, and the run measured unstyled`,
-      }));
+      // C-9: only one file caused the ENOENT. The others were dropped with it
+      // when the harness rebuilt without any stylesheet, so "not readable at X"
+      // is false of them; they keep the byte and rule counts buildCssReport had
+      // already computed.
+      const priorDetails = cssReport.details ?? [];
+      cssReport.details = droppedFiles.map((file) => {
+        const prior = priorDetails.find((d) => d.file === file);
+        const causedIt = missingTarget.split("\\").join("/").endsWith(file);
+        return {
+          file,
+          bytes: prior?.bytes ?? 0,
+          rules: prior?.rules ?? 0,
+          unreadable: causedIt
+            ? `not readable at ${missingTarget}; dropped, and the run measured unstyled`
+            : `dropped alongside ${missingTarget}, which could not be read; the run measured unstyled`,
+        };
+      });
       delete cssReport.onlyCandidate;
       delete cssReport.noEntryInPackage;
       delete cssReport.runtimeEngines;
@@ -3312,11 +3552,20 @@ export async function analyze(
     if (cssReport.details && cssReport.details.length > 0) {
       const stats = await probeStylesheetMatchStats(page);
       for (const stat of stats ?? []) {
-        const detail = cssReport.details.find((d) => stat.file.endsWith(d.file) || d.file.endsWith(stat.file));
+        // C-16: one direction only. `d.file.endsWith(stat.file)` plus `find`'s
+        // first hit could attach a probe result to the wrong entry whenever two
+        // discovered stylesheets share a trailing segment.
+        const normalized = stat.file.split("\\").join("/");
+        const detail = cssReport.details.find((d) => normalized.endsWith(d.file));
         if (!detail) continue;
         detail.matchedRules = stat.matched;
-        if (detail.rules > 0 && stat.matched === 0) {
-          onWarning(STYLESHEET_MATCHED_NOTHING_WARNING(detail.file, detail.rules));
+        // C-8: `stat.rules` is what the CSSOM probe actually read;
+        // `detail.rules` is the static count. The probe reports `rules: 0` for
+        // a sheet it could not find or could not read (cross-origin), and
+        // warning off the static count there asserts something about a sheet
+        // nothing inspected.
+        if (stat.rules > 0 && stat.matched === 0) {
+          onWarning(STYLESHEET_MATCHED_NOTHING_WARNING(detail.file, stat.rules));
         }
       }
     }
@@ -3613,8 +3862,13 @@ export const CURVE_EMPTY_POINT_WITH_ERRORS_WARNING = (n: number, messages: strin
 
 // M104 (commerce-F2): every point empty, nothing reported. The growth class
 // would be fitted over a component that rendered nothing at any N.
+// M106 C3 (review gap 7): prefixed `scale point N=` -- the same shape
+// `renderFailed` (analyze.ts) and hintsForReport's curve branch already match
+// -- so an all-empty curve publishes `providerCandidates` and reaches the
+// provider hint, which is what the MUST promised. `N=all` names the whole
+// sweep rather than a point that does not exist.
 export const CURVE_ALL_POINTS_EMPTY_WARNING = (propName: string): string =>
-  `every scale point rendered 0 DOM nodes: the component renders nothing across the whole ` +
+  `scale point N=all rendered 0 DOM nodes: the component renders nothing across the whole ` +
   `${propName} sweep, so there is no growth to classify.`;
 
 // --no-css wins over an explicit --css, matching --no-wrap/--wrap. Explicit
@@ -3628,6 +3882,13 @@ export function resolveCssFiles(
   options: Pick<AnalyzeOptions, "cssFiles" | "noCss">,
   projectRoot: string,
   warningsOut?: string[],
+  // M102 / I6 (mantine-F1): the provider wrapper is a second entry into the
+  // project's own module graph, and the stylesheets a MantineProvider setup
+  // module imports are exactly the ones the measured render needs. Discovery
+  // walked the project entry only, so a wrapper's imports were invisible and
+  // the run measured unstyled while a `120fps.setup.tsx` sat right there
+  // importing `@mantine/core/styles.css`.
+  opts?: { wrapPath?: string },
 ): {
   files: string[];
   autoDetected: boolean;
@@ -3654,7 +3915,11 @@ export function resolveCssFiles(
     return { files, autoDetected: false, layer: "explicit" };
   }
 
-  const discovered = discoverGlobalCss(projectRoot, warningsOut);
+  const discovered = discoverGlobalCss(
+    projectRoot,
+    warningsOut,
+    opts?.wrapPath ? { extraEntryFiles: [opts.wrapPath] } : undefined,
+  );
   const layer: CssReport["layer"] =
     discovered.source === "entry"
       ? "entry-chain"

@@ -6,7 +6,7 @@ import path from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import type { CompositionTree, CompositionNode, ExportInfo } from "./composition.js";
-import { scanExports, normalizeComponentName } from "./prop-gen.js";
+import { scanExports, normalizeComponentName, selectMeasuredExport } from "./prop-gen.js";
 import {
   isVueFile,
   loadVueCompiler,
@@ -253,8 +253,9 @@ export function HARNESS_DIR_UNWRITABLE(projectRoot: string, detail: string): str
 // (the success path) and the bootServer catch's own rmSync (the common
 // caught-and-rethrown failure path) both remove their entry as soon as they
 // remove the directory. What is left in the set when the process actually
-// exits is exactly the leftover a crash produces: `sweepStaleHarnessDirs` is
-// age-gated at one hour, so it can never cover a directory the current run
+// exits is exactly the leftover a crash produces: `sweepStaleHarnessDirs`
+// never removes a directory whose marker names a live process (and never one
+// this process itself owns), so it cannot cover a directory the current run
 // just abandoned, and a raw, unhandled exception (ant-design-F1's shape)
 // bypasses every try/catch in this file entirely — the `process.on("exit")`
 // handler below is the layer that still catches it, since Node's "exit"
@@ -335,6 +336,29 @@ function harnessDirOwnerPid(dir: string): number | undefined {
     return Number.isInteger(pid) && pid > 0 ? pid : undefined;
   } catch {
     return undefined;
+  }
+}
+
+// M101 (review A6): the directory's own mtime stops advancing the moment the
+// build finishes writing entry.tsx, so a run longer than the gate looks
+// abandoned while it is measuring. The marker is the heartbeat instead, and
+// the run refreshes it at every phase (see the CLI's onPhase).
+function harnessDirHeartbeatMs(dir: string): number | undefined {
+  try {
+    return fs.statSync(path.join(dir, HARNESS_PID_FILE)).mtimeMs;
+  } catch {
+    return undefined;
+  }
+}
+
+export function refreshHarnessDirMarkers(): void {
+  for (const dir of activeHarnessDirs) {
+    try {
+      const now = new Date();
+      fs.utimesSync(path.join(dir, HARNESS_PID_FILE), now, now);
+    } catch {
+      // Best-effort: a directory already removed, or a marker never written.
+    }
   }
 }
 
@@ -555,11 +579,6 @@ export interface BuildHarnessOptions {
   // M65: the export named by `<file>#Export`, imported instead of the one the
   // selection order would pick.
   target?: string;
-  // M100 (I5): the result of `collectStaticPreBuildWarnings` for *this*
-  // component and wrapper, computed by a caller that needed the same warnings
-  // before deciding to build at all. Passed in, it is used as-is and nothing
-  // here recomputes it, so the dry run and the real run cannot drift.
-  preBuild?: StaticPreBuild;
 }
 
 // M100 (I5): every pre-build fact `buildAndServe` derives from the filesystem
@@ -737,6 +756,29 @@ function packageRootStylesheet(pkg: string, fromDir: string): StylesheetImportTa
   return isFile(resolved) ? { file: resolved } : { declared: resolved };
 }
 
+// The lookup order a preprocessor applies to an extension-less import: the
+// file itself, its underscore-prefixed partial, and the directory's own index
+// partial, per language. Returns undefined when none of them exists — unknown,
+// never "missing".
+const PREPROCESSOR_PARTIAL_EXTENSIONS = [".scss", ".sass", ".less", ".styl", ".css"];
+
+export function resolvePreprocessorPartial(base: string): string | undefined {
+  const dir = path.dirname(base);
+  const name = path.basename(base);
+  for (const extension of PREPROCESSOR_PARTIAL_EXTENSIONS) {
+    const candidates = [
+      path.join(dir, name + extension),
+      path.join(dir, "_" + name + extension),
+      path.join(base, "_index" + extension),
+      path.join(base, "index" + extension),
+    ];
+    for (const candidate of candidates) {
+      if (isFile(candidate)) return candidate;
+    }
+  }
+  return undefined;
+}
+
 export function resolveStylesheetImportTarget(
   specifier: string,
   fromFile: string,
@@ -748,7 +790,17 @@ export function resolveStylesheetImportTarget(
     const resolved = specifier.startsWith("/")
       ? path.join(projectRoot, specifier)
       : path.resolve(path.dirname(fromFile), specifier);
-    return isFile(resolved) ? { file: resolved } : { declared: resolved };
+    if (isFile(resolved)) return { file: resolved };
+    // A specifier that names its own extension and is not there really is
+    // missing, and the caller may say so (shadcn's `dist/tailwind.css`). An
+    // extension-less one is the canonical Sass/Less partial form — ant-design's
+    // `@import "../variables"`, primevue's `@import './_mixins'` — where the
+    // file on disk is spelled differently by design. Claiming it missing named
+    // a path that exists nowhere, which is the exact defect M102's third MUST
+    // was written to remove.
+    if (isStylesheet(resolved)) return { declared: resolved };
+    const partial = resolvePreprocessorPartial(resolved);
+    return partial ? { file: partial } : undefined;
   }
   for (const { find, replacement } of aliases) {
     if (!find.test(specifier)) continue;
@@ -1630,6 +1682,18 @@ function calleeName(expr: ts.Expression): string | undefined {
 // writes: a literal, a template with nothing to substitute, `[...].join(sep)`
 // over such parts, and `+` concatenation of them. Anything else (a function, a
 // variable, an interpolation) is not folded — undefined, never a guess.
+// Review A5: what a user has to look at in their own config. Named after the
+// shape, never the syntax-kind number.
+function expressionShape(node: ts.Expression): string {
+  if (ts.isArrowFunction(node) || ts.isFunctionExpression(node)) return "function";
+  if (ts.isIdentifier(node)) return "a variable";
+  if (ts.isTemplateExpression(node)) return "an interpolated template";
+  if (ts.isCallExpression(node)) return "a call";
+  if (ts.isObjectLiteralExpression(node)) return "an object";
+  if (ts.isArrayLiteralExpression(node)) return "an array";
+  return "an expression";
+}
+
 export function foldStringExpression(node: ts.Expression): string | undefined {
   if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) return node.text;
   if (ts.isParenthesizedExpression(node)) return foldStringExpression(node.expression);
@@ -1865,9 +1929,13 @@ function parseViteConfigFile(configFile: string): ParsedViteConfig | undefined {
           if (optionName === "additionalData") {
             const folded = foldStringExpression(option.initializer);
             if (folded === undefined) {
-              // The one option whose absence the existing warning already
-              // describes correctly.
-              ignored.add("css.preprocessorOptions");
+              // Review A5: named with its language and shape. The blanket
+              // ignoredKeys entry (whose text asserts preprocessor globals are
+              // not replicated at all) is added below only when nothing under
+              // preprocessorOptions folded, since otherwise it is false.
+              unfoldable.push(
+                `css.preprocessorOptions.${lang}.additionalData (${expressionShape(option.initializer)})`,
+              );
               continue;
             }
             langOptions.additionalData = folded;
@@ -1897,6 +1965,12 @@ function parseViteConfigFile(configFile: string): ParsedViteConfig | undefined {
     }
   }
 
+  // Review A5: the blanket key's own text asserts that preprocessor globals
+  // are not replicated at all — true only when nothing under
+  // preprocessorOptions folded. Otherwise each dropped option is named.
+  if (unfoldable.length > 0 && Object.keys(preprocessorOptions).length === 0) {
+    ignored.add("css.preprocessorOptions");
+  }
   return {
     publicDir,
     aliasEntries,
@@ -2974,19 +3048,31 @@ const LOCKFILE_MANAGER: Array<[string, PackageManager]> = [
 ];
 
 export function detectPackageManager(root: string): PackageManager {
-  const declared = readProjectManifest(root)?.packageManager;
-  if (typeof declared === "string") {
+  // Review A11: a declaration beats an artifact, at every level. A stray
+  // package-lock.json inside a pnpm workspace member used to win over the
+  // root's own `packageManager: pnpm@...` and print a command that repository
+  // does not have — and it also makes `findWorkspaceRoot` stop at the member,
+  // so the declaration walk goes up on its own, bounded by the repository.
+  const levels: string[] = [];
+  let cursor = path.resolve(root);
+  while (true) {
+    levels.push(cursor);
+    if (fs.existsSync(path.join(cursor, ".git"))) break;
+    const parent = path.dirname(cursor);
+    if (parent === cursor) break;
+    cursor = parent;
+  }
+  const workspaceRoot = findWorkspaceRoot(root);
+  if (!levels.includes(workspaceRoot)) levels.push(workspaceRoot);
+  for (const level of levels) {
+    const declared = readProjectManifest(level)?.packageManager;
+    if (typeof declared !== "string") continue;
     const name = declared.split("@")[0].trim();
     if (name === "pnpm" || name === "yarn" || name === "npm") return name;
   }
-  for (const level of [root, findWorkspaceRoot(root)]) {
+  for (const level of [root, workspaceRoot]) {
     for (const [file, manager] of LOCKFILE_MANAGER) {
       if (fs.existsSync(path.join(level, file))) return manager;
-    }
-    const inherited = readProjectManifest(level)?.packageManager;
-    if (typeof inherited === "string") {
-      const name = inherited.split("@")[0].trim();
-      if (name === "pnpm" || name === "yarn" || name === "npm") return name;
     }
   }
   return "npm";
@@ -3358,18 +3444,17 @@ export async function buildAndServe(
   fs.writeFileSync(path.join(harnessDir, entryFile), entryTsx);
   fs.writeFileSync(path.join(harnessDir, "index.html"), indexHtml);
 
-  // M100 (I5): computed here or handed in already computed by the caller that
-  // printed the same warnings before deciding to build. One code path either
-  // way — nothing below recomputes any of it.
+  // M100 (I5): the single computation of every pre-build fact this run needs.
+  // `explainProps` calls the same function for a dry run (M100 records the
+  // decision to keep one computation per invocation rather than hand one
+  // across), so both paths produce the same warnings in the same order.
   const workspaceRoot = findWorkspaceRoot(projectRoot);
-  const preBuild =
-    options?.preBuild ??
-    collectStaticPreBuildWarnings(projectRoot, {
-      componentPath: absoluteComponentPath,
-      ...(options?.wrapPath ? { wrapPath: options.wrapPath } : {}),
-      ...(options?.noShims ? { noShims: true } : {}),
-      workspaceRoot,
-    });
+  const preBuild = collectStaticPreBuildWarnings(projectRoot, {
+    componentPath: absoluteComponentPath,
+    ...(options?.wrapPath ? { wrapPath: options.wrapPath } : {}),
+    ...(options?.noShims ? { noShims: true } : {}),
+    workspaceRoot,
+  });
   const configWarnings: string[] = [...preBuild.warnings];
   const { viteConfig, externalDeps, styleTooling } = preBuild;
   const alias = preBuild.aliases;
@@ -3641,11 +3726,14 @@ export function sweepStaleHarnessDirs(projectRoot: string): void {
       const full = path.join(projectRoot, entry.name);
       try {
         const owner = harnessDirOwnerPid(full);
-        const ageMs = now - fs.statSync(full).mtimeMs;
+        // Never this process's own directory, at any age: this run knows it is
+        // still using it, and its own exit paths already remove it.
+        if (owner === process.pid) continue;
         const abandoned =
           owner === undefined
-            ? ageMs > STALE_HARNESS_MAX_AGE_MS
-            : !isProcessAlive(owner) || ageMs > LIVE_PID_HARNESS_MAX_AGE_MS;
+            ? now - fs.statSync(full).mtimeMs > STALE_HARNESS_MAX_AGE_MS
+            : !isProcessAlive(owner) ||
+              now - (harnessDirHeartbeatMs(full) ?? 0) > LIVE_PID_HARNESS_MAX_AGE_MS;
         if (abandoned) fs.rmSync(full, { recursive: true, force: true });
       } catch {
         // best-effort: dir may be in use or already gone
@@ -4538,7 +4626,8 @@ export function targetNotFoundMessage(
 // `#Export`, a default export and a file-stem match are all the author's own
 // designation of what the file is, and none of them is second-guessed — a
 // `provider.tsx` whose only component is `Provider` still resolves to it.
-const PROVIDER_SUFFIX = /Provider$/;
+// The rule itself is `PROVIDER_EXPORT_SUFFIX` in src/prop-gen.ts, applied by
+// `selectMeasuredExport`, which this function delegates its ordering to.
 export function detectComponentExport(
   filePath: string,
   target?: string,
@@ -4558,23 +4647,20 @@ export function detectComponentExport(
   const exports = scanExports(content, filePath);
 
   if (target) {
-    const named = exports.find((e) => e.name === target);
-    if (!named) {
+    // The pick order itself lives in `selectMeasuredExport` (src/prop-gen.ts):
+    // review B-8 found two copies of it, each with its own `Provider` regex.
+    // This function keeps what is its own — the "export not found" message and
+    // the filename fallback — and delegates the ordering.
+    if (!exports.some((e) => e.name === target)) {
       throw new Error(targetNotFoundMessage(filePath, target, exports.map((e) => e.name)));
     }
-    return { name: named.name, isDefaultOnly: named.isDefault };
   }
 
-  const defaultExport = exports.find((e) => e.isDefault);
-  if (defaultExport) return { name: defaultExport.name, isDefaultOnly: true };
-
-  const stem = normalizeComponentName(path.basename(filePath, path.extname(filePath)));
-  const stemMatch = exports.find((e) => normalizeComponentName(e.name) === stem);
-  if (stemMatch) return { name: stemMatch.name, isDefaultOnly: false };
-
-  const uncontrolled = exports.find((e) => !PROVIDER_SUFFIX.test(e.name));
-  if (uncontrolled) return { name: uncontrolled.name, isDefaultOnly: false };
-  if (exports.length > 0) return { name: exports[0].name, isDefaultOnly: false };
+  const picked = selectMeasuredExport(exports, filePath, target);
+  if (picked !== undefined) {
+    const info = exports.find((e) => e.name === picked)!;
+    return { name: info.name, isDefaultOnly: info.isDefault };
+  }
 
   // Fallback: derive from filename, assume default export
   const basename = path.basename(filePath, path.extname(filePath));
@@ -4766,10 +4852,28 @@ export const STYLESHEET_MATCH_STATS_SOURCE = `function __120fpsStylesheetMatchSt
       var rule = list[i];
       if (rule.selectorText) {
         stats.rules++;
-        try {
-          if (root && root.querySelector(rule.selectorText)) stats.matched++;
-        } catch (selectorError) {
-          // A selector querySelector rejects matched nothing here either.
+        // Review I7: a rule is matched when ANY of its comma-separated parts
+        // matches. A part scoped to the document itself (:root, html, body, *)
+        // can never be found under #root by querySelector, yet a design-token
+        // sheet made of :root custom properties is exactly the kind that does
+        // apply — counting it as unmatched said "unstyled" about a stylesheet
+        // the render used.
+        var parts = String(rule.selectorText).split(",");
+        for (var p = 0; p < parts.length; p++) {
+          var part = parts[p].trim();
+          if (!part) continue;
+          if (/^(:root|html|body|\\*)([^a-zA-Z0-9_-]|$)/.test(part)) {
+            stats.matched++;
+            break;
+          }
+          try {
+            if (root && (root.querySelector(part) || (root.matches && root.matches(part)))) {
+              stats.matched++;
+              break;
+            }
+          } catch (selectorError) {
+            // A part querySelector rejects matched nothing here either.
+          }
         }
       } else if (rule.cssRules) {
         countRules(Array.prototype.slice.call(rule.cssRules), stats);

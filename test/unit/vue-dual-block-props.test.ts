@@ -158,3 +158,78 @@ describe("a prop declared string | number", () => {
     expect(disclosure[0]).toContain("union of 2 different shapes");
   });
 });
+
+// Review B-4: the one new resolution warning that did not route through
+// `presetRemedyClause`. With the preset file on disk and its props being
+// measured, "so no props were extracted. Add Badge.props.tsx" is false twice.
+
+describe("the unresolved-type warning next to a preset file", () => {
+  it("does not tell the user to create a file that is already there", async () => {
+    const { warnings } = await extractPropsDetailed(
+      path.join(FIXTURES, "UnresolvedPreset.vue"),
+      { onWarning: () => {} },
+    );
+
+    const named = warnings.filter(isVueUnresolvedPropsTypeWarning);
+    expect(named).toHaveLength(1);
+    expect(named[0]).not.toContain("Add UnresolvedPreset.props.tsx");
+    expect(named[0]).toContain("already supplies the values measured");
+  });
+
+  it("does not claim nothing was extracted when the preset supplies props", async () => {
+    const named = (
+      await extractPropsDetailed(path.join(FIXTURES, "UnresolvedPreset.vue"), {
+        onWarning: () => {},
+      })
+    ).warnings.filter(isVueUnresolvedPropsTypeWarning);
+
+    expect(named[0]).not.toContain("No props were extracted");
+  });
+
+  it("keeps both claims when no preset exists", async () => {
+    const named = (
+      await extractPropsDetailed(path.join(FIXTURES, "UnresolvedImport.vue"), {
+        onWarning: () => {},
+      })
+    ).warnings.filter(isVueUnresolvedPropsTypeWarning);
+
+    expect(named[0]).toContain("No props were extracted");
+    expect(named[0]).toContain("Add UnresolvedImport.props.tsx");
+  });
+});
+
+// Review B-11: a jsx setup block beside a ts companion block was handed to a
+// `.ts` virtual file, where its JSX no longer parses.
+
+describe("the language the virtual module is parsed as", () => {
+  it("is tsx when one block is jsx and the other is ts", () => {
+    const source = [
+      '<script lang="ts">',
+      "export interface JsxProps { label?: string }",
+      "</script>",
+      '<script setup lang="jsx">',
+      "const props = defineProps();",
+      "const node = <span>{props.label}</span>;",
+      "</script>",
+    ].join("\n");
+
+    expect(parseSfcScript(source, "Jsx.vue", compiler!)?.lang).toBe("tsx");
+  });
+
+  it("stays ts when neither block mentions jsx", () => {
+    expect(parseSfcScript(read("DualBlock.vue"), "DualBlock.vue", compiler!)?.lang).toBe("ts");
+  });
+
+  it("still prefers an explicit tsx block", () => {
+    const source = [
+      '<script lang="ts">',
+      "export interface P { a?: string }",
+      "</script>",
+      '<script setup lang="tsx">',
+      "const props = defineProps<P>();",
+      "</script>",
+    ].join("\n");
+
+    expect(parseSfcScript(source, "Tsx.vue", compiler!)?.lang).toBe("tsx");
+  });
+});

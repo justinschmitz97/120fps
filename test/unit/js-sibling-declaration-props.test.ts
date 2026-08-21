@@ -158,3 +158,64 @@ describe("declaration lookup stays out of TypeScript entries", () => {
     expect(names).toEqual(expect.arrayContaining(["ref", "name"]));
   });
 });
+
+// Review B-2/B-3: the warning stated two things that could be false of the run
+// that printed them — "has no declaration file beside it" with a `.d.ts` that
+// resolved but declared no props type, and "measuring with no props" with a
+// preset file whose props the run then measured.
+
+describe("what the untyped-JS warning claims", () => {
+  it("says the declaration was read when one resolved and declared nothing", async () => {
+    const dir = mkProject({
+      "package.json": JSON.stringify({ name: "empty-dts" }),
+      "Widget.js": [
+        "export default function Widget(props) {",
+        "  return props.anything;",
+        "}",
+      ].join("\n"),
+      "Widget.d.ts": ["declare const Widget: string;", "export default Widget;"].join("\n"),
+    });
+
+    const { schemas, warnings } = await extractPropsDetailed(path.join(dir, "Widget.js"), {
+      onWarning: () => {},
+    });
+
+    expect(schemas).toEqual([]);
+    const named = warnings.filter(isUntypedJsComponentWarning);
+    expect(named).toHaveLength(1);
+    expect(named[0]).toContain("Widget.d.ts");
+    expect(named[0]).not.toContain("has no declaration file beside it");
+  });
+
+  it("keeps the no-declaration wording when no declaration resolved", async () => {
+    const named = (
+      await extractPropsDetailed(path.join(FIXTURES, "Bare.js"), { onWarning: () => {} })
+    ).warnings.filter(isUntypedJsComponentWarning);
+
+    expect(named[0]).toContain("has no declaration file beside it");
+  });
+
+  it("does not claim no props are measured when a preset supplies them", async () => {
+    const dir = mkProject({
+      "package.json": JSON.stringify({ name: "preset-js" }),
+      "Thing.js": ["export default function Thing(props) {", "  return props.label;", "}"].join("\n"),
+      "Thing.props.tsx": "export default { label: 'hi' };\n",
+    });
+
+    const named = (
+      await extractPropsDetailed(path.join(dir, "Thing.js"), { onWarning: () => {} })
+    ).warnings.filter(isUntypedJsComponentWarning);
+
+    expect(named).toHaveLength(1);
+    expect(named[0]).not.toContain("measuring with no props");
+    expect(named[0]).toContain("Thing.props.tsx");
+  });
+
+  it("still says no props are measured when nothing supplies them", async () => {
+    const named = (
+      await extractPropsDetailed(path.join(FIXTURES, "Bare.js"), { onWarning: () => {} })
+    ).warnings.filter(isUntypedJsComponentWarning);
+
+    expect(named[0]).toContain("measuring with no props");
+  });
+});

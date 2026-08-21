@@ -3,6 +3,8 @@ import {
   generatePropMatrix,
   selectMatrixCombos,
   matrixValues,
+  matrixHeldAbsentProps,
+  matrixAxesFor,
   isMatrixEligible,
   pairwiseCover,
 } from "../../src/prop-gen-values.js";
@@ -298,5 +300,197 @@ describe("a matrix too wide for a full cartesian set", () => {
     const keys = combos.map((c) => JSON.stringify(c));
 
     expect(new Set(keys).size).toBe(keys.length);
+  });
+});
+
+// Review B-1: "absent" was applied to every optional non-axis prop without a
+// literal default, which swept up the values a user wrote in `<stem>.props.tsx`
+// and the content slots a component renders. Combo mode still measures both, so
+// the two modes disagreed about what the component rendered.
+
+describe("a non-axis prop the user or the type actually named", () => {
+  it("keeps a preset-supplied value in every cell", () => {
+    const schemas: PropSchema[] = [
+      schema({ name: "variant", kind: "union", values: ["a", "b"] }),
+      schema({ name: "severity", kind: "string", values: ["success"], provenance: "preset" }),
+    ];
+    const combos = generatePropMatrix(schemas);
+
+    for (const cell of combos) expect(cell.severity).toBe("success");
+  });
+
+  it("keeps children so the cells render content", () => {
+    const schemas: PropSchema[] = [
+      schema({ name: "variant", kind: "union", values: ["a", "b"] }),
+      schema({ name: "children", kind: "reactnode", values: [] }),
+    ];
+    const combos = generatePropMatrix(schemas);
+
+    for (const cell of combos) expect(cell.children).toBe("120fps-placeholder");
+  });
+
+  it("keeps a declared string label", () => {
+    const schemas: PropSchema[] = [
+      schema({ name: "variant", kind: "union", values: ["a", "b"] }),
+      schema({ name: "label", kind: "string", values: ["Save"], provenance: "declared" }),
+    ];
+    const combos = generatePropMatrix(schemas);
+
+    for (const cell of combos) expect(cell.label).toBe("Save");
+  });
+
+  it("keeps a declared reactnode prop under any name", () => {
+    const schemas: PropSchema[] = [
+      schema({ name: "variant", kind: "union", values: ["a", "b"] }),
+      schema({ name: "icon", kind: "reactnode", values: [], provenance: "declared" }),
+    ];
+    const combos = generatePropMatrix(schemas);
+
+    for (const cell of combos) expect("icon" in cell).toBe(true);
+  });
+
+  it("still drops a synthesized stand-in that changes control flow", () => {
+    const schemas: PropSchema[] = [
+      schema({ name: "checked" }),
+      schema({ name: "loading" }),
+      schema({
+        name: "disabledTooltip",
+        kind: "reactnode",
+        values: [],
+        provenance: "placeholder",
+      }),
+    ];
+    const combos = generatePropMatrix(schemas);
+
+    for (const cell of combos) expect("disabledTooltip" in cell).toBe(false);
+  });
+
+  it("names every non-axis prop it held absent", () => {
+    const schemas: PropSchema[] = [
+      schema({ name: "checked" }),
+      schema({
+        name: "disabledTooltip",
+        kind: "reactnode",
+        values: [],
+        provenance: "placeholder",
+      }),
+      schema({ name: "onSelect", kind: "function", values: [], provenance: "placeholder" }),
+      schema({ name: "children", kind: "reactnode", values: [] }),
+    ];
+
+    expect(matrixHeldAbsentProps(schemas)).toEqual(["disabledTooltip", "onSelect"]);
+  });
+
+  it("names nothing when every non-axis prop is held", () => {
+    const schemas: PropSchema[] = [
+      schema({ name: "checked" }),
+      schema({ name: "children", kind: "reactnode", values: [] }),
+    ];
+
+    expect(matrixHeldAbsentProps(schemas)).toEqual([]);
+  });
+});
+
+// Review B-12: an axis whose second value is literally `undefined` seeded a
+// "deviation" that is the prop's own absence.
+
+describe("seeding the pairwise cover", () => {
+  it("skips an axis whose deviation value is absent", () => {
+    const axes = [
+      { name: "a", values: ["x", undefined] },
+      { name: "b", values: ["p", "q"] },
+      { name: "c", values: ["m", "n"] },
+    ];
+    const rows = pairwiseCover(axes, 32);
+
+    // The seeds lead the cover: the anchor, then one deviation per axis that
+    // has a real second value. Pair filling afterwards may still visit
+    // `a: undefined`, which is a pair the cover has to cover.
+    expect(rows[0]).toEqual({ a: "x", b: "p", c: "m" });
+    const seeds = rows.slice(1, 3);
+    expect(seeds).toEqual([
+      { a: "x", b: "q", c: "m" },
+      { a: "x", b: "p", c: "n" },
+    ]);
+  });
+
+  it("still fills pairs when the seeds do not consume the whole budget", () => {
+    const axes = [
+      { name: "a", values: ["x", "y"] },
+      { name: "b", values: ["p", "q"] },
+    ];
+    const rows = pairwiseCover(axes, 16);
+
+    expect(rows.length).toBeGreaterThanOrEqual(3);
+    expect(new Set(rows.map((r) => JSON.stringify(r))).size).toBe(rows.length);
+  });
+});
+
+// dub-F7: `variant` is Badge's only own prop and declares twelve values, so the
+// 1..8 eligibility window excluded it while thirteen inherited `<span>`
+// attributes were crossed. It is now an axis over a truncated value set.
+
+describe("a literal union with more values than one axis can cross", () => {
+  const wide = (): PropSchema =>
+    schema({
+      name: "variant",
+      kind: "union",
+      values: ["default", "violet", "blue", "green", "red", "amber", "sky", "rose", "teal", "gray", "lime", "cyan"],
+    });
+
+  it("is an axis rather than an excluded prop", () => {
+    expect(isMatrixEligible(wide())).toBe(true);
+  });
+
+  it("is crossed over eight of its declared values", () => {
+    expect(matrixValues(wide())).toHaveLength(8);
+  });
+
+  it("anchors on the first declared value and keeps declaration order", () => {
+    expect(matrixValues(wide())).toEqual([
+      "default", "violet", "blue", "green", "red", "amber", "sky", "rose",
+    ]);
+  });
+
+  it("anchors on the declared default when the component names one", () => {
+    const withDefault = { ...wide(), defaultValue: "blue", defaultSource: "destructuring" as const };
+    const values = matrixValues(withDefault);
+
+    expect(values[0]).toBe("blue");
+    expect(values).toHaveLength(8);
+    expect(new Set(values).size).toBe(8);
+  });
+
+  it("leaves a union inside the window exactly as it was", () => {
+    const narrow = schema({ name: "tone", kind: "union", values: ["a", "b", "c"] });
+
+    expect(matrixValues(narrow)).toEqual(["a", "b", "c"]);
+  });
+
+  it("reports declared and measured values per axis", () => {
+    const axes = matrixAxesFor([wide(), schema({ name: "hidden" })]);
+    const variant = axes.find((a) => a.propName === "variant");
+
+    expect(variant?.declaredValues).toHaveLength(12);
+    expect(variant?.measuredValues).toHaveLength(8);
+    expect(variant?.values).toEqual(variant?.measuredValues);
+    expect(axes.find((a) => a.propName === "hidden")?.declaredValues).toEqual([false, true]);
+  });
+
+  it("crosses the wide axis in the generated cells", () => {
+    const combos = generatePropMatrix([wide(), schema({ name: "hidden" })]);
+
+    expect(new Set(combos.map((c) => c.variant)).size).toBe(8);
+  });
+
+  it("keeps the cell count bounded", () => {
+    const combos = generatePropMatrix([
+      wide(),
+      { ...wide(), name: "tone" },
+      { ...wide(), name: "accent" },
+      schema({ name: "hidden" }),
+    ]);
+
+    expect(combos.length).toBeLessThanOrEqual(256);
   });
 });

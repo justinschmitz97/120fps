@@ -21,6 +21,15 @@ export type HintId =
   // React provider nor a props preset, so `renderError`'s text fits neither.
   | "vuePluginGlobals"
   | "vueSlotContent"
+  // M105 I12 fix-up (C-4): a mount abort has no timings and prints no
+  // `Page errors` block, so `renderError`'s copy ("the timings describe a
+  // broken tree", "Read the page errors above") points at output that does not
+  // exist in that window.
+  | "mountAbortProvider"
+  // M106 C3 (review gap 7): every scale point rendered nothing and the page
+  // stayed quiet. `renderError`'s copy asserts an uncaught error, which is
+  // false here, so this case gets its own.
+  | "curveRenderedNothing"
   // M106 C4 (calcom-F5): the numbers are real and the graphic is not.
   | "unresolvedSprite";
 
@@ -175,6 +184,28 @@ export const HINTS: Record<HintId, Hint> = {
     ],
     anchor: "#vue",
   },
+  mountAbortProvider: {
+    id: "mountAbortProvider",
+    title: "the component asked for a provider before it could render",
+    lines: [
+      "The mount was aborted, so there are no timings and no page-error block below: the abort",
+      "message above is the whole record. It names a context or injection the component reads and",
+      "the harness does not supply. Add a wrapper module that renders the provider and point --wrap",
+      "at it (120fps.setup.tsx, or 120fps.setup.vue for an SFC).",
+    ],
+    anchor: "#provider-wrapper",
+  },
+  curveRenderedNothing: {
+    id: "curveRenderedNothing",
+    title: "the component rendered nothing at every scale point",
+    lines: [
+      "No N produced a single DOM node, so the growth class describes a component that never",
+      "rendered rather than one that scales flat. Nothing was thrown: the usual cause is context",
+      "the component reads and the harness does not supply. Point --wrap at a setup module that",
+      "renders the provider, or check that the scaling prop is the one that drives the render.",
+    ],
+    anchor: "#scaling-curves",
+  },
   unresolvedSprite: {
     id: "unresolvedSprite",
     title: "an svg reference points at a sprite the document never defines",
@@ -202,6 +233,14 @@ const VUE_PROXY_FRAME_SIGNATURE = /\bat Proxy\.\$?\w/;
 const UNDEFINED_READ_SIGNATURE = /Cannot read propert(?:y|ies) of undefined/i;
 const VUE_SLOT_SIGNATURE = /\$slots\b/;
 
+// C-4: `PROVIDER_ERROR_SIGNATURE` is /provider|context/i, which a mount abort
+// matches on ordinary browser-lifecycle text ("Execution context was
+// destroyed", "browser context was closed") -- a guess, which M105's MUST NOT
+// forbids. These four name a provider or an injection specifically, and none
+// of them appears in a lifecycle message.
+const MOUNT_ABORT_PROVIDER_SIGNATURE =
+  /useContext|must be used within|<[A-Z]\w*Provider\b|\binject\(/;
+
 export function hintsForMountAbort(errorText: string): HintId[] {
   const found = new Set<HintId>();
   if (VUE_SLOT_SIGNATURE.test(errorText)) found.add("vueSlotContent");
@@ -211,9 +250,9 @@ export function hintsForMountAbort(errorText: string): HintId[] {
   ) {
     found.add("vuePluginGlobals");
   }
-  // The same loose provider/context signature `extraHintLines` uses, and the
-  // same rule behind it: a stack naming neither gets no guess at all.
-  if (PROVIDER_ERROR_SIGNATURE.test(errorText)) found.add("renderError");
+  // C-4: narrow, and with its own copy. A stack naming none of these gets no
+  // guess at all, which is M105's MUST NOT stated as code.
+  if (MOUNT_ABORT_PROVIDER_SIGNATURE.test(errorText)) found.add("mountAbortProvider");
   const order = Object.keys(HINTS) as HintId[];
   return order.filter((id) => found.has(id));
 }
@@ -264,7 +303,10 @@ export function hintsForReport(report: Report): HintId[] {
   // structural field is what production code actually populates.
   const curveRenderError =
     (curveReport?.renderErrorPoints?.length ?? 0) > 0 ||
-    (report.warnings ?? []).some((w) => /^scale point N=/.test(w));
+    // The all-empty marker below shares this prefix so `renderFailed`
+    // publishes provider candidates for it, but nothing threw, so it must not
+    // reach a hint that says something did.
+    (report.warnings ?? []).some((w) => /^scale point N=\d/.test(w));
   if (curveRenderError) found.add("renderError");
   // A page that threw on every scale point is not evidence the scaling prop
   // fails to drive rendering: domFlat's hint text is actively wrong for that
@@ -283,6 +325,7 @@ export function hintsForReport(report: Report): HintId[] {
   const curveRenderedNothing =
     curvePoints.length > 0 && curvePoints.every((p) => p.domNodeCount === 0);
   if (curveReport?.domFlat && !curveRenderError && !curveRenderedNothing) found.add("domFlat");
+  if (curveRenderedNothing && !curveRenderError) found.add("curveRenderedNothing");
   // Both classes are printed on the curve screen's `Growth:` line, so the hint
   // never cites a classification the reader cannot see.
   for (const curve of [curveReport?.mountCurve, curveReport?.rerenderCurve]) {
@@ -379,6 +422,15 @@ function rankProviderCandidates(candidates: string[], texts: string[]): string[]
 }
 
 function extraHintLines(id: HintId, report: Report | undefined): string[] {
+  // M106 C3: the all-empty curve reaches the same provider-candidate list a
+  // render error does; only the surrounding copy differs.
+  if (id === "curveRenderedNothing" && report) {
+    return (report.providerCandidates ?? []).map((candidate) =>
+      (report.transitiveProviderCandidates ?? []).includes(candidate)
+        ? PROVIDER_HINT_LINE_TRANSITIVE(candidate)
+        : PROVIDER_HINT_LINE(candidate),
+    );
+  }
   if (id !== "renderError" || !report) return [];
   const texts = capturedErrorTexts(report);
   // M79 (4a): only emit the provider guess when at least one captured

@@ -140,3 +140,63 @@ describe("the anchor cell survives every cell cap", () => {
     expect(mr.axisCoverage.filter((a) => a.measuredValues === 1).length).toBe(axes.length - 1);
   });
 });
+
+// dub-F1: `disabledTooltip` is not an axis and no cell carries it, so the
+// matrix measured a Switch without a tooltip — a different component from the
+// one the header describes. Lane B's `matrixHeldAbsentProps` answers which
+// props those are; the header is what makes the answer visible.
+describe("non-axis props that no cell carries are named", () => {
+  const combos = [
+    cell(0, { isOpen: false, size: "small" }),
+    cell(1, { isOpen: false, size: "large" }, 4),
+  ];
+
+  it("prints them once, under the axis line", () => {
+    const mr = buildMatrixReport({ axes: AXES, combos, heldAbsentProps: ["disabledTooltip", "onSelect"] });
+    expect(mr.heldAbsentProps).toEqual(["disabledTooltip", "onSelect"]);
+    const report = matrixReportFor(combos);
+    report.matrixReport = mr;
+    const table = formatTable(report);
+    expect(table).toContain("Held absent (no value in any cell): disabledTooltip, onSelect.");
+  });
+
+  it("says nothing when every prop reached the cells", () => {
+    const mr = buildMatrixReport({ axes: AXES, combos, heldAbsentProps: [] });
+    expect(mr.heldAbsentProps).toBeUndefined();
+    const report = matrixReportFor(combos);
+    report.matrixReport = mr;
+    expect(formatTable(report)).not.toContain("Held absent");
+  });
+});
+
+// dub's `variant` declares 12 values; an over-wide union becomes an axis over a
+// truncated set, so "crossed" alone would claim the whole union was measured.
+describe("an axis whose union was truncated says how much of it was crossed", () => {
+  const wideAxes: MatrixAxis[] = [
+    { propName: "isOpen", values: [false, true] },
+    { propName: "variant", values: ["a", "b", "c", "d", "e", "f", "g", "h"], declaredValueCount: 12 },
+  ];
+
+  it("names the crossed count against the declared count", () => {
+    const combos = wideAxes[1].values.map((v, i) => cell(i, { isOpen: false, variant: v }));
+    const mr = buildMatrixReport({ axes: wideAxes, combos });
+    expect(mr.axisCoverage.find((a) => a.propName === "variant")).toEqual({
+      propName: "variant",
+      declaredValues: 12,
+      measuredValues: 8,
+    });
+    const report = matrixReportFor(combos);
+    report.matrixReport = mr;
+    expect(formatTable(report)).toContain("variant: 8 of 12 values crossed");
+  });
+
+  it("leaves an untruncated axis phrased as before", () => {
+    const combos = [
+      cell(0, { isOpen: false, size: "small" }),
+      cell(1, { isOpen: true, size: "large" }, 4),
+    ];
+    const mr = buildMatrixReport({ axes: AXES, combos });
+    expect(mr.axisCoverage.every((a) => a.measuredValues === a.declaredValues)).toBe(true);
+  });
+});
+

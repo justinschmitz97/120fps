@@ -3,6 +3,7 @@ import path from "node:path";
 import { builtinModules } from "node:module";
 import ts from "typescript";
 import { projectCompilerOptions } from "./prop-gen.js";
+import { setImportCycleReported } from "./page-errors.js";
 import { isVueFile, parseSfcScript, type VueSfcCompiler } from "./vue-sfc.js";
 import {
   detectPnP,
@@ -128,6 +129,8 @@ export interface PreflightHit {
   chain: string[];
   // The offending module specifier, for import-edge hits.
   specifier?: string;
+  // M106 A2: every chain that returned to an entry module, first one first.
+  cycleChains?: string[][];
   // M48: recognizer code and the plugin family that owns the transform.
   transformCode?: string;
   transformOwner?: string;
@@ -489,6 +492,8 @@ export function runPreflight(options: PreflightOptions): PreflightResult {
   const providerSources = new Set<string>();
   const parents = new Map<string, string>();
   const cycleReported = new Set<string>();
+  const cycleChains: string[][] = [];
+  setImportCycleReported(false);
   const seen = new Set<string>();
   const queue: string[] = [];
   const entryFiles = new Set<string>();
@@ -627,12 +632,14 @@ export function runPreflight(options: PreflightOptions): PreflightResult {
       // a binding that has not initialized yet throws.
       if (entryFiles.has(target) && target !== file && !cycleReported.has(file)) {
         cycleReported.add(file);
-        // No `specifier`: chainText would append the raw import text after the
-        // resolved file it already names, printing the same hop twice.
-        soft.push({
-          kind: "import-cycle",
-          chain: [...chainTo(file), relative(projectRoot, target)],
-        });
+        // Review A3: page-errors claims a cycle for a TDZ page error only
+        // when one was really found here.
+        setImportCycleReported(true);
+        // Review A7: one hit per run. A barrel with several importers of the
+        // measured module produced one ~500-character warning each, all
+        // describing the same situation; the chains are what differ, so they
+        // accumulate into the single hit's own list.
+        cycleChains.push([...chainTo(file), relative(projectRoot, target)]);
       }
       if (seen.has(target)) continue;
       if (!fs.existsSync(target)) continue;
@@ -641,6 +648,13 @@ export function runPreflight(options: PreflightOptions): PreflightResult {
       parents.set(target, file);
       queue.push(target);
     }
+  }
+
+  // Review A7: one `import-cycle` hit for the run, carrying every chain that
+  // returned to an entry. `chain` stays the first one so every existing
+  // consumer (chainText, the report) reads the same shape as any other hit.
+  if (cycleChains.length > 0) {
+    soft.push({ kind: "import-cycle", chain: cycleChains[0], cycleChains });
   }
 
   // An async function component is a React Server Component. Vue has no such
@@ -757,13 +771,18 @@ export function preflightFailureMessage(hits: PreflightHit[]): string {
 // M106 A2: the remedy is the one shape that reliably re-enters a cycle where
 // the application does — a wrapper module that imports the package's own root
 // first, which the generated entry emits before the component import.
-export const IMPORT_CYCLE_WARNING = (hit: PreflightHit): string =>
-  `${chainText(hit)}: the import graph returns to the measured module (a cycle). The generated ` +
-  "entry is this graph's only root, so it enters the cycle at the component's own file rather " +
-  "than where the application enters it; a module-scope read of a binding that has not " +
-  "initialized yet then fails with \"Cannot access 'X' before initialization\". If the run does " +
-  "not become ready with that error, add a 120fps.setup.tsx (or pass --wrap) that imports this " +
-  "package's own root module first.";
+export const IMPORT_CYCLE_WARNING = (hit: PreflightHit): string => {
+  const chains = hit.cycleChains ?? [hit.chain];
+  const listed = chains.map((chain) => chain.join(" → ")).join("; ");
+  return (
+    `${listed}: the import graph returns to the measured module (a cycle). The generated entry is ` +
+    "a root of this graph, so it enters the cycle at the component's own file rather than where " +
+    "the application enters it; a module-scope read of a binding that has not initialized yet then " +
+    "fails with \"Cannot access 'X' before initialization\". If the run does not become ready with " +
+    "that error, add a 120fps.setup.tsx (or pass --wrap) that imports this package's own root " +
+    "module first."
+  );
+};
 
 const NODE_BUILTIN_TEXT = (hit: PreflightHit): string =>
   `${chainText(hit)}: a Node builtin in the component graph. ` +

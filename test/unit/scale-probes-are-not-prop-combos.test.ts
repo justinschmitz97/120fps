@@ -113,3 +113,40 @@ describe("a scale probe is exempt from budgets and never from rendering", () => 
     expect(report.pass).toBe(false);
   });
 });
+
+// C-1: `fixtures/scale-accordion.fixture.tsx` and `fixtures/scale-throws.fixture.tsx`
+// both export `scale`, so `runComboMode`'s `fixtureHasScale` branch builds a
+// combo list where *every* entry is a probe. The M59 exemption describes the
+// M61 augmentation probe appended beside real prop combos; applied to a whole
+// run it made a scale fixture unfailable on any budget.
+describe("a run made only of scale probes is still judged", () => {
+  function scaleOnlyRun(mountMs: number): Report {
+    return build([
+      mountResult(0, { __120fps_scaleN: 1 }, mountMs, 10),
+      mountResult(1, { __120fps_scaleN: 5 }, mountMs + 2, 50),
+      mountResult(2, { __120fps_scaleN: 20 }, mountMs + 4, 200),
+    ]);
+  }
+
+  it("fails a scale-export fixture whose mounts blow the budget", () => {
+    const report = scaleOnlyRun(900);
+    expect(report.combos.every((c) => c.scaleProbe !== undefined)).toBe(true);
+    expect(report.combos.map((c) => c.verdict)).toEqual(["fail", "fail", "fail"]);
+    expect(report.pass).toBe(false);
+    expect(formatTable(report)).toContain("Result: FAIL");
+  });
+
+  it("passes the same shape when it is inside budget", () => {
+    const report = scaleOnlyRun(3);
+    expect(report.pass).toBe(true);
+  });
+
+  it("still exempts probes that sit beside real prop combos", () => {
+    const report = build([
+      mountResult(0, { variant: "default" }, 4),
+      mountResult(1, { __120fps_scaleN: 50 }, 900, 30),
+    ]);
+    expect(report.combos[1].verdict).toBe("pass");
+    expect(report.pass).toBe(true);
+  });
+});

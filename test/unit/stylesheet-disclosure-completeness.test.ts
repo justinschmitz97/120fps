@@ -36,8 +36,11 @@ describe("a stylesheet that matched nothing is named as such", () => {
     const warning = STYLESHEET_MATCHED_NOTHING_WARNING("css/styles.scss", 1183);
     expect(warning).toContain("css/styles.scss");
     expect(warning).toContain("1183 rules");
-    expect(warning).toContain("unstyled render");
     expect(warning).toContain("--wrap");
+    // C-8: the probe cannot see :root/html/body rules, so the sentence must
+    // not assert "unstyled" as the only reading.
+    expect(warning).toContain("custom properties on :root");
+    expect(warning).not.toMatch(/^.*the measurement describes an unstyled render/);
   });
 });
 

@@ -101,6 +101,22 @@ describe("the package manager a repository actually uses", () => {
     expect(packageManagerRunCommand(path.join(repo, "packages", "ui"), "build")).toBe("pnpm run build");
   });
 
+  it("prefers a workspace root's packageManager over a member's stray lockfile", () => {
+    const repo = mkRepo({
+      "package.json": JSON.stringify({
+        name: "root",
+        workspaces: ["packages/*"],
+        packageManager: "pnpm@11.22.0",
+      }),
+      "pnpm-lock.yaml": "",
+      "packages/ui/package.json": JSON.stringify({ name: "ui" }),
+      "packages/ui/package-lock.json": "{}",
+    });
+    expect(packageManagerRunCommand(path.join(repo, "packages", "ui"), "build")).toBe(
+      "pnpm run build",
+    );
+  });
+
   it("falls back to npm when nothing says otherwise", () => {
     const root = mkRepo({ "package.json": JSON.stringify({ name: "a" }) });
     expect(packageManagerRunCommand(root, "version")).toBe("npm run version");

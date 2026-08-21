@@ -50,7 +50,12 @@ indefinitely (observed: 11+ min, 20 s CPU, children alive) holding its directory
 - The fatal-exit watchdog bounds the whole run: armed before `runOne`, re-armed per phase heartbeat,
   so a hang inside `analyze()` cannot hold the dir and child processes indefinitely (budget: the
   larger of `--explore-budget` + 10 min or 20 min; documented below).
-- Child processes (Chromium, esbuild) are killed on every exit path above.
+- Child processes are closed on every exit path above, through the browser pool and the dev-server
+  pool. Restated after review: `closePoolsBounded` *asks* Playwright and Vite to close and is
+  bounded — a `closeAll()` that never settles is abandoned, not force-killed, because Playwright's
+  public API exposes no process handle for a `chromium.launch()` browser (M92 1.5b, unchanged). The
+  harness directory removal that precedes it is synchronous and unconditional, so the MUST that
+  matters ("leaves nothing behind" on disk) holds even when a browser process outlives the run.
 
 ## MUST NOT
 
@@ -102,13 +107,43 @@ On expiry the watchdog prints what it bounded and takes the same `abortRun` path
 The timer is `unref()`d, so it never keeps an otherwise-finished process alive, and it is cleared in
 `finally` around each component of a sweep.
 
+## Review fixes (2026-08-21)
+
+- **A6** — the live-pid gate read the *directory's* mtime, which stops advancing once the build has
+  written `entry.tsx`, so any run longer than the gate looked abandoned while it was measuring.
+  Liveness is now the `.pid` marker's own mtime, refreshed by `refreshHarnessDirMarkers()` at every
+  phase heartbeat, and a directory whose marker names **this** process is never swept at any age.
+- **A2** — under `--ci` the progress reporter is a no-op, so no phase line can re-arm the watchdog
+  and the budget bounds the whole run. `RUN_WATCHDOG_ABORT_ERROR` now takes that mode and says
+  "exceeded its total budget of N minutes" instead of "made no progress", which was false of a
+  healthy CI run. Per-phase bounding under `--ci` needs an `onHeartbeat` sink read before
+  `resolveProgressReporter`'s `options.ci` short-circuit (Lane C).
+- **A8** — `abortRun` sets `process.exitCode` before awaiting the pools, so a loop that drains while
+  a close is still pending exits with `128 + signo` rather than 0.
+- **A13** — the `activeHarnessDirs` comment no longer claims a one-hour age gate.
+- **calcom-R1 (orphan node process holding a harness dir)** — 120fps starts no node child of its
+  own: `child_process` appears once in `src/` (`compare.ts`'s `execFileSync` for git), and there is
+  no `fork`, `spawn`, `process.execPath` re-exec or `Worker` anywhere (pinned by
+  `test/unit/killed-run-cleanup.test.ts`, "processes a run is responsible for"). A surviving process
+  with the run's argv is therefore that run's own process, from an *earlier*, killed attempt of the
+  same command — the confound V2 already documented ("the directory mtime records *a* run's start,
+  not necessarily the logged one"). Measured directly while three lanes were running here: a WMI
+  match on `*cli.js*Badge.tsx*` returned two processes, one of them another lane's live
+  `dub badge.tsx --matrix` run, matched only because the filter is case-insensitive and argv-shaped.
+  What A6 changes for a real orphan: an idle process stops refreshing its `.pid` marker, so its
+  directory becomes sweepable ten minutes after its last phase instead of being held for as long as
+  the process lives. Live check, the finding's own command against a scratch build
+  (`logs/fix-a-review-calcom2.log`): `Result: PASS`, `Total: 8m 31s`, `EXIT=0`; five seconds later a
+  WMI query for `node.exe` whose CommandLine matches this run returns nothing, `packages/ui` holds no
+  `.120fps-harness-*`, and `git status --porcelain` is empty.
+
 ## Open questions
 
-- The 10-minute gate for a *live* pid can, in principle, remove a directory belonging to another
-  120fps process that has been measuring the same project for more than ten minutes (V2 observed an
-  11-minute excalidraw run). The map fixes this number; the safer variant (never sweep a live pid's
-  directory at all, since that process now cleans up after itself on every exit path including
-  signals) is recorded here for the coordinator rather than taken unilaterally.
+- The 10-minute gate for a *live foreign* pid now measures marker staleness, not directory age, so a
+  run that is still working refreshes itself out of reach of another process's sweep. What remains
+  is a run whose phases are more than ten minutes apart (a single very long explore with no phase
+  line in between): its marker goes stale while it is alive. Raising the gate, or refreshing the
+  marker from a timer rather than from phase lines, is the next lever if the corpus ever shows one.
 
 ## Verification
 

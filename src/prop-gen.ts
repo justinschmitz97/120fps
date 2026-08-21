@@ -364,7 +364,12 @@ export async function extractPropsDetailed(
     binding.targetName !== undefined &&
     binding.computedAnnotation === undefined
   ) {
-    warnUntypedJsComponent(absolutePath, binding.targetName, collecting ? sink : undefined);
+    warnUntypedJsComponent(
+      absolutePath,
+      binding.targetName,
+      declarationPath,
+      collecting ? sink : undefined,
+    );
   }
 
   return {
@@ -580,8 +585,14 @@ export const VUE_UNRESOLVED_PROPS_TYPE_WARNING = (
   typeText: string,
 ): string =>
   `Warning: ${UNRESOLVED_DEFINE_PROPS_MARK} "${typeText}" in ${absolutePath} could not be resolved: ` +
-  `nothing the SFC's script blocks declare or import provides it, so no props were extracted. ` +
-  `Add ${presetFileName(absolutePath)} next to it to supply values for measurement.\n`;
+  `nothing the SFC's script blocks declare or import provides it.` +
+  // Review B-4: the one new resolution warning that did not branch on the
+  // preset already being on disk, so it claimed nothing was extracted while
+  // the preset's own props were being measured.
+  (detectPropPresets(absolutePath)
+    ? presetRemedyClause(absolutePath)
+    : ` No props were extracted.${presetRemedyClause(absolutePath)}`) +
+  "\n";
 
 export function isVueUnresolvedPropsTypeWarning(message: string): boolean {
   return message.includes(UNRESOLVED_DEFINE_PROPS_MARK);
@@ -605,17 +616,26 @@ export function isVuePropsScopeExclusionWarning(message: string): boolean {
 // measured combo mounted with `{}`. Same register as the two Vue scope
 // exclusions above -- a stated cause rather than the generic
 // "extraction may have failed" hedge.
-const UNTYPED_JS_COMPONENT_MARK = "declares no props type and has no declaration file beside it";
+const UNTYPED_JS_COMPONENT_MARK = "declares no props type";
 
 export const UNTYPED_JS_COMPONENT_WARNING = (
   absolutePath: string,
   targetName: string,
-  hasPresets = false,
-): string =>
-  `Warning: ${targetName} in ${absolutePath} ${UNTYPED_JS_COMPONENT_MARK}: measuring with no props. ` +
-  `A sibling <stem>.d.ts is read when one exists (ADR 0004); this JavaScript source has neither an ` +
-  `annotated props parameter nor a declaration.` +
-  (hasPresets ? "\n" : ` Add ${presetFileName(absolutePath)} next to it to supply values.\n`);
+  // Review B-2: the declaration that WAS read, when one resolved. Saying "has
+  // no declaration file beside it" with `Widget.d.ts` on disk is the same class
+  // of false claim M97 section 4 fixed for `warnUnboundTarget`.
+  declarationPath?: string,
+): string => {
+  const source = declarationPath
+    ? `${UNTYPED_JS_COMPONENT_MARK}: ${path.basename(declarationPath)} was read and declares none for it either`
+    : `${UNTYPED_JS_COMPONENT_MARK} and has no declaration file beside it (a sibling <stem>.d.ts is read when one exists, ADR 0004)`;
+  // Review B-3: with a preset on disk, applyPropPresets's append path supplies
+  // the props and the run measures them, so "measuring with no props" is false.
+  const outcome = detectPropPresets(absolutePath)
+    ? `${presetFileName(absolutePath)} next to it supplies the values measured instead.`
+    : `measuring with no props. Add ${presetFileName(absolutePath)} next to it to supply values.`;
+  return `Warning: ${targetName} in ${absolutePath} ${source}: ${outcome}` + "\n";
+};
 
 // Lets src/analyze.ts recognize this specific warning, so the generic
 // ZERO_PROPS_WARNING does not stack on top of a cause already stated.
@@ -1410,14 +1430,70 @@ function warnRecursiveType(
   );
 }
 
+// M103 (dub-F2, corpus re-test): a REQUIRED prop typed as a class or an
+// interface with methods gets a placeholder object -- dub's Table declares
+// `table: TableType<T>`, the harness synthesizes `{}`, and the render dies on
+// `table.getVisibleLeafColumns is not a function` with nothing said in either
+// mode. `warnDegenerateProps` covers the case where synthesis gave up outright;
+// this covers the one where it produced something the component cannot use.
+// Same family, same remedy.
+const REQUIRED_OBJECT_SYNTHESIS_MARK = "is measured with a synthesized stand-in";
+
+export const SYNTHESIZED_REQUIRED_OBJECT_WARNING = (
+  absolutePath: string,
+  propName: string,
+  typeText: string,
+): string =>
+  `Warning: required prop "${propName}" in ${absolutePath} is typed ${typeText}, which no ` +
+  `synthesized value can satisfy, so it ${REQUIRED_OBJECT_SYNTHESIS_MARK}: the component receives an ` +
+  `object with none of that type's methods.` +
+  presetRemedyClause(absolutePath) +
+  "\n";
+
+export function isSynthesizedRequiredObjectWarning(message: string): boolean {
+  return message.includes(REQUIRED_OBJECT_SYNTHESIS_MARK);
+}
+
+// A type whose own members include a callable one. A synthesized stand-in gives
+// the component the fields and none of the methods, which is the shape that
+// crashes on first use rather than rendering something wrong.
+function hasMethodMembers(type: ts.Type): boolean {
+  return type
+    .getProperties()
+    .some((member) =>
+      (member.getDeclarations() ?? []).some(
+        (declaration) =>
+          ts.isMethodSignature(declaration) ||
+          ts.isMethodDeclaration(declaration) ||
+          (ts.isPropertySignature(declaration) &&
+            declaration.type !== undefined &&
+            ts.isFunctionTypeNode(declaration.type)),
+      ),
+    );
+}
+
+function warnSynthesizedRequiredObject(
+  fileName: string,
+  propName: string,
+  typeText: string,
+  sink?: (message: string) => void,
+): void {
+  emit(
+    `${path.resolve(fileName)}::required-object::${propName}`,
+    SYNTHESIZED_REQUIRED_OBJECT_WARNING(fileName, propName, typeText),
+    sink,
+  );
+}
+
 function warnUntypedJsComponent(
   fileName: string,
   targetName: string,
+  declarationPath: string | undefined,
   sink?: (message: string) => void,
 ): void {
   emit(
     `${path.resolve(fileName)}::untyped-js::${targetName}`,
-    UNTYPED_JS_COMPONENT_WARNING(fileName, targetName, detectPropPresets(fileName) !== undefined),
+    UNTYPED_JS_COMPONENT_WARNING(fileName, targetName, declarationPath),
     sink,
   );
 }
@@ -1755,6 +1831,21 @@ type PropRank = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
 // hundred style props declared beside them in the same package; width does.
 const WIDE_DECLARATION_MEMBERS = 40;
 
+// M103 (chakra-F1): the names design systems reserve for their own variant
+// axes. Deliberately short and closed -- each one is a name a user varies to
+// change how the component looks, and none of them is a DOM attribute.
+const KNOWN_VARIANT_AXIS_NAMES = new Set([
+  "colorPalette",
+  "colorScheme",
+  "variant",
+  "size",
+  "tone",
+  "intent",
+  "appearance",
+  "severity",
+  "status",
+]);
+
 function isNarrowDeclarationSite(decl: ts.Declaration): boolean {
   const parent = decl.parent;
   if (!parent) return true;
@@ -1779,6 +1870,18 @@ function propRank(
   const nonUndefined = nonUndefinedMembers(type);
   const target = nonUndefined.length === 1 ? nonUndefined[0] : type;
 
+  // M103 (chakra-F1, corpus re-test): a design system declares its own variant
+  // surface inside the same generated interface as its three hundred style
+  // props, so origin, width and shape cannot separate `colorPalette` from
+  // `clipPath`. The name can: these are the names a component library reserves
+  // for the axes a user actually varies. Promoted only when the prop carries a
+  // string-like type, so a same-named callback or object prop is unaffected.
+  const isStringLike = nonUndefined.some(
+    (member) =>
+      !!(member.flags & (ts.TypeFlags.String | ts.TypeFlags.StringLiteral)) ||
+      member.isStringLiteral(),
+  );
+
   const isVariantSurface =
     !!(target.flags & ts.TypeFlags.BooleanLike) ||
     isBooleanUnion(nonUndefined) ||
@@ -1786,6 +1889,10 @@ function propRank(
       nonUndefined.every((m) => m.isStringLiteral() || !!(m.flags & ts.TypeFlags.StringLiteral))) ||
     (nonUndefined.length > 1 &&
       nonUndefined.every((m) => m.isNumberLiteral() || !!(m.flags & ts.TypeFlags.NumberLiteral)));
+
+  if (KNOWN_VARIANT_AXIS_NAMES.has(name) && (isVariantSurface || isStringLike)) {
+    return isVariantSurface ? 1 : 2;
+  }
 
   // Declared in the project's own sources: the component's file, a local type
   // alias, or the package's generated recipe/variant types. A narrow
@@ -1892,6 +1999,28 @@ function typeToSchema(
       const branches = collapsedUnionBranches(propType, checker);
       if (branches && fileName) {
         warnCollapsedUnion(fileName, prop.getName(), branches, schema.kind, sink);
+      }
+      // M103 (dub-F2): a required prop the synthesizer could only fill with a
+      // stand-in object. `warnDegenerateProps` already covers the case where it
+      // produced nothing at all.
+      if (
+        fileName &&
+        schema.required &&
+        schema.degenerate === undefined &&
+        schema.provenance === "placeholder" &&
+        (schema.kind === "object" || schema.kind === "unknown") &&
+        // The discriminator: a plain synthesized object can carry data, never
+        // behaviour. dub's `TableType` declares `getVisibleLeafColumns()` and
+        // `getRowModel()`; a domain object of plain fields synthesizes fine and
+        // stays silent.
+        hasMethodMembers(propType)
+      ) {
+        warnSynthesizedRequiredObject(
+          fileName,
+          prop.getName(),
+          checker.typeToString(propType),
+          sink,
+        );
       }
     } catch (error) {
       if (!(error instanceof RangeError)) throw error;

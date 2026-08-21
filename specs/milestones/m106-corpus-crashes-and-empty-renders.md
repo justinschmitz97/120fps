@@ -7,6 +7,7 @@ tests:
   - test/unit/import-cycle-preflight-hit.test.ts
   - test/unit/preprocessor-options-replay.test.ts
   - test/unit/entry-selects-exports-at-runtime.test.ts
+  - test/unit/provider-wrapper.test.ts
   # Lane B
   - test/unit/portal-nodes-and-sprite-refs.test.ts
   - test/unit/tracing-window-and-retry-signatures.test.ts
@@ -215,6 +216,25 @@ $ ... --no-auto-compose                                                      # E
 The ESM link error (`does not provide an export named 'IconName'`) is gone; what remains is
 auto-composition composing a type-only name into the scene, which `--no-auto-compose` avoids and
 which is upstream of this file (see the request below).
+**I5 gaps carried, not closed (review).** `collectStaticPreBuildWarnings` does not compute the
+`PROJECT_TRANSFORM_WARNING` inputs — they stay at `analyze.ts:3129`, where the dry run and the real
+run both already reach them — and `BuildHarnessOptions.preBuild` still has no production caller, so
+the "does not recompute" half of I5 is exercised only by
+`test/unit/static-prebuild-warnings.test.ts` ("uses a precomputed result instead of recomputing it").
+That file's "produces the warnings the harness itself would produce" case is the set-and-order
+equality pin the review asked for: it compares `harness.warnings` with `[...new Set(pre.warnings)]`
+by `toEqual`, which is order-sensitive.
+
+**Review fixes (2026-08-21).** A3: `tdzCycleNote` asserted an import cycle for any
+`Cannot access 'X' before initialization`, cross-referencing a warning that need not exist (a
+`--no-preflight` run prints none). `runPreflight` now sets `setImportCycleReported(...)` — true when
+it reports a cycle, false when it walks a graph without one — and the unproven case reads
+"(a temporal dead zone) — possibly an import cycle this run's preflight did not report". A7: one
+`import-cycle` hit per run carrying every chain (`cycleChains`), instead of one ~500-character
+warning per importer; excalidraw printed three. A12: the warning no longer claims the entry is the
+graph's "only root", which is false whenever a `--wrap` module is an entry too. A5 is recorded in
+M102's own review section.
+
 ### Lane B evidence
 
 **B3 — no code change, and none was invented.** The mount pass already closes a per-combo window
@@ -361,13 +381,18 @@ The finding's run printed `Result: PASS` over the same six empty points with no 
 all. Every point carries `renderHealth: "empty"` in JSON and `report.pass === false`.
 
 One correction to C3's wording, from what this run actually showed: **no page errors were captured
-on any point** (`points[].pageErrors` absent throughout), so the provider hint the MUST anticipated
-has nothing to attribute and does not fire — the component renders nothing without throwing. The
-widened broken-point gate (any page errors, not only fatal ones) is still what closes the case the
-investigation described; here the all-points-empty branch is what fails the run. The `domFlat` hint
-is now withheld for this shape (`hints.ts`): its remedy ("point `--curve` at the prop that does
-[drive the DOM]") names the wrong thing when nothing rendered at any N, the same reasoning that
-already suppressed it whenever a curve render error explains the flat curve.
+on any point** (`points[].pageErrors` absent throughout), so a hint asserting that the page threw
+would be false. The widened broken-point gate (any page errors, not only fatal ones) is still what
+closes the case the investigation described; here the all-points-empty branch is what fails the run.
+
+Review fix-up (gap 7): the MUST's provider-hint clause is now implemented without that false claim.
+`CURVE_ALL_POINTS_EMPTY_WARNING` carries the `scale point N=` prefix `renderFailed` matches, so
+`providerCandidates` are published for an all-empty curve; the hint itself is a new
+`curveRenderedNothing` entry whose copy states that nothing threw and points at `--wrap`, and
+`extraHintLines` appends the same provider-candidate lines a render error gets. `renderError`'s own
+fallback was narrowed to `^scale point N=\d` so it cannot pick this marker up. The `domFlat` hint
+stays withheld for this shape: its remedy ("point `--curve` at the prop that does [drive the DOM]")
+names the wrong thing when nothing rendered at any N.
 
 Real-repo evidence for the mixed case (some points render, one does not) is in M104's Verification
 section: commerce `variant-selector.tsx` prints `[renders nothing at N=1]` and `fitted over the

@@ -7,7 +7,12 @@ import { analyze, explainProps, formatExplainProps, resolveProjectPaths, formatA
 import { compareAgainstRef, formatCompare, validateCompareOptions } from "./compare.js";
 import { formatMarkdown, formatJUnit } from "./ci-report.js";
 import { createBrowserPool } from "./measure.js";
-import { createServerPool, presentBundlerFailure, sweepActiveHarnessDirs } from "./harness.js";
+import {
+  createServerPool,
+  presentBundlerFailure,
+  refreshHarnessDirMarkers,
+  sweepActiveHarnessDirs,
+} from "./harness.js";
 import { scanExports } from "./prop-gen.js";
 import { parseIsolationPhases, strictModeUnsupported, VUE_STRICTMODE_ERROR } from "./isolation.js";
 import { setPreflightBypassed } from "./preflight.js";
@@ -123,6 +128,11 @@ export async function abortRun(
     exited = true;
     exit(exitCode);
   };
+  // Review A8: both this deadline and closePoolsBounded's own timer are
+  // unref'd, so if every handle closes while a pool close is still pending the
+  // loop drains and Node exits on its own. Recording the code first makes that
+  // exit the documented one instead of 0.
+  process.exitCode = exitCode;
   const deadline = setTimeout(exitOnce, timeoutMs);
   deadline.unref();
   if (pools) await closePoolsBounded(pools.pool, pools.serverPool, timeoutMs);
@@ -188,12 +198,26 @@ export function registerTerminationHandlers(): void {
   }
 }
 
-export function RUN_WATCHDOG_ABORT_ERROR(componentPath: string, budgetMs: number): string {
+// M101 (review A2): under --ci the progress reporter is a no-op by design
+// (`resolveProgressReporter`, analyze.ts), so no phase line arrives and this
+// timer bounds the whole run rather than one phase of it. Two different facts,
+// two different sentences: "made no progress" is false of a --ci run that was
+// working the entire time.
+export function RUN_WATCHDOG_ABORT_ERROR(
+  componentPath: string,
+  budgetMs: number,
+  bound: "stalled" | "total",
+): string {
+  const minutes = Math.round(budgetMs / 60_000);
+  const lead =
+    bound === "stalled"
+      ? `${componentPath} made no progress for ${minutes} minutes`
+      : `${componentPath} exceeded its total budget of ${minutes} minutes (no phase boundaries ` +
+        "were reported, so the whole run is bounded rather than each phase)";
   return (
-    `Error: ${componentPath} made no progress for ${Math.round(budgetMs / 60_000)} minutes; ` +
-    "aborting the run, removing its harness directory and closing its browser. Re-run with " +
-    "--explore-budget to allow a longer exploration, or with --no-deltas / --max-combos to " +
-    "measure less.\n"
+    `Error: ${lead}; aborting the run, removing its harness directory and closing its browser. ` +
+    "Re-run with --explore-budget to allow a longer exploration, or with --no-deltas / " +
+    "--max-combos to measure less.\n"
   );
 }
 
@@ -1213,11 +1237,30 @@ export function nodeVersionError(version: string): string | undefined {
 export function explainPropsOptions(
   args: CliArgs,
   componentPath: string,
-): { target?: string; noPreflight?: boolean; framework?: "react" | "vue" | "vanilla" | "auto" } {
+): {
+  target?: string;
+  noPreflight?: boolean;
+  framework?: "react" | "vue" | "vanilla" | "auto";
+  curveMode?: ReturnType<typeof resolveCurveOption>;
+  matrixMode?: ReturnType<typeof resolveMatrixOption>;
+  isolation?: ReturnType<typeof resolveIsolationOption>;
+  fixturePath?: string;
+} {
+  // C-5: the four flags below decide which mode the real run takes, and the
+  // dry run's whole job is to predict that mode. They are resolved with the
+  // same functions runOne uses, so the two paths cannot disagree about what a
+  // flag combination means.
+  const curveMode = resolveCurveOption(args);
+  const matrixMode = resolveMatrixOption(args);
+  const isolation = resolveIsolationOption(args);
   return {
     ...(args.targets?.[componentPath] ? { target: args.targets[componentPath] } : {}),
     ...(args.noPreflight ? { noPreflight: true } : {}),
     ...(args.framework ? { framework: args.framework } : {}),
+    ...(curveMode !== undefined ? { curveMode } : {}),
+    ...(matrixMode !== undefined ? { matrixMode } : {}),
+    ...(isolation !== undefined ? { isolation } : {}),
+    ...(args.fixturePath ? { fixturePath: args.fixturePath } : {}),
   };
 }
 
@@ -1372,8 +1415,12 @@ async function main(): Promise<void> {
     // phase that stops making progress cannot hold this directory and this
     // browser forever. Cleared in the same iteration's finally.
     const budgetMs = runWatchdogBudgetMs(args.exploreBudgetSeconds);
+    // Every run passes onPhase, so the timer is re-armed at each phase on
+    // every path, --ci included. The total-budget wording stays for a caller
+    // that omits it.
+    const bound = "stalled" as const;
     const runWatchdog = createRunWatchdog(budgetMs, () => {
-      process.stderr.write(RUN_WATCHDOG_ABORT_ERROR(componentPath, budgetMs));
+      process.stderr.write(RUN_WATCHDOG_ABORT_ERROR(componentPath, budgetMs, bound));
       void abortRun(2, { pool, serverPool });
     });
     try {
@@ -1383,7 +1430,13 @@ async function main(): Promise<void> {
         args,
         pool,
         serverPool,
-        () => runWatchdog.heartbeat(),
+        () => {
+          runWatchdog.heartbeat();
+          // M101 (review A6): the marker is what tells another process this
+          // directory is still in use; the directory's own mtime stopped
+          // advancing when the build finished writing into it.
+          refreshHarnessDirMarkers();
+        },
       );
       if (!args.ci) {
         process.stdout.write(formatTable(report) + "\n");
@@ -1448,20 +1501,14 @@ async function runOne(
   args: CliArgs,
   browserPool?: import("./measure.js").BrowserPool,
   serverPool?: import("./harness.js").ServerPool,
-  // M101: every phase line doubles as a liveness heartbeat for the run
-  // watchdog. Under --ci the progress reporter is a no-op by design, so there
-  // the budget bounds the whole run instead of one phase of it.
+  // M101: every phase boundary is a liveness heartbeat for the run watchdog.
+  // Review A2 follow-up: it rides `onPhase`, which analyze fires before the
+  // --ci gate that silences console progress, so a CI run is bounded per phase
+  // like any other instead of by a bare total.
   onPhase?: () => void,
 ): Promise<import("./report.js").Report> {
   return analyze(componentPath, {
-      ...(onPhase
-        ? {
-            onProgress: (line: string) => {
-              onPhase();
-              process.stdout.write(line + "\n");
-            },
-          }
-        : {}),
+      ...(onPhase ? { onPhase } : {}),
       // Item A: threads this run's warnings out to the same accumulator
       // resolveFatalProcessError reads, so a surface-3 async rejection can
       // disclose them -- see currentRunWarnings's own comment.

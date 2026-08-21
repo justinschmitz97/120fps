@@ -343,14 +343,25 @@ const MAX_MATRIX_AUTO_CELLS = 64;
 
 export function isMatrixEligible(schema: PropSchema): boolean {
   if (schema.kind === "boolean") return true;
-  if (schema.kind === "union" && schema.values.length >= 1 && schema.values.length <= 8) return true;
+  // M104 / I10 (dub-F7): a literal union is an axis whatever its arity. dub's
+  // Badge declares `variant` with twelve values, and a 1..8 window excluded the
+  // component's only own prop while thirteen inherited `<span>` attributes were
+  // crossed. An over-wide union is crossed over a truncated value set instead
+  // (`matrixValues`), so the cell-count bound is unchanged.
+  if (schema.kind === "union" && schema.values.length >= 1) return true;
   return false;
 }
 
+// The most values one axis is ever crossed over. Beyond this the axis keeps its
+// anchor plus the next declared values, and the difference is disclosed per
+// axis (`declaredValues` vs `measuredValues`).
+export const MAX_MATRIX_AXIS_VALUES = 8;
+
 function matrixValueCount(schema: PropSchema): number {
   if (schema.kind === "boolean") return 2;
-  return schema.values.length;
+  return Math.min(schema.values.length, MAX_MATRIX_AXIS_VALUES);
 }
+
 
 export function shouldAutoActivateMatrix(schemas: PropSchema[]): boolean {
   const eligible = schemas.filter(isMatrixEligible);
@@ -364,7 +375,50 @@ export function shouldAutoActivateMatrix(schemas: PropSchema[]): boolean {
 // second inline copy of the predicate.
 export function matrixValues(schema: PropSchema): unknown[] {
   if (schema.kind === "boolean") return [false, true];
-  return schema.values;
+  const declared = schema.values;
+  if (declared.length <= MAX_MATRIX_AXIS_VALUES) return declared;
+  // The anchor is the value the component itself defaults to when it declares
+  // one, so the anchor cell is the component's own resting state; otherwise the
+  // first declared value, matching `resolveAnchorValue`. The rest follow in
+  // declaration order.
+  const anchorIndex =
+    schema.defaultValue === undefined
+      ? 0
+      : Math.max(
+          0,
+          declared.findIndex((value) => Object.is(value, schema.defaultValue)),
+        );
+  const rest = declared.filter((_, index) => index !== anchorIndex);
+  return [declared[anchorIndex], ...rest.slice(0, MAX_MATRIX_AXIS_VALUES - 1)];
+}
+
+// Every value the axis declares, as the schema declares them.
+export function matrixDeclaredValues(schema: PropSchema): unknown[] {
+  return schema.kind === "boolean" ? [false, true] : schema.values;
+}
+
+// M104 / I10 (dub-F7): the axes a matrix crosses, with what each one declares
+// beside what it measures, so the report can say "variant: 8 of 12 values
+// crossed" instead of presenting the truncation as the whole contract.
+export interface MatrixAxisValues {
+  propName: string;
+  // What the cells actually cross. Identical to `measuredValues`; kept so this
+  // satisfies `MatrixAxisLike` for `selectMatrixCombos`.
+  values: unknown[];
+  declaredValues: unknown[];
+  measuredValues: unknown[];
+}
+
+export function matrixAxesFor(schemas: PropSchema[]): MatrixAxisValues[] {
+  return schemas.filter(isMatrixEligible).map((schema) => {
+    const measuredValues = matrixValues(schema);
+    return {
+      propName: schema.name,
+      values: measuredValues,
+      declaredValues: matrixDeclaredValues(schema),
+      measuredValues,
+    };
+  });
 }
 
 // M104 / I10 (dub-F1): a prop the matrix does not vary is not a free variable.
@@ -374,6 +428,20 @@ export function matrixValues(schema: PropSchema): unknown[] {
 // axis named. An optional non-axis prop holds the default the component
 // declares, or is absent. A required one stays present with its anchor value:
 // an absent required prop is a guaranteed crash (M86), not a cleaner cell.
+// M104 / I10 (review B-1): "absent" is for a SYNTHESIZED stand-in only. A value
+// the user wrote in `<stem>.props.tsx` (`provenance: "preset"`) is the whole
+// point of M98's primevue closure, and a content slot is what the component
+// renders -- dropping either measured a component with no content while combo
+// mode still measured it, so the two modes disagreed about the same component.
+const CONTENT_SLOT_NAME = /^(children|label)$/;
+
+function isContentSlot(schema: PropSchema): boolean {
+  if (CONTENT_SLOT_NAME.test(schema.name)) return true;
+  return (
+    (schema.kind === "reactnode" || schema.kind === "string") && schema.provenance === "declared"
+  );
+}
+
 function matrixNonAxisValue(schema: PropSchema): { present: boolean; value?: unknown } {
   if (schema.defaultSource !== undefined) {
     return schema.defaultValue === undefined
@@ -381,7 +449,18 @@ function matrixNonAxisValue(schema: PropSchema): { present: boolean; value?: unk
       : { present: true, value: schema.defaultValue };
   }
   if (schema.required) return { present: true, value: resolveAnchorValue(schema) };
+  if (schema.provenance === "preset") return { present: true, value: resolveAnchorValue(schema) };
+  if (isContentSlot(schema)) return { present: true, value: resolveAnchorValue(schema) };
   return { present: false };
+}
+
+// M104 / I10 (review B-1): the non-axis props no cell carries, so the matrix
+// header can say so. A cell that silently lost a prop reads as a cell the
+// component rendered without it.
+export function matrixHeldAbsentProps(schemas: PropSchema[]): string[] {
+  return schemas
+    .filter((schema) => !isMatrixEligible(schema) && !matrixNonAxisValue(schema).present)
+    .map((schema) => schema.name);
 }
 
 export function generatePropMatrix(schemas: PropSchema[]): PropCombination[] {
@@ -476,8 +555,11 @@ export function pairwiseCover(
   const rows: PropCombination[] = [{ ...anchorRow }];
   for (const axis of axes) {
     if (rows.length >= maxRows) break;
+    // Review B-12: a second value that is literally `undefined` is the prop's
+    // own absence, not a deviation worth a cell of the budget.
+    if (axis.values.length < 2) continue;
     const deviation = axis.values[1];
-    if (deviation === undefined && axis.values.length < 2) continue;
+    if (deviation === undefined) continue;
     rows.push({ ...anchorRow, [axis.name]: deviation });
   }
   for (const row of rows) {

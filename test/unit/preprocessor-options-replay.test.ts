@@ -87,6 +87,31 @@ describe("preprocessor globals a text read can prove", () => {
     expect(data.preprocessorOptions).toBeUndefined();
   });
 
+  // One language's unfoldable additionalData used to set the blanket ignored
+  // key, whose text says preprocessor globals "are not replicated" — false for
+  // the run that replays another language's globals and this one's loadPaths.
+  it("names the language and option it dropped instead of the whole block", () => {
+    fs.mkdirSync(path.join(root, "src", "styles"), { recursive: true });
+    config(
+      "export default { css: { preprocessorOptions: { " +
+        "scss: { additionalData: (source) => source, loadPaths: [path.resolve(__dirname, 'src/styles')] }, " +
+        "less: { additionalData: '@x: 1;' } } } };",
+    );
+    const data = readViteConfigData(root);
+    expect(data.preprocessorOptions?.less?.additionalData).toBe("@x: 1;");
+    expect(data.preprocessorOptions?.scss?.loadPaths).toEqual([path.resolve(root, "src", "styles")]);
+    expect(data.ignoredKeys).not.toContain("css.preprocessorOptions");
+    const named = data.warnings.find((w) => w.includes("additionalData"));
+    expect(named).toContain("css.preprocessorOptions.scss.additionalData (function)");
+  });
+
+  it("keeps the blanket disclosure when nothing under it folded at all", () => {
+    config("export default { css: { preprocessorOptions: { scss: { additionalData: someGlobal } } } };");
+    const data = readViteConfigData(root);
+    expect(data.ignoredKeys).toContain("css.preprocessorOptions");
+    expect(data.preprocessorOptions).toBeUndefined();
+  });
+
   it("reports nothing for a config with no preprocessor options at all", () => {
     config(`export default { css: { modules: { localsConvention: 'camelCaseOnly' } } };`);
     const data = readViteConfigData(root);

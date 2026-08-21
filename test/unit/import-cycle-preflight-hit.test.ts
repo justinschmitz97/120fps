@@ -5,7 +5,12 @@ import os from "node:os";
 import path from "node:path";
 import type { Page } from "playwright";
 import { runPreflight, IMPORT_CYCLE_WARNING, NODE_BUILTIN_WARNING } from "../../src/preflight.js";
-import { attachPageErrorCapture, enrichTimeoutError, tdzCycleNote } from "../../src/page-errors.js";
+import {
+  attachPageErrorCapture,
+  enrichTimeoutError,
+  setImportCycleReported,
+  tdzCycleNote,
+} from "../../src/page-errors.js";
 
 const roots: string[] = [];
 afterAll(() => {
@@ -69,6 +74,33 @@ describe("an import graph that returns to the measured module", () => {
     expect(warning).not.toContain("Node builtin");
   });
 
+  it("reports one hit for a fan-in, listing every chain that returns", () => {
+    const root = mkProject({
+      "package.json": JSON.stringify({ name: "app" }),
+      "Menu.tsx": ['import { A } from "./A";', 'import { B } from "./B";', "export const Menu = () => [A, B];"].join(String.fromCharCode(10)),
+      "A.tsx": ['import { Menu } from "./Menu";', "export const A = Menu;"].join(String.fromCharCode(10)),
+      "B.tsx": ['import { Menu } from "./Menu";', "export const B = Menu;"].join(String.fromCharCode(10)),
+    });
+    const cycles = runPreflight({
+      projectRoot: root,
+      entries: [path.join(root, "Menu.tsx")],
+    }).soft.filter((hit) => hit.kind === "import-cycle");
+    expect(cycles).toHaveLength(1);
+    const warning = IMPORT_CYCLE_WARNING(cycles[0]);
+    expect(warning).toContain("A.tsx");
+    expect(warning).toContain("B.tsx");
+  });
+
+  it("does not claim the component's file is the graph's only root", () => {
+    const root = cyclicProject();
+    const cycle = runPreflight({
+      projectRoot: root,
+      entries: [path.join(root, "DropdownMenu.tsx")],
+    }).soft.find((hit) => hit.kind === "import-cycle")!;
+    // A --wrap module is an entry too (analyze passes [harnessPath, wrapPath]).
+    expect(IMPORT_CYCLE_WARNING(cycle)).not.toContain("only root");
+  });
+
   it("reports no cycle for an acyclic graph", () => {
     const root = mkProject({
       "package.json": JSON.stringify({ name: "app" }),
@@ -88,7 +120,38 @@ describe("attributing a temporal-dead-zone page error", () => {
     return capture;
   }
 
+  it("asserts the cycle only when preflight actually reported one", () => {
+    const capture = captureWith("Cannot access 'DropdownMenu' before initialization");
+    setImportCycleReported(false);
+    const unproven = tdzCycleNote(capture)!;
+    expect(unproven).toContain("DropdownMenu");
+    expect(unproven).toContain("possibly an import cycle");
+    expect(unproven).not.toContain("see the import-cycle warning above");
+    setImportCycleReported(true);
+    expect(tdzCycleNote(capture)!).toContain("see the import-cycle warning above");
+  });
+
+  it("is reset by the preflight walk that finds no cycle", () => {
+    setImportCycleReported(true);
+    const root = mkProject({
+      "package.json": JSON.stringify({ name: "app" }),
+      "Button.tsx": "export const Button = () => null;",
+    });
+    runPreflight({ projectRoot: root, entries: [path.join(root, "Button.tsx")] });
+    const capture = captureWith("Cannot access 'X' before initialization");
+    expect(tdzCycleNote(capture)!).toContain("possibly an import cycle");
+  });
+
+  it("is set by the preflight walk that finds one", () => {
+    setImportCycleReported(false);
+    const root = cyclicProject();
+    runPreflight({ projectRoot: root, entries: [path.join(root, "DropdownMenu.tsx")] });
+    const capture = captureWith("Cannot access 'DropdownMenu' before initialization");
+    expect(tdzCycleNote(capture)!).toContain("see the import-cycle warning above");
+  });
+
   it("names the binding and the cycle instead of a bare timeout", () => {
+    setImportCycleReported(true);
     const capture = captureWith("Cannot access 'DropdownMenu' before initialization");
     const note = tdzCycleNote(capture)!;
     expect(note).toContain("DropdownMenu");

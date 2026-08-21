@@ -137,7 +137,13 @@ export interface InteractionReport {
   stressPattern?: string;
   // Steps in the stress pattern behind `timing`. `timing.median` is the cost
   // of all of them; the budget is per step.
+  // M106 C2 (C-2): the steps that ran, so the per-step cost printed beside it
+  // divides by what was actually measured.
   steps?: number;
+  // Set when the explore wall clock cut the pattern short: how many steps the
+  // pattern would have run. The row says so, because a 3-of-20 cycle is not
+  // the interaction the pattern's name describes.
+  stepsPlanned?: number;
 }
 
 // M84/M85 cross-lane interface: how a synthesized prop value was chosen
@@ -313,6 +319,10 @@ export interface CurveViolation {
 export interface MatrixAxis {
   propName: string;
   values: unknown[];
+  // M104 fix-up: an over-wide union (>8 values) becomes an axis over a
+  // truncated value set, so `values.length` is what the matrix offered and
+  // this is what the component declares. Absent when nothing was truncated.
+  declaredValueCount?: number;
 }
 
 export interface MatrixCell {
@@ -355,6 +365,10 @@ export interface MatrixAxisCoverage {
 export interface MatrixReport {
   axes: MatrixAxis[];
   axisCoverage: MatrixAxisCoverage[];
+  // M104 / I10 (Lane B `matrixHeldAbsentProps`): non-axis props that no cell
+  // carries at all. A cell that silently lost a prop reads as a cell the
+  // component rendered without it, which is a different measurement.
+  heldAbsentProps?: string[];
   cells: MatrixCell[];
   hotCells: MatrixCell[];
   coldCells: MatrixCell[];
@@ -807,8 +821,13 @@ export function formatTable(report: Report): string {
       const stepSuffix = interaction.steps && interaction.steps > 1
         ? ` = ${perStepCost(interaction).toFixed(2)}ms x ${interaction.steps} steps`
         : "";
+      // M106 C2 (C-2): naming the planned count next to the run count is what
+      // stops `x 3 steps` reading as a complete open-close-10 cycle.
+      const truncatedSuffix = interaction.stepsPlanned
+        ? ` [truncated: ${interaction.steps ?? 0} of ${interaction.stepsPlanned} steps, explore budget]`
+        : "";
       lines.push(
-        `    ${interaction.label} (${interaction.type}): ${interaction.timing.median.toFixed(2)}ms${stepSuffix} [${interaction.relativeTiming.toFixed(2)}x cal]${portalSuffix}${patternSuffix}`,
+        `    ${interaction.label} (${interaction.type}): ${interaction.timing.median.toFixed(2)}ms${stepSuffix} [${interaction.relativeTiming.toFixed(2)}x cal]${portalSuffix}${patternSuffix}${truncatedSuffix}`,
       );
     }
   }
@@ -869,6 +888,11 @@ export function formatTable(report: Report): string {
     report.combos.filter((c) => c.scaleProbe === undefined).map((c) => c.verdict),
     "combos",
   );
+  // C-14: the React pass demotes any `pass` combo with a finding to `warn`
+  // after buildReport returned, scale probes included, and ci-report.ts reads
+  // `combos.some(v === "warn")` unfiltered. Without this line the console shows
+  // no rollup at all while the CI status says `warn`.
+  appendScaleProbeWarnRollup(lines, report);
 
   if (hasUnstable) {
     lines.push("⚠ Unstable results (CV>15%): consider increasing sample count");
@@ -1004,23 +1028,31 @@ function appendPageErrors(lines: string[], report: Report): void {
   for (const combo of affected) {
     lines.push(`  Combo #${combo.comboIndex}:`);
     for (const message of combo.pageErrors ?? []) lines.push(`    - ${message}`);
+    // C-17: the verdict sentence belongs to the errors above it. Printed after
+    // the transition block, "counted as a failure" sat directly under
+    // "excluded from combo N's verdict" and read as if the transition errors
+    // were what got counted.
+    appendComboErrorVerdict(lines, combo);
     appendTransitionPageErrors(lines, combo);
-    if (combo.harnessFault) {
-      // M85: the "counted as a failure" line below is specifically false for
-      // this combo — the value that caused the crash was the harness's own,
-      // not the component's, so the opposite statement belongs here instead.
-      lines.push(
-        `    combo ${combo.comboIndex} rendered 0 DOM nodes while the page threw, but the cause ` +
-        `was the harness's own synthesized value for "${combo.harnessFault.propName}" ` +
-        `(${JSON.stringify(combo.harnessFault.value)}, provenance: ${combo.harnessFault.provenance}): ` +
-        "excluded from the verdict, not counted as a component failure.",
-      );
-    } else if (combo.renderHealth === "error") {
-      lines.push(
-        `    combo ${combo.comboIndex} rendered 0 DOM nodes while the page threw: ` +
-        "counted as a failure, not a pass.",
-      );
-    }
+  }
+}
+
+function appendComboErrorVerdict(lines: string[], combo: ComboReport): void {
+  if (combo.harnessFault) {
+    // M85: the "counted as a failure" line below is specifically false for
+    // this combo — the value that caused the crash was the harness's own,
+    // not the component's, so the opposite statement belongs here instead.
+    lines.push(
+      `    combo ${combo.comboIndex} rendered 0 DOM nodes while the page threw, but the cause ` +
+      `was the harness's own synthesized value for "${combo.harnessFault.propName}" ` +
+      `(${JSON.stringify(combo.harnessFault.value)}, provenance: ${combo.harnessFault.provenance}): ` +
+      "excluded from the verdict, not counted as a component failure.",
+    );
+  } else if (combo.renderHealth === "error") {
+    lines.push(
+      `    combo ${combo.comboIndex} rendered 0 DOM nodes while the page threw: ` +
+      "counted as a failure, not a pass.",
+    );
   }
 }
 
@@ -1120,6 +1152,20 @@ function appendWarnRollup(
   if (warned === 0) return;
   lines.push(
     `${warned} of ${verdicts.length} ${noun} warned; warnings do not fail the run.`,
+  );
+}
+
+// C-14: scale probes are excluded from the prop-combo rollup above because
+// they are not prop combos, but a warn on one is still a warn the CI surface
+// reports. Named separately so the two counts stay distinguishable.
+function appendScaleProbeWarnRollup(lines: string[], report: Report): void {
+  if (!report.pass) return;
+  const warned = report.combos.filter(
+    (c) => c.scaleProbe !== undefined && c.verdict === "warn",
+  ).length;
+  if (warned === 0) return;
+  lines.push(
+    `${warned} scale probe${warned === 1 ? "" : "s"} warned; warnings do not fail the run.`,
   );
 }
 
@@ -1585,6 +1631,7 @@ export function formatCurveViolation(violation: CurveViolation): string {
 
 export interface BuildMatrixReportInput {
   axes: MatrixAxis[];
+  heldAbsentProps?: string[];
   // The matrix cells ARE the combos (M21). Projecting them keeps cell verdicts
   // and the run-level pass/fail derived from one computation instead of two
   // that drift: the combo verdict already accounts for interactions.
@@ -1665,14 +1712,25 @@ export function buildMatrixReport(input: BuildMatrixReportInput): MatrixReport {
     for (const c of cells) seen.set(comboKey(c.props[axis.propName]), c.props[axis.propName]);
     const coverage: MatrixAxisCoverage = {
       propName: axis.propName,
-      declaredValues: axis.values.length,
+      declaredValues: axis.declaredValueCount ?? axis.values.length,
       measuredValues: seen.size,
     };
     if (seen.size === 1) coverage.heldValue = [...seen.values()][0];
     return coverage;
   });
 
-  return { axes: input.axes, axisCoverage, cells, hotCells, coldCells, failingCells, compoundEffects };
+  return {
+    axes: input.axes,
+    axisCoverage,
+    ...(input.heldAbsentProps && input.heldAbsentProps.length > 0
+      ? { heldAbsentProps: input.heldAbsentProps }
+      : {}),
+    cells,
+    hotCells,
+    coldCells,
+    failingCells,
+    compoundEffects,
+  };
 }
 
 // M91 (primevue-F2): the same mark combo mode's renderHealthMarks prints for
@@ -1695,7 +1753,15 @@ function appendAxisCoverage(lines: string[], mr: MatrixReport): void {
   const heldLabel = held
     .map((a) => `${a.propName}=${a.measuredValues === 0 ? "absent" : formatCellValue(a.heldValue)}`)
     .join(", ");
-  const crossed = coverage.filter((a) => a.measuredValues > 1).map((a) => a.propName);
+  // An axis whose union was truncated to fit the matrix crossed fewer values
+  // than the component declares, and "crossed" alone would hide that.
+  const crossed = coverage
+    .filter((a) => a.measuredValues > 1)
+    .map((a) =>
+      a.measuredValues < a.declaredValues
+        ? `${a.propName}: ${a.measuredValues} of ${a.declaredValues} values crossed`
+        : a.propName,
+    );
   lines.push(
     crossed.length > 0
       ? `Axes crossed: ${crossed.join(", ")}. Held at one value (not crossed at this cell cap): ${heldLabel}.`
@@ -1725,6 +1791,11 @@ function formatMatrixOutput(lines: string[], report: Report): string {
     : `${mr.hotCells.length} hottest shown`;
   lines.push(`${mr.cells.length} cells measured, ${shownLabel}:`);
   appendAxisCoverage(lines, mr);
+  if (mr.heldAbsentProps && mr.heldAbsentProps.length > 0) {
+    lines.push(
+      `Held absent (no value in any cell): ${mr.heldAbsentProps.join(", ")}.`,
+    );
+  }
   lines.push("");
 
   const cols = [...axisNames, "Mount", "Rerender", "Interact", "DOM", "Verdict"];

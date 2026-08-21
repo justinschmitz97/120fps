@@ -29,7 +29,7 @@ describe("a mount-phase abort names a remedy for the cause its own text shows", 
     const abort =
       "mount phase failed on combo 0 of badge.tsx: page.evaluate: Error: useContext returned " +
       "`undefined`. Seems you forgot to wrap component within <ChakraProvider />";
-    expect(hintsForMountAbort(abort)).toContain("renderError");
+    expect(hintsForMountAbort(abort)).toContain("mountAbortProvider");
   });
 
   it("stays silent on a stack that names none of the signatures", () => {
@@ -53,5 +53,39 @@ describe("a mount-phase abort names a remedy for the cause its own text shows", 
 
   it("produces no block at all when nothing matched", () => {
     expect(formatHints(hintsForMountAbort("mount phase failed: boom"))).toBe("");
+  });
+});
+
+// C-4: M105's MUST NOT ("Guess") stated as tests. A mount abort routinely
+// carries browser-lifecycle text, and the old provider signature (/provider|
+// context/i) matched every one of these — then printed renderError's copy,
+// which talks about timings and a page-error block a mount abort never has.
+describe("a mount abort is never given a provider guess by lifecycle text", () => {
+  const lifecycle = [
+    "mount phase failed on combo 0 of Button.tsx: page.evaluate: Execution context was destroyed, most likely because of a navigation.",
+    "mount phase failed on combo 0 of Button.tsx: Target closed: browser context was closed",
+    "mount phase failed on combo 0 of Button.tsx: page.evaluate: Target page, context or browser has been closed",
+  ];
+
+  for (const abort of lifecycle) {
+    it(`stays silent on: ${abort.slice(abort.indexOf(":") + 1, 60).trim()}...`, () => {
+      expect(hintsForMountAbort(abort)).toEqual([]);
+      expect(formatHints(hintsForMountAbort(abort))).toBe("");
+    });
+  }
+
+  it("still fires on an abort that names a context the component reads", () => {
+    const abort =
+      "mount phase failed on combo 0 of badge.tsx: page.evaluate: Error: useContext returned " +
+      "`undefined`. Seems you forgot to wrap component within <ChakraProvider />";
+    expect(hintsForMountAbort(abort)).toEqual(["mountAbortProvider"]);
+  });
+
+  it("does not claim timings or a page-error block the abort window never had", () => {
+    const abort = "mount phase failed on combo 0 of X.vue: page.evaluate: inject('theme') returned undefined";
+    const block = formatHints(hintsForMountAbort(abort));
+    expect(block).toContain("--wrap");
+    expect(block).not.toContain("the timings describe a broken tree");
+    expect(block).not.toContain("Read the page errors above");
   });
 });

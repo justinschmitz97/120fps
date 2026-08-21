@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   isMatrixEligible,
+  matrixValues,
   shouldAutoActivateMatrix,
   generatePropMatrix,
 } from "../../src/prop-gen-values.js";
@@ -23,8 +24,11 @@ describe("isMatrixEligible", () => {
     expect(isMatrixEligible(makeSchema({ name: "size", kind: "union", values: Array.from({ length: 8 }, (_, i) => `v${i}`) }))).toBe(true);
   });
 
-  it("union with 9 values is not eligible", () => {
-    expect(isMatrixEligible(makeSchema({ name: "size", kind: "union", values: Array.from({ length: 9 }, (_, i) => `v${i}`) }))).toBe(false);
+  it("union with 9 values is an axis over a truncated value set", () => {
+    // M104 / I10 (dub-F7): eligible whatever its arity; crossed over 8 values.
+    const wide = makeSchema({ name: "size", kind: "union", values: Array.from({ length: 9 }, (_, i) => `v${i}`) });
+    expect(isMatrixEligible(wide)).toBe(true);
+    expect(matrixValues(wide)).toHaveLength(8);
   });
 
   it("union with 0 values is not eligible", () => {

@@ -107,6 +107,60 @@ describe("resolving one stylesheet import the way a bundler would", () => {
   });
 });
 
+// ant-design (`@import "../variables"`) and primevue (`@import './_mixins'`)
+// write the canonical Sass/Less partial form: no extension, an underscore the
+// importer never spells, sometimes a directory with an `_index`. None of that
+// is a missing file, and none of it may be reported as one.
+describe("a preprocessor partial imported without its extension", () => {
+  it("resolves an underscore-prefixed sibling", () => {
+    const real = write("src/_variables.scss", "$a: 1;");
+    const entry = write("src/styles.scss", '@import "./_variables";');
+    expect(resolveStylesheetImportTarget("./_variables", entry, root, [])).toEqual({ file: real });
+  });
+
+  it("resolves a partial the importer spells without its underscore", () => {
+    const real = write("theme/_mixins.scss", "@mixin a {}");
+    const entry = write("theme/base/index.scss", '@import "../mixins";');
+    expect(resolveStylesheetImportTarget("../mixins", entry, root, [])).toEqual({ file: real });
+  });
+
+  it("resolves a Less partial the same way", () => {
+    const real = write("components/style/variables.less", "@a: 1;");
+    const entry = write("components/button/style/index.less", '@import "../../style/variables";');
+    expect(resolveStylesheetImportTarget("../../style/variables", entry, root, [])).toEqual({
+      file: real,
+    });
+  });
+
+  it("resolves a directory's own index partial", () => {
+    const real = write("src/theme/_index.scss", "$a: 1;");
+    const entry = write("src/styles.scss", '@import "./theme";');
+    expect(resolveStylesheetImportTarget("./theme", entry, root, [])).toEqual({ file: real });
+  });
+
+  it("claims nothing about an extension-less import it cannot place", () => {
+    const entry = write("src/styles.scss", '@import "./nowhere";');
+    expect(resolveStylesheetImportTarget("./nowhere", entry, root, [])).toBeUndefined();
+  });
+
+  it("still names a missing file whose specifier carries an extension", () => {
+    const entry = write("src/styles.css", '@import "./gone.css";');
+    expect(resolveStylesheetImportTarget("./gone.css", entry, root, [])).toEqual({
+      declared: path.join(root, "src", "gone.css"),
+    });
+  });
+
+  it("keeps a stylesheet whose partials all resolve, and warns about none of them", () => {
+    write("package.json", JSON.stringify({ name: "lib", devDependencies: { sass: "^1.83.0" } }));
+    write("src/_variables.scss", "$a: 1;");
+    const styles = write("src/styles.scss", '@import "./_variables"; .a { color: red }');
+    const warnings: string[] = [];
+    const result = discoverGlobalCss(root, warnings);
+    expect(result.files).toEqual([styles]);
+    expect(warnings.filter((w) => w.includes("_variables"))).toEqual([]);
+  });
+});
+
 describe("stylesheets the measured package declares about itself", () => {
   it("collects style, the styles export, the style.css export and any subpath style condition", () => {
     const styleField = write("dist/theme.css", ".a{}");

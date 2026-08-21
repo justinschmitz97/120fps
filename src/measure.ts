@@ -520,8 +520,8 @@ export const TRACING_STALL_RETRY_WARNING =
   "was retried once against a fresh CDP session";
 
 export const TARGET_CLOSED_RETRY_WARNING =
-  "the browser target closed mid-measurement; the affected sample was retried once against a fresh " +
-  "browser session";
+  "the browser target closed mid-measurement; the affected sample was retried once after re-entering " +
+  "the harness page";
 
 export function contextRetryWarningFor(err: unknown): string {
   if (isTracingTimeoutError(err)) return TRACING_STALL_RETRY_WARNING;
@@ -1331,6 +1331,10 @@ export async function collectTrace(
   // listener has to be attached before the action runs, or a fast flush would
   // resolve into nothing.
   let armFlushTimeout: () => void = () => {};
+  // Review B-10: removed in the `finally` too. A trace that throws before the
+  // flush never fires this listener, and consecutive failures accumulated them
+  // on the same CDP session.
+  let onComplete: (() => void) | undefined;
   const traceComplete = new Promise<void>((resolve, reject) => {
     armFlushTimeout = () => {
       if (completed || timer !== undefined) return;
@@ -1339,12 +1343,13 @@ export async function collectTrace(
         TRACE_FLUSH_TIMEOUT_MS,
       );
     };
-    cdp.once("Tracing.tracingComplete", () => {
+    onComplete = () => {
       completed = true;
       if (timer !== undefined) clearTimeout(timer);
       timer = undefined;
       resolve();
-    });
+    };
+    cdp.once("Tracing.tracingComplete", onComplete);
   });
 
   // Prevent unhandled rejection if timeout fires before await
@@ -1371,6 +1376,7 @@ export async function collectTrace(
   } finally {
     if (timer !== undefined) clearTimeout(timer);
     cdp.off("Tracing.dataCollected", onData);
+    if (onComplete) cdp.off("Tracing.tracingComplete", onComplete);
     // A trace that never completed leaves the session started, and the next
     // Tracing.start then fails with "already been started": turning one lost
     // sample into a dead run. Recovery is best-effort and never masks the
@@ -1521,6 +1527,14 @@ export interface TransitionPageErrors {
   errors: PageErrorDrain;
 }
 
+// M99 (I4): the prop-change rerender for one combo. `run` receives a callback
+// that closes the combo's OWN error window again, for the mounts of its own
+// props that the rerender loop performs.
+export interface TransitionWindow {
+  toComboIndex: number;
+  run: (claimOwnWindow: () => void) => Promise<void>;
+}
+
 export interface RerenderResult {
   comboIndex: number;
   props: PropCombination;
@@ -1543,17 +1557,35 @@ export interface RerenderResult {
 export async function runWithSplitErrorWindows(
   capture: Pick<PageErrorCapture, "drain">,
   result: RerenderResult,
-  transition: { toComboIndex: number; run: () => Promise<void> } | undefined,
+  transition: TransitionWindow | undefined,
 ): Promise<RerenderResult> {
-  const own = capture.drain();
+  let own = capture.drain();
   if (hasPageErrors(own)) result.pageErrors = own;
   if (!transition) return result;
-  await transition.run();
+  // M99 (review B-6): the prop-change loop mounts THIS combo's own props before
+  // each rerender into the next combo's. Those mounts belong to this combo, so
+  // the body closes the own window again over them; only what the rerender
+  // itself raises reaches `transitionPageErrors`, which is what M99 excludes
+  // from the verdict.
+  const claimOwnWindow = (): void => {
+    const drained = capture.drain();
+    if (!hasPageErrors(drained)) return;
+    own = mergeDrains(own, drained) ?? drained;
+    result.pageErrors = own;
+  };
+  await transition.run(claimOwnWindow);
   const drained = capture.drain();
   if (hasPageErrors(drained)) {
     result.transitionPageErrors = { toComboIndex: transition.toComboIndex, errors: drained };
   }
   return result;
+}
+
+// M99 (I4): the combo that follows `ci`, wrapping at the end of the list, so
+// the last row reports its transition to combo 0 rather than to a row that
+// does not exist.
+export function nextComboIndex(comboIndex: number, comboCount: number): number {
+  return comboCount > 0 ? (comboIndex + 1) % comboCount : 0;
 }
 
 export interface MeasureRerenderOptions {
@@ -1704,7 +1736,14 @@ export async function measureRerender(
       // continues to the rest of the combos) rather than reporting a
       // misleading all-zero timing for a combo nothing was actually measured
       // on.
-      if (stableSamples.length === 0) continue;
+      if (stableSamples.length === 0) {
+        // M99 (review B-9): a combo nothing was measured on still opened an
+        // error window. Leaving it undrained would attribute its errors to the
+        // next combo's own window, the exact mis-attribution I4 exists to
+        // prevent. The warmup path above already drains before its `continue`.
+        ms.errorCapture.drain();
+        continue;
+      }
 
       const result: RerenderResult = {
         comboIndex: ci,
@@ -1717,16 +1756,16 @@ export async function measureRerender(
       // The pairing follows the full combo list, so partitioning by pacing
       // cannot change which combo rerenders into which.
       // Skip when either combo is a scale combo: cross-scale rerenders are not meaningful
-      let transition: { toComboIndex: number; run: () => Promise<void> } | undefined;
+      let transition: TransitionWindow | undefined;
       if (combos.length > 1) {
-        const nextIndex = (ci + 1) % combos.length;
+        const nextIndex = nextComboIndex(ci, combos.length);
         const nextProps = combos[nextIndex];
         const isScale = "__120fps_scaleN" in props;
         const nextIsScale = "__120fps_scaleN" in nextProps;
         if (!isScale && !nextIsScale) {
           transition = {
             toComboIndex: nextIndex,
-            run: async () => {
+            run: async (claimOwnWindow) => {
               const changeSamples: number[] = [];
               for (let s = 0; s < sampleCount; s++) {
                 const sample = await withFrameStarvationRetry(
@@ -1738,6 +1777,9 @@ export async function measureRerender(
                       async () => {
                         await suspendThrottle(ms.session.cdp, cpuThrottle, () => tryCollectGarbage(ms.session.cdp));
                         await mountAndWait(ms.page, props);
+                        // This combo's own mount closed; what follows is the
+                        // transition.
+                        claimOwnWindow();
                         return rerenderAndTrace(ms.page, ms.session.cdp, nextProps);
                       },
                       { onRetry: options.onWarning, budget: retryBudget },

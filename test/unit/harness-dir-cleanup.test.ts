@@ -29,7 +29,10 @@ describe("harness directory cleanup targets the workspace member root, not only 
     expect(fs.existsSync(dir)).toBe(true);
 
     // Age it past the stale cutoff and sweep only the member root: a repo-root
-    // check would never see this directory at all.
+    // check would never see this directory at all. M101 (review A6) exempts a
+    // directory the *current* process owns, so the marker names a dead pid —
+    // this test is about where the sweep looks, not about whose dir it is.
+    fs.writeFileSync(path.join(dir, ".pid"), "4194303");
     const past = new Date(Date.now() - 2 * 60 * 60 * 1000);
     fs.utimesSync(dir, past, past);
     sweepStaleHarnessDirs(memberRoot);

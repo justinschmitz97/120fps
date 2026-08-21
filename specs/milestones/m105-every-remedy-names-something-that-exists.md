@@ -105,6 +105,14 @@ would be guessing about. `waitForReadyOrFatal` passes the same lazily-built line
 to `buildFatalPageErrorMessage`, and prefers the fatal message whenever the fatal signal did arrive,
 even if the readiness wait rejected first (the observed order for taxonomy).
 
+## Review fixes (2026-08-21)
+
+- **A11** — `detectPackageManager` read a level's lockfile before another level's `packageManager`
+  field, so a stray `package-lock.json` in a pnpm workspace member printed `npm run build` for a
+  repository whose root declares pnpm. Declarations are now read at every level from the member up
+  to the repository root (the walk is its own, because a stray member lockfile also makes
+  `findWorkspaceRoot` stop at the member), and only then lockfiles.
+
 ## Verification
 
 ### Unit

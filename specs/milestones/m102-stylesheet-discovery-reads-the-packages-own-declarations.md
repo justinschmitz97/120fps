@@ -6,12 +6,20 @@ tests:
   - test/unit/stylesheet-match-stats.test.ts
   - test/unit/entry-stylesheet-discovery.test.ts
   - test/unit/stylesheet-disclosure-completeness.test.ts
+  - test/unit/wrapper-stylesheet-discovery.test.ts
 ---
 
 # M102: stylesheet discovery reads the package's own declarations and discloses what applied
 
-Lane A (+ I6 already landed, I7 consumed by Lane C). Closes heroui-F1, mantine-F1, shadcn-ui-F1,
-shadcn-ui-F2, and produces the evidence shadcn-ui-F3 and excalidraw-F2 need.
+Lane A (+ I6 already landed, I7 consumed by Lane C). Closes heroui-F1, shadcn-ui-F1, shadcn-ui-F2,
+and produces the evidence shadcn-ui-F3 and excalidraw-F2 need. **mantine-F1 is still not claimed
+closed**, now measured rather than assumed: I6 is implemented here and wired by Lane C
+(`resolveCssFiles` passes the resolved wrapper path), and a mantine run proves the wiring works —
+but only for a wrapper that imports the stylesheets itself. mantine's own wrapper imports
+`MantineProvider.tsx`, whose three `import './*.css'` statements are one hop further down, and a
+deep walk of the entry's import graph is M71's explicit non-goal ("only the entry file's own imports
+are read"). Closing mantine-F1 needs that non-goal revisited, which is a discovery-scope decision,
+not this milestone's.
 Not closed (by design, M82): calcom-F1. Root cause: `C:\Projekte\120fps-fieldtest\verify\V8-css-discovery.md`.
 
 ## Purpose
@@ -142,6 +150,26 @@ walks `cssRules` (descending into `@media`/`@supports`/`@layer` groups), counts 
 (`cssRules` throws) is skipped, an exotic selector `querySelector` rejects counts as unmatched. No
 CSS parser, no preprocessor, no network — CSSOM has already parsed all of it.
 
+## Review fixes (2026-08-21)
+
+- **A1 (blocker)** — `resolveStylesheetImportTarget`'s relative branch returned `{ declared }` for
+  *any* relative import whose literal path is not a file, so a Sass/Less partial
+  (`@import "../variables"` in ant-design, `@import './_mixins'` in primevue) was reported as a
+  missing generated file and its whole stylesheet was dropped. A specifier that carries a stylesheet
+  extension may still be called missing; an extension-less one goes through
+  `resolvePreprocessorPartial` (`x.ext`, `_x.ext`, `x/_index.ext`, `x/index.ext` for scss/sass/less/
+  styl/css) and, failing that, is `undefined` — unknown, never missing. That is the third MUST
+  applied to the branch that violated it.
+- **A5** — one language's unfoldable `additionalData` set the blanket `css.preprocessorOptions`
+  ignored key, whose text says preprocessor globals are not replicated, while the run replayed
+  another language's globals and this one's `loadPaths`. Each dropped option is now named with its
+  language and shape (`css.preprocessorOptions.scss.additionalData (function)`); the blanket key is
+  added only when nothing under `preprocessorOptions` folded at all.
+- **A10 (accepted, not changed)** — `exports[*].style` for an opt-in subpath (`./themes/dark`) can
+  become the sole candidate. The MAP mandates reading `exports[*].style`; the candidates are already
+  ordered `style` → `./styles` → `./style.css` → other subpaths, so a base stylesheet always wins
+  when one is declared.
+
 ## Open questions
 
 - `css.details` (the last MUST, shadcn-ui-F3) is built in `src/analyze.ts:2658` and emptied at
@@ -222,5 +250,47 @@ Stylesheets: css/styles.scss (largest-stylesheet fallback, low confidence — ve
 "details":[{"file":"css/styles.scss","bytes":21142,"rules":158,"matchedRules":0}]
 ```
 
-`git status --porcelain` is empty in all three repositories afterwards, with no harness directory and
-no `120fps-report.json` left behind.
+mantine (`logs/fix-a-mantine*.log`), the I6 wiring end to end. Without a wrapper the run falls back
+to the size-ranked guess and fails on the provider, printing the remedy it asks for:
+
+```
+$ node <scratch>/cli.js packages/@mantine/core/src/components/Badge/Badge.tsx     --samples 3 --max-combos 2 --explore-budget 20
+Stylesheets: src/core/MantineProvider/default-css-variables.css (largest-stylesheet fallback, ...)
+Result: FAIL
+    - @mantine/core: MantineProvider was not found in component tree ...
+    component's import graph reaches src/core/MantineProvider/MantineProvider.tsx (MantineProvider):
+    likely needs a provider wrapper; see --wrap / 120fps.setup.tsx
+```
+
+With the wrapper it asks for — created, recorded here, deleted afterwards —
+
+```tsx
+import "./src/core/MantineProvider/baseline.css";
+import "./src/core/MantineProvider/global.css";
+import "./src/core/MantineProvider/default-css-variables.css";
+import { MantineProvider } from "./src/core/MantineProvider/MantineProvider";
+
+export default function Setup({ children }: { children?: any }) {
+  return <MantineProvider>{children}</MantineProvider>;
+}
+```
+
+the wrapper's own imports are discovered through I6:
+
+```
+Wrapper: 120fps.setup.tsx (auto-detected), +10.24ms mount overhead
+Stylesheets: src/core/MantineProvider/baseline.css, src/core/MantineProvider/global.css,
+             src/core/MantineProvider/default-css-variables.css (found in the project entry's own imports)
+Result: PASS   Total: 25.0s
+"details":[{"file":".../baseline.css","bytes":675,"rules":6,"matchedRules":4},
+           {"file":".../global.css","bytes":830,"rules":18,"matchedRules":0},
+           {"file":".../default-css-variables.css","bytes":27238,"rules":3,"matchedRules":3}]
+```
+
+The same wrapper *without* those three CSS lines (only the provider import) yields the
+largest-fallback pick again — the one hop I6 does not take, and the reason mantine-F1 stays open.
+Those `matchedRules` also exercise I7's document-scope rule: `default-css-variables.css` is three
+`:root` token rules, counted as applying instead of as "unstyled".
+
+`git status --porcelain` is empty in all four repositories afterwards, with no harness directory,
+no wrapper and no `120fps-report.json` left behind.

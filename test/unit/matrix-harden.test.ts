@@ -140,19 +140,18 @@ describe("H10: compound significance boundaries", () => {
   });
 });
 
-describe("H12: union with 9 values excluded", () => {
-  it("excluded from matrix axes", () => {
+describe("H12: union with 9 values crossed over a truncated value set", () => {
+  it("is an axis, over its first 8 values", () => {
     const schemas = [
       makeSchema({ name: "big", kind: "union", values: Array.from({ length: 9 }, (_, i) => `v${i}`) }),
       makeSchema({ name: "a", kind: "boolean" }),
       makeSchema({ name: "b", kind: "boolean" }),
     ];
     const cells = generatePropMatrix(schemas);
-    expect(cells).toHaveLength(4); // 2x2 from booleans only
-    // big is at anchor
-    for (const cell of cells) {
-      expect(cell.big).toBe("v0");
-    }
+    // M104 / I10 (dub-F7): 8 crossed values x 2 booleans x 2 booleans.
+    expect(cells).toHaveLength(32);
+    expect(new Set(cells.map((cell) => cell.big)).size).toBe(8);
+    expect(cells[0].big).toBe("v0");
   });
 });
 
