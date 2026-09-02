@@ -173,6 +173,73 @@ interrupted run is still removed by the next ordinary run, now with A5's line na
 `test/unit/harness-dir-writability.test.ts`, `test/unit/harness-crash-warnings.test.ts` and
 `test/unit/killed-run-cleanup.test.ts` stay green (baseline failures excepted).
 
+### Lane A evidence (2026-09-03)
+
+Tests: `node node_modules/vitest/vitest.mjs run test/unit/signal-teardown-removes-harness-dirs.test.ts
+test/unit/harness-dir-removal-retries-and-discloses.test.ts
+test/unit/stale-sweep-discloses-what-it-removed.test.ts --maxWorkers=2` →
+`Test Files 3 passed (3) / Tests 16 passed (16)`.
+The lane's neighbours (`exit-watchdog`, `harness-crash-warnings`, `harness-dir-cleanup`,
+`harness-dir-writability`, `harness-sweep`, `killed-run-cleanup`,
+`lane-a-m87-m88-m93-m94-m95-harden`, `tsconfig-export-harden`) →
+`Test Files 8 passed (8) / Tests 98 passed | 1 skipped (100)`; all eleven files together →
+`Test Files 11 passed (11) / Tests 115 passed | 1 skipped (116)`.
+`test/unit/killed-run-cleanup.test.ts:173-177` ("sweeps even with no pools to close") asserted the
+single pre-close pass and now asserts both passes; it is the one existing assertion M113 changes.
+
+`node node_modules/typescript/bin/tsc --noEmit`: clean.
+
+Corpus, through `C:/Projekte/120fps-fieldtest/scratch/A-M113/dist/cli.js` (built from this worktree
+at 416e4f8 plus the uncommitted lane-A changes).
+
+base-ui SIGTERM repro (`EVIDENCE.md:57`), the command verbatim from the Verification section, six
+attempts, labels `M113-base-ui-after-1` … `-6`:
+
+Before (`verify/regression-base-ui.md:12`, attempt 2 of 2):
+`| base-ui-R1-verify-killwrapper2 | same repro, repeated | 143 | packages/react/.120fps-harness-lagPiI/ (.pid=37396, entry.tsx, index.html) still present 15 s later, ?? packages/react/.120fps-harness-lagPiI/ in git status. Claim failed. |`
+
+After, attempts 1, 2, 4, 5, 6 (`.meta.json` `"exit": 143`, checked 12 s after the kill):
+
+```
+=== attempt 6 "exit": 143
+ls: cannot access '/e/repositories/base-ui/.120fps-harness-*': No such file or directory
+ls: cannot access '/e/repositories/base-ui/packages/react/.120fps-harness-*': No such file or directory
+git: []
+```
+
+Attempt 3 recorded `"exit": 2` and its log shows the run continuing
+(`combo 7: measurement did not complete after 2 retries (target closed); omitted from the report`):
+msys `kill -TERM` reached Chromium in the job's process group but not the CLI, so that attempt never
+entered the signal path. Its disk was clean all the same (same two `No such file or directory` lines,
+empty `git status --porcelain`). Attempt 6 replaces it, so the signal path itself ran five times, exit
+143 each time, with no `.120fps-harness-*` left in the repository root or in `packages/react` and an
+empty `git status --porcelain` on five of five. Closed: yes.
+
+Run to completion on the same root (`M113-base-ui-after-complete`): `"exit": 0`, `"seconds": 40`,
+report reached (`#7 verdict=pass domNodeCount=101 scaleProbe=50 mount=60.5 rerender=24.7`), no
+removal line and no leftover — a sweep that removed nothing prints nothing.
+
+A5 on the corpus, the shadcn-admin-F3 pass-gate (`EVIDENCE.md:157`, "leftover .120fps-harness-* dir
+after externally interrupted run"): a `.120fps-harness-planted` directory with a dead-pid marker in
+`/e/repositories-run5/shadcn-admin`, then the ordinary toolbar run
+(`M113-shadcn-admin-sweep-after.log:36`):
+
+```
+⚠ Removed a stale harness directory from an earlier run: .120fps-harness-planted (its owner process is gone).
+```
+
+`ls -d /e/repositories-run5/shadcn-admin/.120fps-harness-*` → `No such file or directory`. Closed: yes.
+
+Unaffected repo, `EVIDENCE.md:97` (`M113-shadcn-admin-after`): `"exit": 1`, the same code
+`logs/shadcn-admin/toolbar-remedy.meta.json` recorded before the change (the run's own page error,
+not the sweep); the report is reached
+(`W The machine was too busy to measure against. Budget verdicts still print…`, `combos=0`), the log
+holds no `stale harness directory`, `Could not remove the harness directory` or `leftover harness`
+text, and `ls -d /e/repositories-run5/shadcn-admin/.120fps-harness-*` prints
+`No such file or directory`. `src/components/ui/button.tsx --explain-props`
+(`M113-shadcn-button-explain-after`) still reaches its explanation: `"exit": 0`,
+`Component: Button`.
+
 ## Deferred
 
 - Moving the harness directory outside the project root (a temp dir plus a Vite alias). It would make

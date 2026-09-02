@@ -9,8 +9,10 @@ import { formatMarkdown, formatJUnit } from "./ci-report.js";
 import { createBrowserPool } from "./measure.js";
 import {
   createServerPool,
+  HARNESS_DIR_REMOVAL_FAILED_WARNING,
   presentBundlerFailure,
   refreshHarnessDirMarkers,
+  removeActiveHarnessDirs,
   sweepActiveHarnessDirs,
 } from "./harness.js";
 import { scanExports } from "./prop-gen.js";
@@ -107,11 +109,36 @@ type ClosablePools = {
 // the dev-server pool takes its esbuild workers with it; when either hangs,
 // armExitWatchdog still delivers the exit code, by which point nothing is left
 // on disk.
+//
+// M113 (base-ui-R1): "by which point nothing is left on disk" was false. The
+// first removal runs while Chromium, the dev server and its esbuild workers
+// still hold handles on entry.tsx, index.html and the directory itself, so on
+// Windows it throws EBUSY and leaves the directory behind. The second pass
+// below runs once those handles are gone, retries a busy removal, and says so
+// when a directory still survives.
+export function sweepHarnessDirsAfterClose(
+  hooks: {
+    remove?: (dir: string) => void;
+    warn?: (line: string) => void;
+    cwd?: string;
+  } = {},
+): void {
+  const warn = hooks.warn ?? ((line: string) => console.error(line));
+  for (const failure of removeActiveHarnessDirs({
+    retry: true,
+    remove: hooks.remove,
+    cwd: hooks.cwd,
+  })) {
+    warn(HARNESS_DIR_REMOVAL_FAILED_WARNING(failure.dir, failure.reason));
+  }
+}
+
 export async function abortRun(
   exitCode: number,
   pools?: ClosablePools,
   hooks: {
     sweep?: () => void;
+    finalSweep?: () => void;
     exit?: (code: number) => void;
     timeoutMs?: number;
   } = {},
@@ -138,6 +165,9 @@ export async function abortRun(
   deadline.unref();
   if (pools) await closePoolsBounded(pools.pool, pools.serverPool, timeoutMs);
   clearTimeout(deadline);
+  // The pass that actually leaves the working tree clean: the handles are gone
+  // by now, and a directory the first pass could not remove is still tracked.
+  (hooks.finalSweep ?? hooks.sweep ?? (() => sweepHarnessDirsAfterClose()))();
   exitOnce();
 }
 

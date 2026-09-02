@@ -271,21 +271,117 @@ export function HARNESS_DIR_UNWRITABLE(projectRoot: string, detail: string): str
 // on a graceful return.
 const activeHarnessDirs = new Set<string>();
 
-// The body the `process.on("exit")` handler below runs. Exported so the
-// mechanism is testable without triggering a real process exit — a test can
-// call this directly (or synthesize the event via `process.emit("exit")`,
-// which Node runs its listeners for exactly as a real exit would, since
-// listeners cannot tell the two apart).
-export function sweepActiveHarnessDirs(): void {
-  for (const dir of activeHarnessDirs) {
+// M113 (base-ui-R1): on Windows a handle Chromium, the dev server or an
+// esbuild worker still holds makes a removal throw EBUSY/EPERM/ENOTEMPTY, and
+// that handle is gone milliseconds later. A single attempt turned a transient
+// lock into a directory the developer found in `git status`.
+export const HARNESS_DIR_REMOVAL_BUDGET_MS = 1000;
+export const HARNESS_DIR_REMOVAL_MIN_ATTEMPTS = 5;
+const HARNESS_DIR_REMOVAL_DELAY_MS = 200;
+// Every outstanding directory together: a root full of locked leftovers must
+// not push a signalled exit near the CLI's 8 s watchdog, so the per-directory
+// budget above yields to this one.
+export const HARNESS_SWEEP_BUDGET_MS = 1500;
+
+// The codes a held handle produces. Anything else (ENOTDIR, a hostile
+// injected remover) says the next attempt would fail the same way.
+const HARNESS_DIR_RETRY_CODES = new Set(["EBUSY", "EPERM", "EACCES", "ENOTEMPTY", "EMFILE", "ENFILE"]);
+
+// The `process.on("exit")` handler permits synchronous work only, so the wait
+// between attempts cannot be a timer.
+function sleepSync(ms: number): void {
+  if (ms <= 0) return;
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+// maxRetries covers the handle that closes within a few milliseconds without
+// leaving this function; the loop around it owns the budget, the injection
+// point and the disclosure.
+function removeHarnessDirOnce(dir: string): void {
+  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 2, retryDelay: 25 });
+}
+
+// Returns the error code of the last failed attempt, or undefined once the
+// directory is gone. Never throws: every caller is on a teardown path.
+export function removeHarnessDirWithRetries(
+  dir: string,
+  remove: (dir: string) => void = removeHarnessDirOnce,
+  deadline: number = Date.now() + HARNESS_SWEEP_BUDGET_MS,
+): string | undefined {
+  const started = Date.now();
+  for (let attempt = 1; ; attempt++) {
     try {
-      // "exit" only permits synchronous work; fs.rmSync already is.
-      fs.rmSync(dir, { recursive: true, force: true });
-    } catch {
-      // Best-effort: the process is already on its way out.
+      remove(dir);
+      return undefined;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      const reason = code ?? (err as Error).message;
+      if (code === undefined || !HARNESS_DIR_RETRY_CODES.has(code)) return reason;
+      const spent = Date.now() - started;
+      const budgetSpent =
+        attempt >= HARNESS_DIR_REMOVAL_MIN_ATTEMPTS && spent >= HARNESS_DIR_REMOVAL_BUDGET_MS;
+      if (budgetSpent || Date.now() >= deadline) return reason;
+      sleepSync(Math.min(HARNESS_DIR_REMOVAL_DELAY_MS, deadline - Date.now()));
     }
   }
-  activeHarnessDirs.clear();
+}
+
+// The path as the developer sees it: what `ls` in the directory they started
+// the run from would print.
+function harnessDirDisplayPath(dir: string, cwd: string): string {
+  const rel = path.relative(cwd, dir);
+  return rel && !rel.startsWith("..") && !path.isAbsolute(rel) ? rel.replace(/\\/g, "/") : dir;
+}
+
+export function HARNESS_DIR_REMOVAL_FAILED_WARNING(dir: string, reason: string): string {
+  return (
+    `Could not remove the harness directory ${dir} (${reason}). It is this run's own scratch ` +
+    "directory, not part of your project; remove it by hand, or the next run in this project will."
+  );
+}
+
+// The body the `process.on("exit")` handler below runs, and the pass the CLI
+// runs after the pools have closed. A directory whose removal failed stays in
+// the set: that is what makes the second pass — after Chromium and the dev
+// server have let go — able to see it at all.
+export function removeActiveHarnessDirs(
+  options: {
+    retry?: boolean;
+    // Injected so the failure path is testable without contriving a real
+    // Windows lock; every caller uses the default.
+    remove?: (dir: string) => void;
+    cwd?: string;
+  } = {},
+): Array<{ dir: string; reason: string }> {
+  const remove = options.remove ?? removeHarnessDirOnce;
+  const cwd = options.cwd ?? process.cwd();
+  const deadline = Date.now() + HARNESS_SWEEP_BUDGET_MS;
+  const failures: Array<{ dir: string; reason: string }> = [];
+  for (const dir of activeHarnessDirs) {
+    let reason: string | undefined;
+    if (options.retry) {
+      reason = removeHarnessDirWithRetries(dir, remove, deadline);
+    } else {
+      try {
+        remove(dir);
+      } catch (err) {
+        reason = (err as NodeJS.ErrnoException).code ?? (err as Error).message;
+      }
+    }
+    if (reason === undefined) activeHarnessDirs.delete(dir);
+    else failures.push({ dir: harnessDirDisplayPath(dir, cwd), reason });
+  }
+  return failures;
+}
+
+// Exported so the mechanism is testable without triggering a real process exit
+// — a test can call this directly (or synthesize the event via
+// `process.emit("exit")`, which Node runs its listeners for exactly as a real
+// exit would, since listeners cannot tell the two apart). One attempt per
+// directory: this is the pass that runs while the handles are still open, and
+// the CLI's post-close pass is the one that spends the retry budget.
+export function sweepActiveHarnessDirs(): void {
+  removeActiveHarnessDirs();
 }
 
 let exitSweepRegistered = false;
@@ -4372,6 +4468,12 @@ export function HARNESS_DIR_UNREMOVABLE_WARNING(dir: string, reason: string): st
   );
 }
 
+// M113 A5: the run that removed a leftover said nothing, so the developer had
+// no evidence the previous run had left anything behind at all.
+export function HARNESS_DIR_SWEPT_WARNING(dir: string, reason: string): string {
+  return `Removed a stale harness directory from an earlier run: ${dir} (${reason}).`;
+}
+
 export function sweepStaleHarnessDirs(
   projectRoot: string,
   warningsOut?: string[],
@@ -4381,6 +4483,9 @@ export function sweepStaleHarnessDirs(
 ): void {
   try {
     const now = Date.now();
+    // M113 A6: the retries are bounded across the whole sweep, so a root full
+    // of locked leftovers cannot delay the start of a run.
+    const deadline = now + HARNESS_SWEEP_BUDGET_MS;
     for (const entry of fs.readdirSync(projectRoot, { withFileTypes: true })) {
       if (!entry.isDirectory() || !entry.name.startsWith(".120fps-harness-")) continue;
       const full = path.join(projectRoot, entry.name);
@@ -4389,23 +4494,24 @@ export function sweepStaleHarnessDirs(
         // Never this process's own directory, at any age: this run knows it is
         // still using it, and its own exit paths already remove it.
         if (owner === process.pid) continue;
-        const abandoned =
+        const staleBecause =
           owner === undefined
             ? now - fs.statSync(full).mtimeMs > STALE_HARNESS_MAX_AGE_MS
-            : !isProcessAlive(owner) ||
-              now - (harnessDirHeartbeatMs(full) ?? 0) > LIVE_PID_HARNESS_MAX_AGE_MS;
-        if (!abandoned) continue;
-        try {
-          remove(full);
-        } catch (err) {
-          const reason = (err as NodeJS.ErrnoException).code ?? (err as Error).message;
-          warningsOut?.push(
-            HARNESS_DIR_UNREMOVABLE_WARNING(
-              path.relative(projectRoot, full).replace(/\\/g, "/") || entry.name,
-              reason,
-            ),
-          );
-        }
+              ? "unmarked and older than the age gate"
+              : undefined
+            : !isProcessAlive(owner)
+              ? "its owner process is gone"
+              : now - (harnessDirHeartbeatMs(full) ?? 0) > LIVE_PID_HARNESS_MAX_AGE_MS
+                ? "its owner stopped heartbeating"
+                : undefined;
+        if (staleBecause === undefined) continue;
+        const shown = path.relative(projectRoot, full).replace(/\\/g, "/") || entry.name;
+        const failure = removeHarnessDirWithRetries(full, remove, deadline);
+        warningsOut?.push(
+          failure === undefined
+            ? HARNESS_DIR_SWEPT_WARNING(shown, staleBecause)
+            : HARNESS_DIR_UNREMOVABLE_WARNING(shown, failure),
+        );
       } catch {
         // best-effort: the directory may have vanished between readdir and stat
       }
