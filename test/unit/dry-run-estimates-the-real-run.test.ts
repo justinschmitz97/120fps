@@ -6,6 +6,7 @@ import {
   explainProps,
   formatExplainProps,
   estimateRunCost,
+  buildBaselineEntry,
   DEFAULT_PHASE_ESTIMATE,
   type PropsExplanation,
 } from "../../src/analyze.js";
@@ -220,5 +221,120 @@ describe("a dry run over a component with a recorded baseline", () => {
     });
     expect(explained.costEstimate?.combos).toBe(4);
     expect(explained.costEstimate?.samples).toBe(5);
+  });
+});
+
+// The prop shapes each mode's estimate has to price: one small union (the
+// standard combo path), one array prop (curve), two unions (matrix).
+function writeComponent(dir: string, name: string, body: string): string {
+  const file = path.join(dir, name);
+  fs.writeFileSync(file, body);
+  return file;
+}
+
+const CHIP = `export interface ChipProps {
+  variant?: "primary" | "secondary";
+}
+
+export function Chip({ variant = "primary" }: ChipProps) {
+  return <span className={variant}>chip</span>;
+}
+
+export default Chip;
+`;
+
+const LIST = `export interface ListProps {
+  items?: string[];
+}
+
+export function List({ items = [] }: ListProps) {
+  return <ul>{items.map((i) => <li key={i}>{i}</li>)}</ul>;
+}
+
+export default List;
+`;
+
+describe("the estimate prices the mode the same dry run predicts", () => {
+  it("counts the scale anchors the combo path always appends", async () => {
+    const dir = tempProject();
+    const file = writeComponent(dir, "chip.tsx", CHIP);
+    const explained = await explainProps(file, { noPreflight: true, samples: 5 });
+    expect(explained.predictedMode).toBe("combo");
+    // Three prop combos plus the four [1, 5, 20, 50] anchors runComboMode appends.
+    expect(explained.costEstimate?.combos).toBe(7);
+  });
+
+  it("throttles samples against the anchored combo count, as the real run does", async () => {
+    const dir = tempProject();
+    const file = writeComponent(dir, "chip.tsx", CHIP);
+    const explained = await explainProps(file, { noPreflight: true, samples: 10, maxCombos: 20 });
+    expect(explained.costEstimate?.combos).toBe(7);
+    expect(explained.costEstimate?.samples).toBeLessThanOrEqual(10);
+  });
+
+  it("prices a curve run by its scale points, with no sample throttle", async () => {
+    const dir = tempProject();
+    const file = writeComponent(dir, "list.tsx", LIST);
+    const explained = await explainProps(file, { noPreflight: true, samples: 10 });
+    expect(explained.predictedMode).toBe("curve");
+    expect(explained.costEstimate?.combos).toBe(6);
+    expect(explained.costEstimate?.samples).toBe(10);
+  });
+
+  it("prices a curve run by the scale points the flags name", async () => {
+    const dir = tempProject();
+    const file = writeComponent(dir, "list.tsx", LIST);
+    const explained = await explainProps(file, { noPreflight: true, scalePoints: [1, 10] });
+    expect(explained.costEstimate?.combos).toBe(2);
+  });
+
+  it("prices a matrix run by its capped cells, with no anchors", async () => {
+    const dir = tempProject();
+    const explained = await explainProps(path.join(dir, "button.tsx"), {
+      noPreflight: true,
+      maxCombos: 4,
+      samples: 5,
+    });
+    expect(explained.predictedMode).toBe("matrix");
+    expect(explained.costEstimate?.combos).toBe(4);
+    expect(explained.costEstimate?.samples).toBe(5);
+  });
+
+  it("falls back to the defaults when the baseline file cannot be read", async () => {
+    const dir = tempProject();
+    fs.writeFileSync(path.join(dir, "120fps-baseline.json"), "{ truncated");
+    const explained = await explainProps(path.join(dir, "button.tsx"), { noPreflight: true });
+    expect(explained.costEstimate?.source).toBe("defaults");
+  });
+});
+
+describe("the baseline entry a --save-baseline run writes", () => {
+  const metrics = {
+    mount: 4.2,
+    rerender: 1.1,
+    unmount: 0.6,
+    domNodeCount: 12,
+    interactions: {},
+    unstable: new Set<string>(),
+    tier: "T1" as const,
+  };
+
+  it("carries the run's phase timings and the units they were spent on", () => {
+    const entry = buildBaselineEntry(metrics, true, {
+      currentEnv: localEnv(),
+      phaseTimings: RECORDED,
+      phaseUnits: { combos: 4, samples: 5 },
+    });
+    expect(entry.phaseTimings).toEqual(RECORDED);
+    expect(entry.phaseUnits).toEqual({ combos: 4, samples: 5 });
+  });
+
+  it("carries neither when the run recorded no units to scale them by", () => {
+    const entry = buildBaselineEntry(metrics, true, {
+      currentEnv: localEnv(),
+      phaseTimings: RECORDED,
+    });
+    expect(entry.phaseTimings).toBeUndefined();
+    expect(entry.phaseUnits).toBeUndefined();
   });
 });

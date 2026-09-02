@@ -891,7 +891,7 @@ export function buildReport(input: BuildReportInput): Report {
   return report;
 }
 
-interface BaselineWorkflowContext {
+export interface BaselineWorkflowContext {
   options: AnalyzeOptions;
   projectRoot: string;
   relativeComponent: string;
@@ -995,26 +995,38 @@ function applyBaselineWorkflow(
   }
 
   if (ctx.options.saveBaseline && metrics) {
-    const entry: BaselineEntry = {
-      mount: metrics.mount,
-      rerender: metrics.rerender,
-      unmount: metrics.unmount,
-      domNodeCount: metrics.domNodeCount,
-      interactions: metrics.interactions,
-      tier: metrics.tier,
-      env: ctx.currentEnv,
-      ...(ctx.sourceFingerprint ? { sourceFingerprint: ctx.sourceFingerprint } : {}),
-      pass: report.pass,
-      ...(metrics.measuredState ? { measuredState: metrics.measuredState } : {}),
-      ...(ctx.phaseTimings && ctx.phaseUnits
-        ? { phaseTimings: ctx.phaseTimings, phaseUnits: ctx.phaseUnits }
-        : {}),
-    };
+    const entry = buildBaselineEntry(metrics, report.pass, ctx);
     const { pruned } = saveBaselineFile(baselinePath, entry, ctx.relativeComponent);
     if (pruned.length > 0) {
       report.warnings = [...(report.warnings ?? []), PRUNED_SLOTS_NOTICE(pruned)];
     }
   }
+}
+
+// The entry `--save-baseline` writes. M115 C7 rides along here: a run that
+// recorded both its phase timings and the units it spent them on carries them
+// on the entry, so a later dry run can scale them; a run missing either (an
+// isolation run has no combos or samples) carries neither.
+export function buildBaselineEntry(
+  metrics: BaselineMetrics,
+  pass: boolean,
+  ctx: Pick<BaselineWorkflowContext, "currentEnv" | "sourceFingerprint" | "phaseTimings" | "phaseUnits">,
+): BaselineEntry {
+  return {
+    mount: metrics.mount,
+    rerender: metrics.rerender,
+    unmount: metrics.unmount,
+    domNodeCount: metrics.domNodeCount,
+    interactions: metrics.interactions,
+    tier: metrics.tier,
+    env: ctx.currentEnv,
+    ...(ctx.sourceFingerprint ? { sourceFingerprint: ctx.sourceFingerprint } : {}),
+    pass,
+    ...(metrics.measuredState ? { measuredState: metrics.measuredState } : {}),
+    ...(ctx.phaseTimings && ctx.phaseUnits
+      ? { phaseTimings: ctx.phaseTimings, phaseUnits: ctx.phaseUnits }
+      : {}),
+  };
 }
 
 // Everything the mode branches (isolation, curve, matrix, standard combos)
@@ -1357,6 +1369,7 @@ async function runCurveMode(ctx: ModeContext, match: ScalingPropMatch): Promise<
     calibration,
     thresholds,
     skipAttribution: options.skipAttribution,
+    phaseClock: ctx.phaseClock,
   });
 
   // A sweep that never moved the DOM measured no growth. The verdict still
@@ -2425,6 +2438,10 @@ export async function explainProps(
     // CLI forwards one shape to both entry points.
     samples?: number;
     maxCombos?: number;
+    // M115 C6 fix-up: curve mode measures one unit per scale point and the
+    // combo path appends these same points as anchors, so the estimate prices
+    // whichever list the real run would use.
+    scalePoints?: number[];
   } = {},
 ): Promise<PropsExplanation> {
   const resolvedPath = path.resolve(componentPath);
@@ -2576,15 +2593,39 @@ export async function explainProps(
   const altNote = await alternativeExportNote(resolvedPath, componentName, schemas, options.target);
   if (altNote) warnings.push(altNote);
 
-  // M115 C6: what the real run would cost. Filesystem reads only -- the combo
-  // count the dispatcher would measure, the samples `computeEffectiveSamples`
-  // would allow, and this component's own recorded phases when a
-  // `--save-baseline` run on this machine left some.
+  // M100 (element-plus-F4): the real dispatcher's own precedence, not two
+  // independent booleans. A fixture (given or auto-detected next to the
+  // component) makes the matrix branch unreachable exactly as it does in
+  // analyze(); an auto-composed scene is the one input a dry run cannot see
+  // cheaply, so it is assumed absent here -- the same stated limit
+  // `scaleProbeWillRun` already carries.
+  const predictedMode = predictMode({
+    isolation: options.isolation !== undefined,
+    // `resolveCurveMatch`'s own precedence: --no-curve suppresses it
+    // entirely, an explicit --curve names the prop itself, otherwise
+    // detection answers -- and a fixture or composed scene has no curve.
+    curve:
+      options.curveMode === false || dryRunUsesFixture
+        ? false
+        : options.curveMode !== undefined && options.curveMode !== true
+          ? true
+          : curveMatch !== undefined,
+    matrixEligible: options.matrixMode !== false && !dryRunUsesFixture,
+    matrixRequested: options.matrixMode === true,
+    matrixAutoActivates: shouldAutoActivateMatrix(schemas),
+  });
+
+  // M115 C6: what the real run would cost. Filesystem reads only -- the units
+  // the mode this same dry run predicts would measure, the samples that mode
+  // allows, and this component's own recorded phases when a `--save-baseline`
+  // run on this machine left some.
   const costEstimate = estimateExplainedRunCost({
     schemas,
     projectRoot,
     relativeComponent,
     usesFixture: dryRunUsesFixture,
+    mode: predictedMode,
+    ...(options.scalePoints ? { scalePoints: options.scalePoints } : {}),
     samples: options.samples,
     maxCombos: options.maxCombos,
   });
@@ -2625,27 +2666,7 @@ export async function explainProps(
     // not silently glossed over.
     scaleProbeWillRun: !isFixturePath(resolvedPath) && !curveMatch,
     matrixWouldActivate: shouldAutoActivateMatrix(schemas),
-    // M100 (element-plus-F4): the real dispatcher's own precedence, not two
-    // independent booleans. A fixture (given or auto-detected next to the
-    // component) makes the matrix branch unreachable exactly as it does in
-    // analyze(); an auto-composed scene is the one input a dry run cannot see
-    // cheaply, so it is assumed absent here — the same stated limit
-    // `scaleProbeWillRun` already carries.
-    predictedMode: predictMode({
-      isolation: options.isolation !== undefined,
-      // `resolveCurveMatch`'s own precedence: --no-curve suppresses it
-      // entirely, an explicit --curve names the prop itself, otherwise
-      // detection answers -- and a fixture or composed scene has no curve.
-      curve:
-        options.curveMode === false || dryRunUsesFixture
-          ? false
-          : options.curveMode !== undefined && options.curveMode !== true
-            ? true
-            : curveMatch !== undefined,
-      matrixEligible: options.matrixMode !== false && !dryRunUsesFixture,
-      matrixRequested: options.matrixMode === true,
-      matrixAutoActivates: shouldAutoActivateMatrix(schemas),
-    }),
+    predictedMode,
     ...(options.matrixMode === false
       ? { matrixIneligibleReason: "no-matrix-flag" as const }
       : dryRunUsesFixture
@@ -2660,6 +2681,36 @@ export async function explainProps(
   };
 }
 
+// The units the mode this dry run predicts would actually measure. Curve mode
+// measures one point per scale point and applies no sample throttle; matrix
+// mode measures capped cells; the standard combo path measures the capped prop
+// combos *plus* the scale anchors `runComboMode` always appends, and throttles
+// samples against that larger count.
+function estimateMeasuredUnits(
+  input: {
+    schemas: PropSchema[];
+    usesFixture: boolean;
+    mode: PredictedMode;
+    scalePoints?: number[];
+  },
+  cap: number,
+  requested: number,
+): { combos: number; samples: number } {
+  if (input.mode === "curve") {
+    const points = input.scalePoints ?? [1, 3, 5, 10, 20, 50];
+    return { combos: Math.max(1, points.length), samples: requested };
+  }
+  if (input.mode === "matrix") {
+    const cells = generatePropMatrix(input.schemas).length;
+    const combos = Math.max(1, Math.min(cells === 0 ? 1 : cells, cap));
+    return { combos, samples: computeEffectiveSamples(combos, requested) };
+  }
+  const generated = input.usesFixture ? 1 : generateCombinations(input.schemas).length;
+  const anchors = input.usesFixture ? 0 : (input.scalePoints ?? [1, 5, 20, 50]).length;
+  const combos = Math.max(1, Math.min(generated === 0 ? 1 : generated, cap)) + anchors;
+  return { combos, samples: computeEffectiveSamples(combos, requested) };
+}
+
 // The dry run's half of M115 C6: no server, no browser, no measurement. A
 // fixture or an auto-composed scene supplies one combo; otherwise the real
 // run's own combo generation, cap and sample throttle decide the units.
@@ -2668,17 +2719,27 @@ function estimateExplainedRunCost(input: {
   projectRoot: string;
   relativeComponent: string;
   usesFixture: boolean;
+  mode: PredictedMode;
+  scalePoints?: number[];
   samples?: number;
   maxCombos?: number;
 }): RunCostEstimate {
-  const generated = input.usesFixture ? 1 : generateCombinations(input.schemas).length;
   const cap = input.maxCombos ?? DEFAULT_MEASURED_COMBOS;
-  const combos = Math.max(1, Math.min(generated === 0 ? 1 : generated, cap));
-  const samples = computeEffectiveSamples(combos, input.samples ?? 10);
+  const requested = input.samples ?? 10;
+  const { combos, samples } = estimateMeasuredUnits(input, cap, requested);
 
   const cpus = os.cpus();
+  // A truncated or hand-edited baseline file must not abort a dry run that
+  // measures nothing: the estimate falls back to the documented defaults.
+  const baseline = (() => {
+    try {
+      return loadBaseline(path.join(input.projectRoot, "120fps-baseline.json"));
+    } catch {
+      return null;
+    }
+  })();
   const entry = selectPhaseTimingEntry(
-    loadBaseline(path.join(input.projectRoot, "120fps-baseline.json")),
+    baseline,
     input.relativeComponent,
     {
       cpu: cpus.length > 0 ? cpus[0].model : "unknown",

@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { buildReport, type BuildReportInput } from "../../src/analyze.js";
 import { formatMarkdown } from "../../src/ci-report.js";
+import { buildCurveReport } from "../../src/report.js";
+import type { MountResult, TraceEvent } from "../../src/measure.js";
 import {
   createPhaseClock,
   formatPhaseBreakdown,
@@ -217,6 +219,47 @@ describe("phase timings over a run's label sequence", () => {
     expect(timings.attribution).toBe(5_000);
     expect(timings.mount).toBe(15_000);
     expect(sumOfPhases(timings)).toBe(timings.total);
+  });
+
+  it("charges a curve run's attribution work to the attribution phase", () => {
+    const trace: TraceEvent[] = [
+      {
+        cat: "devtools.timeline",
+        name: "FunctionCall",
+        dur: 3_000,
+        ph: "X",
+        ts: 1_000,
+        args: { data: { url: "http://localhost:5173/src/List.tsx" } },
+      },
+    ];
+    const scalePoints = [1, 5];
+    const mounts: MountResult[] = scalePoints.map((n, i) => ({
+      comboIndex: i,
+      props: { __120fps_scaleN: n },
+      mount: { samples: [5], median: 5, p95: 5 },
+      unmount: { samples: [2], median: 2, p95: 2 },
+      domNodeCount: 10,
+      heapDelta: 0,
+      mountTraces: [trace],
+    }));
+    const charged: number[] = [];
+
+    const curve = buildCurveReport({
+      propName: "items",
+      propKind: "array",
+      reason: "array prop",
+      scalePoints,
+      mounts,
+      rerenders: [],
+      explores: [],
+      heapDeltas: scalePoints.map(() => 0),
+      calibration: { totalDuration: 10, scriptDuration: 5 },
+      thresholds: THRESHOLDS,
+      phaseClock: { addAttribution: (ms) => charged.push(ms) },
+    });
+
+    expect(curve.points.every((point) => point.costAttribution !== undefined)).toBe(true);
+    expect(charged).toHaveLength(scalePoints.length);
   });
 
   it("closes the total at the report boundary, not at the read", () => {

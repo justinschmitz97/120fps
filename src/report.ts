@@ -1608,6 +1608,9 @@ export interface BuildCurveReportInput {
   calibration: CalibrationResult;
   thresholds: Thresholds;
   skipAttribution?: boolean;
+  // M115 C2: curve mode's attribution work belongs to the `attribution` phase,
+  // exactly as combo and matrix mode charge it.
+  phaseClock?: Pick<PhaseClock, "addAttribution">;
 }
 
 export function buildCurveReport(input: BuildCurveReportInput): ScalingCurveReport {
@@ -1647,7 +1650,9 @@ export function buildCurveReport(input: BuildCurveReportInput): ScalingCurveRepo
     };
 
     if (!input.skipAttribution && mount?.mountTraces && mount.mountTraces.length > 0) {
+      const attributionStart = Date.now();
       point.costAttribution = attributeCost(mount.mountTraces);
+      input.phaseClock?.addAttribution(Date.now() - attributionStart);
     }
 
     // M104 (commerce-F2) / M106 C3 (dub-F6): the same split combo mode draws.

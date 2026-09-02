@@ -107,9 +107,14 @@ Every line below was re-read in this worktree; the map's line numbers all still 
   that word. The combo and sample counts are the ones the real run would measure (the same cap and
   the same `computeEffectiveSamples` the dispatcher applies), and the estimate reads `phaseTimings`
   from the baseline entry for this component when `--save-baseline` recorded one and its environment
-  fingerprint matches; otherwise it uses the documented defaults and says so.
+  fingerprint matches; otherwise it uses the documented defaults and says so. The counts are the
+  ones the mode this same dry run predicts would measure: a curve run's scale points (no sample
+  throttle), a matrix run's capped cells, or the capped prop combos *plus* the scale anchors
+  `runComboMode` always appends.
 - **C7** `--save-baseline` records the run's `phaseTimings` on the baseline entry; an entry written
-  before this milestone stays readable and counts as "no phase timings recorded".
+  before this milestone stays readable and counts as "no phase timings recorded". An isolation run
+  records no phase timings: the estimate scales them by combos and samples, which an isolation run
+  has none of.
 
 ### Lane A (`src/cli.ts`)
 
@@ -276,7 +281,9 @@ worktree, through `node C:/Projekte/120fps-fieldtest/tools/run120.mjs`:
   ```
 
   The ten phase keys sum to `total` exactly, and the printed `Total: 26.0s` differs from
-  `phaseTimings.total` by under 1000 ms. Closed: yes for C1-C4; the parenthesised breakdown on the
+  `phaseTimings.total` by under 1000 ms. Verdict, mode and warnings identical to the pre-change run
+  (`pass: false`, `mode: curve`, 10 warnings in both `toolbar-remedy.json` and
+  `M115-shadcn-toolbar-after.json`). Closed: yes for C1-C4; the parenthesised breakdown on the
   `Total:` line is A1 and lands with Lane A's `cli.ts` edit.
 - **Unaffected repo** (`--label M115-shadcn-button-after`, exit=0):
   `src/components/ui/button.tsx --explain-props` still reaches its full schema
@@ -319,5 +326,7 @@ Two implementation facts worth recording, both inside Lane C's own files:
   line beside a line that already prints needs no flag.
 - Cross-machine estimate calibration for C6. A baseline recorded on another machine is not a
   prediction for this one, so a fingerprint mismatch falls back to the defaults.
+- Pricing an isolation dry run. C6's estimate scales per-combo and per-sample costs; an isolation
+  run measures neither, so `--isolate --explain-props` prices the combo path it would have taken.
 - The dry run's own wall clock (median 7 s, max 92 s, `dx-audit.md`): worth naming once the real
   run's phases are known, and not before.
