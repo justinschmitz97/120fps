@@ -51,3 +51,31 @@ describe("a re-export whose specifier does not resolve", () => {
     });
   });
 });
+
+// M114 (review B-major): `export { default } from "./x"` and `export * from
+// "./x"` name no PascalCase binding in the barrel's own text, so the export
+// scan yielded nothing and the follow gave up on a barrel the filesystem
+// resolves.
+
+describe("a barrel that re-exports without naming the binding", () => {
+  it("follows `export { default } from` to the declaring module", async () => {
+    const detail = await extractPropsDetailed(path.join(BARREL, "default-barrel.tsx"));
+
+    expect(detail.schemas.map((s) => s.name).sort()).toEqual(["footer", "heading", "open"]);
+    expect(detail.targetFile).toBe(path.join(BARREL, "drawer.tsx"));
+    expect(detail.unresolvedReExport).toBeUndefined();
+  });
+
+  it("follows `export * from` to the declaring module", async () => {
+    const detail = await extractPropsDetailed(path.join(BARREL, "star-barrel.tsx"));
+
+    expect(detail.schemas.map((s) => s.name).sort()).toEqual([
+      "cancelLabel",
+      "confirmLabel",
+      "isOpen",
+      "title",
+    ]);
+    expect(detail.targetName).toBe("ConfirmDialog");
+    expect(detail.unresolvedReExport).toBeUndefined();
+  });
+});

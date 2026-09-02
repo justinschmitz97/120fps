@@ -9,6 +9,10 @@ import {
 } from "../../src/prop-gen-values.js";
 
 const DIALOG = path.resolve(__dirname, "../../fixtures/controlled-pair/Dialog.tsx");
+const DIALOG_DEFAULTS = path.resolve(
+  __dirname,
+  "../../fixtures/controlled-pair/DialogDefaults.tsx",
+);
 
 // fluentui-F1: all four Dialog cells set `open` and `defaultOpen` together,
 // which `useControllableState` rejects, so every cell measured the error path.
@@ -65,5 +69,30 @@ describe("the values a boolean axis is crossed over", () => {
     expect(cells.some((cell) => !("open" in cell))).toBe(true);
     expect(cells.some((cell) => cell.open === true)).toBe(true);
     expect(cells.every((cell) => "modal" in cell)).toBe(true);
+  });
+});
+
+// M114 (review B-major): a twin that declares a default was routed through the
+// non-axis path, which held the declared value present in every cell -- the
+// pairing the milestone forbids, restored by the default the component wrote.
+
+describe("a matrix over a pair whose twin declares a default", () => {
+  let schemas: PropSchema[];
+
+  it("sets the twin in no cell and names it as held absent", async () => {
+    schemas = await extractProps(DIALOG_DEFAULTS);
+    const cells = generatePropMatrix(schemas);
+
+    expect(cells.length).toBeGreaterThan(1);
+    for (const cell of cells) expect("defaultOpen" in cell).toBe(false);
+    expect(matrixHeldAbsentProps(schemas)).toContain("defaultOpen");
+  });
+
+  it("crosses absence against the state a defaulted-true boolean is not already in", async () => {
+    schemas = await extractProps(DIALOG_DEFAULTS);
+    const unmountOnClose = schemas.find((s) => s.name === "unmountOnClose")!;
+
+    expect(unmountOnClose.defaultValue).toBe(true);
+    expect(matrixValues(unmountOnClose)).toEqual([undefined, false]);
   });
 });

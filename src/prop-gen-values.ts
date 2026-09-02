@@ -390,12 +390,24 @@ function controlledTwinOf(name: string): string | undefined {
 // whose controlled member is eligible in the same set. One function, so the
 // cells, the header and the held-absent line cannot describe different sets.
 export function matrixAxisSchemas(schemas: PropSchema[]): PropSchema[] {
-  const eligible = schemas.filter(isMatrixEligible);
-  const eligibleNames = new Set(eligible.map((schema) => schema.name));
-  return eligible.filter((schema) => {
+  const dropped = droppedTwinNames(schemas);
+  return schemas.filter((schema) => isMatrixEligible(schema) && !dropped.has(schema.name));
+}
+
+// M114 (review B-major): the uncontrolled twins `matrixAxisSchemas` drops. A
+// dropped twin is not merely off-axis: pinning `defaultOpen` beside a
+// controlled `open` is the pairing the milestone forbids, so every caller has
+// to treat these names as absent rather than routing them through
+// `matrixNonAxisValue`, which would hold a declared default or a required
+// value present.
+export function droppedTwinNames(schemas: PropSchema[]): Set<string> {
+  const eligibleNames = new Set(schemas.filter(isMatrixEligible).map((schema) => schema.name));
+  const dropped = new Set<string>();
+  for (const schema of schemas) {
     const controlled = controlledTwinOf(schema.name);
-    return controlled === undefined || !eligibleNames.has(controlled);
-  });
+    if (controlled !== undefined && eligibleNames.has(controlled)) dropped.add(schema.name);
+  }
+  return dropped;
 }
 
 export function matrixValues(schema: PropSchema): unknown[] {
@@ -405,7 +417,12 @@ export function matrixValues(schema: PropSchema): unknown[] {
   // and never measured the component without the prop at all -- the case a
   // controlled/uncontrolled pair makes decisive. A required boolean has no
   // absent state to cross.
-  if (schema.kind === "boolean") return schema.required ? [false, true] : [undefined, true];
+  // The present member is the one that differs from what the component already
+  // does unprompted: a prop declared `unmountOnClose = true` crossed against
+  // `true` would render the same state twice and the axis line would still
+  // claim two values.
+  if (schema.kind === "boolean")
+    return schema.required ? [false, true] : [undefined, schema.defaultValue === true ? false : true];
   const declared = schema.values;
   if (declared.length <= MAX_MATRIX_AXIS_VALUES) return declared;
   // The anchor is the value the component itself defaults to when it declares
@@ -490,8 +507,13 @@ function matrixNonAxisValue(schema: PropSchema): { present: boolean; value?: unk
 // component rendered without it.
 export function matrixHeldAbsentProps(schemas: PropSchema[]): string[] {
   const axisNames = new Set(matrixAxisSchemas(schemas).map((schema) => schema.name));
+  const dropped = droppedTwinNames(schemas);
   return schemas
-    .filter((schema) => !axisNames.has(schema.name) && !matrixNonAxisValue(schema).present)
+    .filter(
+      (schema) =>
+        !axisNames.has(schema.name) &&
+        (dropped.has(schema.name) || !matrixNonAxisValue(schema).present),
+    )
     .map((schema) => schema.name);
 }
 
@@ -500,9 +522,10 @@ export function generatePropMatrix(schemas: PropSchema[]): PropCombination[] {
 
   const eligible = matrixAxisSchemas(schemas);
   const axisNames = new Set(eligible.map((schema) => schema.name));
+  const droppedTwins = droppedTwinNames(schemas);
   const anchorProps: PropCombination = {};
   for (const s of schemas) {
-    if (axisNames.has(s.name)) continue;
+    if (axisNames.has(s.name) || droppedTwins.has(s.name)) continue;
     const held = matrixNonAxisValue(s);
     if (held.present) anchorProps[s.name] = held.value;
   }

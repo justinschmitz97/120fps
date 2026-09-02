@@ -10,7 +10,7 @@ import {
   type VueSfcCompiler,
 } from "../../src/vue-sfc.js";
 
-const VUE_ROOT = path.resolve("fixtures/vue-project");
+const VUE_ROOT = path.resolve(__dirname, "../../fixtures/vue-project");
 const INJECT = path.resolve(__dirname, "../../fixtures/vue-inject-context");
 
 let compiler: VueSfcCompiler | undefined;
@@ -33,6 +33,10 @@ describe("what a measured SFC's setup block reads", () => {
   it("records its absence for a setup block that injects nothing", async () => {
     expect((await parse("NoInject.vue"))?.usesInject).toBe(false);
   });
+
+  it("does not count a commented-out inject call as read evidence", async () => {
+    expect((await parse("CommentedInject.vue"))?.usesInject).toBe(false);
+  });
 });
 
 // The compiler resolution failure the swallowed catch hid: two test files went
@@ -43,11 +47,15 @@ describe("a project the Vue compiler does not resolve from", () => {
   it("records why each specifier failed", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "no-vue-"));
 
-    expect(await loadVueCompiler(dir)).toBeUndefined();
-    const failures = vueCompilerLoadFailures(dir);
+    try {
+      expect(await loadVueCompiler(dir)).toBeUndefined();
+      const failures = vueCompilerLoadFailures(dir);
 
-    expect(failures.some((f) => f.startsWith("vue/compiler-sfc:"))).toBe(true);
-    expect(failures.some((f) => f.startsWith("@vue/compiler-sfc:"))).toBe(true);
-    expect(VUE_COMPILER_MISSING(dir)).toContain("vue/compiler-sfc:");
+      expect(failures.some((f) => f.startsWith("vue/compiler-sfc:"))).toBe(true);
+      expect(failures.some((f) => f.startsWith("@vue/compiler-sfc:"))).toBe(true);
+      expect(VUE_COMPILER_MISSING(dir)).toContain("vue/compiler-sfc:");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

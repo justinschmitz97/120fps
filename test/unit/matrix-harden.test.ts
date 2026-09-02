@@ -156,7 +156,7 @@ describe("H12: union with 9 values crossed over a truncated value set", () => {
 });
 
 describe("H13: a boolean axis has 2 matrix values, never 3", () => {
-  it("crosses absent against present for an optional boolean (M114 B2)", () => {
+  it("crosses absent against present for an optional boolean", () => {
     const schemas = [
       makeSchema({ name: "a", kind: "boolean", required: false }),
       makeSchema({ name: "b", kind: "boolean", required: true }),

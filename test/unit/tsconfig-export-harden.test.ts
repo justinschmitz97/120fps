@@ -155,7 +155,7 @@ export const Badge: React.FC<{ label: string }> = () => null;`,
 });
 
 describe("H11: export default memo(X) call expression", () => {
-  it("names the component the wrapper wraps (M114 B1)", () => {
+  it("names the component the wrapper wraps", () => {
     const dir = mkProject({
       "fancy.tsx": `import { memo } from "react";
 const Widget = () => null;

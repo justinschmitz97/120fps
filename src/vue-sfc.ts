@@ -39,6 +39,14 @@ export interface SfcScript {
 // keeps `useInject(` and `ctx.inject(` out: only Vue's own injector counts.
 const INJECT_CALL = /(?<![\w$.])inject\s*[<(]/;
 
+// M114 (review B-minor): a commented-out `inject(` is not read evidence. The
+// hint may name provide/inject only from a call the block actually makes.
+const COMMENT = /\/\*[\s\S]*?\*\/|\/\/.*/g;
+
+function callsInject(content: string): boolean {
+  return INJECT_CALL.test(content.replace(COMMENT, " "));
+}
+
 export function isVueFile(filePath: string): boolean {
   return /\.vue$/i.test(filePath);
 }
@@ -148,7 +156,7 @@ export function parseSfcScript(
     content,
     // M114 B6 / I8: read once, here, so a hint about provide/inject rests on
     // the same text the props extraction read.
-    usesInject: INJECT_CALL.test(content),
+    usesInject: callsInject(content),
     lang: strongerLang(
       typeof block.lang === "string" ? block.lang : undefined,
       typeof companion?.lang === "string" ? companion.lang : undefined,

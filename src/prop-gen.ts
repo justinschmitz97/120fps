@@ -1638,11 +1638,15 @@ function firstParameterTypeNode(
 // has no declaration is a specifier that did not resolve, which is a fact about
 // the filesystem, not a failed extraction.
 type ReExportTarget =
-  | { file: ts.SourceFile; name: string }
+  | { file: ts.SourceFile; name: string | undefined }
   | { unresolved: { barrel: string; specifier: string } };
 
 function moduleSpecifierFor(sourceFile: ts.SourceFile, name: string): string | undefined {
-  let specifier: string | undefined;
+  // M114 (review B-minor): a bare `export * from` specifier stands in for a
+  // name it never matched. It is the only candidate when the file has exactly
+  // one star; with two, naming either as the cause would be a guess.
+  let starSpecifier: string | undefined;
+  let starCount = 0;
   for (const statement of sourceFile.statements) {
     if (
       ts.isExportDeclaration(statement) &&
@@ -1651,7 +1655,8 @@ function moduleSpecifierFor(sourceFile: ts.SourceFile, name: string): string | u
     ) {
       const clause = statement.exportClause;
       if (!clause) {
-        specifier ??= statement.moduleSpecifier.text;
+        starSpecifier ??= statement.moduleSpecifier.text;
+        starCount += 1;
         continue;
       }
       if (!ts.isNamedExports(clause)) continue;
@@ -1674,42 +1679,106 @@ function moduleSpecifierFor(sourceFile: ts.SourceFile, name: string): string | u
       if (statement.importClause.name?.text === name) return statement.moduleSpecifier.text;
     }
   }
-  return specifier;
+  return starCount === 1 ? starSpecifier : undefined;
+}
+
+function aliasTargetOf(
+  symbol: ts.Symbol,
+  checker: ts.TypeChecker,
+  sink?: (message: string) => void,
+): ts.Symbol | undefined {
+  if (!(symbol.flags & ts.SymbolFlags.Alias)) return symbol;
+  try {
+    return checker.getAliasedSymbol(symbol);
+  } catch (error) {
+    // M114 (review B-minor): the checker throwing is a different cause from a
+    // specifier the filesystem never resolved, so the run says which one it hit.
+    const reason = error instanceof Error ? error.message : String(error);
+    sink?.(`re-export of ${symbol.getName()}: the type checker could not follow the alias (${reason})`);
+    return undefined;
+  }
+}
+
+const COMPONENT_DECLARATION_NAME = /^[A-Z]/;
+
+function isValueDeclaration(declaration: ts.Declaration): boolean {
+  return (
+    ts.isFunctionDeclaration(declaration) ||
+    ts.isClassDeclaration(declaration) ||
+    ts.isVariableDeclaration(declaration) ||
+    ts.isExportAssignment(declaration)
+  );
+}
+
+// M114 B4/B5: `export { default } from "./component"` and `export * from
+// "./component"` name no PascalCase binding in the barrel's own text, so
+// `scanExports` yields nothing and the walk stopped at a barrel the filesystem
+// resolves fine. The module's export symbols carry both spellings.
+function fallbackExportSymbol(
+  moduleExports: ts.Symbol[],
+  checker: ts.TypeChecker,
+  sink?: (message: string) => void,
+): ts.Symbol | undefined {
+  const byDefault = moduleExports.find((symbol) => symbol.name === "default");
+  if (byDefault) return aliasTargetOf(byDefault, checker, sink);
+  for (const symbol of moduleExports) {
+    if (!COMPONENT_DECLARATION_NAME.test(symbol.name)) continue;
+    const aliased = aliasTargetOf(symbol, checker, sink);
+    const declaration = aliased?.getDeclarations()?.[0];
+    if (declaration && isValueDeclaration(declaration)) return aliased;
+  }
+  return undefined;
+}
+
+// The name the declaring module knows the component by. `default` is a slot,
+// not an identifier, so the declaring file selects its own export instead.
+function declaredNameOf(aliased: ts.Symbol, declaration: ts.Declaration): string | undefined {
+  const declared = (declaration as ts.Declaration & { name?: ts.Node }).name;
+  if (declared && ts.isIdentifier(declared)) return declared.text;
+  const name = aliased.getName();
+  return name === "default" ? undefined : name;
+}
+
+function declaredElsewhere(
+  aliased: ts.Symbol | undefined,
+  sourceFile: ts.SourceFile,
+): ReExportTarget | undefined {
+  const declaration = aliased?.getDeclarations()?.[0];
+  const declaringFile = declaration?.getSourceFile();
+  if (!aliased || !declaration || !declaringFile) return undefined;
+  if (declaringFile.fileName === sourceFile.fileName) return undefined;
+  return { file: declaringFile, name: declaredNameOf(aliased, declaration) };
 }
 
 function followReExportedComponent(
   sourceFile: ts.SourceFile,
   checker: ts.TypeChecker,
   explicitTarget?: string,
+  sink?: (message: string) => void,
 ): ReExportTarget | undefined {
+  const moduleSymbol = checker.getSymbolAtLocation(sourceFile);
+  const moduleExports = moduleSymbol ? checker.getExportsOfModule(moduleSymbol) : [];
   const name =
     explicitTarget ??
     selectMeasuredExport(
       scanExports(sourceFile.getFullText(), sourceFile.fileName),
       sourceFile.fileName,
     );
-  if (!name) return undefined;
 
-  const moduleSymbol = checker.getSymbolAtLocation(sourceFile);
-  const exported = moduleSymbol
-    ? checker.getExportsOfModule(moduleSymbol).find((symbol) => symbol.name === name)
-    : undefined;
-
-  if (exported && exported.flags & ts.SymbolFlags.Alias) {
-    let aliased: ts.Symbol | undefined;
-    try {
-      aliased = checker.getAliasedSymbol(exported);
-    } catch {
-      aliased = undefined;
-    }
-    const declaration = aliased?.getDeclarations()?.[0];
-    const declaringFile = declaration?.getSourceFile();
-    if (declaringFile && declaringFile.fileName !== sourceFile.fileName) {
-      return { file: declaringFile, name: aliased!.getName() };
-    }
+  if (name) {
+    const exported = moduleExports.find((symbol) => symbol.name === name);
+    const followed = exported
+      ? declaredElsewhere(aliasTargetOf(exported, checker, sink), sourceFile)
+      : undefined;
+    if (followed) return followed;
+    const specifier = moduleSpecifierFor(sourceFile, name);
+    if (specifier === undefined) return undefined;
+    return { unresolved: { barrel: path.normalize(sourceFile.fileName), specifier } };
   }
 
-  const specifier = moduleSpecifierFor(sourceFile, name);
+  const followed = declaredElsewhere(fallbackExportSymbol(moduleExports, checker, sink), sourceFile);
+  if (followed) return followed;
+  const specifier = moduleSpecifierFor(sourceFile, "default");
   if (specifier === undefined) return undefined;
   return { unresolved: { barrel: path.normalize(sourceFile.fileName), specifier } };
 }
@@ -1734,7 +1803,7 @@ function findComponentPropsType(
   );
   if (!target) {
     if (hops >= RE_EXPORT_HOPS) return {};
-    const followed = followReExportedComponent(sourceFile, checker, explicitTarget);
+    const followed = followReExportedComponent(sourceFile, checker, explicitTarget, sink);
     if (followed === undefined) return {};
     if ("unresolved" in followed) return { unresolvedReExport: followed.unresolved };
     const binding = findComponentPropsType(followed.file, checker, followed.name, sink, hops + 1);
