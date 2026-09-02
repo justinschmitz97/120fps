@@ -1,6 +1,10 @@
 import { describe, it, expect } from "vitest";
 import path from "node:path";
-import { collectStaticPreBuildWarnings, resolveServerConditions } from "../../src/harness.js";
+import {
+  collectStaticPreBuildWarnings,
+  harnessServerCompileOptions,
+  resolveServerConditions,
+} from "../../src/harness.js";
 
 const REFERENCES = path.resolve("fixtures/tsconfig-shapes/project-references");
 const BUTTON = path.join(REFERENCES, "src", "components", "Button.tsx");
@@ -53,6 +57,16 @@ describe("customConditions from the governing config reach the dev server", () =
     expect(disclosures).toHaveLength(1);
     expect(disclosures[0]).toContain("customConditions");
     expect(preBuild.resolveConditions).toEqual(["source"]);
+  });
+
+  // The spec words A5 as a fact about the built server options, so the wiring
+  // between the resolved list and createServer is asserted, not only the list.
+  it("reaches the server options the harness builds", () => {
+    const compile = harnessServerCompileOptions("react", REFERENCES, REFERENCES, BUTTON, [
+      "source",
+    ]);
+
+    expect(compile.conditions).toEqual(["source"]);
   });
 
   it("says nothing and forwards nothing for a project that declares no conditions", () => {

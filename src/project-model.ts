@@ -244,10 +244,13 @@ export function TSCONFIG_REFERENCES_NO_MATCH_WARNING(
   subject: string,
   tried: string[],
 ): string {
+  // Every config the walk touched, including one it could not read: a
+  // reference target that is missing is exactly the case this sentence has to
+  // explain, so naming nothing there would be the unhelpful answer.
+  const attempted = tried.length > 0 ? `(tried ${tried.join(", ")}) ` : "";
   return (
     `${nearestConfigPath} ${TSCONFIG_REFERENCES_MARKER}; no referenced config covers ${subject} ` +
-    `(tried ${tried.join(", ")}), so path aliases and compiler options those configs declare are ` +
-    "unavailable"
+    `${attempted}so path aliases and compiler options those configs declare are unavailable`
   );
 }
 
@@ -339,7 +342,12 @@ function resolveReferencePath(configDir: string, reference: string): string | un
     }
     return resolved.replace(/\\/g, "/");
   } catch {
-    return resolved.endsWith(".json") ? resolved.replace(/\\/g, "/") : undefined;
+    // A target that is not on disk is still named: a ".json" target reaches
+    // readCompilerConfig as itself, a directory target as the "tsconfig.json"
+    // `tsc --build` looks for inside it, so the tried list names both.
+    return resolved.endsWith(".json")
+      ? resolved.replace(/\\/g, "/")
+      : path.join(resolved, "tsconfig.json").replace(/\\/g, "/");
   }
 }
 
@@ -362,6 +370,18 @@ function coversTarget(fileNames: readonly string[], target: string, targetIsFile
     const candidate = normalisePath(file);
     return targetIsFile ? candidate === wanted : candidate.startsWith(prefix);
   });
+}
+
+// A monorepo member's nearest config is one of several tsconfig.json files in
+// the tree, so the disclosure names it relative to the root that bounded the
+// search. A single-package project, whose search root holds that config, still
+// reads as a bare "tsconfig.json".
+function describeNearestConfig(nearestConfigPath: string, stopDir?: string): string {
+  if (!stopDir) return path.basename(nearestConfigPath);
+  const relative = path.relative(stopDir, nearestConfigPath).replace(/\\/g, "/");
+  return relative.length > 0 && !relative.startsWith("..")
+    ? relative
+    : path.basename(nearestConfigPath);
 }
 
 export function resolveGoverningTsconfig(fileOrDir: string, stopDir?: string): GoverningTsconfig {
@@ -435,11 +455,17 @@ export function resolveGoverningTsconfig(fileOrDir: string, stopDir?: string): G
     for (const candidate of queued) {
       if (!candidate || seen.has(normalisePath(candidate))) continue;
       seen.add(normalisePath(candidate));
-      const referenced = readCompilerConfig(candidate, []);
-      if (!referenced) continue;
       const relativeCandidate = path
         .relative(path.dirname(nearestConfigPath), candidate)
         .replace(/\\/g, "/");
+      // Named before it is read: a missing or malformed reference target is a
+      // config this walk tried, and A2's no-match sentence names every one.
+      const readFailures: string[] = [];
+      const referenced = readCompilerConfig(candidate, readFailures);
+      if (!referenced) {
+        tried.push(`${relativeCandidate} (unreadable)`);
+        continue;
+      }
       tried.push(relativeCandidate);
       if (!coversTarget(referenced.parsed.fileNames, target, targetIsFile)) {
         for (const nested of referencePaths(referenced.raw)) {
@@ -455,7 +481,7 @@ export function resolveGoverningTsconfig(fileOrDir: string, stopDir?: string): G
       );
       warnings.push(
         TSCONFIG_REFERENCES_WARNING(
-          path.basename(nearestConfigPath),
+          describeNearestConfig(nearestConfigPath, stopDir),
           relativeCandidate,
           subject,
           [...supplied],
@@ -474,7 +500,11 @@ export function resolveGoverningTsconfig(fileOrDir: string, stopDir?: string): G
   }
 
   warnings.push(
-    TSCONFIG_REFERENCES_NO_MATCH_WARNING(path.basename(nearestConfigPath), subject, tried),
+    TSCONFIG_REFERENCES_NO_MATCH_WARNING(
+      describeNearestConfig(nearestConfigPath, stopDir),
+      subject,
+      tried,
+    ),
   );
   return nearestAnswer;
 }

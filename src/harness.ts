@@ -2844,11 +2844,18 @@ export function jsxInJsPlugin(jsxImportSource: string = DEFAULT_JSX_IMPORT_SOURC
 export function resolveJsxImportSource(
   projectRoot: string,
   workspaceRoot: string = findWorkspaceRoot(projectRoot),
+  forFile?: string,
 ): string {
   try {
     // M109 (I1): the governing config, so a references-only root reaches the
-    // referenced config that declares jsxImportSource.
-    const declared = resolveGoverningTsconfig(projectRoot, workspaceRoot).options.jsxImportSource;
+    // referenced config that declares jsxImportSource. The file decides which
+    // referenced config that is: a directory query matches whichever config
+    // covers any file under the root, which is the first `references` entry,
+    // not the one covering the component being measured.
+    const declared = resolveGoverningTsconfig(
+      forFile ?? projectRoot,
+      workspaceRoot,
+    ).options.jsxImportSource;
     return declared && declared.length > 0 ? declared : DEFAULT_JSX_IMPORT_SOURCE;
   } catch {
     return DEFAULT_JSX_IMPORT_SOURCE;
@@ -2866,10 +2873,36 @@ export function resolveJsxImportSource(
 export function harnessEsbuildOptions(
   projectRoot: string,
   workspaceRoot?: string,
+  forFile?: string,
 ): { jsx: "automatic"; jsxImportSource: string } {
   return {
     jsx: "automatic",
-    jsxImportSource: resolveJsxImportSource(projectRoot, workspaceRoot),
+    jsxImportSource: resolveJsxImportSource(
+      projectRoot,
+      workspaceRoot ?? findWorkspaceRoot(projectRoot),
+      forFile,
+    ),
+  };
+}
+
+// The two compile-shaping keys createServer receives, in one place a test can
+// hold: a Vue project keeps the vue plugin's own compilation of its SFC blocks
+// and receives no esbuild key at all.
+export function harnessServerCompileOptions(
+  renderer: string,
+  projectRoot: string,
+  workspaceRoot: string,
+  componentPath: string,
+  resolveConditions: string[],
+): {
+  esbuild?: { jsx: "automatic"; jsxImportSource: string };
+  conditions?: string[];
+} {
+  return {
+    ...(renderer === "vue"
+      ? {}
+      : { esbuild: harnessEsbuildOptions(projectRoot, workspaceRoot, componentPath) }),
+    ...(resolveConditions.length > 0 ? { conditions: resolveConditions } : {}),
   };
 }
 
@@ -3742,7 +3775,16 @@ export async function buildAndServe(
   // non-node_modules `.js`); array position does not matter for ordering
   // relative to Vite's own esbuild plugin, since `enforce: "pre"` alone
   // decides that.
-  plugins.push(jsxInJsPlugin(resolveJsxImportSource(projectRoot, workspaceRoot)));
+  plugins.push(
+    jsxInJsPlugin(resolveJsxImportSource(projectRoot, workspaceRoot, absoluteComponentPath)),
+  );
+  const compileOptions = harnessServerCompileOptions(
+    renderer,
+    projectRoot,
+    workspaceRoot,
+    absoluteComponentPath,
+    preBuild.resolveConditions,
+  );
   // Appended, never substituted: the Tailwind entries above must survive.
   if (reactCompiler.active) {
     plugins.push(...(await loadReactCompilerPlugin(reactCompiler.pluginPath!, reactCompiler.target)));
@@ -3829,19 +3871,14 @@ export async function buildAndServe(
         ...(fsAllow ? { fs: { allow: fsAllow } } : {}),
       },
       // M109 (A3): what the project's tsconfig says about `jsx` never decides
-      // how the harness compiles its .ts/.tsx/.jsx. A Vue project keeps the vue
-      // plugin's own compilation of its SFC blocks, untouched.
-      ...(renderer === "vue"
-        ? {}
-        : { esbuild: harnessEsbuildOptions(projectRoot, workspaceRoot) }),
+      // how the harness compiles its .ts/.tsx/.jsx. M109 (A5): resolve
+      // conditions carry the governing tsconfig's customConditions.
+      ...(compileOptions.esbuild ? { esbuild: compileOptions.esbuild } : {}),
       resolve: {
         alias,
         dedupe: renderer === "vue" ? ["vue"] : ["react", "react-dom"],
         // M76: a pass-through to Vite's own condition-aware exports resolver.
-        // M109 (A5): with the governing tsconfig's customConditions appended.
-        ...(preBuild.resolveConditions.length > 0
-          ? { conditions: preBuild.resolveConditions }
-          : {}),
+        ...(compileOptions.conditions ? { conditions: compileOptions.conditions } : {}),
       },
       optimizeDeps: {
         include: stableInclude,
@@ -5315,6 +5352,13 @@ function parseTsconfigPathsConfig(tsconfigPath: string): ParsedTsconfigPaths | u
 // is disclosed once per process per config — `loadTsconfigAliases` runs several
 // times in one run and the sentence is the same every time.
 const disclosedGoverningConfigs = new Set<string>();
+
+// The register spans a process, so a test process measuring several projects
+// needs to start from empty; without this every assertion on a first
+// disclosure depends on which test file ran first in the same worker.
+export function resetGoverningDisclosures(): void {
+  disclosedGoverningConfigs.clear();
+}
 
 export function loadTsconfigAliases(
   projectRoot: string,

@@ -1,9 +1,13 @@
-import { describe, it, expect, afterAll } from "vitest";
+import { describe, it, expect, afterAll, beforeEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { resolveGoverningTsconfig } from "../../src/project-model.js";
-import { collectStaticPreBuildWarnings, loadTsconfigAliases } from "../../src/harness.js";
+import {
+  collectStaticPreBuildWarnings,
+  loadTsconfigAliases,
+  resetGoverningDisclosures,
+} from "../../src/harness.js";
 
 const REFERENCES = path.resolve("fixtures/tsconfig-shapes/project-references");
 const JSX_PRESERVE = path.resolve("fixtures/tsconfig-shapes/jsx-preserve");
@@ -90,7 +94,11 @@ describe("a references-only config hands over to the referenced config that cove
 
     expect(governing.configPath).toBe(governing.nearestConfigPath);
     expect(governing.viaReferences).toBe(false);
-    expect(governing.warnings.join(" ")).toContain("no referenced config covers");
+    const sentence = governing.warnings.join(" ");
+    expect(sentence).toContain("no referenced config covers");
+    // The reference target that is missing is the one fact this sentence
+    // exists to report, so it is named.
+    expect(sentence).toContain("tsconfig.gone.json (unreadable)");
   });
 
   it("builds the alias the referenced config declares, so the import resolves", () => {
@@ -109,6 +117,11 @@ describe("a references-only config hands over to the referenced config that cove
 // The chosen config is not the one the README's "nearest one wins" sentence
 // names, so the run says which config it read and what that config supplied.
 describe("the chosen referenced config is disclosed once", () => {
+  // The register spans the process, so the "once" assertions below describe
+  // this file's two calls, not whatever ran before them in the same worker.
+  beforeEach(() => {
+    resetGoverningDisclosures();
+  });
   it("names the nearest config, the chosen config and the field it supplied", () => {
     const preBuild = collectStaticPreBuildWarnings(REFERENCES, { componentPath: BUTTON });
     const disclosures = preBuild.warnings.filter((w) =>
@@ -123,6 +136,7 @@ describe("the chosen referenced config is disclosed once", () => {
   });
 
   it("prints it once for a second run in the same process", () => {
+    collectStaticPreBuildWarnings(REFERENCES, { componentPath: BUTTON });
     const again = collectStaticPreBuildWarnings(REFERENCES, { componentPath: BUTTON });
 
     expect(
