@@ -3209,9 +3209,21 @@ function declaredOptionDiagnostic(configPath: string): string | undefined {
     path.dirname(configPath),
     configPath,
   );
-  return converted.errors.length > 0
-    ? ts.flattenDiagnosticMessageText(converted.errors[0].messageText, " ")
-    : undefined;
+  if (converted.errors.length > 0) {
+    return ts.flattenDiagnosticMessageText(converted.errors[0].messageText, " ");
+  }
+  // A malformed include/files key, or an invalid option inside an extends base,
+  // never reaches convertCompilerOptionsFromJson. Parsing without globbing
+  // surfaces it; 18003 only says the fixture has no input files.
+  const parsed = ts.parseJsonConfigFileContent(
+    configFile.config,
+    { ...ts.sys, readDirectory: () => [] },
+    path.dirname(configPath),
+    undefined,
+    configPath,
+  );
+  const other = parsed.errors.find((diagnostic) => diagnostic.code !== 18003);
+  return other ? ts.flattenDiagnosticMessageText(other.messageText, " ") : undefined;
 }
 
 function createCompilerOptions(absolutePath: string): ts.CompilerOptions {
@@ -3249,8 +3261,10 @@ function createCompilerOptions(absolutePath: string): ts.CompilerOptions {
       readFailureDetail(governing.warnings, governing.nearestConfigPath),
     );
   } else if (tsconfigPath) {
-    const optionDetail = declaredOptionDiagnostic(tsconfigPath);
-    if (optionDetail) warnTsconfigOnce(tsconfigPath, optionDetail);
+    if (!warnedTsconfigPaths.has(tsconfigPath)) {
+      const optionDetail = declaredOptionDiagnostic(tsconfigPath);
+      if (optionDetail) warnTsconfigOnce(tsconfigPath, optionDetail);
+    }
     // Override resolution to Bundler: user components use extensionless imports
     compilerOptions = {
       ...governing.options,
