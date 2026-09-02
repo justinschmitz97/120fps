@@ -1,0 +1,44 @@
+{
+  "version": 2,
+  "timestamp": "2026-09-01T10:00:00.000Z",
+  "entries": {
+    "./button.tsx#0f1e2d3c": {
+      "mount": 4.2,
+      "rerender": 1.1,
+      "unmount": 0.6,
+      "domNodeCount": 12,
+      "interactions": {},
+      "tier": "T1",
+      "env": {
+        "shape": 1,
+        "metrics": 4,
+        "cpu": "Another Machine CPU @ 1.00GHz",
+        "cores": 2,
+        "os": "SomeOtherOS 0.0.0",
+        "nodeVersion": "v20.0.0",
+        "chromiumVersion": "120.0.0.0",
+        "cpuThrottle": 4,
+        "samples": 10,
+        "calibrationTotalDuration": 10,
+        "calibrationScriptDuration": 5,
+        "mode": "combo"
+      },
+      "pass": true,
+      "savedAt": "2026-09-01T10:00:00.000Z",
+      "phaseTimings": {
+        "preflight": 4000,
+        "build": 41000,
+        "calibration": 30000,
+        "mount": 58000,
+        "rerender": 20000,
+        "explore": 80000,
+        "scale": 0,
+        "deltas": 0,
+        "attribution": 0,
+        "analysis": 12000,
+        "total": 245000
+      },
+      "phaseUnits": { "combos": 4, "samples": 5 }
+    }
+  }
+}

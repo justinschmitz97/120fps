@@ -1,5 +1,5 @@
 import type { Report, ScalingCurveReport, Thresholds } from "./report.js";
-import { computeCurveVerdict, deriveReportMode } from "./report.js";
+import { computeCurveVerdict, deriveReportMode, describePhaseBreakdown } from "./report.js";
 import type { IsolationReport } from "./isolation.js";
 import { CHURN_DEGRADATION_LIMIT, LEAK_BYTES_PER_CYCLE } from "./isolation.js";
 
@@ -221,16 +221,21 @@ export function formatMarkdown(reports: Report[]): string {
     `component${reports.length === 1 ? "" : "s"}, ${regressionCount} ` +
     `regression${regressionCount === 1 ? "" : "s"}`,
     "",
-    "| component | mount | rerender | verdict | vs baseline |",
-    "|---|---|---|---|---|",
+    "| component | mount | rerender | verdict | vs baseline | phases |",
+    "|---|---|---|---|---|---|",
   ];
 
   for (const report of reports) {
     const timings = modeTimings(report);
     const cached = report.cached ? " _(cached)_" : "";
+    // M115 C5: the terminal's own breakdown, per component. A report with no
+    // phaseTimings -- an older JSON, a cached verdict -- is a dash: it did not
+    // spend zero seconds, it did not record where its seconds went.
+    const phases = describePhaseBreakdown(report.phaseTimings);
     lines.push(
       `| \`${escapeMdCell(report.componentPath)}\`${cached} | ${timings.mount} | ` +
-      `${timings.rerender} | ${VERDICT_MARK[worstVerdict(report)]} | ${baselineDelta(report)} |`,
+      `${timings.rerender} | ${VERDICT_MARK[worstVerdict(report)]} | ${baselineDelta(report)} | ` +
+      `${phases === "" ? "-" : phases} |`,
     );
   }
 

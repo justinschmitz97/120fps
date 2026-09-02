@@ -202,6 +202,109 @@ from this worktree. Commands verbatim from `EVIDENCE.md` rows:
 
 Plus `tsc --noEmit` clean, and the Lane C and Lane A test files green (baseline failures excepted).
 
+### Lane C evidence
+
+Run 2026-09-02 in `C:/Projekte/120fps-m107` on `feat/m107-run5-remediation`.
+
+Tests, `node node_modules/vitest/vitest.mjs run test/unit/report-carries-phase-timings.test.ts
+test/unit/progress-lines-carry-elapsed-time.test.ts test/unit/dry-run-estimates-the-real-run.test.ts
+--maxWorkers=2`:
+
+```
+ Test Files  3 passed (3)
+      Tests  32 passed (32)
+```
+
+Whole unit suite, `node node_modules/vitest/vitest.mjs run test/unit --maxWorkers=2`:
+
+```
+ Test Files  3 failed | 274 passed (277)
+      Tests  24 failed | 4301 passed | 1 skipped (4326)
+```
+
+The 24 failures are the map's baseline failures and nothing else:
+`vue-dual-block-props.test.ts` (18), `prop-default-disclosure.test.ts` (2),
+`bundler-error-presentation.test.ts` (4). `prop-cap-ranking.test.ts` (the environment one) is green
+here.
+
+`node node_modules/typescript/bin/tsc --noEmit`: clean, no output.
+
+Corpus, scratch dist `C:/Projekte/120fps-fieldtest/scratch/C-M115/dist/cli.js` built from this
+worktree, through `node C:/Projekte/120fps-fieldtest/tools/run120.mjs`:
+
+- **n8n-F4, dry run** (`--label M115-n8n-after`, exit=0, 6 s). Before (`logs/n8n/02-explain-dialog.log`):
+  no line matching `Estimated real run`. After:
+
+  ```
+  Matrix mode:  would not auto-activate
+  Estimated real run: ~1m 31s (8 combos x 10 samples; defaults: no phase timings recorded for this component yet)
+  ```
+
+  Every other line of the dry run is unchanged. Closed: yes.
+- **n8n-F3, real run** (`--label M115-n8n-real-after`, exit=2, 37 s). This row never reaches a report
+  (its own unresolved `~icons/` import is M108/M110 work, not this milestone). What it does show is
+  C4. Before (`logs/n8n/04-real-button.log`): `preflight: walking the import graph` /
+  `harness: building`. After:
+
+  ```
+  preflight: walking the import graph  (0:01)
+  harness: building  (0:01)
+  ```
+
+  Closed: partly -- C4 confirmed; the breakdown and the sum identity could not be read from this row.
+- **shadcn-admin-F2, real run** (`--label M115-shadcn-toolbar-after`, exit=0, 26 s). Before
+  (`logs/shadcn-admin/toolbar-remedy.log:56`): `Total: 53.7s`, and `grep -c phaseTimings
+  logs/shadcn-admin/toolbar-remedy.json` = 0. After:
+
+  ```
+  preflight: walking the import graph  (0:00)
+  harness: building  (0:00)
+  calibration  (0:07)
+  mode: curve on filters  (0:08)
+  mount: 6 scale points  (0:08)
+  rerender: 6 scale points  (0:14)
+  explore: 6 scale points  (0:17)
+  react analysis  (0:24)
+  Total: 26.0s
+  ```
+
+  and the JSON report carries
+
+  ```
+  {"preflight":224,"build":7534,"calibration":1238,"mount":5145,"rerender":3227,"explore":7191,"scale":0,"deltas":0,"attribution":0,"analysis":1477,"total":26036}
+  sum 26036 total 26036
+  ```
+
+  The ten phase keys sum to `total` exactly, and the printed `Total: 26.0s` differs from
+  `phaseTimings.total` by under 1000 ms. Closed: yes for C1-C4; the parenthesised breakdown on the
+  `Total:` line is A1 and lands with Lane A's `cli.ts` edit.
+- **Unaffected repo** (`--label M115-shadcn-button-after`, exit=0):
+  `src/components/ui/button.tsx --explain-props` still reaches its full schema
+  (`Props (32):`, `Curve mode:`, `Scale probe:`, `Matrix mode:`, the same warnings) with one added
+  line, `Estimated real run: ~1m 31s (8 combos x 10 samples; defaults: no phase timings recorded for
+  this component yet)`. Closed: yes.
+
+Not landed in this commit, and why:
+
+- **A1, A2** are Lane A's `cli.ts` lines (wave 2). Without A1 the terminal's `Total:` prints exactly
+  what it printed before; `formatPhaseBreakdown` (I11) is exported and ready for it. Without I12 the
+  CLI forwards no `samples`/`maxCombos` to `explainProps`, so the corpus dry run above names the
+  defaults (8 combos x 10 samples); `explainProps` already accepts both options and the unit test
+  covers the capped counts.
+
+Two implementation facts worth recording, both inside Lane C's own files:
+
+- C6's estimate needs the units the recorded phases were spent on, so `BaselineEntry` carries
+  `phaseUnits: { combos, samples }` beside `phaseTimings`. Both are optional, neither enters
+  `computeEnvKey` or the baseline key, and an entry without them reads as "no phase timings
+  recorded".
+- `fixtures/phase-timings/baseline-other-machine.json` (not `120fps-baseline.json`: the repository's
+  `.gitignore:11` would keep that name out of the commit) carries a deliberately foreign environment
+  fingerprint: a machine identity that matches cannot be committed to a file, so the fixture proves
+  the mismatch path (defaults) and the matching path is driven from a temp project the test writes
+  with this machine's own `os.cpus()` values. A dry run launches no browser, so the match is on
+  `cpu`, `cores` and `os` and never on `chromiumVersion`.
+
 ## Deferred
 
 - Levers B, C and D of `perf-levers.md`. B and C are M116, gated on the numbers this milestone

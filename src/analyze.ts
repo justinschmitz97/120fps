@@ -98,6 +98,7 @@ import {
   computeEnvKey,
   parseBaselineKey,
   selectBaselineEntry,
+  selectPhaseTimingEntry,
   sameMachineIdentity,
   envAdvisory,
   NO_ENV_BASELINE_WARNING,
@@ -147,6 +148,11 @@ import {
   type WrapperReport,
   type PropProvenance,
   formatStylesheetsLine,
+  createPhaseClock,
+  formatElapsedClock,
+  formatPhaseDuration,
+  type PhaseClock,
+  type PhaseTimings,
 } from "./report.js";
 
 // M40: the numbers are real, but they describe a transient scene. Warn, never
@@ -396,24 +402,33 @@ export interface AnalyzeOptions {
 export function resolveProgressReporter(
   options: Pick<AnalyzeOptions, "ci" | "onProgress" | "onPhase">,
   write: (chunk: string) => void = (chunk) => process.stdout.write(chunk),
+  // M115 C4: the run clock. Every boundary is charged here, on the one path
+  // every label already travels, so a phase is measured once and `onPhase` and
+  // `onProgress` see the identical stamped string.
+  clock?: PhaseClock,
 ): (line: string) => void {
   // Review A2: every phase boundary reaches `onPhase` on every path, `--ci`
   // included. Console reporting is decided after that, not instead of it.
   const heartbeat = options.onPhase;
-  const emit = (line: string): void => {
-    heartbeat?.(line);
-  };
-  if (options.ci) return emit;
+  const stamp = (line: string): string =>
+    clock ? `${line}  (${formatElapsedClock(clock.boundary(line))})` : line;
+  if (options.ci) {
+    return (line) => {
+      heartbeat?.(stamp(line));
+    };
+  }
   const sink = options.onProgress;
   if (sink) {
     return (line) => {
-      emit(line);
-      sink(line);
+      const stamped = stamp(line);
+      heartbeat?.(stamped);
+      sink(stamped);
     };
   }
   return (line) => {
-    emit(line);
-    write(line + "\n");
+    const stamped = stamp(line);
+    heartbeat?.(stamped);
+    write(stamped + "\n");
   };
 }
 
@@ -452,6 +467,11 @@ export interface BuildReportInput {
   // M84) and may not exist on a given schema; when it is absent everywhere,
   // no combo is ever exonerated (see detectHarnessFault).
   schemas?: Array<PropSchema & { provenance?: PropProvenance }>;
+  // M115 C2: `attributeCost` runs per combo inside this function, between the
+  // mount phase and the report boundary, so its window is handed back to the
+  // clock here and carved out of whichever phase was open. No progress line
+  // names it; the report's `attribution` key is where it shows up.
+  phaseClock?: Pick<PhaseClock, "addAttribution">;
 }
 
 // M85: mirrors isHarnessInternalNoise's (src/page-errors.ts) principle for a
@@ -655,6 +675,8 @@ export function buildReport(input: BuildReportInput): Report {
       scalingCurve: null,
       relativeMount,
       verdict: "pass",
+      // M115 C3: the state graph already measured this; nothing else read it.
+      ...(exploreResult ? { exploreWallClockMs: exploreResult.graph.wallClockMs } : {}),
       measuredState: mount.measuredState ?? "settled",
       ...(isScaleProbe ? { scaleProbe: scaleProbeValue as number } : {}),
       ...(input.measuredWithoutProps && !isScaleProbe ? { measuredWithoutProps: true } : {}),
@@ -672,7 +694,9 @@ export function buildReport(input: BuildReportInput): Report {
     }
 
     if (!input.skipAttribution && mount.mountTraces && mount.mountTraces.length > 0) {
+      const attributionStart = Date.now();
       combo.costAttribution = attributeCost(mount.mountTraces);
+      input.phaseClock?.addAttribution(Date.now() - attributionStart);
     }
 
     // M59: mount and rerender each watched the page over their own window; the
@@ -876,6 +900,11 @@ interface BaselineWorkflowContext {
   envPolicy: BaselineEnvPolicy;
   // M39: stored with the entry on save so unchanged components can reuse it.
   sourceFingerprint?: string;
+  // M115 C7: where this run's minutes went, and the combo and sample counts it
+  // spent them on, so a later dry run can scale them. Read by the estimate
+  // only; it never enters the environment key or the reuse decision.
+  phaseTimings?: PhaseTimings;
+  phaseUnits?: { combos: number; samples: number };
 }
 
 // Shared by every output mode: the isolation branch returns before the combo
@@ -977,6 +1006,9 @@ function applyBaselineWorkflow(
       ...(ctx.sourceFingerprint ? { sourceFingerprint: ctx.sourceFingerprint } : {}),
       pass: report.pass,
       ...(metrics.measuredState ? { measuredState: metrics.measuredState } : {}),
+      ...(ctx.phaseTimings && ctx.phaseUnits
+        ? { phaseTimings: ctx.phaseTimings, phaseUnits: ctx.phaseUnits }
+        : {}),
     };
     const { pruned } = saveBaselineFile(baselinePath, entry, ctx.relativeComponent);
     if (pruned.length > 0) {
@@ -1024,6 +1056,9 @@ interface ModeContext {
   onWarning: (warning: string) => void;
   // M65: one line per phase boundary, already silenced in CI mode.
   progress: (line: string) => void;
+  // M115 C1: the clock the progress reporter charges, so every mode branch
+  // puts the same run's breakdown on the report it returns.
+  phaseClock: PhaseClock;
   getSchemas: () => Promise<PropSchema[]>;
   getSourceFingerprint: () => Promise<string>;
   attachHarnessContext: (report: Report) => void;
@@ -1214,6 +1249,8 @@ async function runIsolationMode(
     },
   );
 
+  // M115 C1: the run's own breakdown, on the report the run returns.
+  report.phaseTimings = ctx.phaseClock.timings();
   writeReportJson(report, options.jsonPath);
 
   return report;
@@ -1399,6 +1436,8 @@ async function runCurveMode(ctx: ModeContext, match: ScalingPropMatch): Promise<
     if (point) point.reactOptimizations = opts;
   }
 
+  // M115 C1: the run's own breakdown, on the report the run returns.
+  report.phaseTimings = ctx.phaseClock.timings();
   writeReportJson(report, options.jsonPath);
 
   return report;
@@ -1590,6 +1629,7 @@ async function runMatrixMode(ctx: ModeContext, matrixAutoActivated: boolean): Pr
     explores: matrixExplores,
     heapDeltas,
     thresholds,
+    phaseClock: ctx.phaseClock,
     rerenders: matrixRerenders,
     flatThresholds: options.flatThresholds,
     explicitThresholds,
@@ -1621,6 +1661,8 @@ async function runMatrixMode(ctx: ModeContext, matrixAutoActivated: boolean): Pr
   if (ctx.wrapper) attachWrapperReport(report, ctx.wrapper);
   ctx.attachHarnessContext(report);
 
+  // M115 C1: the run's own breakdown, on the report the run returns.
+  report.phaseTimings = ctx.phaseClock.timings();
   writeReportJson(report, options.jsonPath);
 
   return report;
@@ -1956,6 +1998,7 @@ async function runComboMode(ctx: ModeContext, fixtureHasScale: boolean): Promise
     explores,
     heapDeltas,
     thresholds,
+    phaseClock: ctx.phaseClock,
     rerenders,
     flatThresholds: options.flatThresholds,
     explicitThresholds,
@@ -2097,6 +2140,11 @@ async function runComboMode(ctx: ModeContext, fixtureHasScale: boolean): Promise
     currentEnv,
     envPolicy,
     ...(options.saveBaseline ? { sourceFingerprint: await ctx.getSourceFingerprint() } : {}),
+    // M115 C7: a reading, not a closing -- the total still ends at the
+    // `report` boundary a few lines below, where the JSON's own number is
+    // taken.
+    phaseTimings: ctx.phaseClock.snapshot(),
+    phaseUnits: { combos: combos.length, samples: effectiveSamples },
   });
 
   // M51: recorded before serialization so the JSON carries the same ids the
@@ -2105,6 +2153,8 @@ async function runComboMode(ctx: ModeContext, fixtureHasScale: boolean): Promise
   if (hintIds.length > 0) report.hints = hintIds;
 
   ctx.progress("report");
+  // M115 C1: the run's own breakdown, on the report the run returns.
+  report.phaseTimings = ctx.phaseClock.timings();
   writeReportJson(report, options.jsonPath);
 
   return report;
@@ -2245,7 +2295,71 @@ export interface PropsExplanation {
   // a component that has one.
   curveSuppressedByFlag?: boolean;
   presetPath?: string;
+  // M115 C6: what the real run this dry run predicts is about to cost.
+  costEstimate?: RunCostEstimate;
   warnings: string[];
+}
+
+export interface RunCostEstimate {
+  estimatedMs: number;
+  // The counts the real run would measure: the same combo cap and the same
+  // `computeEffectiveSamples` the dispatcher applies.
+  combos: number;
+  samples: number;
+  // "baseline" means the per-phase numbers are this component's own, recorded
+  // by a `--save-baseline` run on this machine. "defaults" means they are the
+  // documented fleet medians and the line says so.
+  source: "baseline" | "defaults";
+}
+
+// M115 C6: the fallback per-phase numbers, from the 283 logged runs of field
+// test run 5 (`remediation/timing-profile.md`, section 4: a 4-combo x 5-sample
+// combo run has a median of 39 s). `fixedMs` covers preflight, build,
+// calibration and analysis; `perMountSampleMs` is one mount sample;
+// `perComboMs` covers the rerender, explore and attribution work a combo
+// carries beyond its mount samples.
+export const DEFAULT_PHASE_ESTIMATE = {
+  fixedMs: 15_000,
+  perMountSampleMs: 700,
+  perComboMs: 2_500,
+};
+
+// An estimate, never a measurement: it multiplies per-unit costs by the units
+// the real run would measure. Nothing here starts a server, a browser or a
+// measurement.
+export function estimateRunCost(input: {
+  combos: number;
+  samples: number;
+  recorded?: { timings: PhaseTimings; units: { combos: number; samples: number } };
+}): RunCostEstimate {
+  const { combos, samples } = input;
+  const recorded = input.recorded;
+  const units = recorded?.units;
+  const usable =
+    recorded !== undefined && units !== undefined && units.combos > 0 && units.samples > 0;
+  if (!usable) {
+    return {
+      estimatedMs:
+        DEFAULT_PHASE_ESTIMATE.fixedMs +
+        DEFAULT_PHASE_ESTIMATE.perMountSampleMs * combos * samples +
+        DEFAULT_PHASE_ESTIMATE.perComboMs * combos,
+      combos,
+      samples,
+      source: "defaults",
+    };
+  }
+  const t = recorded!.timings;
+  const recordedUnits = units!;
+  const fixed = t.preflight + t.build + t.calibration + t.analysis;
+  const perMountSample = t.mount / (recordedUnits.combos * recordedUnits.samples);
+  const perCombo =
+    (t.rerender + t.explore + t.scale + t.deltas + t.attribution) / recordedUnits.combos;
+  return {
+    estimatedMs: Math.round(fixed + perMountSample * combos * samples + perCombo * combos),
+    combos,
+    samples,
+    source: "baseline",
+  };
 }
 
 // M82: always constructed, even for "none" — the fingerprint call sites guard
@@ -2306,6 +2420,11 @@ export async function explainProps(
     matrixMode?: boolean;
     isolation?: { phases: string[]; memoryCycles?: number };
     fixturePath?: string;
+    // I12 (M115 C6): the two flags that decide how many combos and samples the
+    // real run would measure. Same names and types as `AnalyzeOptions`, so the
+    // CLI forwards one shape to both entry points.
+    samples?: number;
+    maxCombos?: number;
   } = {},
 ): Promise<PropsExplanation> {
   const resolvedPath = path.resolve(componentPath);
@@ -2313,7 +2432,7 @@ export async function explainProps(
     throw new Error(`Component file not found: ${componentPath}`);
   }
 
-  const { projectRoot } = resolveProjectPaths(resolvedPath);
+  const { projectRoot, relativeComponent } = resolveProjectPaths(resolvedPath);
   const componentName = detectComponentExport(resolvedPath, options.target).name;
 
   const warnings: string[] = [];
@@ -2457,6 +2576,19 @@ export async function explainProps(
   const altNote = await alternativeExportNote(resolvedPath, componentName, schemas, options.target);
   if (altNote) warnings.push(altNote);
 
+  // M115 C6: what the real run would cost. Filesystem reads only -- the combo
+  // count the dispatcher would measure, the samples `computeEffectiveSamples`
+  // would allow, and this component's own recorded phases when a
+  // `--save-baseline` run on this machine left some.
+  const costEstimate = estimateExplainedRunCost({
+    schemas,
+    projectRoot,
+    relativeComponent,
+    usesFixture: dryRunUsesFixture,
+    samples: options.samples,
+    maxCombos: options.maxCombos,
+  });
+
   return {
     componentPath,
     componentName,
@@ -2523,8 +2655,45 @@ export async function explainProps(
       ? { curveSuppressedByFlag: true }
       : {}),
     ...(presets ? { presetPath: presets.path } : {}),
+    costEstimate,
     warnings,
   };
+}
+
+// The dry run's half of M115 C6: no server, no browser, no measurement. A
+// fixture or an auto-composed scene supplies one combo; otherwise the real
+// run's own combo generation, cap and sample throttle decide the units.
+function estimateExplainedRunCost(input: {
+  schemas: PropSchema[];
+  projectRoot: string;
+  relativeComponent: string;
+  usesFixture: boolean;
+  samples?: number;
+  maxCombos?: number;
+}): RunCostEstimate {
+  const generated = input.usesFixture ? 1 : generateCombinations(input.schemas).length;
+  const cap = input.maxCombos ?? DEFAULT_MEASURED_COMBOS;
+  const combos = Math.max(1, Math.min(generated === 0 ? 1 : generated, cap));
+  const samples = computeEffectiveSamples(combos, input.samples ?? 10);
+
+  const cpus = os.cpus();
+  const entry = selectPhaseTimingEntry(
+    loadBaseline(path.join(input.projectRoot, "120fps-baseline.json")),
+    input.relativeComponent,
+    {
+      cpu: cpus.length > 0 ? cpus[0].model : "unknown",
+      cores: cpus.length,
+      os: `${os.type()} ${os.release()}`,
+    },
+  );
+
+  return estimateRunCost({
+    combos,
+    samples,
+    ...(entry?.phaseTimings && entry.phaseUnits
+      ? { recorded: { timings: entry.phaseTimings, units: entry.phaseUnits } }
+      : {}),
+  });
 }
 
 const EXPLAIN_VALUE_CAP = 4;
@@ -2694,6 +2863,19 @@ export function formatExplainProps(explained: PropsExplanation): string {
           : `Matrix mode:  predicate matches, but ${explained.predictedMode} mode takes precedence and is what this run would use`
       : "Matrix mode:  would not auto-activate",
   );
+
+  // M115 C6: an estimate, said in that word, with the units it multiplied and
+  // where the per-phase numbers came from. Nothing was measured to produce it.
+  const estimate = explained.costEstimate;
+  if (estimate) {
+    lines.push(
+      `Estimated real run: ~${formatPhaseDuration(estimate.estimatedMs)} ` +
+      `(${estimate.combos} combos x ${estimate.samples} samples; ` +
+      (estimate.source === "baseline"
+        ? "phase timings from 120fps-baseline.json)"
+        : "defaults: no phase timings recorded for this component yet)"),
+    );
+  }
 
   if (explained.warnings.length > 0) {
     lines.push("");
@@ -2954,7 +3136,12 @@ export async function analyze(
   const pool = options.browserPool ?? createBrowserPool();
   const ownsPool = options.browserPool === undefined;
 
-  const progress = resolveProgressReporter(options);
+  // M115 C1: the run clock opens before anything is read from disk, so the
+  // interval that precedes the first `preflight:` boundary is charged rather
+  // than lost. Every stamp is taken at a phase boundary, never inside a traced
+  // window.
+  const phaseClock = createPhaseClock();
+  const progress = resolveProgressReporter(options, undefined, phaseClock);
 
   let fixturePath: string | undefined = options.fixturePath;
   let fixtureAutoDetected = false;
@@ -3645,6 +3832,7 @@ export async function analyze(
       runWarnings,
       onWarning,
       progress,
+      phaseClock,
       getSchemas: async () => (schemas ??= await extractSchemas(harness!.componentPath)),
       getSourceFingerprint,
       attachHarnessContext,

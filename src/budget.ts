@@ -11,6 +11,7 @@ import {
   type MachineInfo,
   type MeasuredState,
   type NormalizedDelta,
+  type PhaseTimings,
   type TierBudget,
 } from "./report.js";
 
@@ -52,6 +53,38 @@ export interface BaselineEntry {
   // M45: when this slot was last written, for pruning. Absent means pre-M45,
   // which is kept: absence is not age.
   savedAt?: string;
+  // M115 C7: where the recording run's minutes went, and the combo and sample
+  // counts it spent them on, so a later dry run can scale them to the run it
+  // is predicting. Never part of `computeEnvKey` or the baseline key: an entry
+  // that differs only here is still the same slot and is still reused.
+  phaseTimings?: PhaseTimings;
+  phaseUnits?: { combos: number; samples: number };
+}
+
+// M115 C6: the entry a dry run may estimate from. A dry run launches no
+// browser, so `chromiumVersion` cannot be part of the match; machine identity
+// is what the estimate depends on, and a mismatch falls back to the defaults
+// rather than presenting another machine's numbers as a prediction.
+export function selectPhaseTimingEntry(
+  baseline: Baseline | null,
+  componentPath: string,
+  machine: { cpu: string; cores: number; os: string },
+): BaselineEntry | undefined {
+  if (!baseline) return undefined;
+  const candidates = Object.entries(baseline.entries)
+    .filter(([key]) => parseBaselineKey(key).componentPath === componentPath)
+    .map(([, value]) => value)
+    .filter(
+      (entry) =>
+        entry?.phaseTimings !== undefined &&
+        entry.phaseUnits !== undefined &&
+        entry.env?.cpu === machine.cpu &&
+        entry.env?.cores === machine.cores &&
+        entry.env?.os === machine.os,
+    );
+  if (candidates.length === 0) return undefined;
+  candidates.sort((a, b) => (Date.parse(b.savedAt ?? "") || 0) - (Date.parse(a.savedAt ?? "") || 0));
+  return candidates[0];
 }
 
 // M39: order-independent identity over file contents plus a config string.
