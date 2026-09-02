@@ -243,6 +243,51 @@ fixture with its own `node_modules`, which no fixture under `fixtures/` has; the
 assertion (no built alias matches `/@vite/client`, `/@fs/...` or the harness entry) plus the
 react-spectrum run above (0 lines matching `@vite/client` or `404`, a report produced) carry it.
 
+### Lane B evidence (2026-09-03, worktree `C:/Projekte/120fps-m107`, scratch dist `B-M109`)
+
+Tests (`node node_modules/vitest/vitest.mjs run
+test/unit/prop-extraction-shares-the-tsconfig-reader.test.ts --maxWorkers=2`):
+
+```
+ Test Files  1 passed (1)
+      Tests  4 passed (4)
+```
+
+The 69 `test/unit` files that import `src/prop-gen.ts` are green, run in two batches:
+`Test Files 35 passed (35)`, `Tests 478 passed (478)` and `Test Files 34 passed (34)`,
+`Tests 472 passed (472)`. `test/unit/prop-gen-tsconfig-warn.test.ts` (M24's one warning per config
+path per process) stays green: the reader reports only the diagnostics the run discloses, so
+`createCompilerOptions` reads the governing config's own `compilerOptions` through
+`ts.convertCompilerOptionsFromJson` for the invalid-option-value case B2 keeps. The two lane B
+baseline failures (`vue-dual-block-props`, `prop-default-disclosure`) were already fixed by M114
+(b5d7070) and pass here.
+
+`node node_modules/typescript/bin/tsc --noEmit`: clean, no output.
+
+Corpus, each through `node C:/Projekte/120fps-fieldtest/tools/run120.mjs` with
+`--cli C:/Projekte/120fps-fieldtest/scratch/B-M109/dist/cli.js`:
+
+- **coordinator-F1, dry run** (`--cwd C:/Projekte/tmp-vite-refs --label M109-tmp-vite-refs-after --
+  src/components/Button.tsx --explain-props`). Before
+  (`findings/_coordinator-tsconfig-references.md:6`): `explain (references-only root) |
+  src/components/Button.tsx | --explain-props | 0 | 2 | props 2, "Stylesheets: none found", no alias
+  warning`. After: `exit=0 killed=false seconds=3`, `Props (2):`, and under `Warnings:`
+  `  tsconfig.json declares no compilerOptions and lists references; tsconfig.app.json covers
+  src/components/Button.tsx and supplies paths, baseUrl` -- the same sentence the real run prints
+  (lane A's row above), so extraction and the harness read one config. Closed: yes.
+- **ark-F1, prop extraction under `jsx: "preserve"`** (`--cwd /e/repositories-run5/ark/packages/react
+  --label M109-ark-after-laneB -- src/components/accordion/accordion-root.tsx --samples 5
+  --max-combos 4 --explore-budget 60 --no-deltas`; the label carries a lane suffix so lane A's log of
+  the same run is not overwritten). Before (`logs/ark/react-accordion-nomatrix.log:32`):
+  `    - React is not defined (×7)`. After: `exit=0 killed=false seconds=77`, `Result: PASS`
+  (`logs/ark/M109-ark-after-laneB.log:115`), `grep -c "React is not defined"` = 0, and the JSON
+  digest reports `combos=8` with props extracted from the tsconfig-governed program. Closed: yes.
+- **Unaffected repository** (`--cwd /e/repositories-run5/shadcn-admin --label
+  M109-shadcn-admin-after-laneB -- src/components/ui/button.tsx --explain-props`): `Component:
+  Button`, `Props (32):`,
+  `Stylesheets: src/styles/index.css (found in the project entry's own imports)`, no references
+  disclosure. Unchanged.
+
 Corpus (commands verbatim from the `EVIDENCE.md` rows named above):
 
 - ark-F1 — `node run120.mjs --cwd .../ark/packages/react --label react-accordion-nomatrix --

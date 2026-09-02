@@ -17,7 +17,7 @@ import {
   loadPropPresets,
   literalValue,
 } from "./prop-presets.js";
-import { findCompilerConfig, findProjectRoot, findWorkspaceRoot } from "./project-model.js";
+import { findProjectRoot, findWorkspaceRoot, resolveGoverningTsconfig } from "./project-model.js";
 
 // M36: a fresh ts.Program per extraction re-parses lib.d.ts and the project's
 // node_modules type graph every time. Between calls only the component file
@@ -3186,16 +3186,48 @@ export function projectCompilerOptions(absolutePath: string): ts.CompilerOptions
   return createCompilerOptions(path.resolve(absolutePath));
 }
 
+// The reader keeps quiet about a config it could not read, so the caller that
+// asked prints the message once. Its sentence names the path this function
+// already has, so the path is not repeated inside the detail.
+function readFailureDetail(warnings: string[], configPath: string): string {
+  const marker = `could not parse tsconfig at ${configPath}: `;
+  const failure = warnings.find((warning) => warning.startsWith(marker));
+  return failure ? failure.slice(marker.length) : (warnings[0] ?? "the config could not be read");
+}
+
+// The reader surfaces only the diagnostics the run discloses (a broken extends
+// chain). An option declared with the wrong value type has warned here once per
+// config since M24 and still does, read from the governing config's own
+// compilerOptions without globbing the project's files a second time.
+function declaredOptionDiagnostic(configPath: string): string | undefined {
+  const configFile = ts.readConfigFile(configPath, ts.sys.readFile);
+  const raw = configFile.config as { compilerOptions?: unknown } | undefined;
+  const declared = raw?.compilerOptions;
+  if (configFile.error || declared === null || typeof declared !== "object") return undefined;
+  const converted = ts.convertCompilerOptionsFromJson(
+    declared,
+    path.dirname(configPath),
+    configPath,
+  );
+  return converted.errors.length > 0
+    ? ts.flattenDiagnosticMessageText(converted.errors[0].messageText, " ")
+    : undefined;
+}
+
 function createCompilerOptions(absolutePath: string): ts.CompilerOptions {
   // M69: the same search the harness builds aliases from, so one config
   // governs both. The bound is the workspace root; a tree with no package.json
   // anywhere has no project model, and the walk keeps its old reach.
+  // M109 (I1): through the shared reader, so a references-only root hands
+  // extraction the referenced config that covers this file, which is the
+  // config the harness aliases and the dev server resolve from.
   const startDir = path.dirname(absolutePath);
   const memberRoot = findProjectRoot(startDir);
-  const tsconfigPath = findCompilerConfig(
-    startDir,
+  const governing = resolveGoverningTsconfig(
+    absolutePath,
     memberRoot === undefined ? undefined : findWorkspaceRoot(memberRoot),
   );
+  const tsconfigPath = governing.configPath;
 
   let compilerOptions: ts.CompilerOptions = {
     target: ts.ScriptTarget.ES2022,
@@ -3209,36 +3241,26 @@ function createCompilerOptions(absolutePath: string): ts.CompilerOptions {
     allowJs: true,
   };
 
-  if (tsconfigPath) {
-    const configFile = ts.readConfigFile(tsconfigPath, ts.sys.readFile);
-    if (configFile.error) {
-      warnTsconfigOnce(
-        tsconfigPath,
-        ts.flattenDiagnosticMessageText(configFile.error.messageText, " "),
-      );
-    } else {
-      const parsed = ts.parseJsonConfigFileContent(
-        configFile.config,
-        ts.sys,
-        path.dirname(tsconfigPath),
-      );
-      if (parsed.errors.length > 0) {
-        warnTsconfigOnce(
-          tsconfigPath,
-          ts.flattenDiagnosticMessageText(parsed.errors[0].messageText, " "),
-        );
-      }
-      // Override resolution to Bundler: user components use extensionless imports
-      compilerOptions = {
-        ...parsed.options,
-        skipLibCheck: true,
-        moduleResolution: ts.ModuleResolutionKind.Bundler,
-        module: ts.ModuleKind.ESNext,
-        // The measured file is named by the user: a project that excludes
-        // JavaScript from type checking still gets its .jsx component read.
-        allowJs: true,
-      };
-    }
+  if (governing.nearestConfigPath && !tsconfigPath) {
+    // B2: a config that could not be read keeps its one warning, and
+    // extraction continues on the defaults above.
+    warnTsconfigOnce(
+      governing.nearestConfigPath,
+      readFailureDetail(governing.warnings, governing.nearestConfigPath),
+    );
+  } else if (tsconfigPath) {
+    const optionDetail = declaredOptionDiagnostic(tsconfigPath);
+    if (optionDetail) warnTsconfigOnce(tsconfigPath, optionDetail);
+    // Override resolution to Bundler: user components use extensionless imports
+    compilerOptions = {
+      ...governing.options,
+      skipLibCheck: true,
+      moduleResolution: ts.ModuleResolutionKind.Bundler,
+      module: ts.ModuleKind.ESNext,
+      // The measured file is named by the user: a project that excludes
+      // JavaScript from type checking still gets its .jsx component read.
+      allowJs: true,
+    };
   }
 
   return compilerOptions;
