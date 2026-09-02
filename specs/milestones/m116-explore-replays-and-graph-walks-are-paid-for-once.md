@@ -78,11 +78,14 @@ differs, the map's number is named and the worktree's number is used.
 - C3 An edge whose pattern is not state-invariant replays the path per sample, exactly as today.
 - C4 After a retry (`withFrameStarvationRetry` or a `withContextRetry` re-`enter()`), the path is
   replayed before the sample that follows: no sample is measured from a state a retry destroyed.
-- C4b When a sample's pattern did not run every planned step (`stepsRun < stepsPlanned` or
-  `budgetExhausted`), or the edge emitted `EXPLORE_STALLED_WARNING` (`src/explorer.ts:723`, `:782`),
-  the path is replayed before the next sample: no sample is measured from a state a truncated pattern
-  left. The unit test drives a fake whose pattern reports `budgetExhausted` on sample 2 and asserts a
-  second navigation before sample 3.
+- C4b When a sample's pattern did not run every planned step (`stepsRun < stepsPlanned`,
+  `budgetExhausted`, or `stepsFailed > 0` — `executeStressPattern` swallows a step whose action
+  throws and still counts it as run, so the failed-step count is the only signal for that case), the
+  path is replayed before the next sample: no sample is measured from a state a truncated pattern
+  left. `EXPLORE_STALLED_WARNING` ends the edge (`stalled = true; break;`), so it has no next sample
+  and needs no reset. The unit test drives a fake whose pattern reports a failed step on sample 2 and
+  asserts a second navigation before sample 3; no fake drives `budgetExhausted`, because the only
+  state-invariant pattern carries one step.
 - C5 The traced window still wraps only `executeStressPattern` (`src/explorer.ts:762-764`); the
   per-sample `tryCollectGarbage` (`src/explorer.ts:705`, `:760`) still runs per sample; explore keeps
   the vsync context and its per-combo budget, and an edge that spends the budget mid-samples
@@ -262,8 +265,10 @@ Through `node C:/Projekte/120fps-fieldtest/tools/run120.mjs` with
    `phaseTimings {"preflight":221,...,"explore":6397,...,"total":18678}`, 10 warnings led by
    `⚠ vite.config.ts declares plugins, which the harness read but cannot honor: the project's Vite config is never executed`.
    No `scroll-sweep` in the report: explore unchanged (no state-invariant edge). The row's own
-   finding is M112's remedy wording, not this milestone's; closed: no (out of lane C's scope), and
-   this milestone's expectation — same verdict, same warnings — holds.
+   finding is M112's remedy wording, not this milestone's; closed: no (out of lane C's scope). The
+   before arm is lane A's to run with command 3: C1 is a no-op on this subject (no scroll-sweep
+   edge), so no verdict, warning-list or `phaseTimings.preflight` comparison is claimed here; the
+   arm comparison for C1 is `fixtures/large-dom.tsx` in the E1 table.
 2. calcom control, `EVIDENCE.md` row calcom-R1, label `M116-calcom-after`
    (`-- packages/ui/components/popover/Popover.tsx --matrix --samples 3 --max-combos 4
    --explore-budget 60 --no-deltas`, `--timeout 900`). Before (EVIDENCE.md): "--matrix silently has
@@ -279,11 +284,13 @@ Through `node C:/Projekte/120fps-fieldtest/tools/run120.mjs` with
    `Estimated real run: ~2m 9s (12 combos x 10 samples; defaults: no phase timings recorded for this component yet)`,
    `Dry run: nothing was measured, no report was written.`
 
-C4b's `budgetExhausted` trigger is unreachable for the only state-invariant pattern today:
-`scroll-sweep` carries a single step (`src/stress-patterns.ts:134-142`) and
-`executeStressPattern` checks the budget before the first step, which the sample loop already
-guards with `remainingWallClock() <= 0`. The reset is implemented and covered by the retry test
-(`enterAndInvalidatePath`), not by a driven truncation.
+C4b's `budgetExhausted` trigger is reachable only in the window between the sample loop's
+`remainingWallClock()` guard and `executeStressPattern`'s own check (`src/stress-patterns.ts:189`),
+which no deterministic fake reproduces; `scroll-sweep`, the only state-invariant pattern today,
+carries a single step (`src/stress-patterns.ts:134-142`), so `stepsRun < stepsPlanned` is likewise
+undrivable for it. The `stepsFailed > 0` trigger covers the case that does occur — a wheel step that
+throws part-way leaves the container at an arbitrary offset — and the unit test drives it. The reset
+is also covered by the retry test (`enterAndInvalidatePath`).
 
 Plus, per the map: the milestone's tests pass, both lanes' existing tests stay green (baseline
 failures excepted), and `tsc --noEmit` is clean.

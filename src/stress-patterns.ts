@@ -174,6 +174,10 @@ function mapTypeToAction(type: InteractionDescriptor["type"]): StressStep["actio
 export interface StressPatternRun {
   stepsRun: number;
   stepsPlanned: number;
+  // M116 C4b fix-up: a step whose action throws is swallowed below, so
+  // `stepsRun === stepsPlanned` alone cannot tell the caller the pattern ended
+  // where it started. A failed step leaves the page at an arbitrary state.
+  stepsFailed: number;
   budgetExhausted: boolean;
 }
 
@@ -185,9 +189,10 @@ export async function executeStressPattern(
   const started = Date.now();
   const budgetMs = remainingMs;
   let stepsRun = 0;
+  let stepsFailed = 0;
   for (const step of pattern.steps) {
     if (budgetMs !== undefined && Date.now() - started >= budgetMs) {
-      return { stepsRun, stepsPlanned: pattern.steps.length, budgetExhausted: true };
+      return { stepsRun, stepsFailed, stepsPlanned: pattern.steps.length, budgetExhausted: true };
     }
     stepsRun++;
     try {
@@ -257,13 +262,15 @@ export async function executeStressPattern(
         }
       }
     } catch {
-      // Element may have disappeared or become non-interactive
+      // Element may have disappeared or become non-interactive. The step is
+      // counted as failed so the caller can invalidate the state it left.
+      stepsFailed++;
     }
     await page.evaluate(
       () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))),
     );
   }
-  return { stepsRun, stepsPlanned: pattern.steps.length, budgetExhausted: false };
+  return { stepsRun, stepsFailed, stepsPlanned: pattern.steps.length, budgetExhausted: false };
 }
 
 // Where to put the pointer and how far one wheel tick travels. The step size

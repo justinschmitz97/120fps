@@ -414,12 +414,14 @@ async function navigateToState(
   }
 }
 
-// M116 C4b: a pattern the budget cut short did not end where it started, so
-// the state-invariance proof no longer covers the state it left. The next
-// sample replays the path instead of measuring from that state.
+// M116 C4b: a pattern the budget cut short, or one of whose steps threw, did
+// not end where it started, so the state-invariance proof no longer covers the
+// state it left. The next sample replays the path instead of measuring from
+// that state. `executeStressPattern` swallows a throwing step and still counts
+// it as run, so `stepsFailed` is the only signal for that case.
 function patternRanShort(run: StressPatternRun | undefined): boolean {
   if (!run) return false;
-  return run.budgetExhausted || run.stepsRun < run.stepsPlanned;
+  return run.budgetExhausted || run.stepsRun < run.stepsPlanned || run.stepsFailed > 0;
 }
 
 function computeGlobalMedianEdgeCost(edges: StateEdge[]): number {
@@ -749,7 +751,6 @@ async function exploreCombo(
         if (observed === undefined) {
           const kept = edges.length + (samples.length > 0 ? 1 : 0);
           onWarning?.(EXPLORE_STALLED_WARNING(opts.comboIndex, kept));
-          pathIsCurrent = false;
           stalled = true;
           break;
         }
@@ -810,7 +811,6 @@ async function exploreCombo(
         // sample survived, so the count has to include it.
         const kept = edges.length + (samples.length > 0 ? 1 : 0);
         onWarning?.(EXPLORE_STALLED_WARNING(opts.comboIndex, kept));
-        pathIsCurrent = false;
         stalled = true;
         break;
       }

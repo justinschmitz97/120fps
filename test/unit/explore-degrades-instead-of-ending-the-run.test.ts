@@ -38,7 +38,8 @@ describe("a stress pattern cannot outlive the budget that bounds it", () => {
   it("runs every step when the budget is not reached", async () => {
     const pattern = { name: "single-shot", steps: [{ action: "click" as const, selector: "button" }] };
     const run = await executeStressPattern(blockedPage(0), pattern, 60_000);
-    expect(run).toEqual({ stepsRun: 1, stepsPlanned: 1, budgetExhausted: false });
+    // The click throws, which the step loop swallows: the step ran and failed.
+    expect(run).toEqual({ stepsRun: 1, stepsFailed: 1, stepsPlanned: 1, budgetExhausted: false });
   });
 
   it("runs unbounded when no budget is supplied, as every existing caller did", async () => {

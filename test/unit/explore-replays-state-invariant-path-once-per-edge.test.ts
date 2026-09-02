@@ -69,6 +69,13 @@ interface FakeOptions {
   // Which `readObservedWindow` call loses the target once, the way a crashed
   // renderer does.
   loseTargetOnRead?: number;
+  // Which `mouse.wheel` call throws once, the way an element that left the DOM
+  // mid-sweep does. `executeStressPattern` swallows it, so only `stepsFailed`
+  // tells the sample loop the sweep left the container somewhere arbitrary.
+  failWheelOnCall?: number;
+  // Time the run the way the shipped default does: a real trace lifecycle
+  // instead of the PerformanceObserver window.
+  traceTiming?: boolean;
 }
 
 function fakeHarnessRun(options: FakeOptions): {
@@ -105,14 +112,33 @@ function fakeHarnessRun(options: FakeOptions): {
     throw new Error(`unhandled page.evaluate in fake: ${src.slice(0, 120)}`);
   };
 
+  // M52's trace path is the shipped default, so it gets its own arm: a CDP fake
+  // that answers `Tracing.start`/`Tracing.end` and flushes one empty
+  // `dataCollected` chunk plus `tracingComplete`, as test/unit/trace-recovery
+  // does.
+  const listeners = new Map<string, ((arg: unknown) => void)[]>();
+  const fire = (event: string, arg: unknown): void => {
+    for (const fn of listeners.get(event) ?? []) fn(arg);
+  };
   const cdp = {
     send: async (method: string) => {
       rec.cdpSends.push(method);
+      if (method === "Tracing.end") {
+        fire("Tracing.dataCollected", { value: [] });
+        fire("Tracing.tracingComplete", undefined);
+      }
       return {};
     },
     detach: async () => {},
-    on: () => {},
-    off: () => {},
+    on: (event: string, fn: (arg: unknown) => void) => {
+      listeners.set(event, [...(listeners.get(event) ?? []), fn]);
+    },
+    once: (event: string, fn: (arg: unknown) => void) => {
+      listeners.set(event, [...(listeners.get(event) ?? []), fn]);
+    },
+    off: (event: string, fn: (arg: unknown) => void) => {
+      listeners.set(event, (listeners.get(event) ?? []).filter((f) => f !== fn));
+    },
   };
 
   const page = {
@@ -135,6 +161,9 @@ function fakeHarnessRun(options: FakeOptions): {
       move: async () => {},
       wheel: async () => {
         rec.wheels++;
+        if (options.failWheelOnCall === rec.wheels) {
+          throw new Error("Element is not attached to the DOM");
+        }
       },
       down: async () => {},
       up: async () => {},
@@ -168,7 +197,7 @@ async function exploreWithFake(
     combos: [{}],
     samples,
     warmupRuns: 0,
-    observerTiming: true,
+    observerTiming: options.traceTiming !== true,
     seed: 42,
     onWarning: (w) => warnings.push(w),
   });
@@ -267,5 +296,47 @@ describe("a retry replays the path before the sample that follows it", () => {
     expect(graph.edges[0].samples).toHaveLength(5);
     // Initial state, the edge's first replay, and the replay the retry forces.
     expect(rec.mounts).toBe(3);
+  });
+});
+
+describe("the trace path -- the shipped default -- replays the same way", () => {
+  it("mounts once for a scroll sweep measured five times", async () => {
+    const { graph, rec } = await exploreWithFake({ ...SCROLL_ONLY, traceTiming: true }, 5);
+    expect(graph.edges).toHaveLength(1);
+    expect(graph.edges[0].stressPattern).toBe("scroll-sweep");
+    expect(graph.edges[0].samples).toHaveLength(5);
+    expect(rec.cdpSends).toContain("Tracing.start");
+    expect(rec.mounts).toBe(2);
+  });
+
+  it("mounts once per sample for a click edge", async () => {
+    const { graph, rec } = await exploreWithFake({ ...CLICK_ONLY, traceTiming: true }, 5);
+    expect(graph.edges[0].interaction.type).toBe("click");
+    expect(graph.edges[0].samples).toHaveLength(5);
+    expect(rec.mounts).toBe(6);
+  });
+});
+
+describe("a sample whose pattern step failed does not hand its state on", () => {
+  it("replays the path after a swallowed wheel failure, on both timing paths", async () => {
+    // The sweep is one step; a wheel that throws part-way aborts it and leaves
+    // the container at an arbitrary offset. `executeStressPattern` swallows the
+    // throw and still reports `stepsRun === stepsPlanned`, so `stepsFailed` is
+    // what invalidates the path.
+    for (const traceTiming of [false, true]) {
+      const { graph, rec } = await exploreWithFake(
+        { ...SCROLL_ONLY, failWheelOnCall: 5, traceTiming },
+        5,
+      );
+      expect(graph.edges[0].samples).toHaveLength(5);
+      // Initial state, the edge's first replay, and the replay the failed step
+      // forces before sample 2. Samples 3..5 sweep cleanly and add none.
+      expect(rec.mounts).toBe(3);
+    }
+  });
+
+  it("mounts twice when every sweep completes", async () => {
+    const { rec } = await exploreWithFake(SCROLL_ONLY, 5);
+    expect(rec.mounts).toBe(2);
   });
 });
