@@ -83,7 +83,15 @@ describe("workspace-sibling packages with unbuilt dist but resolvable source (M9
     // itself already resolves through.
     const sourceEntry = fs.realpathSync(path.join(real, "src", "index.ts")).replace(/\\/g, "/");
     expect(extraAliases[0].replacement).toBe(sourceEntry);
-    expect(warnings).toContain(UNBUILT_WORKSPACE_SOURCE_ALIAS_WARNING("@dub/utils", sourceEntry));
+    // M107: the message names the field the derivation followed and the path
+    // that field declared, in place of the blanket "unbuilt dist/" claim.
+    expect(warnings).toContain(
+      UNBUILT_WORKSPACE_SOURCE_ALIAS_WARNING("@dub/utils", sourceEntry, {
+        field: "main",
+        declared: "./dist/index.mjs",
+        exists: false,
+      }),
+    );
     expect(warnings.some((w) => w.includes("type-only"))).toBe(false);
   });
 

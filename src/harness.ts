@@ -2767,7 +2767,10 @@ export const UNBUILT_WORKSPACE_PACKAGE_WARNING = (pkg: string, entryRelative: st
 // Returns undefined — falling through to the unchanged VITE_START_FAILED
 // message — for anything that is not exactly this shape: a genuinely broken
 // external dependency, or a workspace package whose entry does resolve.
-function diagnoseUnbuiltWorkspacePackage(viteMessage: string, projectRoot: string): string | undefined {
+export function diagnoseUnbuiltWorkspacePackage(
+  viteMessage: string,
+  projectRoot: string,
+): string | undefined {
   const match = RESOLVE_ENTRY_FAILURE.exec(viteMessage);
   if (!match) return undefined;
   const pkg = match[1];
@@ -2790,6 +2793,10 @@ function diagnoseUnbuiltWorkspacePackage(viteMessage: string, projectRoot: strin
   if (entry === undefined) return undefined;
   const entryPath = path.resolve(real, entry);
   if (fs.existsSync(entryPath)) return undefined;
+  // M107 (gutenberg-F1): a build is not what this package needs when its own
+  // source is on disk — scanExternalDeps aliases it, and the run reaches a
+  // verdict instead of aborting.
+  if (resolveWorkspaceSourceEntry(real, manifest) !== undefined) return undefined;
   return UNBUILT_WORKSPACE_PACKAGE_WARNING(pkg, path.relative(real, entryPath).replace(/\\/g, "/"));
 }
 
@@ -3922,6 +3929,29 @@ type LocalResolution =
     }
   | { kind: "unaliased" };
 
+// M107 (directus-F1): a package written for NodeNext resolution imports its
+// own modules with the extension of the build output (`./parse-now.js`), and
+// only the TypeScript source is on disk. Without this the walk stops at the
+// first file of an aliased sibling and never sees the siblings that file
+// imports. Same mapping TypeScript itself applies, source extensions only.
+const TS_COUNTERPARTS: Record<string, string[]> = {
+  ".js": [".ts", ".tsx"],
+  ".mjs": [".mts"],
+  ".cjs": [".cts"],
+  ".jsx": [".tsx"],
+};
+
+function resolveTypeScriptCounterpart(target: string): string | undefined {
+  const extension = path.extname(target);
+  const counterparts = TS_COUNTERPARTS[extension];
+  if (counterparts === undefined) return undefined;
+  const stem = target.slice(0, target.length - extension.length);
+  for (const counterpart of counterparts) {
+    if (isFile(stem + counterpart)) return stem + counterpart;
+  }
+  return undefined;
+}
+
 function resolveLocalImport(
   fromFile: string,
   spec: string,
@@ -3954,7 +3984,7 @@ function resolveLocalImport(
     target = path.isAbsolute(aliasedPath) ? aliasedPath : path.resolve(projectRoot, aliasedPath);
   }
 
-  const resolved = resolveTarget(target);
+  const resolved = resolveTarget(target) ?? resolveTypeScriptCounterpart(target);
   if (resolved) return { kind: "resolved", path: resolved, viaShimAlias, viaWorkspaceRootAlias };
   if (!aliased) return { kind: "unaliased" };
   return {
@@ -4013,10 +4043,39 @@ export function TYPE_ONLY_PACKAGE_WARNING(pkg: string): string {
 // dist/, now answers for the bare specifier — the alias applies to Vite's
 // real per-request resolution, not only optimizeDeps, so this import
 // resolves rather than merely avoiding one particular crash site.
-export function UNBUILT_WORKSPACE_SOURCE_ALIAS_WARNING(pkg: string, sourceEntry: string): string {
+// M107: the message names the manifest field the derivation followed, the
+// path that field declared and whether that path is on disk, so no message
+// claims a `dist/` the package never named.
+export function UNBUILT_WORKSPACE_SOURCE_ALIAS_WARNING(
+  pkg: string,
+  sourceEntry: string,
+  entry?: { field: string; declared: string; exists: boolean },
+): string {
+  if (entry === undefined) {
+    return (
+      `${pkg} is a workspace package with no built entry to load; its own source at ${sourceEntry} ` +
+      "resolves and was aliased in its place, so this run measures the real module."
+    );
+  }
+  const existence = entry.exists ? "exists on disk" : "does not exist on disk";
   return (
-    `${pkg} is a workspace package whose package.json points at an unbuilt dist/; its own source ` +
-    `at ${sourceEntry} resolves and was aliased in its place, so this run measures the real module.`
+    `${pkg} is a workspace package whose ${entry.field} names ${entry.declared}, which ${existence}; ` +
+    `its own source at ${sourceEntry} resolves and was aliased in its place, so this run measures ` +
+    "the real module."
+  );
+}
+
+// M107 (react-spectrum-F1): a workspace sibling that declares no runtime entry
+// at all ships declarations only. It is not an unbuilt package, nothing about
+// it can fail when the browser loads it, and no build command helps.
+export function TYPES_ONLY_WORKSPACE_PACKAGE_WARNING(
+  pkg: string,
+  typesPath: string | undefined,
+): string {
+  return (
+    `${pkg} is a workspace package that declares no runtime entry (no main, module or exports)` +
+    (typesPath ? `, only types at ${typesPath}` : "") +
+    "; it ships declarations only, so it was left out of the pre-bundle and needs no build."
   );
 }
 
@@ -4071,6 +4130,163 @@ function isWorkspaceSibling(pkgDir: string, workspaceRoot: string): boolean {
   return !relative.split("/").includes("node_modules");
 }
 
+// M107: the manifest fields that can name a runtime entry, in the order the
+// source derivation tries them.
+type DeclaredEntry = { field: string; declared: string };
+
+const EXPORT_ENTRY_CONDITIONS = ["development", "source", "import", "default", "require"];
+
+const DECLARATION_FILE = /\.d\.[cm]?ts$/;
+
+function exportConditionTargets(value: unknown, depth = 0): string[] {
+  if (typeof value === "string") return [value];
+  if (value === null || typeof value !== "object" || Array.isArray(value) || depth > 2) return [];
+  const record = value as Record<string, unknown>;
+  const targets: string[] = [];
+  for (const condition of EXPORT_ENTRY_CONDITIONS) {
+    if (!(condition in record)) continue;
+    for (const target of exportConditionTargets(record[condition], depth + 1)) {
+      if (!targets.includes(target)) targets.push(target);
+    }
+  }
+  return targets;
+}
+
+function exportsRootTargets(exportsField: unknown): string[] {
+  if (typeof exportsField === "string") return [exportsField];
+  if (exportsField === null || typeof exportsField !== "object" || Array.isArray(exportsField)) {
+    return [];
+  }
+  const record = exportsField as Record<string, unknown>;
+  if ("." in record) return exportConditionTargets(record["."]);
+  // A sugar form: conditions at the top level, no subpath keys at all.
+  if (Object.keys(record).some((key) => key.startsWith("."))) return [];
+  return exportConditionTargets(record);
+}
+
+function declaredRuntimeEntries(manifest: Record<string, unknown>): DeclaredEntry[] {
+  const entries: DeclaredEntry[] = [];
+  if (typeof manifest.source === "string") entries.push({ field: "source", declared: manifest.source });
+  for (const declared of exportsRootTargets(manifest.exports)) {
+    entries.push({ field: 'exports["."]', declared });
+  }
+  if (typeof manifest.module === "string") entries.push({ field: "module", declared: manifest.module });
+  if (typeof manifest.main === "string") entries.push({ field: "main", declared: manifest.main });
+  return entries;
+}
+
+function declaresRuntimeEntry(manifest: Record<string, unknown> | undefined): boolean {
+  if (!manifest) return false;
+  return ["source", "exports", "module", "main"].some((field) => manifest[field] !== undefined);
+}
+
+// M107: a declared entry names a build output, and the source it was built
+// from sits at the same path with the build directory dropped and a source
+// extension applied (`dist/shared/index.js` -> `shared/index.ts`).
+function sourceCandidatesFor(real: string, declared: string): string[] {
+  const normalized = declared.replace(/\\/g, "/").replace(/^\.\//, "");
+  const withoutExtension = (value: string) => value.replace(/\.[^./]+$/, "");
+  const relatives = [normalized, withoutExtension(normalized)];
+  const segments = normalized.split("/").filter((segment) => segment.length > 0 && segment !== ".");
+  if (segments.length > 1) {
+    const tail = segments.slice(1).join("/");
+    relatives.push(withoutExtension(tail), tail);
+  }
+  const seen = new Set<string>();
+  const candidates: string[] = [];
+  for (const relative of relatives) {
+    if (relative.length === 0 || relative === ".." || seen.has(relative)) continue;
+    seen.add(relative);
+    candidates.push(path.resolve(real, relative));
+  }
+  return candidates;
+}
+
+function resolveSourceCandidate(real: string, declared: string): string | undefined {
+  for (const candidate of sourceCandidatesFor(real, declared)) {
+    const resolved = resolveTarget(candidate);
+    if (resolved !== undefined && !DECLARATION_FILE.test(resolved)) {
+      return resolved.replace(/\\/g, "/");
+    }
+  }
+  return undefined;
+}
+
+type WorkspaceSourceEntry = {
+  entry: string;
+  field: string;
+  declared: string;
+  declaredExists: boolean;
+};
+
+// M107 (directus-F1, gutenberg-F1): the source an unbuilt workspace sibling
+// declares, whatever layout it uses. `<pkg>/src` is the last fallback, not the
+// only candidate.
+function resolveWorkspaceSourceEntry(
+  real: string,
+  manifest: Record<string, unknown> | undefined,
+): WorkspaceSourceEntry | undefined {
+  const declaredEntries = manifest ? declaredRuntimeEntries(manifest) : [];
+  const declaredExists = (declared: string) => fs.existsSync(path.resolve(real, declared));
+  for (const candidate of declaredEntries) {
+    const resolved = resolveSourceCandidate(real, candidate.declared);
+    if (resolved !== undefined) {
+      return {
+        entry: resolved,
+        field: candidate.field,
+        declared: candidate.declared,
+        declaredExists: declaredExists(candidate.declared),
+      };
+    }
+  }
+  const primary = declaredEntries[0];
+  const types = manifest && typeof manifest.types === "string" ? manifest.types : undefined;
+  if (types !== undefined && DECLARATION_FILE.test(types)) {
+    const stem = path.resolve(real, types.replace(/\\/g, "/").replace(DECLARATION_FILE, ""));
+    for (const extension of SOURCE_EXTENSIONS) {
+      if (!isFile(stem + extension)) continue;
+      return {
+        entry: (stem + extension).replace(/\\/g, "/"),
+        field: "types",
+        declared: types,
+        declaredExists: declaredExists(types),
+      };
+    }
+  }
+  const fallback = resolveTarget(path.join(real, "src"));
+  if (fallback === undefined || DECLARATION_FILE.test(fallback)) return undefined;
+  return {
+    entry: fallback.replace(/\\/g, "/"),
+    field: primary?.field ?? "src",
+    declared: primary?.declared ?? "src",
+    declaredExists: primary === undefined ? true : declaredExists(primary.declared),
+  };
+}
+
+// M107 (directus-F1): an `exports` subpath key gets the same derivation as the
+// root entry. A key whose declared target already resolves needs no source
+// counterpart and keeps the resolution it has today.
+function workspaceSubpathSourceEntries(
+  real: string,
+  manifest: Record<string, unknown> | undefined,
+): Array<{ subpath: string; entry: string }> {
+  const exportsField = manifest?.exports;
+  if (!exportsField || typeof exportsField !== "object" || Array.isArray(exportsField)) return [];
+  const rescued: Array<{ subpath: string; entry: string }> = [];
+  for (const [key, value] of Object.entries(exportsField as Record<string, unknown>)) {
+    if (!key.startsWith("./") || key === "./package.json" || key.includes("*")) continue;
+    for (const declared of exportConditionTargets(value)) {
+      const literal = resolveTarget(path.resolve(real, declared.replace(/^\.\//, "")));
+      if (literal !== undefined) break;
+      const resolved = resolveSourceCandidate(real, declared);
+      if (resolved === undefined || !SOURCE_EXTENSIONS.includes(path.extname(resolved))) continue;
+      rescued.push({ subpath: key.slice(2), entry: resolved });
+      break;
+    }
+  }
+  return rescued;
+}
+
 export function scanExternalDeps(
   componentPath: string,
   projectRoot: string,
@@ -4095,7 +4311,18 @@ export function scanExternalDeps(
   const reportedBrokenAliases = new Set<string>();
   const reportedWorkspaceRootAliases = new Set<string>();
   const queue = [componentPath];
+  const pkgNameOf = (spec: string) =>
+    spec.startsWith("@") ? spec.split("/").slice(0, 2).join("/") : spec.split("/")[0];
+  // M107: a sibling rescued in a later round is imported from inside another
+  // package, where a pnpm install links dependencies the entry project's own
+  // node_modules chain never carries. The directory the specifier was first
+  // read from answers for it; projectRoot stays the first probe.
+  const firstImporterDir = new Map<string, string>();
 
+  // M107 (gutenberg-F1): the walk runs again from every source an unbuilt
+  // sibling was aliased to, so a sibling first reached through an import the
+  // scanner could not resolve is rescued in the same pass.
+  const walk = () => {
   while (queue.length > 0) {
     const file = queue.shift()!;
     const normalizedFile = path.resolve(file);
@@ -4155,6 +4382,9 @@ export function scanExternalDeps(
         const pkg = spec.startsWith("@")
           ? spec.split("/").slice(0, 2).join("/")
           : spec.split("/")[0];
+        const importerDir = path.dirname(normalizedFile);
+        if (!firstImporterDir.has(spec)) firstImporterDir.set(spec, importerDir);
+        if (!firstImporterDir.has(pkg)) firstImporterDir.set(pkg, importerDir);
         if (spec === pkg) {
           // The specifier was already the bare root: unchanged, covers every
           // ordinary dependency including subpath-only ones like swiper.
@@ -4180,9 +4410,7 @@ export function scanExternalDeps(
       }
     }
   }
-
-  externalPkgs.delete("react");
-  externalPkgs.delete("react-dom");
+  };
 
   const BLOCKED = new Set([
     "next", "webpack", "critters", "fibers",
@@ -4197,12 +4425,16 @@ export function scanExternalDeps(
   // M76: an entry may now be a subpath string rather than a bare name, so the
   // blocklist's membership and prefix checks apply to the package-name
   // portion re-derived from each entry, not to the raw entry text.
-  for (const entry of externalPkgs) {
-    const pkg = entry.startsWith("@") ? entry.split("/").slice(0, 2).join("/") : entry.split("/")[0];
-    if (BLOCKED.has(pkg) || pkg.startsWith("@next/") || pkg.startsWith("@vercel/turbopack")) {
-      externalPkgs.delete(entry);
+  const dropIgnored = () => {
+    externalPkgs.delete("react");
+    externalPkgs.delete("react-dom");
+    for (const entry of externalPkgs) {
+      const pkg = pkgNameOf(entry);
+      if (BLOCKED.has(pkg) || pkg.startsWith("@next/") || pkg.startsWith("@vercel/turbopack")) {
+        externalPkgs.delete(entry);
+      }
     }
-  }
+  };
 
   // M77: a bare specifier that resolves to an installed package with no
   // runtime entry (no package.json main/module/exports, no index file) is
@@ -4223,10 +4455,55 @@ export function scanExternalDeps(
   // both the optimizer and Vite's real resolver succeed; one with no
   // resolvable source anywhere is still excluded (nothing else is safe), but
   // the warning stops promising a crash it cannot actually prevent.
-  for (const pkg of externalPkgs) {
-    const dir = installedPackageDir(pkg, projectRoot);
-    if (dir === undefined || resolveTarget(dir) !== undefined) continue;
-    if (isWorkspaceSibling(dir, workspaceRoot)) {
+  //
+  // M107: each sibling is decided once per pass; a sibling aliased to its own
+  // source hands that source back to the walk, so the pass reaches a fixed
+  // point instead of stopping at the first ring of imports.
+  type SiblingDecision = { aliasedRoot: boolean; aliasedSpecifiers: Set<string> };
+  const siblingDecisions = new Map<string, SiblingDecision>();
+  const decidedEntries = new Set<string>();
+  const keptEntries = new Set<string>();
+
+  const applyDecision = (entry: string, pkg: string, decision: SiblingDecision): void => {
+    if (decision.aliasedRoot || decision.aliasedSpecifiers.has(entry) || entry === pkg) {
+      externalPkgs.delete(entry);
+    }
+  };
+
+  const resolvePackages = (): boolean => {
+    let queuedSource = false;
+    for (const entry of [...externalPkgs]) {
+      const pkg = pkgNameOf(entry);
+      const decided = siblingDecisions.get(pkg);
+      if (decided !== undefined) {
+        applyDecision(entry, pkg, decided);
+        continue;
+      }
+      if (decidedEntries.has(entry)) {
+        externalPkgs.delete(entry);
+        continue;
+      }
+      if (keptEntries.has(entry)) continue;
+      const importerDir = firstImporterDir.get(entry) ?? firstImporterDir.get(pkg);
+      const dir =
+        installedPackageDir(pkg, projectRoot) ??
+        (importerDir === undefined ? undefined : resolvePackageDir(pkg, importerDir));
+      if (dir === undefined) {
+        keptEntries.add(entry);
+        continue;
+      }
+      if (!isWorkspaceSibling(dir, workspaceRoot)) {
+        // A subpath of a package that is not a workspace sibling keeps the
+        // resolution it has today (M76, calcom-F1).
+        if (entry !== pkg || resolveTarget(dir) !== undefined) {
+          keptEntries.add(entry);
+          continue;
+        }
+        decidedEntries.add(entry);
+        externalPkgs.delete(entry);
+        warningsOut?.push(TYPE_ONLY_PACKAGE_WARNING(entry));
+        continue;
+      }
       // Realpath, not the node_modules symlink/junction location: the
       // physical source directory, matching isWorkspaceSibling's own check
       // and avoiding routing Vite's resolution and fs watching through the
@@ -4237,22 +4514,71 @@ export function scanExternalDeps(
       } catch {
         real = dir;
       }
-      const resolvedSourceEntry = resolveTarget(path.join(real, "src"));
-      const sourceEntry = resolvedSourceEntry?.replace(/\\/g, "/");
-      externalPkgs.delete(pkg);
-      if (sourceEntry !== undefined) {
-        extraAliasesOut?.push({ find: new RegExp(`^${escapeRegex(pkg)}$`), replacement: sourceEntry });
-        warningsOut?.push(UNBUILT_WORKSPACE_SOURCE_ALIAS_WARNING(pkg, sourceEntry));
-      } else {
-        const manifest = readProjectManifest(real);
-        const scripts = manifest?.scripts as Record<string, unknown> | undefined;
-        const buildCommand = typeof scripts?.build === "string" ? scripts.build : undefined;
-        warningsOut?.push(UNBUILT_WORKSPACE_PACKAGE_NO_SOURCE_WARNING(pkg, buildCommand));
+      const manifest = readProjectManifest(real);
+      // M107: a sibling that declares a runtime entry is unbuilt when that
+      // entry does not resolve, whatever else happens to sit in its root; one
+      // that declares none keeps M94's probe.
+      const declaresEntry = declaresRuntimeEntry(manifest);
+      if (
+        resolveDirectoryEntry(dir) !== undefined ||
+        (!declaresEntry && resolveTarget(dir) !== undefined)
+      ) {
+        keptEntries.add(entry);
+        continue;
       }
-      continue;
+      const decision: SiblingDecision = { aliasedRoot: false, aliasedSpecifiers: new Set() };
+      siblingDecisions.set(pkg, decision);
+      const source = declaresEntry ? resolveWorkspaceSourceEntry(real, manifest) : undefined;
+      const subpaths = workspaceSubpathSourceEntries(real, manifest);
+      if (source !== undefined) {
+        decision.aliasedRoot = true;
+        extraAliasesOut?.push({
+          find: new RegExp(`^${escapeRegex(pkg)}$`),
+          replacement: source.entry,
+        });
+        warningsOut?.push(
+          UNBUILT_WORKSPACE_SOURCE_ALIAS_WARNING(pkg, source.entry, {
+            field: source.field,
+            declared: source.declared,
+            exists: source.declaredExists,
+          }),
+        );
+        if (SOURCE_EXTENSIONS.includes(path.extname(source.entry))) {
+          queue.push(source.entry);
+          queuedSource = true;
+        }
+      }
+      for (const subpath of subpaths) {
+        const specifier = `${pkg}/${subpath.subpath}`;
+        decision.aliasedSpecifiers.add(specifier);
+        extraAliasesOut?.push({
+          find: new RegExp(`^${escapeRegex(specifier)}$`),
+          replacement: subpath.entry,
+        });
+        queue.push(subpath.entry);
+        queuedSource = true;
+      }
+      if (source === undefined && subpaths.length === 0) {
+        if (!declaresEntry) {
+          const types = typeof manifest?.types === "string" ? manifest.types : undefined;
+          warningsOut?.push(TYPES_ONLY_WORKSPACE_PACKAGE_WARNING(pkg, types));
+        } else {
+          const scripts = manifest?.scripts as Record<string, unknown> | undefined;
+          const buildCommand = typeof scripts?.build === "string" ? scripts.build : undefined;
+          warningsOut?.push(UNBUILT_WORKSPACE_PACKAGE_NO_SOURCE_WARNING(pkg, buildCommand));
+        }
+      }
+      for (const known of [...externalPkgs]) {
+        if (pkgNameOf(known) === pkg) applyDecision(known, pkg, decision);
+      }
     }
-    externalPkgs.delete(pkg);
-    warningsOut?.push(TYPE_ONLY_PACKAGE_WARNING(pkg));
+    return queuedSource;
+  };
+
+  for (;;) {
+    walk();
+    dropIgnored();
+    if (!resolvePackages()) break;
   }
 
   return [...externalPkgs];

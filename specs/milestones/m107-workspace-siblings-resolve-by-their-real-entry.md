@@ -189,6 +189,70 @@ with no "unbuilt dist/" substring and no "may still fail when the browser loads 
 Unaffected control: a run-5 pass-gate repo (shadcn-admin, its button component) still reaches a
 report with the verdict it produced at `7177203`.
 
+### Lane A evidence (2026-09-02)
+
+Two mechanisms A3 turned out to need, both inside `scanExternalDeps`'s own walk and both covered by
+`test/unit/workspace-sibling-transitive-rescue.test.ts`: a rescued sibling's package directory is
+resolved from the file that imported it when the entry project's own chain does not carry it (pnpm
+links a package's dependencies under that package, not under the app), and a relative specifier
+written with the build extension (`./parse-now.js`, NodeNext style) resolves to its TypeScript source.
+Without the second one the walk stops at the first file of an aliased sibling: directus's
+`packages/utils/shared/index.ts` re-exports 60 modules, every one of them with a `.js` specifier.
+
+Tests: `vitest run test/unit/workspace-sibling-entry-resolution.test.ts
+test/unit/workspace-sibling-transitive-rescue.test.ts
+test/unit/workspace-sibling-diagnosis-wording.test.ts
+test/unit/unbuilt-workspace-source-alias.test.ts test/unit/import-scanner-coverage.test.ts
+test/unit/css-injection.test.ts test/unit/provider-wrapper.test.ts
+test/unit/shim-usage-reporting.test.ts test/unit/shim-usage-reporting-harden.test.ts
+test/unit/unresolved-alias-reporting.test.ts test/unit/vue-support-harden.test.ts
+test/unit/wildcard-alias-capture.test.ts --maxWorkers=2` →
+`Test Files 12 passed (12) / Tests 222 passed (222)`.
+
+Whole suite: `Test Files 4 failed | 273 passed (277) / Tests 31 failed | 4294 passed | 1 skipped
+(4326)` — the 24 baseline failures of `vue-dual-block-props` (18), `prop-default-disclosure` (2) and
+`bundler-error-presentation` (4), plus 7 in `test/unit/dry-run-estimates-the-real-run.test.ts`, an
+uncommitted lane-C file in this worktree. `prop-cap-ranking` is green here. No test that was green at
+baseline fails.
+
+Types: `node node_modules/typescript/bin/tsc --noEmit` clean.
+
+Corpus, through `scratch/A-M107/dist/cli.js`:
+
+- directus (`M107-directus-after`, exit 2). Before (`logs/directus/real-vbutton.log:3`):
+  `Error: @directus/utils is a workspace package whose package.json points at dist/shared/index.js,
+  which does not exist on disk: it needs a build step (its dist/ output was never produced), not a
+  package.json fix. Run this workspace's build for that package, then measure again.` After:
+  `@directus/utils is a workspace package whose exports["."] names ./dist/shared/index.js, which does
+  not exist on disk; its own source at E:/repositories-run5/directus/packages/utils/shared/index.ts
+  resolves and was aliased in its place, so this run measures the real module.` Eight siblings are
+  aliased, `@directus/constants` and `@directus/errors` among them (both reached only through the
+  rescued `@directus/utils` source). Closed: yes for the sibling resolution; the run now stops one
+  layer later, on `Failed to parse source for import analysis ... the .yaml file format` for
+  `src/lang/translations/en-US.yaml`, a transform finding M108/M110 own.
+- gutenberg (`M107-gutenberg-after`, exit 2). Before (`logs/gutenberg/real-button.log:3`):
+  `Error: @wordpress/hooks is a workspace package whose package.json points at build-module/index.mjs,
+  which does not exist on disk: it needs a build step ...`. After
+  (`M107-gutenberg-after.log:31`): `@wordpress/hooks is a workspace package whose exports["."] names
+  ./build-module/index.mjs, which does not exist on disk; its own source at
+  E:/repositories-run5/gutenberg/packages/hooks/src/index.ts resolves and was aliased in its place,
+  so this run measures the real module.` No `dist/` substring; 23 siblings aliased where 8 were
+  before; no "needs a build step" abort. Closed: yes for A3 and A5. The run now stops on
+  `Failed to resolve entry for package "@wordpress/escape-html"`, which `readSpecifiers`
+  (`src/harness.ts:3997`) never sees because `packages/element/src/serialize.ts` imports it with a
+  multi-line `import { ... } from` clause and `STATIC_IMPORT_PATTERN` matches within one line only.
+  That is a scanner-coverage defect of its own, listed under Deferred.
+- react-spectrum (`M107-react-spectrum-after`, exit 0). Before
+  (`logs/react-spectrum/explain-button.log:48`): `@react-types/shared is a workspace package whose
+  package.json points at an unbuilt dist/, and no resolvable source was found to measure instead:
+  this import may still fail when the browser loads it, not only at pre-bundle time.` After
+  (`M107-react-spectrum-after.log:50`): `@react-types/shared is a workspace package that declares no
+  runtime entry (no main, module or exports), only types at src/index.d.ts; it ships declarations
+  only, so it was left out of the pre-bundle and needs no build.` Closed: yes.
+- Control shadcn-admin (`M107-shadcn-admin-after`, exit 0):
+  `node .../run120.mjs --cwd /e/repositories-run5/shadcn-admin ... -- src/components/ui/button.tsx
+  --explain-props` still reaches its props explanation and its stylesheet line.
+
 ## Deferred
 
 - `#`-prefixed and `imports`-field specifiers, the Nuxt `#build`/`#imports` diagnosis, and virtual or
@@ -202,3 +266,13 @@ report with the verdict it produced at `7177203`.
   would change resolution for registry installs.
 - Adding `.d.ts` to `SOURCE_EXTENSIONS`: a declaration file is not a module a browser loads; A4 gives
   the types-only sibling its own message instead.
+- Multi-line `import { a, b } from "pkg"` clauses: `STATIC_IMPORT_PATTERN` (`src/harness.ts:3994`)
+  matches within one line, so a specifier written across lines never enters the walk at all. It is
+  what gutenberg's run stops on after this milestone (`@wordpress/escape-html`, imported that way
+  from `packages/element/src/serialize.ts`). Widening the pattern to `[\s\S]*?` makes an
+  `import "./side-effect";` followed by a later `from` clause match as one statement and drops the
+  first specifier, so the fix needs its own milestone and its own tests.
+- A workspace member that no `node_modules` link points at: `installedPackageDir` and
+  `resolvePackageDir` both answer from the resolution chain, and MUST NOT keeps a registry install on
+  the target it resolves to today. Reading `pnpm-workspace.yaml` globs to find a member by manifest
+  name is a different mechanism.
