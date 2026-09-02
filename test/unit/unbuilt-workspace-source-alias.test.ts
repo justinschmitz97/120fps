@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import {
+  packageScriptCommand,
   scanExternalDeps,
   UNBUILT_WORKSPACE_SOURCE_ALIAS_WARNING,
   UNBUILT_WORKSPACE_PACKAGE_NO_SOURCE_WARNING,
@@ -113,13 +114,21 @@ describe("workspace-sibling packages with unbuilt dist but resolvable source (M9
     const deps = scanExternalDeps(entryPath, member, [], undefined, warnings, workspaceRoot);
 
     expect(deps).not.toContain("@dub/utils");
+    // M111 A5: the package manager invocation of the script name, with the
+    // directory to run it in, in place of the raw script body.
     expect(warnings).toContain(
-      UNBUILT_WORKSPACE_PACKAGE_NO_SOURCE_WARNING("@dub/utils", "tsup", {
-        field: "main",
-        declared: "./dist/index.mjs",
-        exists: false,
-      }),
+      UNBUILT_WORKSPACE_PACKAGE_NO_SOURCE_WARNING(
+        "@dub/utils",
+        packageScriptCommand(real, "build", process.cwd()),
+        {
+          field: "main",
+          declared: "./dist/index.mjs",
+          exists: false,
+        },
+      ),
     );
+    expect(warnings.join("\n")).toContain("run build");
+    expect(warnings.join("\n")).not.toContain("tsup");
     expect(warnings).not.toContain(TYPE_ONLY_PACKAGE_WARNING("@dub/utils"));
   });
 

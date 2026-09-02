@@ -65,6 +65,19 @@ export function resolveProjectModel(dir: string): ProjectModel {
   return { memberRoot, workspaceRoot: findWorkspaceRoot(memberRoot) };
 }
 
+// M111 A4 (midday-F1): the run-5 runner read one directory's crash and another
+// directory's success as two different projects. Both roots printed once per
+// component, absolute, is the evidence that reading needed: identical here
+// means the two runs measured the same thing, and any remaining difference is
+// not project resolution. One root when the member is the workspace.
+export function formatResolvedRoots(memberRoot: string, workspaceRoot: string): string {
+  const member = path.resolve(memberRoot);
+  const workspace = path.resolve(workspaceRoot);
+  return member === workspace
+    ? `Root: ${member}`
+    : `Roots: member ${member}, workspace ${workspace}`;
+}
+
 const COMPILER_CONFIGS = ["tsconfig.json", "jsconfig.json"];
 
 // M69. One answer to "which config governs this file", shared by alias

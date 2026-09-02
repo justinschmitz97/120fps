@@ -14,6 +14,7 @@ import {
   sweepActiveHarnessDirs,
 } from "./harness.js";
 import { scanExports } from "./prop-gen.js";
+import { formatResolvedRoots, resolveProjectModel } from "./project-model.js";
 import { parseIsolationPhases, strictModeUnsupported, VUE_STRICTMODE_ERROR } from "./isolation.js";
 import { setPreflightBypassed } from "./preflight.js";
 import { formatTable, DEFAULT_THRESHOLDS } from "./report.js";
@@ -1230,6 +1231,14 @@ export function nodeVersionError(version: string): string | undefined {
   return `Node ${MIN_NODE_MAJOR}+ required, found ${version}`;
 }
 
+// M111 A4: one line per component, from the component path the user gave,
+// resolved the way every other stage resolves it. The paths are absolute, so
+// the line reads the same from every shell directory.
+export function resolvedRootsLine(componentPath: string): string {
+  const model = resolveProjectModel(path.dirname(path.resolve(componentPath)));
+  return formatResolvedRoots(model.memberRoot, model.workspaceRoot);
+}
+
 // I3a (element-plus-F2): every flag the dry run can honour, in one place a
 // test can read. `--framework` used to stop here: the real run forwards it and
 // discloses that it does not change how a file mounts, while the dry run
@@ -1315,6 +1324,10 @@ async function main(): Promise<void> {
     for (let idx = 0; idx < componentPaths.length; idx++) {
       const componentPath = componentPaths[idx];
       if (componentPaths.length > 1) process.stdout.write(`\n=== ${componentPath} ===\n`);
+      // M111 A4: the first line of this component's block, so a reader
+      // comparing two shell directories sees the roots both runs resolved
+      // before anything those runs could disagree about.
+      if (!args.ci) process.stdout.write(resolvedRootsLine(componentPath) + "\n");
       try {
         const explained = await explainProps(componentPath, explainPropsOptions(args, componentPath));
         process.stdout.write(formatExplainProps(explained) + "\n");
@@ -1439,6 +1452,8 @@ async function main(): Promise<void> {
         },
       );
       if (!args.ci) {
+        // M111 A4: ahead of this component's table, once per component.
+        process.stdout.write(resolvedRootsLine(componentPath) + "\n");
         process.stdout.write(formatTable(report) + "\n");
         process.stdout.write(formatWallClock(Date.now() - started) + "\n");
       }

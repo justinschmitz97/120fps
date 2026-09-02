@@ -1494,10 +1494,210 @@ export function findPostcssConfigAbove(
   return undefined;
 }
 
+// M111 A1 (midday-F1): Tailwind 3 has no Vite plugin of its own; it enters
+// through PostCSS, and `resolveDefaultConfigPath` resolves `tailwind.config.*`
+// against `process.cwd()`. A run started at the repository root of a monorepo
+// therefore built a workspace member with Tailwind's *default* config -- empty
+// `content`, no theme extension -- and `@apply` threw inside PostCSS. The
+// config the member is built with has to come from the member, not the shell.
+export const TAILWIND_CONFIG_FILES = [
+  "tailwind.config.js",
+  "tailwind.config.cjs",
+  "tailwind.config.mjs",
+  "tailwind.config.ts",
+];
+
+// Member first, then each ancestor up to and including the workspace root:
+// Vite's own PostCSS search order, so the file found here is the file the
+// pipeline would have used had it been started in the member.
+function findPostcssConfigFile(memberRoot: string, workspaceRoot: string): string | undefined {
+  for (const level of workspaceLevels(memberRoot, workspaceRoot)) {
+    for (const name of POSTCSS_CONFIG_FILES) {
+      const candidate = path.join(level, name);
+      if (isFile(candidate)) return candidate;
+    }
+  }
+  return undefined;
+}
+
+// `@tailwindcss/postcss` and `@tailwindcss/vite` are the version-4 entries; the
+// bare `tailwindcss` plugin name is the version-3 one.
+function postcssTextDeclaresBareTailwind(text: string): boolean {
+  return /(?<![@\w/-])tailwindcss(?![\w/-])/.test(text);
+}
+
+// Installed metadata first, the declared range second: a fixture or a member
+// measured before its install still states which major it means.
+function tailwindMajor(memberRoot: string, workspaceRoot: string): number | undefined {
+  const versions: string[] = [];
+  // Bounded by the workspace: an install above the workspace root belongs to
+  // whatever checkout this project happens to sit inside, not to this project.
+  for (const level of workspaceLevels(memberRoot, workspaceRoot)) {
+    const manifest = readProjectManifest(path.join(level, "node_modules", "tailwindcss"));
+    if (typeof manifest?.version === "string") {
+      versions.push(manifest.version);
+      break;
+    }
+  }
+  for (const level of workspaceLevels(memberRoot, workspaceRoot)) {
+    const manifest = readProjectManifest(level);
+    for (const field of ["dependencies", "devDependencies", "peerDependencies"] as const) {
+      const deps = manifest?.[field] as Record<string, unknown> | undefined;
+      const range = deps?.tailwindcss;
+      if (typeof range === "string") versions.push(range);
+    }
+  }
+  for (const version of versions) {
+    const major = /(\d+)/.exec(version);
+    if (major) return Number(major[1]);
+  }
+  return undefined;
+}
+
+export interface Tailwind3Pipeline {
+  postcssConfigFile: string;
+  configPath?: string;
+  searched: string[];
+}
+
+// Undefined when nothing about this member is a Tailwind 3 PostCSS pipeline:
+// no PostCSS config, a config that names no bare `tailwindcss` entry, or a
+// major other than 3. The start directory is not an input -- that is the whole
+// point of the milestone -- so it appears only in the message A3 builds.
+export function resolveTailwind3Config(
+  memberRoot: string,
+  workspaceRoot: string = findWorkspaceRoot(memberRoot),
+): Tailwind3Pipeline | undefined {
+  if (detectTailwindVite(memberRoot)) return undefined;
+  const postcssConfigFile = findPostcssConfigFile(memberRoot, workspaceRoot);
+  if (postcssConfigFile === undefined) return undefined;
+  let text: string;
+  try {
+    text = fs.readFileSync(postcssConfigFile, "utf-8");
+  } catch {
+    return undefined;
+  }
+  if (!postcssTextDeclaresBareTailwind(text)) return undefined;
+  const major = tailwindMajor(memberRoot, workspaceRoot);
+  if (major !== undefined && major !== 3) return undefined;
+  const searched = workspaceLevels(memberRoot, workspaceRoot);
+  for (const level of searched) {
+    for (const name of TAILWIND_CONFIG_FILES) {
+      const candidate = path.join(level, name);
+      if (isFile(candidate)) return { postcssConfigFile, configPath: candidate, searched };
+    }
+  }
+  return { postcssConfigFile, searched };
+}
+
+// M111 A3. Names what was looked for, where, and the directory this run was
+// started in, because that directory is what Tailwind falls back to once the
+// search comes back empty. It never names a build script: no script produces a
+// config the repository does not carry.
+export function TAILWIND3_CONFIG_MISSING_WARNING(searched: string[], startDir: string): string {
+  return (
+    `This project builds its CSS with Tailwind 3 through PostCSS, but none of ` +
+    `${TAILWIND_CONFIG_FILES.join(", ")} was found in ${searched.join(", ")}. ` +
+    `Tailwind then resolves its config from the directory the run started in ` +
+    `(${startDir}) and falls back to its default config, whose content list is empty: ` +
+    `utility classes and @apply rules resolve to nothing. Add one of those files to ${searched[0]}.`
+  );
+}
+
+interface PostcssPluginDeclaration {
+  name?: string;
+  options?: unknown;
+  instance?: unknown;
+}
+
+// The member's own config file decides the plugin list. Loaded, not parsed:
+// the object map and the array forms both reach the same declarations, and a
+// plugin the member instantiated itself passes through untouched.
+async function readPostcssPluginDeclarations(
+  file: string,
+): Promise<PostcssPluginDeclaration[] | undefined> {
+  if (![".js", ".cjs", ".mjs"].includes(path.extname(file))) return undefined;
+  let config: unknown;
+  try {
+    config = createRequire(file)(file);
+  } catch {
+    const mod = (await import(pathToFileURL(file).href)) as { default?: unknown };
+    config = mod.default ?? mod;
+  }
+  const plugins = (config as { plugins?: unknown } | undefined)?.plugins;
+  if (Array.isArray(plugins)) {
+    return plugins.map((entry) => {
+      if (typeof entry === "string") return { name: entry };
+      if (Array.isArray(entry) && typeof entry[0] === "string") {
+        return { name: entry[0], options: entry[1] };
+      }
+      return { instance: entry };
+    });
+  }
+  if (plugins && typeof plugins === "object") {
+    return Object.entries(plugins as Record<string, unknown>).map(([name, options]) => ({
+      name,
+      ...(options === true || options === null || options === undefined ? {} : { options }),
+    }));
+  }
+  return undefined;
+}
+
+// M111 A1: the member's pipeline rebuilt with one difference -- its Tailwind 3
+// entry receives the config path resolved from the member. Every other plugin
+// the member declared keeps its own options and its own place in the order.
+// Any failure returns undefined, which leaves the run on the directory-search
+// behaviour it had before: a stylesheet decision is never worth aborting for.
+export async function loadTailwind3PostcssPipeline(
+  memberRoot: string,
+  postcssConfigFile: string,
+  tailwindConfigPath: string,
+  onWarning?: (warning: string) => void,
+): Promise<{ plugins: unknown[] } | undefined> {
+  try {
+    const declared = await readPostcssPluginDeclarations(postcssConfigFile);
+    if (declared === undefined) return undefined;
+    const require = createRequire(path.join(memberRoot, "/"));
+    const plugins: unknown[] = [];
+    for (const entry of declared) {
+      if (entry.name === undefined) {
+        plugins.push(entry.instance);
+        continue;
+      }
+      const options =
+        entry.name === "tailwindcss"
+          ? {
+              ...(entry.options as Record<string, unknown> | undefined),
+              config: tailwindConfigPath,
+            }
+          : entry.options;
+      const loaded = (await import(pathToFileURL(require.resolve(entry.name)).href)) as {
+        default?: unknown;
+      };
+      const factory = loaded.default ?? loaded;
+      plugins.push(
+        typeof factory === "function"
+          ? (factory as (o?: unknown) => unknown)(options)
+          : factory,
+      );
+    }
+    return { plugins };
+  } catch (err) {
+    onWarning?.(
+      `Could not rebuild the PostCSS pipeline from ${postcssConfigFile} with an explicit Tailwind ` +
+        `config (${err instanceof Error ? err.message : String(err)}): Tailwind resolves its own ` +
+        `config from the directory this run started in, so the result depends on that directory.`,
+    );
+    return undefined;
+  }
+}
+
 export interface StyleTooling {
   tailwind: boolean;
   unsupportedEngines: string[];
   postcssConfigDir?: string;
+  tailwind3ConfigPath?: string;
+  tailwind3PostcssConfigFile?: string;
   warnings: string[];
 }
 
@@ -1508,15 +1708,27 @@ export function resolveStyleTooling(
   projectRoot: string,
   workspaceRoot: string = findWorkspaceRoot(projectRoot),
   importedPackages: readonly string[] = [],
+  startDir: string = process.cwd(),
 ): StyleTooling {
   const unsupportedEngines = detectUnsupportedStyleEngines(projectRoot, workspaceRoot, importedPackages);
   const postcssConfigDir = findPostcssConfigAbove(projectRoot, workspaceRoot);
+  const tailwind3 = resolveTailwind3Config(projectRoot, workspaceRoot);
+  const warnings =
+    unsupportedEngines.length > 0 ? [UNSUPPORTED_STYLE_ENGINE_WARNING(unsupportedEngines)] : [];
+  if (tailwind3 && tailwind3.configPath === undefined) {
+    warnings.push(TAILWIND3_CONFIG_MISSING_WARNING(tailwind3.searched, startDir));
+  }
   return {
     tailwind: detectTailwindVite(projectRoot),
     unsupportedEngines,
-    warnings:
-      unsupportedEngines.length > 0 ? [UNSUPPORTED_STYLE_ENGINE_WARNING(unsupportedEngines)] : [],
+    warnings,
     ...(postcssConfigDir ? { postcssConfigDir } : {}),
+    ...(tailwind3?.configPath
+      ? {
+          tailwind3ConfigPath: tailwind3.configPath,
+          tailwind3PostcssConfigFile: tailwind3.postcssConfigFile,
+        }
+      : {}),
   };
 }
 
@@ -3298,7 +3510,7 @@ function diagnoseNuxtBuildModule(
     match[2],
     extendsHint,
     nuxtDirExists,
-    nuxtDirExists ? findLikelyGenerateCommand(projectRoot) : undefined,
+    nuxtDirExists ? findLikelyGenerateCommand(projectRoot, undefined, process.cwd()) : undefined,
   );
 }
 
@@ -3357,11 +3569,40 @@ export function detectPackageManager(root: string): PackageManager {
   return "npm";
 }
 
+// M111 A5: a command the reader can paste. `<dir>` is the package's directory
+// relative to the directory the run started in, posix-separated; the absolute
+// path when no relative path exists (a different drive); nothing when the two
+// are the same directory. `startDir` is a parameter rather than a read of
+// `process.cwd()` so the message is a function of its inputs alone.
+export function runDirectoryPrefix(root: string, startDir: string): string {
+  const target = path.resolve(root);
+  const from = path.resolve(startDir);
+  if (target === from) return "";
+  const relative = path.relative(from, target);
+  const dir = relative === "" || path.isAbsolute(relative) ? target : relative.replace(/\\/g, "/");
+  return `cd ${dir} && `;
+}
+
 // yarn runs a script by bare name; npm and pnpm need `run` for anything
 // outside their own lifecycle names.
-export function packageManagerRunCommand(root: string, script: string): string {
+export function packageManagerRunCommand(root: string, script: string, startDir?: string): string {
   const manager = detectPackageManager(root);
-  return manager === "yarn" ? `yarn ${script}` : `${manager} run ${script}`;
+  const run = manager === "yarn" ? `yarn ${script}` : `${manager} run ${script}`;
+  return startDir === undefined ? run : runDirectoryPrefix(root, startDir) + run;
+}
+
+// M111 A5: the one place a remedy turns a package's script into a command. A
+// script the manifest does not declare has no command, and a script *body* is
+// never printed: it belongs to another package's build, not to the reader's
+// shell.
+export function packageScriptCommand(
+  root: string,
+  script: string,
+  startDir?: string,
+): string | undefined {
+  const scripts = readProjectManifest(root)?.scripts as Record<string, unknown> | undefined;
+  if (typeof scripts?.[script] !== "string") return undefined;
+  return packageManagerRunCommand(root, script, startDir);
 }
 
 // M105 (ant-design-F1): the script *name* list alone chose `prepare`
@@ -3374,6 +3615,7 @@ const GENERATOR_TOKEN = /(generate|codegen|gen)/i;
 export function findLikelyGenerateCommand(
   root: string,
   missingRelativePath?: string,
+  startDir?: string,
 ): string | undefined {
   const manifest = readProjectManifest(root);
   const scripts = manifest?.scripts as Record<string, unknown> | undefined;
@@ -3385,7 +3627,7 @@ export function findLikelyGenerateCommand(
   if (missingRelativePath) {
     const posix = missingRelativePath.replace(/\\/g, "/");
     const named = commands.find(([, command]) => command.replace(/\\/g, "/").includes(posix));
-    if (named) return packageManagerRunCommand(root, named[0]);
+    if (named) return packageManagerRunCommand(root, named[0], startDir);
 
     const stem = path.basename(posix, path.extname(posix)).toLowerCase();
     if (stem) {
@@ -3393,12 +3635,12 @@ export function findLikelyGenerateCommand(
         const lower = command.toLowerCase();
         return lower.includes(stem) && GENERATOR_TOKEN.test(lower);
       });
-      if (generates) return packageManagerRunCommand(root, generates[0]);
+      if (generates) return packageManagerRunCommand(root, generates[0], startDir);
     }
   }
 
   for (const name of CODEGEN_SCRIPT_PRIORITY) {
-    if (typeof scripts[name] === "string") return packageManagerRunCommand(root, name);
+    if (typeof scripts[name] === "string") return packageManagerRunCommand(root, name, startDir);
   }
   return undefined;
 }
@@ -3488,7 +3730,7 @@ function diagnoseGitignoredGeneratedFile(message: string, projectRoot: string): 
     relativeToProject,
     // M105 (ant-design-F1): the missing file is the evidence for which script
     // produces it, so it is passed rather than left to a name list.
-    findLikelyGenerateCommand(projectRoot, relativeToProject),
+    findLikelyGenerateCommand(projectRoot, relativeToProject, process.cwd()),
   );
 }
 
@@ -3771,6 +4013,20 @@ export async function buildAndServe(
   const plugins: unknown[] = styleTooling.tailwind
     ? await loadTailwindVitePlugin(projectRoot)
     : [];
+  // M111 A1 (midday-F1): Tailwind 3 enters through PostCSS and resolves its own
+  // config against `process.cwd()`, so the shell directory decided whether the
+  // member's CSS built at all. Rebuilding the member's declared pipeline with
+  // the config path resolved from the member takes that decision away from the
+  // shell without replacing a single plugin the member declared.
+  const tailwind3Postcss =
+    styleTooling.tailwind3ConfigPath && styleTooling.tailwind3PostcssConfigFile
+      ? await loadTailwind3PostcssPipeline(
+          projectRoot,
+          styleTooling.tailwind3PostcssConfigFile,
+          styleTooling.tailwind3ConfigPath,
+          (warning) => configWarnings.push(warning),
+        )
+      : undefined;
   // M77: unconditional and cheap (a no-op for every file outside a
   // non-node_modules `.js`); array position does not matter for ordering
   // relative to Vite's own esbuild plugin, since `enforce: "pre"` alone
@@ -3823,6 +4079,12 @@ export async function buildAndServe(
   // reading process.env throws before it renders.
   const define = readEnvDefines(projectRoot, workspaceRoot);
 
+  // The rebuilt Tailwind 3 pipeline wins over the inherited config directory:
+  // it is that directory's config, already loaded, with the config path the
+  // member's own search would have found.
+  const postcssOption: string | { plugins: unknown[] } | undefined =
+    tailwind3Postcss ?? styleTooling.postcssConfigDir;
+
   const bootServer = async (): Promise<ViteDevServer> => {
     const created = await createServer({
       root: projectRoot,
@@ -3843,12 +4105,10 @@ export async function buildAndServe(
       // M106 A3: postcss and the folded preprocessor options share one `css`
       // object — twenty declares both, and passing either alone dropped the
       // other.
-      ...(styleTooling.postcssConfigDir || viteConfig.preprocessorOptions
+      ...(postcssOption || viteConfig.preprocessorOptions
         ? {
             css: {
-              ...(styleTooling.postcssConfigDir
-                ? { postcss: styleTooling.postcssConfigDir }
-                : {}),
+              ...(postcssOption ? { postcss: postcssOption as never } : {}),
               ...(viteConfig.preprocessorOptions
                 ? { preprocessorOptions: viteConfig.preprocessorOptions }
                 : {}),
@@ -5030,8 +5290,9 @@ export function scanExternalDeps(
           const types = typeof manifest?.types === "string" ? manifest.types : undefined;
           warningsOut?.push(TYPES_ONLY_WORKSPACE_PACKAGE_WARNING(pkg, types));
         } else {
-          const scripts = manifest?.scripts as Record<string, unknown> | undefined;
-          const buildCommand = typeof scripts?.build === "string" ? scripts.build : undefined;
+          // M111 A5: the package manager invocation of the script name, with the
+          // directory to run it in, never the script body.
+          const buildCommand = packageScriptCommand(real, "build", process.cwd());
           const declaredEntry = manifest ? declaredRuntimeEntries(manifest)[0] : undefined;
           warningsOut?.push(
             UNBUILT_WORKSPACE_PACKAGE_NO_SOURCE_WARNING(

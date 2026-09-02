@@ -195,6 +195,66 @@ apart from the new roots line.
 Also required before the commit: the lane's existing tests stay green (baseline failures excepted)
 and `tsc --noEmit` is clean.
 
+### Lane A evidence
+
+Run 2026-09-03 in `C:\Projekte\120fps-m107`, scratch dist
+`C:/Projekte/120fps-fieldtest/scratch/A-M111/dist/cli.js`.
+
+Tests, the three files above (`node node_modules/vitest/vitest.mjs run <files> --maxWorkers=2`):
+
+    Test Files  3 passed (3)
+         Tests  15 passed (15)
+
+The lane's existing tests, the 25 files under `test/unit/` that exercise `resolveStyleTooling`,
+`packageManagerRunCommand`, `findLikelyGenerateCommand`, `postcssConfigDir`, `resolveProjectModel`,
+`UNBUILT_WORKSPACE*` or `buildAndServe`:
+
+    Test Files  25 passed (25)
+         Tests  457 passed (457)
+
+`node node_modules/typescript/bin/tsc --noEmit`: clean, no output.
+
+Corpus. midday from the repository root, the `EVIDENCE.md:61` command with `--out`, `--timeout` and
+`--cli` added, label `M111-midday-after`:
+
+- before (`logs/midday/explain-button.log:12`, exit 2 after 36 s):
+
+      [postcss] E:/repositories-run5/midday/packages/ui/src/globals.css:1:1: The `border-border` class does not exist. If `border-border` is a custom class, make sure it is defined within a `@layer` directive.
+
+- after (`logs/midday/M111-midday-after.log`, exit 0 after 160 s):
+
+      Roots: member E:\repositories-run5\midday\packages\ui, workspace E:\repositories-run5\midday
+      Stylesheets: src/globals.css (largest-stylesheet fallback, low confidence - verify with --css)
+      Result: PASS
+
+  `grep -c` in that log: `content option` 0, `border-border` 0. The roots line occurs once. Closed: yes.
+
+midday from the member root (`--cwd /e/repositories-run5/midday/packages/ui --
+src/components/button.tsx`, label `M111-midday-memberroot-after`, exit 0 after 263 s): the same
+`Stylesheets: src/globals.css (largest-stylesheet fallback, low confidence - verify with --css)`,
+the same `Result: PASS`, the same
+`Roots: member E:\repositories-run5\midday\packages\ui, workspace E:\repositories-run5\midday`,
+and `JSON.stringify(report.warnings)` equal between the two reports. Closed: yes.
+
+Control, shadcn-admin (`--cwd /e/repositories-run5/shadcn-admin -- src/components/ui/button.tsx
+--explain-props`, label `M111-shadcn-admin-after`, exit 0 after 2 s): the dry run still reaches its
+summary, with the new first line `Root: E:\repositories-run5\shadcn-admin` (one root, a
+single-package project). Closed: yes.
+
+Open against A2. The two midday reports still differ in one field: `css.details[0].matchedRules` is
+11 from the repository root and 22 from the member root, reproducibly (a second repository-root run
+also read 11). Cause, verified: Tailwind 3 resolves a relative `content` glob against
+`process.cwd()`, and midday declares `content: ["./src/**/*.{ts,tsx}"]`
+(`packages/ui/tailwind.config.ts:5`), so from the repository root that scan matches no source and
+only the base rules are generated. The attempt to close it inside this milestone (load the config
+with `tailwindcss/loadConfig`, rewrite its globs to absolute, pass the object as `config`) was
+reverted: with an object config Tailwind re-resolves and re-hashes the config on every PostCSS build,
+and both corpus runs then made no progress in the prop-deltas phase and hit the 20-minute watchdog
+(exit 2) instead of finishing in about 4 minutes. Every decision field A2 names in prose (the
+`Stylesheets:` line, the warnings, the verdict, the roots) is identical; `matchedRules` counts the
+rules that matched the rendered DOM. A follow-up has to anchor the globs without giving up Tailwind's
+context cache, which is keyed by the config file path.
+
 ## Deferred
 
 - Member root and workspace root in the JSON report and in `--report-md`. `src/report.ts` belongs to
