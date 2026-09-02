@@ -203,6 +203,44 @@ and hoppscotch rows run with `--samples 5 --max-combos 4 --explore-budget 60 --n
 `test/unit/react-compiler.test.ts`, `test/unit/react-compiler-harden.test.ts`,
 `test/unit/virtual-module-diagnosis.test.ts`, `test/unit/import-scanner-coverage.test.ts` stay green.
 
+### Lane A evidence (2026-09-02, scratch dist `A-M108`)
+
+Tests (`node node_modules/vitest/vitest.mjs run <files> --maxWorkers=2`), the five milestone files
+plus the six files the section above requires to stay green, plus
+`test/unit/bundler-error-presentation.test.ts` (the MAP's baseline defect: sample stack frames now
+derive from the running checkout) and `test/unit/m95-m96-followup.test.ts` (its Nuxt fixture now
+declares `nuxt`, which A2 requires):
+
+    Test Files  13 passed (13)
+         Tests  282 passed (282)
+
+Whole suite, same runner: `Test Files 286 passed (286)`, `Tests 4397 passed | 1 skipped (4398)` —
+the four baseline-failing files included.
+
+`node node_modules/typescript/bin/tsc --noEmit`: clean, no output.
+
+Corpus, `node C:/Projekte/120fps-fieldtest/tools/run120.mjs ... --cli
+C:/Projekte/120fps-fieldtest/scratch/A-M108/dist/cli.js`, one run at a time, label
+`M108-<repo>-after`. "before" lines are the EVIDENCE.md rows' own logs.
+
+- epic-stack-F1 — closed.
+  before: `Error: Failed to start Vite dev server in E:\repositories-run5\epic-stack\.120fps-harness-Azc3vv: epic-stack-template imports from "#app", a Nuxt build-time virtual module that does not exist until `nuxi prepare` generates the .nuxt/ directory. Run `nuxi prepare` in this project, then measure again.`
+  after: `exit=0 killed=false seconds=68` / `Result: PASS` / `Mode: prop combos (4 measured of 64 generated, +4 scale probes)`. No `Missing "#app" specifier`, no Nuxt sentence, no `nuxi prepare`.
+- primer-react-F1 — closed (the expected new failure).
+  before: `Error: react imports from "./compiler-runtime", a Nuxt build-time virtual module that does not exist until `nuxi prepare` generates the .nuxt/ directory. Run `nuxi prepare` in this project, then measure again.`
+  after: `Error: component harness failed before it became ready: warning.ts: __DEV__ is not defined. Page errors:` / `  - __DEV__ is not defined`. No `react/compiler-runtime` error, no Nuxt sentence; the compiler ran at the installed React 18 with the project's own `react-compiler-runtime`. The `React Compiler: ... target 18` terminal line is lane C's (I4, not landed).
+- hoppscotch-F2 — closed.
+  before: `Error: src/components/smart/EnvInput.vue?vue&type=script&setup=true&lang.ts imports "~icons/lucide/eye", which the dev server could not resolve to a loadable file. Check that the target exists; if it lives in an unbuilt workspace package, run that package's own build first.`
+  after: `Error: src/components/smart/EnvInput.vue?vue&type=script&setup=true&lang.ts imports "~icons/lucide/eye", a module in the `~icons/` virtual namespace: a Vite plugin generates it at request time, and 120fps never reads your vite.config, so nothing answers for it here. This repository declares unplugin-icons, the plugin that owns that namespace; measure a component that does not import from it, or stub the import.` — exit 2 unchanged, plus nine `[transform:virtual-module] ... unplugin-icons` preflight warnings before the browser starts.
+- documenso-F1 — closed for the remedy and the transform disclosure, partial on the module name.
+  before: `  - Unable to determine current node version` followed by `No .env or .env.local found: 120fps carries a working .env/.env.local injection mechanism, ...`
+  after: `Error: component harness failed before it became ready: Unable to determine current node version. Page errors:` / `  - Unable to determine current node version`, preceded by `  [transform:babel-macro] primitives/dialog.tsx → @lingui/react/macro: this project compiles that with a Babel macro compiler the project configures in its vite.config, which 120fps does not load (the harness never reads your vite.config).` No env-file remedy. The captured throw now leads the report instead of `did not become ready within timeout` (A8). Two deviations from the section above: the delivered stack carries no source frame, so no throwing module is named (A8 names one only when a frame exists); and the warning's owner stays generic because documenso declares `vite-plugin-babel-macros` in `apps/remix/package.json`, a sibling workspace member that is neither the measured package nor the workspace root — naming it would need sibling-member manifests (deferred).
+- Unaffected control: shadcn-admin `src/components/ui/button.tsx --explain-props`, `exit=0 killed=false seconds=2`, `Component: Button` / `Props (32):` / `Estimated real run: ~2m 9s`.
+
+Not implemented, blocked on I4 (lane C has not landed the two `ReactCompilerReport` fields): A4's
+report object and terminal line. `ReactCompilerState` (`src/harness.ts`) already carries `target`
+and `skipped` for lane C to read.
+
 ## Deferred
 
 - primer-react's `__DEV__` injection (`babel-plugin-transform-replace-expressions`,

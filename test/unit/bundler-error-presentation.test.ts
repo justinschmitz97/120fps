@@ -22,6 +22,13 @@ import {
 // internals under 120fps's own node_modules. Both must re-present as a named
 // 120fps error with no node_modules substring anywhere in the message.
 
+// The frames the harness strips are the ones under its own installation, which
+// is the running checkout: a worktree, a clone or a CI directory. Sample frames
+// are built from that root so the fixture states the same fact everywhere.
+const INSTALL_ROOT = path.resolve(import.meta.dirname, "..", "..");
+const WIN_INSTALL_ROOT = INSTALL_ROOT.replace(/\//g, "\\");
+const POSIX_INSTALL_ROOT = INSTALL_ROOT.replace(/\\/g, "/");
+
 function poolThatThrows(err: unknown): ServerPool {
   return {
     async acquire(): Promise<never> {
@@ -69,8 +76,8 @@ const POSTCSS_ENOENT_ERROR = new Error(
     "[postcss] ENOENT: no such file or directory, open 'E:\\repositories\\shadcn-ui\\apps\\v4\\shadcn\\tailwind.css'",
     "    at async open (node:internal/fs/promises:640:25)",
     "    at async Object.readFile (node:internal/fs/promises:1046:14)",
-    "    at async LazyResult.runOnRoot (C:\\Projekte\\120fps\\node_modules\\.pnpm\\postcss@8.4.35\\node_modules\\postcss\\lib\\lazy-result.js:88:16)",
-    "    at async LazyResult.async (C:\\Projekte\\120fps\\node_modules\\.pnpm\\postcss@8.4.35\\node_modules\\postcss\\lib\\lazy-result.js:192:26)",
+    `    at async LazyResult.runOnRoot (${WIN_INSTALL_ROOT}\\node_modules\\.pnpm\\postcss@8.4.35\\node_modules\\postcss\\lib\\lazy-result.js:88:16)`,
+    `    at async LazyResult.async (${WIN_INSTALL_ROOT}\\node_modules\\.pnpm\\postcss@8.4.35\\node_modules\\postcss\\lib\\lazy-result.js:192:26)`,
     "  - response 500: GET http://localhost:5180/app/globals.css",
   ].join("\n"),
 );
@@ -80,8 +87,8 @@ const VITE_IMPORT_RESOLVE_ERROR = new Error(
     "component harness did not become ready within timeout. Page errors:",
     "  - [vite] Internal Server Error",
     'Failed to resolve import "@shadcn/react/message-scroller" from "registry/new-york-v4/ui/message-scroller.tsx". Does the file exist?',
-    "    at TransformPluginContext._formatLog (C:\\Projekte\\120fps\\node_modules\\.pnpm\\vite@6.4.2\\node_modules\\vite\\dist\\node\\chunks\\dep-Dq2t6Dq0.js:42553:41)",
-    "    at TransformPluginContext.error (C:\\Projekte\\120fps\\node_modules\\.pnpm\\vite@6.4.2\\node_modules\\vite\\dist\\node\\chunks\\dep-Dq2t6Dq0.js:42550:16)",
+    `    at TransformPluginContext._formatLog (${WIN_INSTALL_ROOT}\\node_modules\\.pnpm\\vite@6.4.2\\node_modules\\vite\\dist\\node\\chunks\\dep-Dq2t6Dq0.js:42553:41)`,
+    `    at TransformPluginContext.error (${WIN_INSTALL_ROOT}\\node_modules\\.pnpm\\vite@6.4.2\\node_modules\\vite\\dist\\node\\chunks\\dep-Dq2t6Dq0.js:42550:16)`,
     "  - response 500: GET http://localhost:5179/registry/new-york-v4/ui/message-scroller.tsx",
   ].join("\n"),
 );
@@ -123,7 +130,7 @@ describe("bundler failure re-presentation (M94)", () => {
     const unrecognized = new Error(
       [
         "Something else entirely broke",
-        "    at deepInternal (C:\\Projekte\\120fps\\node_modules\\.pnpm\\some-pkg@1.0.0\\node_modules\\some-pkg\\index.js:1:1)",
+        `    at deepInternal (${WIN_INSTALL_ROOT}\\node_modules\\.pnpm\\some-pkg@1.0.0\\node_modules\\some-pkg\\index.js:1:1)`,
       ].join("\n"),
     );
     let thrown: Error | undefined;
@@ -147,7 +154,7 @@ describe("bundler failure re-presentation (M94)", () => {
       [
         "Something failed during a real render",
         "    at Button (E:\\repositories\\twenty\\packages\\twenty-ui\\src\\input\\Button\\Button.tsx:12:3)",
-        "    at deepInternal (C:\\Projekte\\120fps\\node_modules\\.pnpm\\vite@6.4.2\\node_modules\\vite\\dist\\node\\chunks\\dep-Dq2t6Dq0.js:1:1)",
+        `    at deepInternal (${WIN_INSTALL_ROOT}\\node_modules\\.pnpm\\vite@6.4.2\\node_modules\\vite\\dist\\node\\chunks\\dep-Dq2t6Dq0.js:1:1)`,
       ].join("\n"),
     );
     let thrown: Error | undefined;
@@ -159,7 +166,7 @@ describe("bundler failure re-presentation (M94)", () => {
     }
     expect(thrown!.message).toContain("Button.tsx:12:3");
     expect(thrown!.message).toContain("E:\\repositories\\twenty");
-    expect(thrown!.message).not.toContain("C:\\Projekte\\120fps");
+    expect(thrown!.message).not.toContain(WIN_INSTALL_ROOT);
     expect(thrown!.message).not.toContain("node_modules\\.pnpm\\vite@");
   });
 });
@@ -185,13 +192,13 @@ describe("presentBundlerFailure: surface 2, the page-error channel (M92)", () =>
       "  │   ^^^^^^^^^^^^^^",
       "  ╵",
       "  Button.module.scss 65:3",
-      "    at async Object.run (file:///C:/Projekte/120fps/node_modules/.pnpm/vite@6.4.2_@types+node@22.19.17_jiti@2.7.0_lightningcss@1.32.0/node_modules/vite/dist/node/chunks/dep-Dq2t6Dq0.js:44582:22)",
-      "    at async compileCSSPreprocessors (file:///C:/Projekte/120fps/node_modules/.pnpm/vite@6.4.2_@types+node@22.19.17_jiti@2.7.0_lightningcss@1.32.0/node_modules/vite/dist/node/chunks/dep-Dq2t6Dq0.js:43644:28)",
+      `    at async Object.run (file:///${POSIX_INSTALL_ROOT}/node_modules/.pnpm/vite@6.4.2_@types+node@22.19.17_jiti@2.7.0_lightningcss@1.32.0/node_modules/vite/dist/node/chunks/dep-Dq2t6Dq0.js:44582:22)`,
+      `    at async compileCSSPreprocessors (file:///${POSIX_INSTALL_ROOT}/node_modules/.pnpm/vite@6.4.2_@types+node@22.19.17_jiti@2.7.0_lightningcss@1.32.0/node_modules/vite/dist/node/chunks/dep-Dq2t6Dq0.js:43644:28)`,
     ].join("\n");
     const presented = presentBundlerFailure(pageErrorText, tmpDir, []);
     expect(presented).toContain("did not become ready");
     expect(presented).toContain("Undefined mixin");
-    expect(presented).not.toContain("C:/Projekte/120fps");
+    expect(presented).not.toContain(POSIX_INSTALL_ROOT);
     expect(presented).not.toContain("node_modules/.pnpm/vite@");
     expect(presented).not.toMatch(/^\s*at\s/m);
   });
@@ -204,13 +211,13 @@ describe("presentBundlerFailure: surface 2, the page-error channel (M92)", () =>
       "  - [vite] Internal Server Error",
       "[postcss] ENOENT: no such file or directory, open 'E:\\repositories\\shadcn-ui\\apps\\v4\\shadcn\\tailwind.css'",
       "    at async open (node:internal/fs/promises:640:25)",
-      "    at async LazyResult.runOnRoot (C:\\Projekte\\120fps\\node_modules\\.pnpm\\postcss@8.5.13\\node_modules\\postcss\\lib\\lazy-result.js:88:16)",
+      `    at async LazyResult.runOnRoot (${WIN_INSTALL_ROOT}\\node_modules\\.pnpm\\postcss@8.5.13\\node_modules\\postcss\\lib\\lazy-result.js:88:16)`,
       "  - response 500: GET http://localhost:5183/app/globals.css",
     ].join("\n");
     const presented = presentBundlerFailure(pageErrorText, tmpDir, []);
     expect(presented).toContain("tailwind.css");
     expect(presented).toContain("--no-css");
-    expect(presented).not.toContain("C:\\Projekte\\120fps");
+    expect(presented).not.toContain(WIN_INSTALL_ROOT);
     expect(presented).not.toContain("node_modules\\.pnpm\\postcss@");
   });
 
@@ -222,11 +229,11 @@ describe("presentBundlerFailure: surface 2, the page-error channel (M92)", () =>
       "  - [vite] Internal Server Error",
       "[sass] Error: Undefined mixin.",
       "    at compileString (E:\\repositories\\twenty\\node_modules\\sass-embedded\\dist\\lib\\src\\compile.js:40:1)",
-      "    at async Object.run (C:\\Projekte\\120fps\\node_modules\\.pnpm\\vite@6.4.2\\node_modules\\vite\\dist\\node\\chunks\\dep-Dq2t6Dq0.js:44582:22)",
+      `    at async Object.run (${WIN_INSTALL_ROOT}\\node_modules\\.pnpm\\vite@6.4.2\\node_modules\\vite\\dist\\node\\chunks\\dep-Dq2t6Dq0.js:44582:22)`,
     ].join("\n");
     const presented = presentBundlerFailure(pageErrorText, tmpDir, []);
     expect(presented).toContain("E:\\repositories\\twenty\\node_modules\\sass-embedded");
-    expect(presented).not.toContain("C:\\Projekte\\120fps");
+    expect(presented).not.toContain(WIN_INSTALL_ROOT);
   });
 });
 
@@ -377,7 +384,7 @@ describe("presentBundlerFailure: surface 3, the async unhandled-rejection channe
       [
         "Build failed with 1 error:",
         'components/version/index.tsx:2:20: ERROR: Could not resolve "./version"',
-        "    at failureErrorWithLog (C:\\Projekte\\120fps\\node_modules\\.pnpm\\esbuild@0.25.12\\node_modules\\esbuild\\lib\\main.js:1467:15)",
+        `    at failureErrorWithLog (${WIN_INSTALL_ROOT}\\node_modules\\.pnpm\\esbuild@0.25.12\\node_modules\\esbuild\\lib\\main.js:1467:15)`,
       ].join("\n"),
     );
 
@@ -388,7 +395,7 @@ describe("presentBundlerFailure: surface 3, the async unhandled-rejection channe
     expect(resolved!.output).toContain("components/version/version.ts");
     expect(resolved!.output).toContain("gitignored");
     expect(resolved!.output).toContain("npm run codegen");
-    expect(resolved!.output).not.toContain("C:\\Projekte\\120fps");
+    expect(resolved!.output).not.toContain(WIN_INSTALL_ROOT);
     expect(resolved!.output).not.toMatch(/^\s*at\s/m);
   });
 
@@ -454,7 +461,7 @@ describe("presentBundlerFailure: surface 3, the async unhandled-rejection channe
       [
         "Build failed with 1 error:",
         'components/version/index.tsx:2:20: ERROR: Could not resolve "./version"',
-        "    at failureErrorWithLog (C:\\Projekte\\120fps\\node_modules\\.pnpm\\esbuild@0.25.12\\node_modules\\esbuild\\lib\\main.js:1467:15)",
+        `    at failureErrorWithLog (${WIN_INSTALL_ROOT}\\node_modules\\.pnpm\\esbuild@0.25.12\\node_modules\\esbuild\\lib\\main.js:1467:15)`,
       ].join("\n"),
     );
     const resolved = resolveFatalProcessError(raw, undefined);

@@ -627,7 +627,9 @@ describe("waitForReadyOrFatal", () => {
       "component harness",
       () => "No .env or .env.local found; only NEXT_PUBLIC_*/VITE_* keys reach the page.",
     );
-    emitter.emit("pageerror", new Error("createEnv failed"));
+    // M108 A9: the line attaches to an error that names an environment
+    // variable, which is what this remedy answers for.
+    emitter.emit("pageerror", new Error("createEnv failed: process.env.DATABASE_URL is required"));
     await expect(pending).rejects.toThrow(/NEXT_PUBLIC_/);
   });
 

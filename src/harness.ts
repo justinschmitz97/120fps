@@ -24,7 +24,12 @@ import {
   readProjectManifest,
   workspaceLevels,
 } from "./project-model.js";
-import { detectMissingInstall, hardRemedyFor } from "./preflight.js";
+import {
+  declaredTransformOwner,
+  detectMissingInstall,
+  hardRemedyFor,
+  recognizeVirtualNamespace,
+} from "./preflight.js";
 // Import cycle (harness -> react-profiler -> measure -> harness), safe by
 // construction: every cross-module binding on all three edges is read inside a
 // function body, never during module evaluation, so no partially-initialized
@@ -2280,6 +2285,10 @@ export interface ReactCompilerState {
   version?: string;
   pluginPath?: string;
   warning?: string;
+  // M108 A3/A4: the React major the transform compiles for, and why it did not
+  // run when the runtime that major needs is absent.
+  target?: ReactCompilerTarget;
+  skipped?: { target: string; missingModule: string };
 }
 
 // At most one warning per state, so the disabled note and the resolution note
@@ -2313,7 +2322,25 @@ export function resolveReactCompilerState(
       warning: reactCompilerResolutionWarning(projectRoot),
     };
   }
-  return { detected, active: true, pluginPath, ...(version ? { version } : {}) };
+  const target = detectReactMajor(projectRoot);
+  const runtime = reactCompilerRuntime(target ?? "19");
+  if (target && reactCompilerRuntimeDeps(projectRoot, target).length === 0) {
+    return {
+      detected,
+      active: false,
+      ...(version ? { version } : {}),
+      target,
+      skipped: { target, missingModule: runtime.module },
+      warning: reactCompilerRuntimeMissingWarning(target, runtime.module, runtime.package),
+    };
+  }
+  return {
+    detected,
+    active: true,
+    pluginPath,
+    ...(version ? { version } : {}),
+    ...(target ? { target } : {}),
+  };
 }
 
 // Compiled output imports react/compiler-runtime. @vitejs/plugin-react only
@@ -2322,13 +2349,63 @@ export function resolveReactCompilerState(
 // declared here: otherwise Vite discovers it on the first page load and forces
 // a full reload that destroys the execution context mid-measurement. React 18
 // projects have no such module; there the entry is skipped.
-export function reactCompilerRuntimeDeps(projectRoot: string): string[] {
+export function reactCompilerRuntimeDeps(
+  projectRoot: string,
+  target: ReactCompilerTarget = "19",
+): string[] {
+  const runtime = reactCompilerRuntime(target);
   try {
-    createRequire(path.join(projectRoot, "/")).resolve("react/compiler-runtime");
-    return ["react/compiler-runtime"];
+    createRequire(path.join(projectRoot, "/")).resolve(runtime.module);
+    return [runtime.module];
   } catch {
     return [];
   }
+}
+
+// M108 A3 (primer-react-F1): the compiler emits the runtime import its target
+// names, so the target has to be the React the project installs. React 19
+// ships the runtime inside react itself; 17 and 18 take it from the separate
+// react-compiler-runtime package the project installs beside them.
+export type ReactCompilerTarget = "17" | "18" | "19";
+
+export function detectReactMajor(projectRoot: string): ReactCompilerTarget | undefined {
+  const reactDir = installedPackageDir("react", projectRoot);
+  if (!reactDir) return undefined;
+  const version = readProjectManifest(reactDir)?.version;
+  if (typeof version !== "string") return undefined;
+  const major = /^\D*(\d+)/.exec(version)?.[1];
+  if (major === "17" || major === "18") return major;
+  return Number(major) >= 19 ? "19" : undefined;
+}
+
+export function reactCompilerRuntime(target: ReactCompilerTarget): {
+  module: string;
+  package: string;
+} {
+  return target === "19"
+    ? { module: "react/compiler-runtime", package: "react" }
+    : { module: "react-compiler-runtime", package: "react-compiler-runtime" };
+}
+
+// M92: an option the plugin defaults for us is an option this run cannot
+// disclose, so the target is always passed explicitly once it is known.
+export function reactCompilerBabelOptions(
+  target: ReactCompilerTarget | undefined,
+): Record<string, string> {
+  return target ? { target } : {};
+}
+
+export function reactCompilerRuntimeMissingWarning(
+  target: ReactCompilerTarget,
+  module: string,
+  supplier: string,
+): string {
+  return (
+    `${REACT_COMPILER_PACKAGE} runs at target ${target} here (the React this project installs), ` +
+    `whose runtime import "${module}" ` +
+    `does not resolve from this project (${supplier} supplies it); skipping the compiler ` +
+    "transform and measuring without it."
+  );
 }
 
 // Vite transforms the generated .tsx entry with the automatic JSX runtime, so
@@ -2352,14 +2429,17 @@ export function reactJsxRuntimeDeps(projectRoot: string): string[] {
 }
 
 // Imported on demand: a run without the compiler never loads @babel/core.
-export async function loadReactCompilerPlugin(pluginPath: string): Promise<unknown[]> {
+export async function loadReactCompilerPlugin(
+  pluginPath: string,
+  target?: ReactCompilerTarget,
+): Promise<unknown[]> {
   const mod = await import("@vitejs/plugin-react");
   const factory = (mod as { default?: unknown }).default ?? mod;
   if (typeof factory !== "function") {
     throw new Error("@vitejs/plugin-react has no callable default export");
   }
   const plugin = (factory as (options: unknown) => unknown)({
-    babel: { plugins: [[pluginPath, {}]] },
+    babel: { plugins: [[pluginPath, reactCompilerBabelOptions(target)]] },
   });
   return Array.isArray(plugin) ? plugin : [plugin];
 }
@@ -2861,7 +2941,7 @@ export function presentBundlerFailure(
     diagnoseMissingShimExport(message) ??
     diagnoseGitignoredGeneratedFile(message, projectRoot) ??
     diagnoseNuxtBuildModule(message, buildWarnings, projectRoot) ??
-    diagnoseBundlerFailure(message) ??
+    diagnoseBundlerFailure(message, projectRoot) ??
     stripBundlerStackFrames(message)
   );
 }
@@ -2875,6 +2955,25 @@ export function BUNDLER_IMPORT_UNRESOLVED_ERROR(target: string, importer: string
     "Check that the target exists; if it lives in an unbuilt workspace package, run that package's " +
     "own build first."
   );
+}
+
+// M108 A5: names the layer that produces the specifier (a Vite plugin this
+// harness never loads), and the package this repository declares for it. No
+// build command: nothing on disk is missing, so no build produces it.
+export function VIRTUAL_NAMESPACE_IMPORT_ERROR(
+  target: string,
+  importer: string,
+  namespace: string,
+  producer: string | undefined,
+): string {
+  const base =
+    `${importer} imports "${target}", a module in the \`${namespace}\` virtual namespace: a Vite ` +
+    "plugin generates it at request time, and 120fps never reads your vite.config, so nothing " +
+    "answers for it here.";
+  return producer
+    ? `${base} This repository declares ${producer}, the plugin that owns that namespace; measure ` +
+        "a component that does not import from it, or stub the import."
+    : `${base} Measure a component that does not import from it, or stub the import.`;
 }
 
 export function BUNDLER_STYLESHEET_MISSING_ERROR(target: string): string {
@@ -2925,9 +3024,22 @@ export function CSS_UNREADABLE_DROPPED_WARNING(
 // both patterns could match the same message; returns undefined for any
 // shape neither recognizes, so the caller's own stripBundlerStackFrames still
 // runs as the universal fallback.
-function diagnoseBundlerFailure(message: string): string | undefined {
+function diagnoseBundlerFailure(message: string, projectRoot: string): string | undefined {
   const importMatch = VITE_IMPORT_RESOLVE_FAILURE.exec(message);
-  if (importMatch) return BUNDLER_IMPORT_UNRESOLVED_ERROR(importMatch[1], importMatch[2]);
+  if (importMatch) {
+    // M108 A5 (hoppscotch-F2): a virtual namespace has no file behind it and no
+    // build that produces one, so the unbuilt-workspace clause is false here.
+    const virtual = recognizeVirtualNamespace(importMatch[1]);
+    if (virtual) {
+      return VIRTUAL_NAMESPACE_IMPORT_ERROR(
+        importMatch[1],
+        importMatch[2],
+        virtual.namespace,
+        declaredTransformOwner("virtual-module", importMatch[1], projectRoot),
+      );
+    }
+    return BUNDLER_IMPORT_UNRESOLVED_ERROR(importMatch[1], importMatch[2]);
+  }
   const cssMatch = POSTCSS_ENOENT_FAILURE.exec(message);
   if (cssMatch) return BUNDLER_STYLESHEET_MISSING_ERROR(cssMatch[1]);
   return undefined;
@@ -3012,6 +3124,26 @@ export function NUXT_BUILD_MODULE_MISSING_ERROR(
     : base;
 }
 
+// M108 A2 (epic-stack-F1, primer-react-F1): the Nuxt mechanism is `#build`,
+// `#imports` and `#app`, and only in a repository that declares nuxt. Every
+// other package-imports/exports miss is Node's own resolver reporting a map
+// that lacks a subpath, and that is what the message says.
+const NUXT_VIRTUAL_PREFIXES = ["#build", "#imports", "#app"];
+
+export function MISSING_PACKAGE_SUBPATH_ERROR(
+  specifier: string,
+  pkg: string,
+  importer: string | undefined,
+): string {
+  const from = importer ? `, imported by ${importer}` : "";
+  const map = specifier.startsWith("#") ? "imports" : "exports";
+  return (
+    `${pkg} does not declare "${specifier}" in its package.json \`${map}\` map${from}, so Node's ` +
+    `own resolver refused it. Declare that subpath in ${pkg}'s \`${map}\` map, or import a path ` +
+    "the map already exposes."
+  );
+}
+
 function diagnoseNuxtBuildModule(
   message: string,
   buildWarnings: readonly string[],
@@ -3019,6 +3151,10 @@ function diagnoseNuxtBuildModule(
 ): string | undefined {
   const match = NUXT_BUILD_MODULE_MISSING.exec(message);
   if (!match) return undefined;
+  const isNuxtVirtual = NUXT_VIRTUAL_PREFIXES.some((prefix) => match[1].startsWith(prefix));
+  if (!isNuxtVirtual || !isPackageDeclared("nuxt", projectRoot, findWorkspaceRoot(projectRoot))) {
+    return MISSING_PACKAGE_SUBPATH_ERROR(match[1], match[2], VITE_IMPORT_RESOLVE_FAILURE.exec(message)?.[2]);
+  }
   const extendsHint = buildWarnings.some((w) => w.includes(".nuxt"));
   const nuxtDirExists = fs.existsSync(path.join(projectRoot, ".nuxt"));
   return NUXT_BUILD_MODULE_MISSING_ERROR(
@@ -3477,7 +3613,9 @@ export async function buildAndServe(
           "react",
           "react-dom/client",
           ...reactJsxRuntimeDeps(projectRoot),
-          ...(reactCompiler.active ? reactCompilerRuntimeDeps(projectRoot) : []),
+          ...(reactCompiler.active
+            ? reactCompilerRuntimeDeps(projectRoot, reactCompiler.target ?? "19")
+            : []),
         ];
 
   const stableInclude = unionCachedDeps(
@@ -3495,7 +3633,7 @@ export async function buildAndServe(
   plugins.push(jsxInJsPlugin(resolveJsxImportSource(projectRoot, workspaceRoot)));
   // Appended, never substituted: the Tailwind entries above must survive.
   if (reactCompiler.active) {
-    plugins.push(...(await loadReactCompilerPlugin(reactCompiler.pluginPath!)));
+    plugins.push(...(await loadReactCompilerPlugin(reactCompiler.pluginPath!, reactCompiler.target)));
   }
 
   // M48: the project's own transforms, resolved from its own node_modules with
@@ -4309,6 +4447,91 @@ function workspaceSubpathSourceEntries(
   return rescued;
 }
 
+// M108 A1 (epic-stack-F1): Node's subpath-imports map, the way Vite reads it.
+// The conditions are the browser-development set Vite resolves a dev request
+// with; `types` and `node` deliberately absent, `require` last-resort only.
+const SUBPATH_IMPORT_CONDITIONS = [
+  "source",
+  "development",
+  "browser",
+  "module",
+  "import",
+  "require",
+  "default",
+];
+
+function nearestManifestDir(fromDir: string): string | undefined {
+  let dir = path.resolve(fromDir);
+  for (;;) {
+    if (isFile(path.join(dir, "package.json"))) return dir;
+    const parent = path.dirname(dir);
+    if (parent === dir) return undefined;
+    dir = parent;
+  }
+}
+
+// Conditions are declaration-ordered in Node's algorithm: the first key this
+// resolver recognises wins, and an array is a fallback list.
+function pickConditionalTarget(value: unknown): string | undefined {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      const picked = pickConditionalTarget(entry);
+      if (picked) return picked;
+    }
+    return undefined;
+  }
+  if (value && typeof value === "object") {
+    for (const [condition, nested] of Object.entries(value as Record<string, unknown>)) {
+      if (!SUBPATH_IMPORT_CONDITIONS.includes(condition)) continue;
+      const picked = pickConditionalTarget(nested);
+      if (picked) return picked;
+    }
+  }
+  return undefined;
+}
+
+// The file a "#"-prefixed specifier names, resolved through the `imports` map
+// of the importer's OWN package (a workspace member's map, not the measured
+// root's). Undefined when no map declares it: that specifier stays unresolved
+// and gets the generic missing-subpath diagnosis, never an optimizeDeps entry.
+export function resolveSubpathImport(
+  importerFile: string,
+  specifier: string,
+): string | undefined {
+  if (!specifier.startsWith("#")) return undefined;
+  const pkgDir = nearestManifestDir(path.dirname(importerFile));
+  if (!pkgDir) return undefined;
+  const manifest = readProjectManifest(pkgDir);
+  const imports = manifest?.imports;
+  if (!imports || typeof imports !== "object") return undefined;
+
+  const entries = Object.entries(imports as Record<string, unknown>);
+  let target = entries.find(([key]) => key === specifier)?.[1];
+  let substitution: string | undefined;
+  if (target === undefined) {
+    // Longest matching prefix wins, as Node's PATTERN_KEY_COMPARE does.
+    let bestPrefix = "";
+    for (const [key, value] of entries) {
+      const star = key.indexOf("*");
+      if (star < 0) continue;
+      const prefix = key.slice(0, star);
+      const suffix = key.slice(star + 1);
+      if (!specifier.startsWith(prefix) || !specifier.endsWith(suffix)) continue;
+      if (specifier.length < prefix.length + suffix.length) continue;
+      if (prefix.length < bestPrefix.length) continue;
+      bestPrefix = prefix;
+      target = value;
+      substitution = specifier.slice(prefix.length, specifier.length - suffix.length);
+    }
+  }
+
+  const picked = pickConditionalTarget(target);
+  if (!picked || !picked.startsWith(".")) return undefined;
+  const filled = substitution === undefined ? picked : picked.split("*").join(substitution);
+  return resolveTarget(path.resolve(pkgDir, filled));
+}
+
 export function scanExternalDeps(
   componentPath: string,
   projectRoot: string,
@@ -4401,6 +4624,16 @@ export function scanExternalDeps(
         } else if (!reportedBrokenAliases.has(spec)) {
           reportedBrokenAliases.add(spec);
           warningsOut?.push(BROKEN_ALIAS_WARNING(spec, localResolved.target));
+        }
+      } else if (spec.startsWith("#")) {
+        // M108 A1: a subpath import is the importer's own package talking to
+        // itself. Resolved, it is an ordinary graph edge; unresolved, it is a
+        // map that lacks the key — never a package to pre-bundle, and never a
+        // truncation of one ("#app/utils/misc" collapsed to "#app" is what
+        // manufactured epic-stack's failure).
+        const viaImports = resolveSubpathImport(normalizedFile, spec);
+        if (viaImports && SOURCE_EXTENSIONS.includes(path.extname(viaImports))) {
+          queue.push(viaImports);
         }
       } else if (isBareSpecifier) {
         specifiersOut?.add(spec);

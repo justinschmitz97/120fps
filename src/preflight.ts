@@ -114,7 +114,79 @@ export const TRANSFORM_RECOGNIZERS: TransformRecognizer[] = [
     test: (s) => /\.svelte$/.test(s),
     owner: "@sveltejs/vite-plugin-svelte",
   },
+  // M108 A6 (documenso-F1): a Babel macro is compiled away by a plugin before
+  // any bundler sees it. Nothing is on disk behind the specifier, so the
+  // extension-based recognizers above never match it.
+  {
+    code: "babel-macro",
+    test: (s) => isMacroSpecifier(s),
+    owner: "a Babel macro compiler the project configures in its vite.config",
+  },
+  // M108 A7 (hoppscotch-F2): a virtual namespace is generated at request time
+  // by a plugin. Same shape: no file, no extension, no build that produces one.
+  {
+    code: "virtual-module",
+    test: (s) => recognizeVirtualNamespace(s) !== undefined,
+    owner: "a Vite plugin the project configures in its vite.config",
+  },
 ];
+
+// M108 A6/A7. The namespace, and the packages that can own it: a specifier in
+// the `unplugin-` namespace names its own producer, and the two other
+// namespaces are owned by the plugins seen producing them.
+const VIRTUAL_NAMESPACE_PRODUCERS: Array<{ prefix: string; packages: string[] }> = [
+  { prefix: "~icons/", packages: ["unplugin-icons"] },
+  { prefix: "virtual:uno.css", packages: ["unocss", "@unocss/vite"] },
+  { prefix: "virtual:windi", packages: ["vite-plugin-windicss"] },
+  { prefix: "virtual:pwa-register", packages: ["vite-plugin-pwa"] },
+  { prefix: "virtual:", packages: [] },
+  { prefix: "unplugin-", packages: [] },
+];
+
+export function recognizeVirtualNamespace(
+  specifier: string,
+): { namespace: string; candidates: string[] } | undefined {
+  const entry = VIRTUAL_NAMESPACE_PRODUCERS.find((e) => specifier.startsWith(e.prefix));
+  if (!entry) return undefined;
+  // `unplugin-icons/types/react` names its producer in the specifier itself.
+  const own = entry.prefix === "unplugin-" ? [specifier.split("/")[0]] : [];
+  return { namespace: entry.prefix, candidates: [...entry.packages, ...own] };
+}
+
+// `styled-components/macro` and `@lingui/react/macro` are the two shapes in the
+// corpus; `babel-plugin-macros` itself is imported directly by a few.
+export function isMacroSpecifier(specifier: string): boolean {
+  return (
+    /\/macro$/.test(specifier) ||
+    /\.macro$/.test(specifier) ||
+    specifier === "babel-plugin-macros"
+  );
+}
+
+function macroCompilerCandidates(specifier: string): string[] {
+  const candidates = ["vite-plugin-babel-macros", "babel-plugin-macros"];
+  // A scoped package that ships a macro usually ships the Vite plugin that
+  // compiles it beside it (@lingui/react/macro → @lingui/vite-plugin).
+  if (specifier.startsWith("@")) candidates.push(`${specifier.split("/")[0]}/vite-plugin`);
+  return candidates;
+}
+
+// M108 A6/A7 MUST NOT: name only a package this repository declares. With none
+// declared the recognizer's own generic wording stands.
+export function declaredTransformOwner(
+  code: string,
+  specifier: string,
+  memberRoot: string,
+  workspaceRoot: string = findWorkspaceRoot(memberRoot),
+): string | undefined {
+  const candidates =
+    code === "babel-macro"
+      ? macroCompilerCandidates(specifier)
+      : code === "virtual-module"
+        ? (recognizeVirtualNamespace(specifier)?.candidates ?? [])
+        : [];
+  return candidates.find((pkg) => isPackageDeclared(pkg, memberRoot, workspaceRoot));
+}
 
 export function recognizeTransform(
   specifier: string,
@@ -596,7 +668,12 @@ export function runPreflight(options: PreflightOptions): PreflightResult {
           chain: chainTo(file),
           specifier: edge.specifier,
           transformCode: recognizer.code,
-          transformOwner: recognizer.owner,
+          // M108 A6/A7: a macro or virtual-namespace hit names the plugin this
+          // repository declares for it; the recognizer's generic owner stands
+          // when no candidate is declared.
+          transformOwner:
+            declaredTransformOwner(recognizer.code, edge.specifier, projectRoot, workspaceRoot) ??
+            recognizer.owner,
         });
         // A `.vue` edge is a graph edge as well as a transform note: the note
         // must not end the walk, or a server-only import one SFC deep would
