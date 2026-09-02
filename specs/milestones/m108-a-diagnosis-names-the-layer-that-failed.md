@@ -160,9 +160,9 @@ Unit tests run as `vitest run <files> --maxWorkers=2`.
   generic text with no `nuxi prepare`; the same message with `nuxt` declared and a `#build/`
   specifier still returns the Nuxt text.
 - A3, A4 — `test/unit/react-compiler-target-matches-installed-react.test.ts`. New fixture
-  `fixtures/compiler-react18-project/` with a hand-written `node_modules/react/package.json`
-  (`"version": "18.3.1"`, the pattern of `fixtures/m81/node_modules/aria-button/`),
-  `babel-plugin-react-compiler` declared, no runtime package: report and terminal name `target 18`,
+  `fixtures/compiler-react18-project/` declaring `babel-plugin-react-compiler` with no runtime
+  package; the test copies it to a tmp dir and writes `node_modules/react/package.json` with
+  `"version": "18.3.1"` there, since fixtures cannot ship `node_modules` (`.gitignore:1`): report and terminal name `target 18`,
   no `react/compiler-runtime` resolution error appears, the run reports `skipped` and the warning
   names the module. A sibling `fixtures/compiler-react18-runtime-project/` adds a stub
   `node_modules/react-compiler-runtime/` and stays active, as does existing
@@ -236,6 +236,10 @@ C:/Projekte/120fps-fieldtest/scratch/A-M108/dist/cli.js`, one run at a time, lab
   before: `  - Unable to determine current node version` followed by `No .env or .env.local found: 120fps carries a working .env/.env.local injection mechanism, ...`
   after: `Error: component harness failed before it became ready: Unable to determine current node version. Page errors:` / `  - Unable to determine current node version`, preceded by `  [transform:babel-macro] primitives/dialog.tsx → @lingui/react/macro: this project compiles that with a Babel macro compiler the project configures in its vite.config, which 120fps does not load (the harness never reads your vite.config).` No env-file remedy. The captured throw now leads the report instead of `did not become ready within timeout` (A8). Two deviations from the section above: the delivered stack carries no source frame, so no throwing module is named (A8 names one only when a frame exists); and the warning's owner stays generic because documenso declares `vite-plugin-babel-macros` in `apps/remix/package.json`, a sibling workspace member that is neither the measured package nor the workspace root — naming it would need sibling-member manifests (deferred).
 - Unaffected control: shadcn-admin `src/components/ui/button.tsx --explain-props`, `exit=0 killed=false seconds=2`, `Component: Button` / `Props (32):` / `Estimated real run: ~2m 9s`.
+
+A6's declared-plugin trigger is not implemented: applied literally it makes every import edge a hit;
+only the specifier shapes (`*/macro`, `*.macro`, `babel-plugin-macros`) fire, and only for bare
+specifiers, so a project's own `./macro` file stays an ordinary graph edge.
 
 Not implemented, blocked on I4 (lane C has not landed the two `ReactCompilerReport` fields): A4's
 report object and terminal line. `ReactCompilerState` (`src/harness.ts`) already carries `target`

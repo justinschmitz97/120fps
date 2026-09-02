@@ -2225,6 +2225,16 @@ export const REACT_COMPILER_PACKAGE = "babel-plugin-react-compiler";
 export const REACT_COMPILER_DISABLED_WARNING =
   "React Compiler is installed but disabled for this run; rerender costs will be higher than production.";
 
+// M108 review: the plugin defaults its target to React 19 when none is passed,
+// so an undetectable React major would compile against a runtime the project
+// may not have, undisclosed. An undisclosable target keeps the compiler off.
+export function reactCompilerTargetUnknownWarning(projectRoot: string): string {
+  return (
+    `the installed React version could not be read from ${projectRoot}, so the React Compiler ` +
+    `target is unknown; measuring without the compiler transform.`
+  );
+}
+
 export function reactCompilerResolutionWarning(projectRoot: string): string {
   return (
     `${REACT_COMPILER_PACKAGE} is declared but could not be resolved from ${projectRoot}; ` +
@@ -2322,9 +2332,24 @@ export function resolveReactCompilerState(
       warning: reactCompilerResolutionWarning(projectRoot),
     };
   }
-  const target = detectReactMajor(projectRoot);
-  const runtime = reactCompilerRuntime(target ?? "19");
-  if (target && reactCompilerRuntimeDeps(projectRoot, target).length === 0) {
+  const installedTarget = detectReactMajor(projectRoot);
+  // A react that IS installed answers for the major by itself: an unreadable or
+  // pre-17 install is an unknown target, never the declared range's answer.
+  const target =
+    installedTarget ??
+    (installedPackageDir("react", projectRoot) ? undefined : declaredReactMajor(projectRoot));
+  if (!target) {
+    return {
+      detected,
+      active: false,
+      ...(version ? { version } : {}),
+      warning: reactCompilerTargetUnknownWarning(projectRoot),
+    };
+  }
+  const runtime = reactCompilerRuntime(target);
+  // The runtime probe reads what is installed, so it only speaks when react
+  // itself is installed; a declared-only target has nothing to probe.
+  if (installedTarget && reactCompilerRuntimeDeps(projectRoot, target).length === 0) {
     return {
       detected,
       active: false,
@@ -2371,7 +2396,27 @@ export type ReactCompilerTarget = "17" | "18" | "19";
 export function detectReactMajor(projectRoot: string): ReactCompilerTarget | undefined {
   const reactDir = installedPackageDir("react", projectRoot);
   if (!reactDir) return undefined;
-  const version = readProjectManifest(reactDir)?.version;
+  return majorOf(readProjectManifest(reactDir)?.version);
+}
+
+// With no react installed the declared range is the only evidence of the major
+// there is. An install that reads always wins over it.
+function declaredReactMajor(projectRoot: string): ReactCompilerTarget | undefined {
+  const manifest = readProjectManifest(projectRoot) as
+    | {
+        dependencies?: Record<string, unknown>;
+        devDependencies?: Record<string, unknown>;
+        peerDependencies?: Record<string, unknown>;
+      }
+    | undefined;
+  return majorOf(
+    manifest?.dependencies?.react ??
+      manifest?.devDependencies?.react ??
+      manifest?.peerDependencies?.react,
+  );
+}
+
+function majorOf(version: unknown): ReactCompilerTarget | undefined {
   if (typeof version !== "string") return undefined;
   const major = /^\D*(\d+)/.exec(version)?.[1];
   if (major === "17" || major === "18") return major;
@@ -3151,7 +3196,11 @@ function diagnoseNuxtBuildModule(
 ): string | undefined {
   const match = NUXT_BUILD_MODULE_MISSING.exec(message);
   if (!match) return undefined;
-  const isNuxtVirtual = NUXT_VIRTUAL_PREFIXES.some((prefix) => match[1].startsWith(prefix));
+  // M108 review: on a segment boundary. `#appsettings/x` is an ordinary
+  // imports-map miss, and `nuxi prepare` is no remedy for it.
+  const isNuxtVirtual = NUXT_VIRTUAL_PREFIXES.some(
+    (prefix) => match[1] === prefix || match[1].startsWith(prefix + "/"),
+  );
   if (!isNuxtVirtual || !isPackageDeclared("nuxt", projectRoot, findWorkspaceRoot(projectRoot))) {
     return MISSING_PACKAGE_SUBPATH_ERROR(match[1], match[2], VITE_IMPORT_RESOLVE_FAILURE.exec(message)?.[2]);
   }
@@ -4495,7 +4544,7 @@ function pickConditionalTarget(value: unknown): string | undefined {
 // of the importer's OWN package (a workspace member's map, not the measured
 // root's). Undefined when no map declares it: that specifier stays unresolved
 // and gets the generic missing-subpath diagnosis, never an optimizeDeps entry.
-export function resolveSubpathImport(
+function pickSubpathImportTarget(
   importerFile: string,
   specifier: string,
 ): string | undefined {
@@ -4527,9 +4576,34 @@ export function resolveSubpathImport(
   }
 
   const picked = pickConditionalTarget(target);
-  if (!picked || !picked.startsWith(".")) return undefined;
+  if (!picked) return undefined;
   const filled = substitution === undefined ? picked : picked.split("*").join(substitution);
-  return resolveTarget(path.resolve(pkgDir, filled));
+  return picked.startsWith(".") ? path.resolve(pkgDir, filled) : filled;
+}
+
+export function resolveSubpathImport(
+  importerFile: string,
+  specifier: string,
+): string | undefined {
+  const target = pickSubpathImportTarget(importerFile, specifier);
+  if (!target || !path.isAbsolute(target)) return undefined;
+  return resolveTarget(target);
+}
+
+// M108 review: an `imports` entry may point at a dependency ("#dep":
+// "lodash-es") instead of a file of the package's own. That edge is an
+// ordinary external import and belongs in the pre-bundle list; dropped, Vite
+// discovers it on the first page load and forces the full reload the
+// pre-bundle list exists to prevent.
+export function subpathImportPackage(
+  importerFile: string,
+  specifier: string,
+): string | undefined {
+  const target = pickSubpathImportTarget(importerFile, specifier);
+  if (!target || path.isAbsolute(target) || target.startsWith(".") || target.startsWith("#")) {
+    return undefined;
+  }
+  return target;
 }
 
 export function scanExternalDeps(
@@ -4634,6 +4708,14 @@ export function scanExternalDeps(
         const viaImports = resolveSubpathImport(normalizedFile, spec);
         if (viaImports && SOURCE_EXTENSIONS.includes(path.extname(viaImports))) {
           queue.push(viaImports);
+        } else if (!viaImports) {
+          // The map may name a dependency rather than a local file; that target,
+          // never the "#" specifier, is what a bundler pre-bundles.
+          const viaPackage = subpathImportPackage(normalizedFile, spec);
+          if (viaPackage) {
+            specifiersOut?.add(viaPackage);
+            externalPkgs.add(pkgNameOf(viaPackage));
+          }
         }
       } else if (isBareSpecifier) {
         specifiersOut?.add(spec);

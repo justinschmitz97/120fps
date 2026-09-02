@@ -37,6 +37,10 @@ export interface PageErrorCapture {
   // throws during evaluation throws before the readiness wait is even set up;
   // read on the failure path so that error, not the timeout, leads the report.
   capturedFatal(): FatalPageError | undefined;
+  // M108 review: a new document ends the old document's fatal. Without this,
+  // an error captured after the last drain leads the NEXT segment's readiness
+  // timeout and suppresses the true "did not become ready" wording.
+  resetCapturedFatal(): void;
 }
 
 // Retention is by distinct message: repeats of one noisy message must not
@@ -188,6 +192,9 @@ export function attachPageErrorCapture(page: Page, harnessDirName?: string): Pag
     },
     capturedFatal() {
       return capturedFatal;
+    },
+    resetCapturedFatal() {
+      capturedFatal = undefined;
     },
   };
 }
@@ -408,6 +415,7 @@ export async function gotoWithErrorContext(
   options?: Record<string, unknown>,
 ): Promise<void> {
   try {
+    capture.resetCapturedFatal();
     await page.goto(url, options);
   } catch (err) {
     throw enrichTimeoutError(err, capture, context);

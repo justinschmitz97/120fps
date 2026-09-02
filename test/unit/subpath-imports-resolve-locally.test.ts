@@ -88,4 +88,23 @@ describe("a subpath import declared in the package's own imports map", () => {
 
     expect(scanExternalDeps(entry, tmpDir, [])).toEqual(["tokens-pkg"]);
   });
+
+  // M108 review: an imports entry may name a dependency instead of a local
+  // file. That package is an ordinary external import; dropped from the
+  // pre-bundle list, Vite discovers it on first page load and full-reloads.
+  it("reports the package an imports entry points at, not the # specifier", () => {
+    write("package.json", JSON.stringify({ name: "p", imports: { "#dep": "lodash-es" } }));
+    const entry = write("List.tsx", `import { map } from "#dep";\nexport const List = map;\n`);
+
+    const externals = scanExternalDeps(entry, tmpDir, []);
+    expect(externals).toContain("lodash-es");
+    expect(externals.filter((e) => e.startsWith("#"))).toEqual([]);
+  });
+
+  it("reports the package behind a * pattern that targets a dependency subpath", () => {
+    write("package.json", JSON.stringify({ name: "p", imports: { "#icons/*": "lucide-react/*" } }));
+    const entry = write("Icon.tsx", `import Eye from "#icons/eye";\nexport const Icon = Eye;\n`);
+
+    expect(scanExternalDeps(entry, tmpDir, [])).toEqual(["lucide-react"]);
+  });
 });

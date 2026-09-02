@@ -134,3 +134,46 @@ describe("React Compiler runtime that the target needs but the project lacks", (
     expect(reactCompilerRuntimeDeps(tmpDir, "18")).toEqual([]);
   });
 });
+
+// M108 review: with no readable target the plugin defaults to React 19 and the
+// run discloses neither the target nor the runtime it will import.
+describe("React Compiler target that cannot be read", () => {
+  it("keeps the transform off for a React 16 install", () => {
+    useFixture("compiler-react18-project");
+    installReact("16.14.0");
+    installCompilerPlugin();
+
+    expect(detectReactMajor(tmpDir)).toBeUndefined();
+    const state = resolveReactCompilerState(tmpDir, undefined);
+    expect(state.active).toBe(false);
+    expect(state.target).toBeUndefined();
+  });
+
+  it("warns naming the project root instead of defaulting silently to 19", () => {
+    useFixture("compiler-react18-project");
+    installReact("16.14.0");
+    installCompilerPlugin();
+
+    const state = resolveReactCompilerState(tmpDir, undefined);
+    expect(state.warning).toContain("target is unknown");
+    expect(state.warning).toContain(tmpDir);
+  });
+
+  it("falls back to the declared react range when nothing is installed", () => {
+    useFixture("compiler-react18-project");
+    installCompilerPlugin();
+
+    const state = resolveReactCompilerState(tmpDir, undefined);
+    expect(state.target).toBe("18");
+    expect(state.warning).toBeUndefined();
+  });
+
+  it("keeps the transform off when neither the install nor the manifest names a major", () => {
+    fs.writeFileSync(path.join(tmpDir, "package.json"), JSON.stringify({ name: "p" }));
+    installCompilerPlugin();
+
+    const state = resolveReactCompilerState(tmpDir, true);
+    expect(state.active).toBe(false);
+    expect(state.warning).toContain("target is unknown");
+  });
+});

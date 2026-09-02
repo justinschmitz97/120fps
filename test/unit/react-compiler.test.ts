@@ -231,7 +231,11 @@ describe("resolveReactCompilerState", () => {
   });
 
   it("activates on detection when the package resolves", () => {
-    writePkg({ devDependencies: { [REACT_COMPILER_PACKAGE]: "^1.0.0" } });
+    // React declared: the compiler target comes from the project's own React.
+    writePkg({
+      dependencies: { react: "19" },
+      devDependencies: { [REACT_COMPILER_PACKAGE]: "^1.0.0" },
+    });
     installStub({ version: "1.2.3" });
     const state = resolveReactCompilerState(tmpDir, undefined);
     expect(state.detected).toBe(true);

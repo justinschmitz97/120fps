@@ -126,7 +126,7 @@ export const TRANSFORM_RECOGNIZERS: TransformRecognizer[] = [
   // by a plugin. Same shape: no file, no extension, no build that produces one.
   {
     code: "virtual-module",
-    test: (s) => recognizeVirtualNamespace(s) !== undefined,
+    test: (s, containingFile) => recognizeVirtualNamespace(s, containingFile) !== undefined,
     owner: "a Vite plugin the project configures in its vite.config",
   },
 ];
@@ -145,9 +145,18 @@ const VIRTUAL_NAMESPACE_PRODUCERS: Array<{ prefix: string; packages: string[] }>
 
 export function recognizeVirtualNamespace(
   specifier: string,
+  containingFile = "",
 ): { namespace: string; candidates: string[] } | undefined {
   const entry = VIRTUAL_NAMESPACE_PRODUCERS.find((e) => specifier.startsWith(e.prefix));
   if (!entry) return undefined;
+  // M108 review: `~icons/` and `virtual:` name nothing that can be on disk, but
+  // the bare `unplugin-` prefix also starts ordinary package names
+  // (`unplugin-icons/runtime` is a real file inside an installed package). An
+  // installed package answers for the specifier, so it is not a virtual module.
+  if (entry.prefix === "unplugin-" && containingFile) {
+    const pkg = specifier.split("/")[0];
+    if (installedPackageDir(pkg, path.dirname(containingFile)) !== undefined) return undefined;
+  }
   // `unplugin-icons/types/react` names its producer in the specifier itself.
   const own = entry.prefix === "unplugin-" ? [specifier.split("/")[0]] : [];
   return { namespace: entry.prefix, candidates: [...entry.packages, ...own] };
@@ -156,6 +165,10 @@ export function recognizeVirtualNamespace(
 // `styled-components/macro` and `@lingui/react/macro` are the two shapes in the
 // corpus; `babel-plugin-macros` itself is imported directly by a few.
 export function isMacroSpecifier(specifier: string): boolean {
+  // M108 review: a relative `./macro` is a source file of this project, not a
+  // macro package. Flagging it prints an untrue transform note and ends the
+  // preflight walk at that edge, hiding whatever that file itself imports.
+  if (specifier.startsWith(".") || specifier.startsWith("/")) return false;
   return (
     /\/macro$/.test(specifier) ||
     /\.macro$/.test(specifier) ||

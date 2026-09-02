@@ -1,7 +1,11 @@
 import { describe, it, expect } from "vitest";
 import { EventEmitter } from "node:events";
 import type { Page } from "playwright";
-import { attachPageErrorCapture, waitForReadyOrFatal } from "../../src/page-errors.js";
+import {
+  attachPageErrorCapture,
+  gotoWithErrorContext,
+  waitForReadyOrFatal,
+} from "../../src/page-errors.js";
 
 // documenso-F1: a Babel macro throws during module evaluation, before
 // `waitForReadyOrFatal` registers its waiter. The throw was dropped, the run
@@ -138,5 +142,60 @@ describe("the environment-file remedy", () => {
 
     expect(message).toContain("did not become ready within timeout");
     expect(message).not.toContain(ENV_REMEDY);
+  });
+});
+
+// M108 review: enterHarness re-runs the readiness wait after a mid-session
+// navigation, and only drain() cleared the captured fatal. A fatal captured
+// after the last drain would lead the NEXT segment's unrelated timeout.
+describe("a page error captured before the last navigation", () => {
+  it("does not lead the readiness failure of the document that followed it", async () => {
+    const { page, emitter } = makeFakePage();
+    const capture = attachPageErrorCapture(page);
+    emitter.emit("pageerror", pageError("segment N boom"));
+
+    await gotoWithErrorContext(
+      { goto: async () => undefined },
+      "http://localhost/harness.html",
+      capture,
+      "component harness",
+    );
+
+    let message = "";
+    try {
+      await waitForReadyOrFatal(neverReady, capture, "component harness");
+    } catch (err) {
+      message = (err as Error).message;
+    }
+
+    expect(message).toContain("did not become ready within timeout");
+    expect(message).not.toContain("failed before it became ready");
+  });
+
+  it("still leads when the fatal arrives during the new document's evaluation", async () => {
+    const { page, emitter } = makeFakePage();
+    const capture = attachPageErrorCapture(page);
+    emitter.emit("pageerror", pageError("segment N boom"));
+
+    await gotoWithErrorContext(
+      {
+        goto: async () => {
+          emitter.emit("pageerror", pageError("segment N+1 boom"));
+        },
+      },
+      "http://localhost/harness.html",
+      capture,
+      "component harness",
+    );
+
+    let message = "";
+    try {
+      await waitForReadyOrFatal(neverReady, capture, "component harness");
+    } catch (err) {
+      message = (err as Error).message;
+    }
+
+    expect(message).toContain("failed before it became ready");
+    expect(message).toContain("segment N+1 boom");
   });
 });

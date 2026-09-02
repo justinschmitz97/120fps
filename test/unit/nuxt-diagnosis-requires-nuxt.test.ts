@@ -90,4 +90,30 @@ describe("a package-imports miss in a repository without Nuxt", () => {
     expect(presented).not.toContain("nuxi prepare");
     expect(presented).toContain("antd");
   });
+
+  // M108 review: the prefix test needs a segment boundary. "#appsettings/x" is
+  // an ordinary imports-map miss that shares three letters with "#app".
+  it("stays generic for a #-specifier that only shares a prefix with #app", () => {
+    declare({ nuxt: "3.13.0" });
+    const presented = presentBundlerFailure(
+      'Missing "#appsettings/x" specifier in "my-pkg" package',
+      tmpDir,
+      [],
+    );
+
+    expect(presented).not.toContain("nuxi prepare");
+    expect(presented).toContain("#appsettings/x");
+    expect(presented).toContain("my-pkg");
+  });
+
+  it("still fires the Nuxt diagnosis for a nested #app/ specifier", () => {
+    declare({ nuxt: "3.13.0" });
+    const presented = presentBundlerFailure(
+      'Missing "#app/nuxt" specifier in "@nuxt/ui" package',
+      tmpDir,
+      [],
+    );
+
+    expect(presented).toContain("nuxi prepare");
+  });
 });

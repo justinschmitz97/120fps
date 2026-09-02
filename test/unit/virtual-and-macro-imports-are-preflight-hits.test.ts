@@ -119,3 +119,54 @@ describe("a Babel-macro import", () => {
     expect(warning).not.toMatch(/build first|run .*build/);
   });
 });
+
+// M108 review. Both recognizers key off specifier shape, and both end the walk
+// at the edge they claim, so a false positive both prints an untrue transform
+// note and hides everything the real file imports.
+describe("a specifier that only looks like a transform", () => {
+  it("does not treat a relative ./macro as a Babel macro, and still walks it", () => {
+    fs.writeFileSync(path.join(tmpDir, "package.json"), JSON.stringify({ name: "p" }));
+    fs.mkdirSync(path.join(tmpDir, "src"));
+    const entry = path.join(tmpDir, "src", "Comp.tsx");
+    fs.writeFileSync(entry, `import { t } from "./macro";\nexport const Comp = () => t;\n`);
+    fs.writeFileSync(
+      path.join(tmpDir, "src", "macro.ts"),
+      `import "server-only";\nexport const t = 1;\n`,
+    );
+
+    const result = runPreflight({ projectRoot: tmpDir, entries: [entry] });
+
+    expect(result.transforms.find((h) => h.specifier === "./macro")).toBeUndefined();
+    expect(result.hard.some((h) => h.specifier === "server-only")).toBe(true);
+  });
+
+  it("does not treat an installed unplugin-* package as a virtual namespace", () => {
+    fs.writeFileSync(
+      path.join(tmpDir, "package.json"),
+      JSON.stringify({ name: "p", dependencies: { "unplugin-icons": "^0.19.0" } }),
+    );
+    const pkgDir = path.join(tmpDir, "node_modules", "unplugin-icons");
+    fs.mkdirSync(pkgDir, { recursive: true });
+    fs.writeFileSync(path.join(pkgDir, "package.json"), JSON.stringify({ name: "unplugin-icons" }));
+    fs.writeFileSync(path.join(pkgDir, "runtime.js"), "export const x = 1;\n");
+    fs.writeFileSync(path.join(pkgDir, "runtime.d.ts"), "export declare const x: number;\n");
+    const entry = path.join(tmpDir, "Icon.tsx");
+    fs.writeFileSync(entry, `import { x } from "unplugin-icons/runtime";\nexport const Icon = x;\n`);
+
+    const result = runPreflight({ projectRoot: tmpDir, entries: [entry] });
+
+    expect(result.transforms.find((h) => h.specifier === "unplugin-icons/runtime")).toBeUndefined();
+  });
+
+  it("still reports an unplugin-* specifier no installed package answers for", () => {
+    fs.writeFileSync(path.join(tmpDir, "package.json"), JSON.stringify({ name: "p" }));
+    const entry = path.join(tmpDir, "Icon.tsx");
+    fs.writeFileSync(entry, `import "unplugin-turbo-console/client";\nexport const Icon = 1;\n`);
+
+    const result = runPreflight({ projectRoot: tmpDir, entries: [entry] });
+
+    expect(
+      result.transforms.find((h) => h.specifier === "unplugin-turbo-console/client")?.transformCode,
+    ).toBe("virtual-module");
+  });
+});
