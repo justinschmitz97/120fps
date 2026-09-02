@@ -38,6 +38,8 @@ import {
   PREFLIGHT_BYPASSED_WARNING,
   PreflightHardRejectionError,
   classifyPreprocessorAvailability,
+  type PreflightHit,
+  type PreprocessorAvailability,
 } from "./preflight.js";
 import {
   inferComposition,
@@ -247,6 +249,18 @@ export const MATRIX_AUTO_ACTIVATED_NOTICE = (cellCount: number): string =>
 export const MATRIX_SUPPRESSED_BY_CURVE_WARNING = (propName: string): string =>
   `--matrix did not activate: curve mode auto-activated on ${propName} first, and a run is one ` +
   "whole-run mode or the other. Re-run with --no-curve to force matrix instead.";
+
+// M110 C3 (calcom-R1): the other two branches that make the matrix
+// unreachable. Both fell through to `progress("mode: prop combos")` with
+// nothing said, so an explicit --matrix was dropped in silence; the curve
+// suppressor above has named its winner since M83.
+export const MATRIX_SUPPRESSED_BY_COMPOSITION_WARNING = (rootName: string): string =>
+  `--matrix did not activate: an auto-composed scene rooted at ${rootName} supplies the props, and ` +
+  "a composed scene measures one combo. Re-run with --no-auto-compose to force matrix instead.";
+
+export const MATRIX_SUPPRESSED_BY_FIXTURE_WARNING = (fixtureFile: string): string =>
+  `--matrix did not activate: the fixture ${fixtureFile} supplies the props, and a fixture measures ` +
+  "one combo. Re-run with <file>#Export to name one export and force matrix instead.";
 
 // M83 #4c (commerce-F5): an explicit --matrix bypasses shouldAutoActivateMatrix's
 // 2-eligible-axis floor; when the component genuinely has none, the run still
@@ -2303,7 +2317,13 @@ export interface PropsExplanation {
   // M100 (review C-5): why the matrix branch was unreachable, when it was.
   // "combo" alone cannot say, and the two readings need different sentences:
   // a flag the user typed, or a fixture that owns the props.
-  matrixIneligibleReason?: "no-matrix-flag" | "fixture";
+  // M110 C2 (supabase-F3, calcom-R1): "composed" is the third reading, and
+  // the one the dry run used to be structurally unable to give.
+  matrixIneligibleReason?: "no-matrix-flag" | "fixture" | "composed";
+  // M110 C1: the dispatcher's own composition answer, decided from export
+  // names and schemas. Absent when the run would measure the bound export
+  // alone.
+  composition?: { root: string; exportCount: number };
   // Set when a scaling prop was detected and `--no-curve` suppressed it, so
   // "would not activate: no array or numeric scaling prop" is not printed over
   // a component that has one.
@@ -2411,6 +2431,39 @@ export function buildCssReport(
   };
 }
 
+// M110 C4 (logto-F3): the filter the real run built inline, called by both
+// modes so a dry run cannot classify the same hits differently or in another
+// order. `--no-transforms` answers empty in both, because a run told to apply
+// no project transform has nothing to warn about not applying.
+//
+// I3 places this classifier in `src/preflight.ts` (lane A). Until that export
+// lands, this is the single copy both call sites in this file read; the body
+// is the filter the run path carried at `src/analyze.ts:3596-3614`.
+export function classifiedProjectTransformHits(
+  projectRoot: string,
+  transforms: PreflightHit[],
+  opts: { noTransforms?: boolean; workspaceRoot?: string } = {},
+): Array<{ hit: PreflightHit; availability: PreprocessorAvailability | undefined }> {
+  if (opts.noTransforms) return [];
+  // M48: only warn about transforms the harness will not apply. A project
+  // whose plugin is on the supported list and installed gets it loaded, and
+  // crying wolf about a transform that worked is worse than silence.
+  const loadable = new Set(detectProjectTransforms(projectRoot).map((t) => t.code));
+  // M79 (twenty-F3, half 2): a css-preprocessor hit fires unconditionally
+  // (recognizeTransform performs no availability check by design). Vite's own
+  // CSS pipeline resolves sass/less/stylus directly, so an installed
+  // preprocessor needs no warning at all, and a declared-but-uninstalled one
+  // needs different wording than the genuinely-neither case.
+  const workspaceRoot = opts.workspaceRoot ?? findWorkspaceRoot(projectRoot);
+  return transforms
+    .filter((hit) => !hit.transformCode || !loadable.has(hit.transformCode))
+    .map((hit) => ({
+      hit,
+      availability: classifyPreprocessorAvailability(hit, projectRoot, workspaceRoot),
+    }))
+    .filter(({ availability }) => availability !== "installed");
+}
+
 // The same resolution the pipeline performs, stopped before its first side
 // effect: no harness directory, no dev server, no browser, no report file.
 export async function explainProps(
@@ -2434,6 +2487,11 @@ export async function explainProps(
     matrixMode?: boolean;
     isolation?: { phases: string[]; memoryCycles?: number };
     fixturePath?: string;
+    // M110 C1, C4: the two remaining flags that change what the dispatcher
+    // decides from disk. Same names and types as `AnalyzeOptions`, so the CLI
+    // forwards one shape to both entry points.
+    skipAutoCompose?: boolean;
+    noTransforms?: boolean;
     // I12 (M115 C6): the two flags that decide how many combos and samples the
     // real run would measure. Same names and types as `AnalyzeOptions`, so the
     // CLI forwards one shape to both entry points.
@@ -2515,6 +2573,17 @@ export async function explainProps(
   // in the full run.
   preflight.hard.push(...composedChildPreflightHits(resolvedPath, projectRoot));
   for (const hit of preflight.soft) warnings.push(NODE_BUILTIN_WARNING(hit));
+  // M110 C4 (logto-F3): `runPreflight` returned `transforms` on this path all
+  // along and only the run path read it, so the dry run stayed silent about
+  // the lines the real run printed a minute later from the same files. Same
+  // classifier, same order, same text.
+  for (const { hit, availability } of classifiedProjectTransformHits(
+    projectRoot,
+    preflight.transforms,
+    { ...(options.noTransforms ? { noTransforms: true } : {}) },
+  )) {
+    warnings.push(PROJECT_TRANSFORM_WARNING(hit, availability));
+  }
   if (preflight.hard.length > 0) {
     if (options.noPreflight) warnings.push(PREFLIGHT_BYPASSED_WARNING(preflight.hard));
     else throw new Error(preflightFailureMessage(preflight.hard));
@@ -2571,18 +2640,37 @@ export async function explainProps(
     warnings.push(ZERO_PROPS_WARNING);
   }
 
-  const exports = isVueFile(resolvedPath)
-    ? [componentName]
-    : (await extractExports(resolvedPath)).map((e) => e.name);
+  // M110 C1: kept as records, not names, because `inferComposition` reads the
+  // same shape the dispatcher hands it.
+  const componentExports = isVueFile(resolvedPath) ? undefined : await extractExports(resolvedPath);
+  const exports = componentExports ? componentExports.map((e) => e.name) : [componentName];
   const curveMatch = detectScalingProps(schemas)[0];
   // The fixture inputs the real run has before it dispatches: an explicit
   // --fixture, a target that is itself a fixture, or one sitting next to the
-  // component. Auto-composition is the one input no dry run can decide, and
-  // the footer says so rather than this pretending to know.
-  const dryRunUsesFixture =
-    options.fixturePath !== undefined ||
-    isFixturePath(resolvedPath) ||
-    detectFixture(resolvedPath) !== undefined;
+  // component. Kept as the path, not a boolean, so a dropped --matrix can name
+  // the file that took precedence.
+  const dryRunFixturePath = options.fixturePath
+    ? path.resolve(options.fixturePath)
+    : isFixturePath(resolvedPath)
+      ? resolvedPath
+      : detectFixture(resolvedPath);
+  const dryRunUsesFixture = dryRunFixturePath !== undefined;
+
+  // M110 C1 (supabase-F3, calcom-R1): the dispatcher's own gate, evaluated
+  // here from the same filesystem inputs. `inferComposition` reads export
+  // names and schemas only, so this costs a source parse, not a browser --
+  // the old "composition needs a runtime" rationale was never true.
+  let composition: { root: string; exportCount: number } | undefined;
+  if (
+    componentExports &&
+    componentExports.length > 1 &&
+    !dryRunUsesFixture &&
+    !options.skipAutoCompose &&
+    !options.target
+  ) {
+    const tree = inferComposition(componentExports, await extractAllProps(resolvedPath));
+    if (tree) composition = { root: tree.root, exportCount: componentExports.length };
+  }
 
   // M83 #8 (chakra-ui-F7): detectComponentExport resolving to the file's own
   // marked `export default` is correct by JS/TS export semantics, not a bug
@@ -2611,10 +2699,26 @@ export async function explainProps(
         : options.curveMode !== undefined && options.curveMode !== true
           ? true
           : curveMatch !== undefined,
-    matrixEligible: options.matrixMode !== false && !dryRunUsesFixture,
+    matrixEligible: options.matrixMode !== false && !dryRunUsesFixture && composition === undefined,
     matrixRequested: options.matrixMode === true,
     matrixAutoActivates: shouldAutoActivateMatrix(schemas),
   });
+
+  // M110 C3 (calcom-R1): the same two lines the dispatcher now pushes, from
+  // the same two inputs. Restricted to a `combo` prediction because isolation
+  // and curve return before the dispatcher's matrix branch is reached, and
+  // curve carries its own suppressor.
+  if (options.matrixMode === true && predictedMode === "combo") {
+    if (composition) {
+      warnings.push(MATRIX_SUPPRESSED_BY_COMPOSITION_WARNING(composition.root));
+    } else if (dryRunFixturePath) {
+      warnings.push(
+        MATRIX_SUPPRESSED_BY_FIXTURE_WARNING(
+          path.relative(projectRoot, dryRunFixturePath).replace(/\\/g, "/"),
+        ),
+      );
+    }
+  }
 
   // M115 C6: what the real run would cost. Filesystem reads only -- the units
   // the mode this same dry run predicts would measure, the samples that mode
@@ -2672,7 +2776,12 @@ export async function explainProps(
       ? { matrixIneligibleReason: "no-matrix-flag" as const }
       : dryRunUsesFixture
         ? { matrixIneligibleReason: "fixture" as const }
-        : {}),
+        // M110 C2: reported only when the matrix would otherwise have run, so
+        // a component that never qualified is not told it lost a race.
+        : composition && (options.matrixMode === true || shouldAutoActivateMatrix(schemas))
+          ? { matrixIneligibleReason: "composed" as const }
+          : {}),
+    ...(composition ? { composition } : {}),
     ...(options.curveMode === false && curveMatch !== undefined
       ? { curveSuppressedByFlag: true }
       : {}),
@@ -2886,6 +2995,14 @@ export function formatExplainProps(explained: PropsExplanation): string {
   }
 
   lines.push("");
+  // M110 C1 (supabase-F3, calcom-R1): before the mode lines, because which
+  // scene the run builds is what makes the matrix branch reachable at all.
+  lines.push(
+    explained.composition
+      ? `Composition:  would auto-compose from ${explained.composition.root} ` +
+        `(${explained.composition.exportCount} exports)`
+      : `Composition:  would measure ${explained.componentName} alone`,
+  );
   lines.push(
     explained.curveSuppressedByFlag
       ? "Curve mode:   would not activate: --no-curve, though this component has a scaling prop"
@@ -2909,7 +3026,15 @@ export function formatExplainProps(explained: PropsExplanation): string {
   // run never ran. The predicate's answer is still shown; what it loses to is
   // now shown with it.
   lines.push(
-    explained.matrixWouldActivate
+    // M110 C2: an explicit --matrix reaches this branch over a component whose
+    // own predicate never matched, so the composed answer is given before the
+    // predicate's, and "would auto-activate" can never print for a scene the
+    // dispatcher composes.
+    explained.matrixIneligibleReason === "composed"
+      ? "Matrix mode:  predicate matches, but an auto-composed scene supplies the props, so this " +
+        "run would measure that scene's single combo " +
+        `(auto-composed from ${explained.composition?.root ?? explained.componentName})`
+    : explained.matrixWouldActivate
       ? explained.predictedMode === "matrix"
         ? "Matrix mode:  would auto-activate"
         // C-6: combo mode takes no precedence over matrix -- when the
@@ -3593,25 +3718,15 @@ export async function analyze(
     );
     for (const hit of preflight.soft) runWarnings.push(NODE_BUILTIN_WARNING(hit));
 
-    // M48: only warn about transforms the harness will not apply. A project
-    // whose plugin is on the supported list and installed gets it loaded, and
-    // crying wolf about a transform that worked is worse than silence.
     const loadableTransforms = new Set(
       (options.noTransforms ? [] : detectProjectTransforms(projectRoot)).map((t) => t.code),
     );
-    // M79 (twenty-F3, half 2): a css-preprocessor hit fires unconditionally
-    // (recognizeTransform performs no availability check by design). Vite's
-    // own CSS pipeline resolves sass/less/stylus directly, so an installed
-    // preprocessor needs no warning at all, and a declared-but-uninstalled
-    // one needs different wording than the genuinely-neither case.
-    const preprocessorWorkspaceRoot = findWorkspaceRoot(projectRoot);
-    const candidateTransformHits = preflight.transforms
-      .filter((hit) => !hit.transformCode || !loadableTransforms.has(hit.transformCode))
-      .map((hit) => ({
-        hit,
-        availability: classifyPreprocessorAvailability(hit, projectRoot, preprocessorWorkspaceRoot),
-      }))
-      .filter(({ availability }) => availability !== "installed");
+    // M110 C4 (logto-F3): one classifier, shared with the dry run's own
+    // warning list, so the two modes cannot disagree about which transform
+    // hits are worth a warning or in which order they are said.
+    const candidateTransformHits = classifiedProjectTransformHits(projectRoot, preflight.transforms, {
+      ...(options.noTransforms ? { noTransforms: true } : {}),
+    });
     transformHits = candidateTransformHits.map(({ hit }) => hit);
     // Named up front, and again on the way out if the run dies: a transform
     // the harness cannot apply is the first thing to check.
@@ -3953,6 +4068,21 @@ export async function analyze(
         matrixAutoActivates,
       }) === "matrix";
     const matrixAutoActivated = activateMatrix && matrixAutoActivates;
+    // M110 C3 (calcom-R1): the curve branch above has named its winner since
+    // M83; these two dropped an explicit --matrix in silence. A composed scene
+    // and a fixture are mutually exclusive here (composition is skipped
+    // whenever a fixture applies), so at most one line is pushed.
+    if (matrixRequested && !activateMatrix) {
+      if (composed) {
+        runWarnings.push(MATRIX_SUPPRESSED_BY_COMPOSITION_WARNING(compositionTree!.root));
+      } else if (useFixture) {
+        runWarnings.push(
+          MATRIX_SUPPRESSED_BY_FIXTURE_WARNING(
+            path.relative(projectRoot, path.resolve(fixturePath!)).replace(/\\/g, "/"),
+          ),
+        );
+      }
+    }
 
     if (activateMatrix) {
       progress("mode: prop matrix");

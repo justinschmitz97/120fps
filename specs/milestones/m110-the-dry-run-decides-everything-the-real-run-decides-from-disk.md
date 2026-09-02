@@ -189,6 +189,88 @@ Plus `node node_modules/typescript/bin/tsc --noEmit` clean and the lanes' existi
 composition, matrix and harness unit files green (map baseline failures excepted). Decisive output
 lines are pasted here before `status: approved`.
 
+### Lane C evidence (2026-09-03, worktree `C:\Projekte\120fps-m107` at a261145 + lane C's own edits)
+
+Tests, `node node_modules/vitest/vitest.mjs run <files> --maxWorkers=2`:
+
+```
+ Test Files  3 passed (3)
+      Tests  16 passed (16)
+```
+
+(`test/unit/dry-run-predicts-the-composed-scene.test.ts`,
+`test/unit/requested-matrix-names-what-took-precedence.test.ts`,
+`test/unit/dry-run-prints-project-transform-warnings.test.ts`.)
+
+Whole suite, same flags, no regression against the map's baseline list:
+
+```
+ Test Files  299 passed (299)
+      Tests  4502 passed | 1 skipped (4503)
+```
+
+`node node_modules/typescript/bin/tsc --noEmit`: clean (no output).
+
+Corpus, scratch dist `C:/Projekte/120fps-fieldtest/scratch/C-M110/dist/cli.js`, via
+`C:/Projekte/120fps-fieldtest/tools/run120.mjs`:
+
+- **supabase-F3** (`--cwd /e/repositories-run5/supabase/packages/ui`,
+  `src/components/shadcn/ui/popover.tsx --explain-props`, label `M110-supabase-after`, exit 0).
+  Before (`logs/supabase/explain-popover.log`): `Matrix mode:  would auto-activate`, no composition
+  line. After, verbatim:
+
+  ```
+  Composition:  would auto-compose from Popover (5 exports)
+  Matrix mode:  predicate matches, but an auto-composed scene supplies the props, so this run would measure that scene's single combo (auto-composed from Popover)
+  ```
+
+  Closed: yes.
+- **logto-F3** (`--cwd /e/repositories-run5/logto/packages/console`,
+  `src/ds-components/ConfirmModal/index.tsx --explain-props`, label `M110-logto-after`, exit 0).
+  Before (`logs/logto/explain-confirmmodal.log:27-34`): no `[transform:...]` line at all. After:
+  13 `[transform:css-preprocessor]` lines, the same count `logs/logto/real-confirmmodal.log:26-38`
+  prints, first one verbatim:
+
+  ```
+  [transform:css-preprocessor] src/ds-components/ConfirmModal/index.tsx -> @/scss/modal.module.scss: this project compiles that with a CSS preprocessor (Vite needs sass/less/stylus installed in the project), which 120fps ...
+  ```
+
+  Closed: yes.
+- **calcom-R1** (`--cwd /e/repositories/calcom`,
+  `packages/ui/components/popover/Popover.tsx --matrix --samples 3 --max-combos 4 --explore-budget 60 --no-deltas`,
+  label `M110-calcom-after`, exit 0, `Total: 1m 13s`). Before
+  (`logs/regression-calcom/popover-matrix.log:4`): `mode: prop combos` with nothing said about the
+  dropped `--matrix`. After, verbatim:
+
+  ```
+  mode: prop combos  (0:06)
+  ⚠ --matrix did not activate: an auto-composed scene rooted at Popover supplies the props, and a composed scene measures one combo. Re-run with --no-auto-compose to force matrix instead.
+  ```
+
+  Closed: yes.
+- **Unaffected control** (`--cwd /e/repositories-run5/shadcn-admin`,
+  `src/components/ui/button.tsx --explain-props`, label `M110-shadcn-admin-after`, exit 0): same
+  verdict, one added line and no new warning:
+
+  ```
+  Composition:  would measure Button alone
+  Matrix mode:  would not auto-activate
+  ```
+
+  Closed: yes.
+- **epic-stack-F2**: lane A (A1, A2). Not run by lane C; I2's
+  `StaticPreBuild.unresolvedExternals` had not landed at the time of this commit.
+
+Lane C open against lane A:
+
+- **I3** (`classifyProjectTransformHits` in `src/preflight.ts`) had not landed. C4's classifier lives
+  as `classifiedProjectTransformHits` in `src/analyze.ts`, called by the dry run and by the real-run
+  site, so the two modes share one filter; the body moves behind lane A's export when I3 lands.
+- `src/cli.ts`'s `explainPropsOptions` does not forward `skipAutoCompose` or `noTransforms`, so
+  `--no-auto-compose --explain-props` and `--no-transforms --explain-props` still reach `explainProps`
+  without those flags. `explainProps` accepts both (lane C's half of C1 and C4); the forwarding is
+  lane A's line in `src/cli.ts`.
+
 ## Deferred
 
 - Resolving `#app`, `#imports` and `#build` through the importer's `imports` field: M108. A1 warns
