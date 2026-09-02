@@ -7,6 +7,7 @@ import {
   diagnoseUnbuiltWorkspacePackage,
   TYPES_ONLY_WORKSPACE_PACKAGE_WARNING,
   UNBUILT_WORKSPACE_PACKAGE_WARNING,
+  UNBUILT_WORKSPACE_PACKAGE_NO_SOURCE_WARNING,
 } from "../../src/harness.js";
 
 const cleanupDirs: string[] = [];
@@ -125,5 +126,61 @@ describe("the needs-a-build diagnosis is withheld when a package has its source 
     );
 
     expect(diagnosis).toBe(UNBUILT_WORKSPACE_PACKAGE_WARNING("@w/nosource", "dist/index.js"));
+  });
+
+  // A5: the build-step diagnosis carries no dist/ claim of its own; the only
+  // dist/ it may print is one the followed entry itself names.
+  it("names the declared build output instead of inventing a dist/", () => {
+    const { workspaceRoot, member } = mkWorkspace();
+    linkSibling(workspaceRoot, member, "@w/gutenbergish", { main: "./build-module/index.mjs" }, {});
+
+    const diagnosis = diagnoseUnbuiltWorkspacePackage(
+      'Failed to resolve entry for package "@w/gutenbergish". The package may have incorrect main/module/exports specified in its package.json.',
+      member,
+    );
+
+    expect(diagnosis).toContain("build-module/index.mjs");
+    expect(diagnosis).toContain("that build output was never produced");
+    expect(diagnosis).not.toContain("dist/");
+  });
+});
+
+describe("the no-source disclosure names the entry it followed", () => {
+  it("names a non-dist declared entry and claims no dist/", () => {
+    const { workspaceRoot, member, write } = mkWorkspace();
+    linkSibling(
+      workspaceRoot,
+      member,
+      "@w/buildmodule",
+      { exports: { ".": "./build-module/index.mjs" } },
+      {},
+    );
+    write(
+      "packages/app/src/button.tsx",
+      'import { value } from "@w/buildmodule";\nexport default 1;\n',
+    );
+
+    const warnings: string[] = [];
+    const deps = scanExternalDeps(
+      path.join(workspaceRoot, "packages/app/src/button.tsx"),
+      member,
+      [],
+      undefined,
+      warnings,
+      workspaceRoot,
+      [],
+    );
+
+    expect(warnings).toContain(
+      UNBUILT_WORKSPACE_PACKAGE_NO_SOURCE_WARNING("@w/buildmodule", undefined, {
+        field: 'exports["."]',
+        declared: "./build-module/index.mjs",
+        exists: false,
+      }),
+    );
+    const warning = warnings.find((w) => w.includes("@w/buildmodule"))!;
+    expect(warning).toContain("build-module/index.mjs");
+    expect(warning).not.toContain("dist/");
+    expect(deps).not.toContain("@w/buildmodule");
   });
 });

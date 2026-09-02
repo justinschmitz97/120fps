@@ -113,7 +113,13 @@ describe("workspace-sibling packages with unbuilt dist but resolvable source (M9
     const deps = scanExternalDeps(entryPath, member, [], undefined, warnings, workspaceRoot);
 
     expect(deps).not.toContain("@dub/utils");
-    expect(warnings).toContain(UNBUILT_WORKSPACE_PACKAGE_NO_SOURCE_WARNING("@dub/utils", "tsup"));
+    expect(warnings).toContain(
+      UNBUILT_WORKSPACE_PACKAGE_NO_SOURCE_WARNING("@dub/utils", "tsup", {
+        field: "main",
+        declared: "./dist/index.mjs",
+        exists: false,
+      }),
+    );
     expect(warnings).not.toContain(TYPE_ONLY_PACKAGE_WARNING("@dub/utils"));
   });
 

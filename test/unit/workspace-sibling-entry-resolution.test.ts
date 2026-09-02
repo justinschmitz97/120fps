@@ -5,6 +5,7 @@ import os from "node:os";
 import {
   scanExternalDeps,
   UNBUILT_WORKSPACE_SOURCE_ALIAS_WARNING,
+  UNALIASED_WORKSPACE_SUBPATH_WARNING,
 } from "../../src/harness.js";
 
 const cleanupDirs: string[] = [];
@@ -109,6 +110,11 @@ describe("an unbuilt workspace sibling is aliased to the source its own package.
         exists: false,
       }),
     );
+    // A5, pinned literally: a rewrite of the builder that dropped the field
+    // name would keep the comparison above green.
+    expect(warnings.find((w) => w.includes("@w/utils"))).toContain(
+      'whose exports["."] names ./dist/shared/index.js, which does not exist on disk',
+    );
 
     // A2: the subpath key resolves through the same derivation.
     const browserAlias = extraAliases.find((a) => a.find.test("@w/utils/browser"));
@@ -169,7 +175,7 @@ describe("an unbuilt workspace sibling is aliased to the source its own package.
     expect(extraAliases[0]?.replacement).toBe(realPosix(real, "lib", "index.ts"));
     const warning = warnings.find((w) => w.includes("@w/source-field"));
     expect(warning).toBeDefined();
-    expect(warning).toContain("source");
+    expect(warning).toContain("whose source names ./lib/index.ts");
     expect(warning).not.toContain("dist/");
   });
 
@@ -197,6 +203,41 @@ describe("an unbuilt workspace sibling is aliased to the source its own package.
     );
 
     expect(extraAliases[0]?.replacement).toBe(realPosix(real, "lib", "index.ts"));
-    expect(warnings.find((w) => w.includes("@w/both"))).toContain("source");
+    expect(warnings.find((w) => w.includes("@w/both"))).toContain("whose source names ./lib/index.ts");
+  });
+});
+
+describe("a subpath the root alias removed from the pre-bundle is disclosed", () => {
+  it("names the specifier and its sibling when nothing aliased that subpath", () => {
+    const { workspaceRoot, member, write } = mkWorkspace();
+    linkSibling(
+      workspaceRoot,
+      member,
+      "@w/deep",
+      { main: "./dist/index.js" },
+      { "src/index.ts": SOURCE },
+    );
+    write(
+      "packages/ui/src/button.tsx",
+      'import { value } from "@w/deep";\nimport { other } from "@w/deep/not-exported";\nexport default 1;\n',
+    );
+
+    const extraAliases: Array<{ find: RegExp; replacement: string }> = [];
+    const warnings: string[] = [];
+    const deps = scanExternalDeps(
+      path.join(workspaceRoot, "packages/ui/src/button.tsx"),
+      member,
+      [],
+      undefined,
+      warnings,
+      workspaceRoot,
+      extraAliases,
+    );
+
+    expect(deps).not.toContain("@w/deep/not-exported");
+    expect(warnings).toContain(
+      UNALIASED_WORKSPACE_SUBPATH_WARNING("@w/deep/not-exported", "@w/deep"),
+    );
+    expect(warnings.filter((w) => w.includes("@w/deep/not-exported"))).toHaveLength(1);
   });
 });

@@ -2757,7 +2757,7 @@ function resolveManifestEntry(manifest: Record<string, unknown>): string | undef
 
 export const UNBUILT_WORKSPACE_PACKAGE_WARNING = (pkg: string, entryRelative: string): string =>
   `${pkg} is a workspace package whose package.json points at ${entryRelative}, which does not ` +
-  "exist on disk: it needs a build step (its dist/ output was never produced), not a " +
+  "exist on disk: it needs a build step (that build output was never produced), not a " +
   "package.json fix. Run this workspace's build for that package, then measure again.";
 
 // M79 (3a). Vite's own "Failed to resolve entry for package" message blames a
@@ -4089,12 +4089,34 @@ export function TYPES_ONLY_WORKSPACE_PACKAGE_WARNING(
 export function UNBUILT_WORKSPACE_PACKAGE_NO_SOURCE_WARNING(
   pkg: string,
   buildCommand: string | undefined,
+  entry?: { field: string; declared: string; exists: boolean },
 ): string {
+  const build = buildCommand ? ` Run \`${buildCommand}\` in that package first.` : "";
+  if (entry === undefined) {
+    return (
+      `${pkg} is a workspace package whose package.json points at an unbuilt dist/, and no ` +
+      "resolvable source was found to measure instead: this import may still fail when the browser " +
+      "loads it, not only at pre-bundle time." +
+      build
+    );
+  }
+  const existence = entry.exists ? "exists on disk" : "does not exist on disk";
   return (
-    `${pkg} is a workspace package whose package.json points at an unbuilt dist/, and no ` +
-    "resolvable source was found to measure instead: this import may still fail when the browser " +
-    "loads it, not only at pre-bundle time." +
-    (buildCommand ? ` Run \`${buildCommand}\` in that package first.` : "")
+    `${pkg} is a workspace package whose ${entry.field} names ${entry.declared}, which ${existence}, ` +
+    "and no resolvable source was found to measure instead: this import may still fail when the " +
+    "browser loads it, not only at pre-bundle time." +
+    build
+  );
+}
+
+// M107 (review): a subpath specifier of a sibling whose root was aliased is
+// removed from the pre-bundle by that root decision alone. Nothing aliased the
+// subpath itself, so the removal is disclosed instead of silent.
+export function UNALIASED_WORKSPACE_SUBPATH_WARNING(specifier: string, pkg: string): string {
+  return (
+    `${specifier} is a subpath of the workspace package ${pkg}, whose root was aliased to its own ` +
+    "source; that subpath resolved to no source of its own and was left out of the pre-bundle, so " +
+    "this import may still fail when the browser loads it, not only at pre-bundle time."
   );
 }
 
@@ -4318,6 +4340,9 @@ export function scanExternalDeps(
   // node_modules chain never carries. The directory the specifier was first
   // read from answers for it; projectRoot stays the first probe.
   const firstImporterDir = new Map<string, string>();
+  // M107 (review): a specifier whose package directory no importer has yet
+  // produced re-reads its importer from the newest file that imported it.
+  const unresolvedImporters = new Set<string>();
 
   // M107 (gutenberg-F1): the walk runs again from every source an unbuilt
   // sibling was aliased to, so a sibling first reached through an import the
@@ -4383,8 +4408,14 @@ export function scanExternalDeps(
           ? spec.split("/").slice(0, 2).join("/")
           : spec.split("/")[0];
         const importerDir = path.dirname(normalizedFile);
-        if (!firstImporterDir.has(spec)) firstImporterDir.set(spec, importerDir);
-        if (!firstImporterDir.has(pkg)) firstImporterDir.set(pkg, importerDir);
+        if (!firstImporterDir.has(spec) || unresolvedImporters.has(spec)) {
+          firstImporterDir.set(spec, importerDir);
+          unresolvedImporters.delete(spec);
+        }
+        if (!firstImporterDir.has(pkg) || unresolvedImporters.has(pkg)) {
+          firstImporterDir.set(pkg, importerDir);
+          unresolvedImporters.delete(pkg);
+        }
         if (spec === pkg) {
           // The specifier was already the bare root: unchanged, covers every
           // ordinary dependency including subpath-only ones like swiper.
@@ -4464,10 +4495,17 @@ export function scanExternalDeps(
   const decidedEntries = new Set<string>();
   const keptEntries = new Set<string>();
 
+  const reportedUnaliasedSubpaths = new Set<string>();
   const applyDecision = (entry: string, pkg: string, decision: SiblingDecision): void => {
-    if (decision.aliasedRoot || decision.aliasedSpecifiers.has(entry) || entry === pkg) {
+    if (decision.aliasedSpecifiers.has(entry) || entry === pkg) {
       externalPkgs.delete(entry);
+      return;
     }
+    if (!decision.aliasedRoot) return;
+    externalPkgs.delete(entry);
+    if (reportedUnaliasedSubpaths.has(entry)) return;
+    reportedUnaliasedSubpaths.add(entry);
+    warningsOut?.push(UNALIASED_WORKSPACE_SUBPATH_WARNING(entry, pkg));
   };
 
   const resolvePackages = (): boolean => {
@@ -4489,7 +4527,12 @@ export function scanExternalDeps(
         installedPackageDir(pkg, projectRoot) ??
         (importerDir === undefined ? undefined : resolvePackageDir(pkg, importerDir));
       if (dir === undefined) {
-        keptEntries.add(entry);
+        // M107 (review): the importer this specifier was first read from may be
+        // a file where the package is not installed; a later round can reach the
+        // same specifier from a directory where it is, so the entry is left
+        // undecided rather than kept for good.
+        unresolvedImporters.add(entry);
+        unresolvedImporters.add(pkg);
         continue;
       }
       if (!isWorkspaceSibling(dir, workspaceRoot)) {
@@ -4558,14 +4601,25 @@ export function scanExternalDeps(
         queue.push(subpath.entry);
         queuedSource = true;
       }
-      if (source === undefined && subpaths.length === 0) {
+      if (source === undefined) {
         if (!declaresEntry) {
           const types = typeof manifest?.types === "string" ? manifest.types : undefined;
           warningsOut?.push(TYPES_ONLY_WORKSPACE_PACKAGE_WARNING(pkg, types));
         } else {
           const scripts = manifest?.scripts as Record<string, unknown> | undefined;
           const buildCommand = typeof scripts?.build === "string" ? scripts.build : undefined;
-          warningsOut?.push(UNBUILT_WORKSPACE_PACKAGE_NO_SOURCE_WARNING(pkg, buildCommand));
+          const declaredEntry = manifest ? declaredRuntimeEntries(manifest)[0] : undefined;
+          warningsOut?.push(
+            UNBUILT_WORKSPACE_PACKAGE_NO_SOURCE_WARNING(
+              pkg,
+              buildCommand,
+              declaredEntry && {
+                field: declaredEntry.field,
+                declared: declaredEntry.declared,
+                exists: fs.existsSync(path.resolve(real, declaredEntry.declared)),
+              },
+            ),
+          );
         }
       }
       for (const known of [...externalPkgs]) {
