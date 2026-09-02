@@ -487,6 +487,10 @@ export interface ReactCompilerReport {
   active: boolean;
   detected: boolean;
   version?: string;
+  // M108 A4: the React major the transform compiled for, and the runtime that
+  // major needs when its absence is what kept the transform from running.
+  target?: "17" | "18" | "19";
+  skipped?: { target: string; missingModule: string };
 }
 
 // Which measurement this report describes. Same vocabulary as
@@ -924,10 +928,16 @@ export function formatTable(report: Report): string {
     lines.push(formatStylesheetsLine(report.css));
   }
   if (report.reactCompiler?.active) {
-    const version = report.reactCompiler.version
-      ? ` (v${report.reactCompiler.version})`
-      : "";
-    lines.push(`React Compiler: active${version}`);
+    const details: string[] = [];
+    if (report.reactCompiler.version) details.push(`v${report.reactCompiler.version}`);
+    // M108 A4: the target the transform compiled for, beside the version that
+    // compiled it, so a React 18 project reads which React its output assumes.
+    if (report.reactCompiler.target) details.push(`target ${report.reactCompiler.target}`);
+    const suffix = details.length > 0 ? ` (${details.join(", ")})` : "";
+    lines.push(`React Compiler: active${suffix}`);
+  } else if (report.reactCompiler?.skipped) {
+    const { target, missingModule } = report.reactCompiler.skipped;
+    lines.push(`React Compiler: skipped (target ${target}: ${missingModule} not installed)`);
   }
   lines.push("");
 

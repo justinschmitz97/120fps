@@ -2,7 +2,7 @@ import ts from "typescript";
 import os from "node:os";
 import fs from "node:fs";
 import path from "node:path";
-import { buildAndServe, collectStaticPreBuildWarnings, detectComponentExport, detectProjectTransforms, discoverGlobalCss, detectScaleExport, detectWrapper, findProjectRoot, resolveReactCompilerState, assertReactDomClient, assertRendererSupported, rendererFor, detectBundlerReactDomAlias, BUNDLER_PREACT_ALIAS_WARNING, stylesheetRuleCount, hasAnyEnvFile, NO_ENV_FILE_REMEDY_NOTE, presentBundlerFailure, stylesheetReadFailureTarget, CSS_UNREADABLE_DROPPED_WARNING, type HarnessResult } from "./harness.js";
+import { buildAndServe, collectStaticPreBuildWarnings, detectComponentExport, detectProjectTransforms, discoverGlobalCss, detectScaleExport, detectWrapper, findProjectRoot, resolveReactCompilerState, assertReactDomClient, assertRendererSupported, rendererFor, detectBundlerReactDomAlias, BUNDLER_PREACT_ALIAS_WARNING, stylesheetRuleCount, hasAnyEnvFile, NO_ENV_FILE_REMEDY_NOTE, presentBundlerFailure, stylesheetReadFailureTarget, CSS_UNREADABLE_DROPPED_WARNING, type HarnessResult, type ReactCompilerState } from "./harness.js";
 import {
   attachPageErrorCapture,
   gotoWithErrorContext,
@@ -153,6 +153,7 @@ import {
   formatPhaseDuration,
   type PhaseClock,
   type PhaseTimings,
+  type ReactCompilerReport,
 } from "./report.js";
 
 // M40: the numbers are real, but they describe a transient scene. Warn, never
@@ -3166,6 +3167,21 @@ export function formatAccumulatedWarnings(warnings: string[]): string {
   return ["", "", "Warnings recorded before this failure:", ...warnings.map((w) => `  ${w}`)].join("\n");
 }
 
+// M108 A4: one place turns the harness's React Compiler state into the report's
+// disclosure, so the JSON field and the terminal line describe the same run.
+export function buildReactCompilerReport(
+  state: ReactCompilerState | undefined,
+): ReactCompilerReport | undefined {
+  if (!state || !(state.detected || state.active)) return undefined;
+  return {
+    active: state.active,
+    detected: state.detected,
+    ...(state.version ? { version: state.version } : {}),
+    ...(state.target ? { target: state.target } : {}),
+    ...(state.skipped ? { skipped: state.skipped } : {}),
+  };
+}
+
 export async function analyze(
   componentPath: string,
   options: AnalyzeOptions = {},
@@ -3505,12 +3521,9 @@ export async function analyze(
       report.projectTransforms = activeTransforms;
     }
     const compiler = harness?.reactCompiler;
-    if (compiler && (compiler.detected || compiler.active)) {
-      report.reactCompiler = {
-        active: compiler.active,
-        detected: compiler.detected,
-        ...(compiler.version ? { version: compiler.version } : {}),
-      };
+    const compilerReport = buildReactCompilerReport(compiler);
+    if (compilerReport) {
+      report.reactCompiler = compilerReport;
     }
     if (compiler?.warning) {
       report.warnings = [...(report.warnings ?? []), compiler.warning];

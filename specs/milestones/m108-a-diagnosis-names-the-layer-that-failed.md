@@ -7,6 +7,7 @@ tests:
   - test/unit/react-compiler-target-matches-installed-react.test.ts
   - test/unit/virtual-and-macro-imports-are-preflight-hits.test.ts
   - test/unit/page-error-reaches-its-own-remedy.test.ts
+  - test/unit/react-compiler-disclosure-names-target.test.ts
 ---
 
 # M108: A diagnosis names the layer that failed
@@ -244,6 +245,42 @@ specifiers, so a project's own `./macro` file stays an ordinary graph edge.
 Not implemented, blocked on I4 (lane C has not landed the two `ReactCompilerReport` fields): A4's
 report object and terminal line. `ReactCompilerState` (`src/harness.ts`) already carries `target`
 and `skipped` for lane C to read.
+
+### Lane C evidence (2026-09-03, scratch dist `C-M108`)
+
+A4 only: `ReactCompilerReport` (`src/report.ts`) carries `target` and `skipped`, `formatTable`
+prints them, and `buildReactCompilerReport` (`src/analyze.ts`) forwards lane A's
+`ReactCompilerState` into the report object. I4 is closed on both sides.
+
+Tests, `node node_modules/vitest/vitest.mjs run test/unit/react-compiler-disclosure-names-target.test.ts --maxWorkers=2`:
+
+    Test Files  1 passed (1)
+         Tests  9 passed (9)
+
+The 54 files that assert on `formatTable` output (`grep -l formatTable test/unit/*.test.ts`),
+same runner: `Test Files 54 passed (54)`, `Tests 1123 passed (1123)` — including
+`test/unit/react-compiler.test.ts` and `test/unit/react-compiler-harden.test.ts`, whose
+`React Compiler: active (v1.0.0)` assertions hold unchanged for a report with no `target`.
+`test/unit/react-compiler-target-matches-installed-react.test.ts` and
+`test/unit/baseline-slots.test.ts`: `Test Files 2 passed (2)`, `Tests 35 passed (35)`.
+
+`node node_modules/typescript/bin/tsc --noEmit`: clean, no output.
+
+Corpus, `node C:/Projekte/120fps-fieldtest/tools/run120.mjs ... --cli
+C:/Projekte/120fps-fieldtest/scratch/C-M108/dist/cli.js`, one run at a time, label
+`M108-<repo>-after`. "before" lines are the EVIDENCE.md rows' own logs.
+
+- primer-react-F1 — the terminal line cannot be shown here, the rest closed.
+  before: `Error: react imports from "./compiler-runtime", a Nuxt build-time virtual module that does not exist until `nuxi prepare` generates the .nuxt/ directory. Run `nuxi prepare` in this project, then measure again.`
+  after: `exit=2 killed=false seconds=36` / `Error: component harness failed before it became ready: warning.ts: __DEV__ is not defined. Page errors:` / `  - __DEV__ is not defined`. No `react/compiler-runtime` error, no Nuxt sentence. `React Compiler:` is a report header line and this run writes no report (`__DEV__`, deferred), so the corpus cannot print it: primer-react is the only corpus repository that declares `babel-plugin-react-compiler` (`grep -l babel-plugin-react-compiler` over epic-stack, documenso, hoppscotch and shadcn-admin returns nothing). The wording is covered by the unit tests above.
+- epic-stack-F1 — closed, header block unchanged.
+  before: `Error: Failed to start Vite dev server in E:\repositories-run5\epic-stack\.120fps-harness-Azc3vv: epic-stack-template imports from "#app", a Nuxt build-time virtual module that does not exist until `nuxi prepare` generates the .nuxt/ directory. Run `nuxi prepare` in this project, then measure again.`
+  after: `exit=0 killed=false seconds=84` / `Mode: prop combos (4 measured of 64 generated, +4 scale probes)` / `Result: PASS`. No `React Compiler:` line, as the repository declares no compiler.
+- hoppscotch-F2 — closed, unchanged by lane C.
+  after: `exit=2 killed=false seconds=35` / `Error: src/components/smart/EnvInput.vue?vue&type=script&setup=true&lang.ts imports "~icons/lucide/eye", a module in the `~icons/` virtual namespace: a Vite plugin generates it at request time, and 120fps never reads your vite.config, so nothing answers for it here. This repository declares unplugin-icons, the plugin that owns that namespace; measure a component that does not import from it, or stub the import.`
+- documenso-F1 — closed, unchanged by lane C.
+  after: `exit=2 killed=false seconds=36` / `Error: component harness failed before it became ready: Unable to determine current node version. Page errors:` / `  - Unable to determine current node version`, preceded by `  [transform:babel-macro] primitives/dialog.tsx → @lingui/react/macro: this project compiles that with a Babel macro compiler the project configures in its vite.config, which 120fps does not load (the harness never reads your vite.config).` No env-file remedy.
+- Unaffected control: shadcn-admin `src/components/ui/button.tsx --explain-props`, `exit=0 killed=false seconds=3`, `Component: Button` / `Estimated real run: ~2m 9s`.
 
 ## Deferred
 
