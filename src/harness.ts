@@ -17,6 +17,9 @@ import {
   detectPnP,
   findCompilerConfig,
   findProjectRoot,
+  resolveGoverningTsconfig,
+  TSCONFIG_EXTENDS_BROKEN_WARNING,
+  TSCONFIG_REFERENCES_MARKER,
   findWorkspaceRoot,
   installedPackageDir,
   isPackageAvailable,
@@ -595,6 +598,9 @@ export interface BuildHarnessOptions {
 export interface StaticPreBuild {
   warnings: string[];
   viteConfig: ViteConfigData;
+  // M109 (A5): the conditions the dev server resolves exports under — the vite
+  // config's own list, then the governing tsconfig's customConditions.
+  resolveConditions: string[];
   externalDeps: string[];
   styleTooling: StyleTooling;
   nextModules: { detected: boolean; activeShims?: string[]; unsupported: string[] };
@@ -2839,23 +2845,71 @@ export function resolveJsxImportSource(
   projectRoot: string,
   workspaceRoot: string = findWorkspaceRoot(projectRoot),
 ): string {
-  const configPath = findCompilerConfig(projectRoot, workspaceRoot);
-  if (!configPath) return DEFAULT_JSX_IMPORT_SOURCE;
   try {
-    const configFile = ts.readConfigFile(configPath, ts.sys.readFile);
-    if (configFile.error) return DEFAULT_JSX_IMPORT_SOURCE;
-    const parsed = ts.parseJsonConfigFileContent(
-      configFile.config,
-      ts.sys,
-      path.dirname(configPath),
-      undefined,
-      configPath,
-    );
-    const declared = parsed.options.jsxImportSource;
+    // M109 (I1): the governing config, so a references-only root reaches the
+    // referenced config that declares jsxImportSource.
+    const declared = resolveGoverningTsconfig(projectRoot, workspaceRoot).options.jsxImportSource;
     return declared && declared.length > 0 ? declared : DEFAULT_JSX_IMPORT_SOURCE;
   } catch {
     return DEFAULT_JSX_IMPORT_SOURCE;
   }
+}
+
+// M109 (A3, ark-F1): with no esbuild option of its own, vite:esbuild reads the
+// project tsconfig for the ts/tsx loaders, so ark's `"jsx": "preserve"` (the
+// standard Vite library setup, where the project's own plugin-react supplies
+// the runtime the harness does not run) fell through to esbuild's classic
+// React.createElement transform. ark imports only named React exports, so the
+// first JSX evaluation threw `React is not defined` and every .tsx in the
+// repository was mis-transformed. These are the two settings jsxInJsPlugin has
+// applied to project .js files since M77.
+export function harnessEsbuildOptions(
+  projectRoot: string,
+  workspaceRoot?: string,
+): { jsx: "automatic"; jsxImportSource: string } {
+  return {
+    jsx: "automatic",
+    jsxImportSource: resolveJsxImportSource(projectRoot, workspaceRoot),
+  };
+}
+
+export function RESOLVE_CONDITIONS_WARNING(
+  conditions: string[],
+  tsconfigPath: string,
+  viteConfigFile?: string,
+): string {
+  const source = viteConfigFile
+    ? `${path.basename(viteConfigFile)}'s resolve.conditions and customConditions in ${tsconfigPath}`
+    : `customConditions in ${tsconfigPath}`;
+  return `resolve.conditions [${conditions.join(", ")}] came from ${source}.`;
+}
+
+// M109 (A5, react-spectrum-F2): react-aria publishes its subpaths only under
+// the `source` condition the consuming tsconfig declares, with no dist/ to fall
+// back to, and the dev server answered 500 for every one of them; nothing here
+// ever read customConditions. The vite config's own list stays first, so every
+// export a project already resolved resolves the same way.
+export function resolveServerConditions(
+  projectRoot: string,
+  viteConditions: string[],
+  opts?: { forFile?: string; workspaceRoot?: string; viteConfigFile?: string },
+): { conditions: string[]; warning?: string } {
+  const governing = resolveGoverningTsconfig(
+    opts?.forFile ?? projectRoot,
+    opts?.workspaceRoot ?? findWorkspaceRoot(projectRoot),
+  );
+  const declared = governing.options.customConditions ?? [];
+  const added = declared.filter((condition) => !viteConditions.includes(condition));
+  const conditions = [...viteConditions, ...added];
+  if (added.length === 0 || !governing.configPath) return { conditions };
+  return {
+    conditions,
+    warning: RESOLVE_CONDITIONS_WARNING(
+      conditions,
+      governing.configPath,
+      viteConditions.length > 0 ? opts?.viteConfigFile : undefined,
+    ),
+  };
 }
 
 const RESOLVE_ENTRY_FAILURE = /Failed to resolve entry for package "([^"]+)"/;
@@ -3424,7 +3478,7 @@ export function collectStaticPreBuildWarnings(
   // M69: alias construction and the scan both report what they could not
   // resolve, and both feed the same run warnings.
   const warnings: string[] = [];
-  const tsconfigAliases = loadTsconfigAliases(projectRoot, warnings);
+  const tsconfigAliases = loadTsconfigAliases(projectRoot, warnings, opts.componentPath);
   const detected = !opts.noShims && detectNextJs(projectRoot);
   const shimAliases = buildShimAliases(detected);
   // M71: what the project's own vite.config says, read as text. Its aliases sit
@@ -3437,6 +3491,14 @@ export function collectStaticPreBuildWarnings(
     );
   }
   warnings.push(...viteConfig.warnings);
+  // M109 (A5): decided here, so the dry run discloses the list the real run
+  // resolves with.
+  const serverConditions = resolveServerConditions(projectRoot, viteConfig.conditions, {
+    forFile: opts.componentPath,
+    workspaceRoot,
+    ...(viteConfig.configFile ? { viteConfigFile: viteConfig.configFile } : {}),
+  });
+  if (serverConditions.warning) warnings.push(serverConditions.warning);
   const aliases: StaticPreBuild["aliases"] = [
     ...tsconfigAliases,
     ...viteConfig.aliases,
@@ -3494,6 +3556,7 @@ export function collectStaticPreBuildWarnings(
   return {
     warnings,
     viteConfig,
+    resolveConditions: serverConditions.conditions,
     externalDeps,
     styleTooling,
     nextModules: { detected, ...(activeShims ? { activeShims } : {}), unsupported },
@@ -3765,11 +3828,20 @@ export async function buildAndServe(
         watch: null,
         ...(fsAllow ? { fs: { allow: fsAllow } } : {}),
       },
+      // M109 (A3): what the project's tsconfig says about `jsx` never decides
+      // how the harness compiles its .ts/.tsx/.jsx. A Vue project keeps the vue
+      // plugin's own compilation of its SFC blocks, untouched.
+      ...(renderer === "vue"
+        ? {}
+        : { esbuild: harnessEsbuildOptions(projectRoot, workspaceRoot) }),
       resolve: {
         alias,
         dedupe: renderer === "vue" ? ["vue"] : ["react", "react-dom"],
         // M76: a pass-through to Vite's own condition-aware exports resolver.
-        ...(viteConfig.conditions.length > 0 ? { conditions: viteConfig.conditions } : {}),
+        // M109 (A5): with the governing tsconfig's customConditions appended.
+        ...(preBuild.resolveConditions.length > 0
+          ? { conditions: preBuild.resolveConditions }
+          : {}),
       },
       optimizeDeps: {
         include: stableInclude,
@@ -5083,6 +5155,19 @@ export function TYPES_ONLY_ALIAS_WARNING(pattern: string, target: string): strin
   );
 }
 
+// True when nothing outside the key's wildcard constrains what it matches, so
+// the alias fires on every root-absolute URL: "*" and "/*" do, "@/*" (prefix
+// "@"), "/app/*" (prefix "app") and "*-suffix" (suffix "-suffix") do not. The
+// slashes are stripped because a leading one is what a root-absolute URL is
+// made of, not a constraint on the rest of the path.
+function capturesEveryRootAbsoluteUrl(pattern: string): boolean {
+  const first = pattern.indexOf("*");
+  if (first === -1) return false;
+  const bare = (part: string): string =>
+    part.replace(/^\/+/, "").replace(/\/+$/, "");
+  return bare(pattern.slice(0, first)) === "" && bare(pattern.slice(pattern.lastIndexOf("*") + 1)) === "";
+}
+
 // The per-entry logic shared by the member's own `paths` and, additively, the
 // workspace root's (M76). M77 adds the loadable-entry check to the exact-match
 // branch only: a `@/*`-style prefix aliases a directory Vite resolves per
@@ -5091,11 +5176,18 @@ function buildPathAliasEntry(
   pattern: string,
   targets: readonly string[],
   base: string,
+  configFile: string,
   warningsOut?: string[],
 ): { find: RegExp; replacement: string } | undefined {
   if (!targets.length) return undefined;
   // First target only: Vite aliases support a single replacement.
   const target = targets[0];
+  // M109 (A4): a key with no prefix and no suffix of its own fires on every
+  // root-absolute URL, which is Vite's client, /@fs/ and the harness entry too.
+  if (capturesEveryRootAbsoluteUrl(pattern)) {
+    warningsOut?.push(ROOT_ABSOLUTE_ALIAS_WARNING(pattern, target, configFile));
+    return undefined;
+  }
   if (pattern.endsWith("/*") && target.endsWith("/*")) {
     const prefix = pattern.slice(0, -2);
     const dir = path.resolve(base, target.slice(0, -2)).replace(/\\/g, "/");
@@ -5139,14 +5231,25 @@ interface ParsedTsconfigPaths {
   configErrors?: string[];
 }
 
-// M95 (nuxt-ui-F1/F2): a broken extends chain, named and connected to the
-// downstream consequence (an empty prop schema) it silently causes, instead
-// of two unrelated-looking facts a user has to connect themselves.
-export function TSCONFIG_EXTENDS_BROKEN_WARNING(tsconfigPath: string, detail: string): string {
+// M95 (nuxt-ui-F1/F2). M109 moved the builder to `src/project-model.ts`, where
+// the one tsconfig reader produces it; every existing importer keeps this name.
+export { TSCONFIG_EXTENDS_BROKEN_WARNING };
+
+// M109 (A4, react-spectrum-F2): react-spectrum's root declares
+// `paths: { "/*": ["./*"] }`. Vite merges user aliases ahead of its own client
+// alias, so the alias built from that key rewrote `/@vite/client` and the
+// harness entry into the workspace root: two 404s and exit 2 before anything
+// rendered. A key with no prefix of its own aliases every root-absolute URL the
+// dev server owns, so it builds no alias at all.
+export function ROOT_ABSOLUTE_ALIAS_WARNING(
+  pattern: string,
+  target: string,
+  configFile: string,
+): string {
   return (
-    `${tsconfigPath}: ${detail} Path aliases and compiler options from the broken part of this ` +
-    "config chain are unavailable, and prop extraction for files under it may report fewer props " +
-    "than the source actually declares."
+    `${configFile}: the path alias "${pattern}" -> "${target}" has no prefix of its own, so it ` +
+    "would rewrite every root-absolute URL the dev server serves, including Vite's own client " +
+    "and the harness entry. It is skipped; the other keys in this config still apply."
   );
 }
 
@@ -5208,14 +5311,23 @@ function parseTsconfigPathsConfig(tsconfigPath: string): ParsedTsconfigPaths | u
   }
 }
 
+// M109 (A2): the references handover describes the run, not the caller, so it
+// is disclosed once per process per config — `loadTsconfigAliases` runs several
+// times in one run and the sentence is the same every time.
+const disclosedGoverningConfigs = new Set<string>();
+
 export function loadTsconfigAliases(
   projectRoot: string,
   warningsOut?: string[],
+  forFile?: string,
 ): Array<{ find: RegExp; replacement: string; fromWorkspaceRoot?: WorkspaceRootAliasSource }> {
   // M69: upward from the member, bounded by the root that governs the install.
   // A member inheriting the workspace tsconfig used to get no aliases at all.
+  // M109 (I1): through the reader, so a references-only root hands over to the
+  // referenced config that covers the file being measured.
   const workspaceRoot = findWorkspaceRoot(projectRoot);
-  const tsconfigPath = findCompilerConfig(projectRoot, workspaceRoot);
+  const governing = resolveGoverningTsconfig(forFile ?? projectRoot, workspaceRoot);
+  const tsconfigPath = governing.configPath;
 
   let memberAliases: Array<{ find: RegExp; replacement: string }> = [];
   let memberPatterns = new Set<string>();
@@ -5228,29 +5340,44 @@ export function loadTsconfigAliases(
   // sets this flag.
   let memberDeclaredBaseUrlOnly = false;
 
+  // A malformed member config gives up entirely, same as before M76, rather
+  // than guessing whether a root layer should still apply. The reader keeps
+  // quiet about it so this message is printed once, by whoever asked.
+  if (governing.nearestConfigPath && !tsconfigPath) {
+    process.stderr.write(`Warning: ${governing.warnings[0]}\n`);
+    return [];
+  }
+
   if (tsconfigPath) {
-    const parsed = parseTsconfigPathsConfig(tsconfigPath);
-    // A malformed member config already warned to stderr above: give up
-    // entirely, same as before M76, rather than guess whether a root layer
-    // should still apply.
-    if (parsed === undefined) return [];
     // M95: a broken extends chain (parseJsonConfigFileContent's own
     // diagnostics, previously discarded) is disclosed once per config file —
     // the rest of this function still runs on whatever paths/baseUrl it
-    // could parse despite the broken part of the chain.
-    for (const detail of parsed.configErrors ?? []) {
-      warningsOut?.push(TSCONFIG_EXTENDS_BROKEN_WARNING(tsconfigPath, detail));
+    // could parse despite the broken part of the chain. M109: the references
+    // handover travels the same channel, once per process per config.
+    for (const warning of governing.warnings) {
+      if (!warningsOut) break;
+      if (warning.includes(TSCONFIG_REFERENCES_MARKER)) {
+        if (disclosedGoverningConfigs.has(warning)) continue;
+        disclosedGoverningConfigs.add(warning);
+      }
+      warningsOut.push(warning);
     }
-    if (parsed.paths) {
+    if (governing.options.paths) {
       // The member's own declared pattern names, regardless of whether its
       // own target resolves: the member deliberately owns any name it lists.
-      memberPatterns = new Set(Object.keys(parsed.paths));
-      for (const [pattern, targets] of Object.entries(parsed.paths)) {
-        const entry = buildPathAliasEntry(pattern, targets, parsed.base, warningsOut);
+      memberPatterns = new Set(Object.keys(governing.options.paths));
+      for (const [pattern, targets] of Object.entries(governing.options.paths)) {
+        const entry = buildPathAliasEntry(
+          pattern,
+          targets,
+          governing.base,
+          tsconfigPath,
+          warningsOut,
+        );
         if (entry) memberAliases.push(entry);
       }
-    } else if (parsed.baseUrl) {
-      memberAliases = baseUrlAliases(parsed.baseUrl, projectRoot, workspaceRoot);
+    } else if (governing.options.baseUrl) {
+      memberAliases = baseUrlAliases(governing.options.baseUrl, projectRoot, workspaceRoot);
       memberDeclaredBaseUrlOnly = true;
     }
   }
@@ -5265,7 +5392,12 @@ export function loadTsconfigAliases(
     replacement: string;
     fromWorkspaceRoot: WorkspaceRootAliasSource;
   }> = [];
-  if (!memberDeclaredBaseUrlOnly && rootConfigPath && rootConfigPath !== tsconfigPath) {
+  if (
+    !memberDeclaredBaseUrlOnly &&
+    rootConfigPath &&
+    rootConfigPath !== tsconfigPath &&
+    rootConfigPath !== governing.nearestConfigPath
+  ) {
     const rootParsed = parseTsconfigPathsConfig(rootConfigPath);
     for (const detail of rootParsed?.configErrors ?? []) {
       warningsOut?.push(TSCONFIG_EXTENDS_BROKEN_WARNING(rootConfigPath, detail));
@@ -5273,7 +5405,13 @@ export function loadTsconfigAliases(
     if (rootParsed?.paths) {
       for (const [pattern, targets] of Object.entries(rootParsed.paths)) {
         if (memberPatterns.has(pattern) || !targets.length) continue;
-        const entry = buildPathAliasEntry(pattern, targets, rootParsed.base, warningsOut);
+        const entry = buildPathAliasEntry(
+          pattern,
+          targets,
+          rootParsed.base,
+          rootConfigPath,
+          warningsOut,
+        );
         if (!entry) continue;
         workspaceRootAliases.push({
           ...entry,

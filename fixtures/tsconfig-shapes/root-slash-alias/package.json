@@ -1,0 +1,5 @@
+{
+  "name": "tsconfig-shapes-root-slash-alias",
+  "private": true,
+  "type": "module"
+}

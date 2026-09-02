@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import ts from "typescript";
 
 // M68. One directory used to answer every question about a project, which is
 // only right when the package and the install are the same directory. A
@@ -199,4 +200,281 @@ const PNP_MARKERS = [".pnp.cjs", ".pnp.loader.mjs"];
 export function detectPnP(workspaceRoot: string): boolean {
   if ((process.versions as Record<string, string | undefined>).pnp !== undefined) return true;
   return PNP_MARKERS.some((name) => fs.existsSync(path.join(workspaceRoot, name)));
+}
+
+// M109 (I1, coordinator-F1): "which config governs this file" has one more
+// answer than `findCompilerConfig` gives. `npm create vite@latest` writes a
+// root that declares no compilerOptions at all -- `{ "files": [],
+// "references": [...] }` -- and puts every option the project uses in
+// `tsconfig.app.json`. TypeScript reads the referenced project that covers the
+// file; the harness and prop extraction read the nearest config, found no
+// `paths`, and the run died on the project's own `@/lib/utils` import.
+export interface GoverningTsconfig {
+  // The config whose options apply. Undefined only when there is no config, or
+  // when the nearest one could not be read (the caller owns that message).
+  configPath: string | undefined;
+  nearestConfigPath: string | undefined;
+  // True only when configPath came from a `references` entry.
+  viaReferences: boolean;
+  options: ts.CompilerOptions;
+  // Where a relative `paths` target resolves from: baseUrl, else the directory
+  // of the config that declared `paths`, else the config's own directory.
+  base: string;
+  warnings: string[];
+}
+
+// The wording the harness prints, and the text its disclosure register keys on.
+export const TSCONFIG_REFERENCES_MARKER = "declares no compilerOptions and lists references";
+
+export function TSCONFIG_REFERENCES_WARNING(
+  nearestConfigPath: string,
+  chosenConfigPath: string,
+  subject: string,
+  fields: string[],
+): string {
+  const supplied = fields.length > 0 ? fields.join(", ") : "its compiler options";
+  return (
+    `${nearestConfigPath} ${TSCONFIG_REFERENCES_MARKER}; ${chosenConfigPath} covers ${subject} ` +
+    `and supplies ${supplied}`
+  );
+}
+
+export function TSCONFIG_REFERENCES_NO_MATCH_WARNING(
+  nearestConfigPath: string,
+  subject: string,
+  tried: string[],
+): string {
+  return (
+    `${nearestConfigPath} ${TSCONFIG_REFERENCES_MARKER}; no referenced config covers ${subject} ` +
+    `(tried ${tried.join(", ")}), so path aliases and compiler options those configs declare are ` +
+    "unavailable"
+  );
+}
+
+// M95 (nuxt-ui-F1/F2): a broken extends chain, named and connected to the
+// downstream consequence (an empty prop schema) it silently causes, instead
+// of two unrelated-looking facts a user has to connect themselves. M109 moved
+// it here from `src/harness.ts`, which re-exports it, so that the one reader
+// can produce it.
+export function TSCONFIG_EXTENDS_BROKEN_WARNING(tsconfigPath: string, detail: string): string {
+  return (
+    `${tsconfigPath}: ${detail} Path aliases and compiler options from the broken part of this ` +
+    "config chain are unavailable, and prop extraction for files under it may report fewer props " +
+    "than the source actually declares."
+  );
+}
+
+// M95: scoped to the two diagnostic codes TypeScript actually uses for an
+// unresolvable extends target (5083 "Cannot find a base configuration file",
+// 6053 "File not found"). Every other parseJsonConfigFileContent diagnostic is
+// unrelated noise -- 18003 "No inputs were found" fires for a tmpdir tsconfig
+// with no matching source files, which is a completely normal config.
+const EXTENDS_BROKEN_CODES = new Set([5083, 6053]);
+
+// The four options a referenced config supplies that change what a run does.
+const GOVERNING_FIELDS = ["paths", "baseUrl", "jsxImportSource", "customConditions"] as const;
+
+interface ReadCompilerConfig {
+  raw: Record<string, unknown>;
+  parsed: ts.ParsedCommandLine;
+  base: string;
+  configErrors: string[];
+}
+
+// Returns undefined on a read or parse failure, with the detail pushed onto
+// `failures`: the caller owns the message, so no read reports itself twice.
+function readCompilerConfig(
+  configPath: string,
+  failures: string[],
+): ReadCompilerConfig | undefined {
+  const configDir = path.dirname(configPath);
+  try {
+    const configFile = ts.readConfigFile(configPath, ts.sys.readFile);
+    if (configFile.error) {
+      failures.push(
+        `could not parse tsconfig at ${configPath}: ${ts.flattenDiagnosticMessageText(configFile.error.messageText, " ")}`,
+      );
+      return undefined;
+    }
+    // parseJsonConfigFileContent resolves extends (string and array), JSONC and
+    // trailing commas; baseUrl comes back absolute.
+    const parsed = ts.parseJsonConfigFileContent(
+      configFile.config,
+      ts.sys,
+      configDir,
+      undefined,
+      configPath,
+    );
+    const options = parsed.options;
+    const base =
+      options.baseUrl ?? (options as { pathsBasePath?: string }).pathsBasePath ?? configDir;
+    return {
+      raw: (configFile.config ?? {}) as Record<string, unknown>,
+      parsed,
+      base,
+      configErrors: parsed.errors
+        .filter((d) => EXTENDS_BROKEN_CODES.has(d.code))
+        .map((d) => ts.flattenDiagnosticMessageText(d.messageText, " ")),
+    };
+  } catch (err) {
+    failures.push(
+      `could not parse tsconfig at ${configPath}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return undefined;
+  }
+}
+
+function normalisePath(file: string): string {
+  const forward = path.resolve(file).replace(/\\/g, "/");
+  return process.platform === "win32" ? forward.toLowerCase() : forward;
+}
+
+// A referenced `path` is a config file or the directory holding one, exactly as
+// `tsc --build` reads it.
+function resolveReferencePath(configDir: string, reference: string): string | undefined {
+  const resolved = path.resolve(configDir, reference);
+  try {
+    if (fs.statSync(resolved).isDirectory()) {
+      return path.join(resolved, "tsconfig.json").replace(/\\/g, "/");
+    }
+    return resolved.replace(/\\/g, "/");
+  } catch {
+    return resolved.endsWith(".json") ? resolved.replace(/\\/g, "/") : undefined;
+  }
+}
+
+function referencePaths(raw: Record<string, unknown>): string[] {
+  const references = raw.references;
+  if (!Array.isArray(references)) return [];
+  return references
+    .map((entry) =>
+      entry && typeof entry === "object" ? (entry as { path?: unknown }).path : undefined,
+    )
+    .filter((value): value is string => typeof value === "string" && value.length > 0);
+}
+
+// `include`/`files` semantics, computed by TypeScript itself: fileNames is the
+// glob result. A directory is covered when any of its files is.
+function coversTarget(fileNames: readonly string[], target: string, targetIsFile: boolean): boolean {
+  const wanted = normalisePath(target);
+  const prefix = wanted.endsWith("/") ? wanted : wanted + "/";
+  return fileNames.some((file) => {
+    const candidate = normalisePath(file);
+    return targetIsFile ? candidate === wanted : candidate.startsWith(prefix);
+  });
+}
+
+export function resolveGoverningTsconfig(fileOrDir: string, stopDir?: string): GoverningTsconfig {
+  const target = path.resolve(fileOrDir);
+  let targetIsFile = false;
+  try {
+    targetIsFile = !fs.statSync(target).isDirectory();
+  } catch {
+    // A path that is not on disk is a file when it looks like one; a caller
+    // naming a directory that does not exist gets the same answer either way.
+    targetIsFile = path.extname(target) !== "";
+  }
+  const startDir = targetIsFile ? path.dirname(target) : target;
+  const warnings: string[] = [];
+  const nearestConfigPath = findCompilerConfig(startDir, stopDir);
+  if (!nearestConfigPath) {
+    return {
+      configPath: undefined,
+      nearestConfigPath: undefined,
+      viaReferences: false,
+      options: {},
+      base: startDir,
+      warnings,
+    };
+  }
+
+  const nearest = readCompilerConfig(nearestConfigPath, warnings);
+  if (!nearest) {
+    return {
+      configPath: undefined,
+      nearestConfigPath,
+      viaReferences: false,
+      options: {},
+      base: startDir,
+      warnings,
+    };
+  }
+  for (const detail of nearest.configErrors) {
+    warnings.push(TSCONFIG_EXTENDS_BROKEN_WARNING(nearestConfigPath, detail));
+  }
+  const nearestAnswer: GoverningTsconfig = {
+    configPath: nearestConfigPath,
+    nearestConfigPath,
+    viaReferences: false,
+    options: nearest.parsed.options,
+    base: nearest.base,
+    warnings,
+  };
+
+  // MUST NOT: a config declaring its own compilerOptions wins outright, so the
+  // README's "nearest one wins" stays true for every project that has one.
+  const ownOptions = nearest.raw.compilerOptions;
+  const declaresOwnOptions =
+    ownOptions !== null &&
+    typeof ownOptions === "object" &&
+    Object.keys(ownOptions as Record<string, unknown>).length > 0;
+  const references = referencePaths(nearest.raw);
+  if (declaresOwnOptions || references.length === 0) return nearestAnswer;
+
+  const subject = path.relative(path.dirname(nearestConfigPath), target).replace(/\\/g, "/") || ".";
+  const seen = new Set<string>([normalisePath(nearestConfigPath)]);
+  const tried: string[] = [];
+  let queued = references.map((reference) =>
+    resolveReferencePath(path.dirname(nearestConfigPath), reference),
+  );
+  // Breadth-first over the reference graph, cycle-guarded: a solution-style
+  // root pointing at another solution-style root still reaches a real project,
+  // and a cycle or a missing target ends the walk with the nearest config.
+  while (queued.length > 0) {
+    const next: Array<string | undefined> = [];
+    for (const candidate of queued) {
+      if (!candidate || seen.has(normalisePath(candidate))) continue;
+      seen.add(normalisePath(candidate));
+      const referenced = readCompilerConfig(candidate, []);
+      if (!referenced) continue;
+      const relativeCandidate = path
+        .relative(path.dirname(nearestConfigPath), candidate)
+        .replace(/\\/g, "/");
+      tried.push(relativeCandidate);
+      if (!coversTarget(referenced.parsed.fileNames, target, targetIsFile)) {
+        for (const nested of referencePaths(referenced.raw)) {
+          next.push(resolveReferencePath(path.dirname(candidate), nested));
+        }
+        continue;
+      }
+      for (const detail of referenced.configErrors) {
+        warnings.push(TSCONFIG_EXTENDS_BROKEN_WARNING(candidate, detail));
+      }
+      const supplied = GOVERNING_FIELDS.filter(
+        (field) => (referenced.parsed.options as Record<string, unknown>)[field] !== undefined,
+      );
+      warnings.push(
+        TSCONFIG_REFERENCES_WARNING(
+          path.basename(nearestConfigPath),
+          relativeCandidate,
+          subject,
+          [...supplied],
+        ),
+      );
+      return {
+        configPath: candidate,
+        nearestConfigPath,
+        viaReferences: true,
+        options: referenced.parsed.options,
+        base: referenced.base,
+        warnings,
+      };
+    }
+    queued = next;
+  }
+
+  warnings.push(
+    TSCONFIG_REFERENCES_NO_MATCH_WARNING(path.basename(nearestConfigPath), subject, tried),
+  );
+  return nearestAnswer;
 }

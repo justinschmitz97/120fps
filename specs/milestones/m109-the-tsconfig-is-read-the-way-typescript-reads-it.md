@@ -185,6 +185,64 @@ fixture directory is edited.
   contributes, matching the same component under a control root with inlined `compilerOptions`; an
   unreadable config warns once and returns the defaults.
 
+### Lane A evidence (2026-09-02, worktree `C:/Projekte/120fps-m107`, scratch dist `A-M109`)
+
+Tests (`node node_modules/vitest/vitest.mjs run <the four lane A files> --maxWorkers=2`):
+
+```
+ Test Files  4 passed (4)
+      Tests  24 passed (24)
+```
+
+The 30 existing `test/unit` files that import `loadTsconfigAliases`, `resolveJsxImportSource`,
+`collectStaticPreBuildWarnings`, `findCompilerConfig`, `TSCONFIG_EXTENDS_BROKEN_WARNING`,
+`buildAndServe` or `fsAllowDirs`, plus the six that import `src/project-model.ts`, are green:
+`Test Files 30 passed (30)`, `Tests 473 passed (473)` and `Test Files 5 passed (5)`,
+`Tests 75 passed (75)`. No baseline failure changed.
+
+`node node_modules/typescript/bin/tsc --noEmit`: clean, no output.
+
+Corpus, each through `node C:/Projekte/120fps-fieldtest/tools/run120.mjs` with
+`--cli C:/Projekte/120fps-fieldtest/scratch/A-M109/dist/cli.js`:
+
+- **ark-F1** (`--cwd /e/repositories-run5/ark/packages/react --label M109-ark-after --
+  src/components/accordion/accordion-root.tsx --samples 5 --max-combos 4 --explore-budget 60
+  --no-deltas`). Before (`logs/ark/react-accordion-nomatrix.log:32`):
+  `    - React is not defined (×7)`. After: `exit=0 killed=false seconds=57`, `Result: PASS`,
+  `grep -c "React is not defined"` = 0. Closed: yes.
+- **react-spectrum-F2** (`--cwd /e/repositories-run5/react-spectrum/packages/react-aria-components
+  --label M109-react-spectrum-after -- src/Button.tsx --samples 5 --max-combos 4`). Before
+  (`logs/react-spectrum/real-button.log:4`):
+  `  - response 404: GET http://localhost:5175/@vite/client`. After: `exit=0 killed=false
+  seconds=81`, `Result: PASS`, `grep -c "@vite/client"` = 0 and `grep -c "404"` = 0, and the two
+  disclosures in the JSON report's warnings:
+  `E:/repositories-run5/react-spectrum/tsconfig.json: the path alias "/*" -> "./*" has no prefix of
+  its own, so it would rewrite every root-absolute URL the dev server serve ...` and
+  `resolve.conditions [source] came from customConditions in
+  E:/repositories-run5/react-spectrum/tsconfig.json.` The run still reports the workspace-sibling
+  subpaths react-spectrum-F1 (M107) owns. Closed: yes.
+- **coordinator-F1** (`--cwd C:/Projekte/tmp-vite-refs --label M109-coordinator-after --
+  src/components/Button.tsx --isolate mount --samples 2`; `tsconfig.json` already carries the
+  `tsconfig.refs.bak` shape). Before (`C:/Projekte/tmp-vite-refs/run-a.log:3`):
+  `Error: src/components/Button.tsx imports "@/lib/utils", which the dev server could not resolve to
+  a loadable file.` After: `exit=0 killed=false seconds=3`, `Result: PASS`, and
+  `warnings=2` in the JSON digest carrying
+  `tsconfig.json declares no compilerOptions and lists references; tsconfig.app.json covers
+  src/components/Button.tsx and supplies paths, baseUrl`. Closed: yes.
+- **coordinator-F1, dry run** (same tree, `-- src/components/Button.tsx --explain-props`): `exit=0`,
+  `Props (2):`, and under `Warnings:` the identical sentence
+  `tsconfig.json declares no compilerOptions and lists references; tsconfig.app.json covers
+  src/components/Button.tsx and supplies paths, baseUrl`. Dry-run and real-run text match verbatim.
+- **Unaffected repository** (`--cwd /e/repositories-run5/shadcn-admin -- src/components/ui/button.tsx
+  --explain-props`): `Component: Button`, `Props (32):`,
+  `Stylesheets: src/styles/index.css (found in the project entry's own imports)`, no references
+  disclosure. Unchanged.
+
+Not asserted in a unit test, by choice: A4's "answers HTTP 200" half needs a booted dev server in a
+fixture with its own `node_modules`, which no fixture under `fixtures/` has; the alias-level
+assertion (no built alias matches `/@vite/client`, `/@fs/...` or the harness entry) plus the
+react-spectrum run above (0 lines matching `@vite/client` or `404`, a report produced) carry it.
+
 Corpus (commands verbatim from the `EVIDENCE.md` rows named above):
 
 - ark-F1 — `node run120.mjs --cwd .../ark/packages/react --label react-accordion-nomatrix --
