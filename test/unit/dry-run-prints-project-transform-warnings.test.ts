@@ -95,3 +95,28 @@ describe("the transform decisions a dry run makes from the same files the real r
     expect(transformLines(explained.warnings)).toEqual([]);
   });
 });
+
+// The run path's half of the same parity: analyze() needs a browser, so what
+// is pinned here is that it reads the shared classifier and forwards
+// --no-transforms into it, instead of filtering the hits inline again.
+describe("the run path's own transform warnings", () => {
+  const analyzeSrc = fs.readFileSync(path.resolve("src/analyze.ts"), "utf-8");
+  const block = analyzeSrc.slice(
+    analyzeSrc.indexOf("const loadableTransforms = new Set("),
+    analyzeSrc.indexOf("if (loadableTransforms.size > 0)"),
+  );
+
+  it("pushes exactly what the shared classifier returns", () => {
+    expect(block).toContain("classifiedProjectTransformHits(projectRoot, preflight.transforms, {");
+    expect(block).toContain("for (const { hit, availability } of candidateTransformHits)");
+    expect(block).toContain("runWarnings.push(PROJECT_TRANSFORM_WARNING(hit, availability));");
+    // No second, independent filter: the dry run and the run path cannot
+    // disagree about which hits are worth a warning.
+    expect(block).not.toContain("preflight.transforms.filter");
+  });
+
+  it("forwards --no-transforms into the classifier, so the run stays silent too", () => {
+    expect(block).toContain('...(options.noTransforms ? { noTransforms: true } : {})');
+    expect(classifiedProjectTransformHits(path.resolve("."), [], { noTransforms: true })).toEqual([]);
+  });
+});

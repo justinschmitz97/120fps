@@ -258,9 +258,22 @@ export const MATRIX_SUPPRESSED_BY_COMPOSITION_WARNING = (rootName: string): stri
   `--matrix did not activate: an auto-composed scene rooted at ${rootName} supplies the props, and ` +
   "a composed scene measures one combo. Re-run with --no-auto-compose to force matrix instead.";
 
-export const MATRIX_SUPPRESSED_BY_FIXTURE_WARNING = (fixtureFile: string): string =>
+// M110 review: `--target` throws TARGET_WITH_FIXTURE_ERROR whenever the
+// fixture came from an explicit --fixture or from the input file itself, so
+// the `<file>#Export` remedy is only usable for the auto-detected sibling.
+export type FixtureProvenance = "sibling" | "explicit-flag" | "fixture-input";
+
+export const MATRIX_SUPPRESSED_BY_FIXTURE_WARNING = (
+  fixtureFile: string,
+  provenance: FixtureProvenance = "sibling",
+): string =>
   `--matrix did not activate: the fixture ${fixtureFile} supplies the props, and a fixture measures ` +
-  "one combo. Re-run with <file>#Export to name one export and force matrix instead.";
+  "one combo. " +
+  (provenance === "sibling"
+    ? "Re-run with <file>#Export to name one export and force matrix instead."
+    : provenance === "explicit-flag"
+      ? "Re-run against the component file without --fixture to force matrix instead."
+      : "Re-run against the component file, not this fixture, to force matrix instead.");
 
 // M83 #4c (commerce-F5): an explicit --matrix bypasses shouldAutoActivateMatrix's
 // 2-eligible-axis floor; when the component genuinely has none, the run still
@@ -2324,6 +2337,10 @@ export interface PropsExplanation {
   // names and schemas. Absent when the run would measure the bound export
   // alone.
   composition?: { root: string; exportCount: number };
+  // M110 review: the fixture that would supply the scene (projectRoot-relative
+  // posix path), so the composition line does not claim the component would be
+  // measured alone when a fixture owns the render.
+  fixtureFile?: string;
   // Set when a scaling prop was detected and `--no-curve` suppressed it, so
   // "would not activate: no array or numeric scaling prop" is not printed over
   // a component that has one.
@@ -2649,12 +2666,25 @@ export async function explainProps(
   // --fixture, a target that is itself a fixture, or one sitting next to the
   // component. Kept as the path, not a boolean, so a dropped --matrix can name
   // the file that took precedence.
+  // The sibling probe mirrors the dispatcher's own gate (`!fixturePath &&
+  // !options.target`): with a --target the real run ignores a sibling
+  // fixture entirely.
   const dryRunFixturePath = options.fixturePath
     ? path.resolve(options.fixturePath)
     : isFixturePath(resolvedPath)
       ? resolvedPath
-      : detectFixture(resolvedPath);
+      : options.target
+        ? undefined
+        : detectFixture(resolvedPath);
   const dryRunUsesFixture = dryRunFixturePath !== undefined;
+  const dryRunFixtureFile = dryRunFixturePath
+    ? path.relative(projectRoot, dryRunFixturePath).replace(/\\/g, "/")
+    : undefined;
+  const dryRunFixtureProvenance: FixtureProvenance = options.fixturePath
+    ? "explicit-flag"
+    : isFixturePath(resolvedPath)
+      ? "fixture-input"
+      : "sibling";
 
   // M110 C1 (supabase-F3, calcom-R1): the dispatcher's own gate, evaluated
   // here from the same filesystem inputs. `inferComposition` reads export
@@ -2685,16 +2715,16 @@ export async function explainProps(
   // M100 (element-plus-F4): the real dispatcher's own precedence, not two
   // independent booleans. A fixture (given or auto-detected next to the
   // component) makes the matrix branch unreachable exactly as it does in
-  // analyze(); an auto-composed scene is the one input a dry run cannot see
-  // cheaply, so it is assumed absent here -- the same stated limit
-  // `scaleProbeWillRun` already carries.
+  // analyze(), and since M110 C1 an auto-composed scene is read from the same
+  // source parse the dispatcher uses.
   const predictedMode = predictMode({
     isolation: options.isolation !== undefined,
     // `resolveCurveMatch`'s own precedence: --no-curve suppresses it
     // entirely, an explicit --curve names the prop itself, otherwise
-    // detection answers -- and a fixture or composed scene has no curve.
+    // detection answers -- and a fixture or composed scene has no curve
+    // (resolveCurveMatch returns undefined for both).
     curve:
-      options.curveMode === false || dryRunUsesFixture
+      options.curveMode === false || dryRunUsesFixture || composition !== undefined
         ? false
         : options.curveMode !== undefined && options.curveMode !== true
           ? true
@@ -2713,10 +2743,19 @@ export async function explainProps(
       warnings.push(MATRIX_SUPPRESSED_BY_COMPOSITION_WARNING(composition.root));
     } else if (dryRunFixturePath) {
       warnings.push(
-        MATRIX_SUPPRESSED_BY_FIXTURE_WARNING(
-          path.relative(projectRoot, dryRunFixturePath).replace(/\\/g, "/"),
-        ),
+        MATRIX_SUPPRESSED_BY_FIXTURE_WARNING(dryRunFixtureFile!, dryRunFixtureProvenance),
       );
+    }
+  }
+
+  // M110 review: `resolveCurveMatch` warns whenever an explicit --curve meets
+  // a scene that has no curve; the dry run now knows both of those scenes, so
+  // it says the same line from the same two inputs.
+  if (options.curveMode === true || typeof options.curveMode === "object") {
+    if (dryRunUsesFixture) {
+      warnings.push(CURVE_NOT_ACTIVATED_WARNING("the run measures a fixture file"));
+    } else if (composition) {
+      warnings.push(CURVE_NOT_ACTIVATED_WARNING("the run measures a composed scene"));
     }
   }
 
@@ -2765,11 +2804,9 @@ export async function explainProps(
       ? { curve: { propName: curveMatch.schema.name, reason: curveMatch.reason } }
       : {}),
     // M83 #5: the same gating condition runComboMode's non-curve, non-fixture
-    // branch uses. Accurate for the common case this predicts; an
-    // auto-composed scene is not cheaply detectable inside a dry run's scope,
-    // so this may be imprecise for that shape — an accepted, stated limit,
-    // not silently glossed over.
-    scaleProbeWillRun: !isFixturePath(resolvedPath) && !curveMatch,
+    // branch uses, including the `!composed` half M110 C1 made visible here.
+    scaleProbeWillRun:
+      !isFixturePath(resolvedPath) && !curveMatch && composition === undefined,
     matrixWouldActivate: shouldAutoActivateMatrix(schemas),
     predictedMode,
     ...(options.matrixMode === false
@@ -2782,6 +2819,7 @@ export async function explainProps(
           ? { matrixIneligibleReason: "composed" as const }
           : {}),
     ...(composition ? { composition } : {}),
+    ...(dryRunFixtureFile ? { fixtureFile: dryRunFixtureFile } : {}),
     ...(options.curveMode === false && curveMatch !== undefined
       ? { curveSuppressedByFlag: true }
       : {}),
@@ -3001,11 +3039,17 @@ export function formatExplainProps(explained: PropsExplanation): string {
     explained.composition
       ? `Composition:  would auto-compose from ${explained.composition.root} ` +
         `(${explained.composition.exportCount} exports)`
-      : `Composition:  would measure ${explained.componentName} alone`,
+      : explained.fixtureFile
+        ? `Composition:  would measure the scene in ${explained.fixtureFile}`
+        : `Composition:  would measure ${explained.componentName} alone`,
   );
   lines.push(
     explained.curveSuppressedByFlag
       ? "Curve mode:   would not activate: --no-curve, though this component has a scaling prop"
+      // M110 review: `resolveCurveMatch` returns undefined for a composed
+      // scene, so a scaling prop on the root does not make curve mode run.
+      : explained.composition && explained.curve
+        ? "Curve mode:   would not activate: an auto-composed scene supplies the props"
       : explained.curve
         ? `Curve mode:   would activate on ${explained.curve.propName} (${explained.curve.reason})`
         : "Curve mode:   would not activate: no array or numeric scaling prop",
@@ -3030,10 +3074,16 @@ export function formatExplainProps(explained: PropsExplanation): string {
     // own predicate never matched, so the composed answer is given before the
     // predicate's, and "would auto-activate" can never print for a scene the
     // dispatcher composes.
-    explained.matrixIneligibleReason === "composed"
-      ? "Matrix mode:  predicate matches, but an auto-composed scene supplies the props, so this " +
-        "run would measure that scene's single combo " +
-        `(auto-composed from ${explained.composition?.root ?? explained.componentName})`
+    // The predicate's own answer decides the first clause: an explicit
+    // --matrix reaches "composed" over a component whose predicate never
+    // matched, and saying "predicate matches" there would be false (M92).
+    explained.matrixIneligibleReason === "composed" && explained.composition
+      ? (explained.matrixWouldActivate
+          ? "Matrix mode:  predicate matches, but an auto-composed scene supplies the props, so " +
+            "this run would measure that scene's single combo"
+          : "Matrix mode:  --matrix was passed, but an auto-composed scene supplies the props, so " +
+            "this run would measure that scene's single combo") +
+        ` (auto-composed from ${explained.composition.root})`
     : explained.matrixWouldActivate
       ? explained.predictedMode === "matrix"
         ? "Matrix mode:  would auto-activate"
@@ -4079,6 +4129,7 @@ export async function analyze(
         runWarnings.push(
           MATRIX_SUPPRESSED_BY_FIXTURE_WARNING(
             path.relative(projectRoot, path.resolve(fixturePath!)).replace(/\\/g, "/"),
+            inputIsFixture ? "fixture-input" : fixtureAutoDetected ? "sibling" : "explicit-flag",
           ),
         );
       }
