@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { formatResolvedRoots, resolveProjectModel } from "../../src/project-model.js";
+import { resolvedRootsLine, resolvedRootsOutput } from "../../src/cli.js";
 
 const FIXTURE_ROOT = path.resolve(__dirname, "..", "..", "fixtures", "tailwind3-monorepo");
 const FIXTURE_MEMBER = path.join(FIXTURE_ROOT, "packages", "ui");
@@ -48,5 +49,19 @@ describe("the line naming the roots a run resolved", () => {
       })
       .join("\n");
     expect(block.split("\n").filter((l) => l.startsWith("Roots:"))).toHaveLength(2);
+  });
+});
+
+describe("the line the CLI itself prints", () => {
+  it("names both roots for a component file inside a workspace member", () => {
+    expect(resolvedRootsLine(path.join(FIXTURE_MEMBER, "src", "Button.tsx"))).toBe(
+      `Roots: member ${FIXTURE_MEMBER}, workspace ${FIXTURE_ROOT}`,
+    );
+  });
+
+  it("writes nothing under --ci", () => {
+    const component = path.join(FIXTURE_MEMBER, "src", "Button.tsx");
+    expect(resolvedRootsOutput(component, false)).toBe(resolvedRootsLine(component) + "\n");
+    expect(resolvedRootsOutput(component, true)).toBe("");
   });
 });

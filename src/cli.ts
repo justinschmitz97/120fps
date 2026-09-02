@@ -1239,6 +1239,13 @@ export function resolvedRootsLine(componentPath: string): string {
   return formatResolvedRoots(model.memberRoot, model.workspaceRoot);
 }
 
+// M111 A4: --ci output is read by a machine, so the line is written for a
+// reader or not at all. One place decides that, for the dry run and for the
+// measured run.
+export function resolvedRootsOutput(componentPath: string, ci: boolean): string {
+  return ci ? "" : resolvedRootsLine(componentPath) + "\n";
+}
+
 // I3a (element-plus-F2): every flag the dry run can honour, in one place a
 // test can read. `--framework` used to stop here: the real run forwards it and
 // discloses that it does not change how a file mounts, while the dry run
@@ -1327,7 +1334,7 @@ async function main(): Promise<void> {
       // M111 A4: the first line of this component's block, so a reader
       // comparing two shell directories sees the roots both runs resolved
       // before anything those runs could disagree about.
-      if (!args.ci) process.stdout.write(resolvedRootsLine(componentPath) + "\n");
+      process.stdout.write(resolvedRootsOutput(componentPath, args.ci === true));
       try {
         const explained = await explainProps(componentPath, explainPropsOptions(args, componentPath));
         process.stdout.write(formatExplainProps(explained) + "\n");
@@ -1453,7 +1460,7 @@ async function main(): Promise<void> {
       );
       if (!args.ci) {
         // M111 A4: ahead of this component's table, once per component.
-        process.stdout.write(resolvedRootsLine(componentPath) + "\n");
+        process.stdout.write(resolvedRootsOutput(componentPath, false));
         process.stdout.write(formatTable(report) + "\n");
         process.stdout.write(formatWallClock(Date.now() - started) + "\n");
       }

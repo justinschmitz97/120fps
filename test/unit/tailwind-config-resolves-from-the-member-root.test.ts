@@ -2,10 +2,13 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createRequire } from "node:module";
 import {
   TAILWIND_CONFIG_FILES,
+  loadTailwind3PostcssPipeline,
   resolveStyleTooling,
   resolveTailwind3Config,
+  writeAnchoredTailwind3Config,
 } from "../../src/harness.js";
 import { resolveGoverningTsconfig } from "../../src/project-model.js";
 
@@ -107,5 +110,134 @@ describe("a Tailwind 3 pipeline with no config at any level", () => {
     expect(warning).toContain(root);
     expect(warning).toContain(startDir);
     expect(warning).not.toMatch(/pnpm run|npm run|yarn /);
+  });
+});
+
+const FAKE_TAILWIND_INDEX = 'module.exports = (options) => ({ postcssPlugin: "tailwindcss", options });\n';
+const FAKE_LOAD_CONFIG = "module.exports = (file) => require(file);\n";
+const FAKE_AUTOPREFIXER = 'module.exports = () => ({ postcssPlugin: "autoprefixer" });\n';
+
+// The member's own Tailwind and autoprefixer, written locally: this repo's own
+// tailwindcss is v4 and carries no `loadConfig` entry, and the assertion is
+// about which plugins come back, not about what those plugins do.
+function tailwind3Member(files: Record<string, string>): string {
+  const { member } = workspace({
+    "package.json": JSON.stringify({ name: "ui", devDependencies: { tailwindcss: "^3.4.19" } }),
+    "tailwind.config.js": 'module.exports = { content: ["./src/**/*.{ts,tsx}"] };\n',
+    "node_modules/tailwindcss/package.json": JSON.stringify({
+      name: "tailwindcss",
+      version: "3.4.19",
+      main: "index.js",
+      exports: { ".": "./index.js", "./loadConfig": "./loadConfig.js" },
+    }),
+    "node_modules/tailwindcss/index.js": FAKE_TAILWIND_INDEX,
+    "node_modules/tailwindcss/loadConfig.js": FAKE_LOAD_CONFIG,
+    "node_modules/autoprefixer/package.json": JSON.stringify({
+      name: "autoprefixer",
+      version: "10.4.0",
+      main: "index.js",
+    }),
+    "node_modules/autoprefixer/index.js": FAKE_AUTOPREFIXER,
+    ...files,
+  });
+  return member;
+}
+
+function pluginNames(pipeline: { plugins: unknown[] } | undefined): (string | undefined)[] {
+  return (pipeline?.plugins ?? []).map((p) => (p as { postcssPlugin?: string }).postcssPlugin);
+}
+
+describe("the PostCSS pipeline rebuilt with an explicit Tailwind 3 config", () => {
+  it("keeps every plugin the member declared, in the order it declared them", async () => {
+    const member = tailwind3Member({
+      "postcss.config.js": "module.exports = { plugins: { tailwindcss: {}, autoprefixer: {} } };\n",
+    });
+    const pipeline = await loadTailwind3PostcssPipeline(
+      member,
+      path.join(member, "postcss.config.js"),
+      path.join(member, "tailwind.config.js"),
+      member,
+    );
+    expect(pipeline?.plugins).toHaveLength(2);
+    expect(pluginNames(pipeline)).toEqual(["tailwindcss", "autoprefixer"]);
+  });
+
+  it("drops a plugin the member disabled with `false`", async () => {
+    const member = tailwind3Member({
+      "postcss.config.js":
+        "module.exports = { plugins: { tailwindcss: {}, autoprefixer: false } };\n",
+    });
+    const pipeline = await loadTailwind3PostcssPipeline(
+      member,
+      path.join(member, "postcss.config.js"),
+      path.join(member, "tailwind.config.js"),
+      member,
+    );
+    expect(pluginNames(pipeline)).toEqual(["tailwindcss"]);
+  });
+
+  it("keeps a config path the member pinned itself", async () => {
+    const member = tailwind3Member({
+      "postcss.config.js":
+        'module.exports = { plugins: { tailwindcss: { config: "./tailwind.other.js" } } };\n',
+    });
+    const pipeline = await loadTailwind3PostcssPipeline(
+      member,
+      path.join(member, "postcss.config.js"),
+      path.join(member, "tailwind.config.js"),
+      member,
+    );
+    const options = (pipeline?.plugins[0] as { options?: { config?: string } }).options;
+    expect(options?.config).toBe("./tailwind.other.js");
+  });
+
+  it("says so when it cannot read a plugin list, instead of falling back in silence", async () => {
+    const member = tailwind3Member({
+      "postcss.config.ts": "export default { plugins: { tailwindcss: {} } };\n",
+    });
+    const warnings: string[] = [];
+    const configFile = path.join(member, "postcss.config.ts");
+    const pipeline = await loadTailwind3PostcssPipeline(
+      member,
+      configFile,
+      path.join(member, "tailwind.config.js"),
+      member,
+      (warning) => warnings.push(warning),
+    );
+    expect(pipeline).toBeUndefined();
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain(configFile);
+    expect(warnings[0]).toContain("the directory this run started in");
+  });
+});
+
+describe("the Tailwind 3 config the pipeline is given", () => {
+  it("resolves the member's relative content globs against the member root", () => {
+    const member = tailwind3Member({
+      "postcss.config.js": "module.exports = { plugins: { tailwindcss: {} } };\n",
+    });
+    const generated = writeAnchoredTailwind3Config(
+      member,
+      path.join(member, "tailwind.config.js"),
+      member,
+    );
+    const config = createRequire(generated)(generated) as { content: string[] };
+    expect(config.content).toEqual([
+      path.join(member, "src/**/*.{ts,tsx}").split(path.sep).join("/"),
+    ]);
+  });
+
+  it("is the config the Tailwind entry receives", async () => {
+    const member = tailwind3Member({
+      "postcss.config.js": "module.exports = { plugins: { tailwindcss: {} } };\n",
+    });
+    const pipeline = await loadTailwind3PostcssPipeline(
+      member,
+      path.join(member, "postcss.config.js"),
+      path.join(member, "tailwind.config.js"),
+      member,
+    );
+    const options = (pipeline?.plugins[0] as { options?: { config?: string } }).options;
+    expect(options?.config).toBe(path.join(member, "tailwind.anchored.config.cjs"));
   });
 });

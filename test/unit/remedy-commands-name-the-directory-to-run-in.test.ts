@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import {
   UNBUILT_WORKSPACE_PACKAGE_NO_SOURCE_WARNING,
+  findLikelyGenerateCommand,
   packageManagerRunCommand,
   packageScriptCommand,
 } from "../../src/harness.js";
@@ -84,6 +85,47 @@ describe("a remedy that asks the user to run a package script", () => {
     const otherDrive = member.startsWith("Z:") ? "Y:\\elsewhere" : "Z:\\elsewhere";
     expect(packageManagerRunCommand(member, "build", otherDrive)).toBe(
       `cd ${member} && pnpm run build`,
+    );
+  });
+});
+
+describe("a remedy naming a directory whose name contains a space", () => {
+  it("quotes the directory so the command stays pasteable", () => {
+    const root = mkRepo({
+      "package.json": JSON.stringify({ name: "repo", private: true }),
+      "pnpm-lock.yaml": "",
+      "packages/my ui/package.json": UI_MANIFEST,
+    });
+    expect(packageScriptCommand(path.join(root, "packages", "my ui"), "build", root)).toBe(
+      'cd "packages/my ui" && pnpm run build',
+    );
+  });
+});
+
+describe("the generate remedies", () => {
+  function generatorWorkspace(): { root: string; member: string } {
+    const root = mkRepo({
+      "package.json": JSON.stringify({ name: "repo", private: true }),
+      "pnpm-lock.yaml": "",
+      "packages/ui/package.json": JSON.stringify({
+        name: "@acme/ui",
+        scripts: { generate: "nuxi generate", "build:types": "gen -o src/generated/types.ts" },
+      }),
+    });
+    return { root, member: path.join(root, "packages", "ui") };
+  }
+
+  it("names the directory when no missing file points at a script", () => {
+    const { root, member } = generatorWorkspace();
+    expect(findLikelyGenerateCommand(member, undefined, root)).toBe(
+      "cd packages/ui && pnpm run generate",
+    );
+  });
+
+  it("names the directory when the missing generated file points at a script", () => {
+    const { root, member } = generatorWorkspace();
+    expect(findLikelyGenerateCommand(member, "src/generated/types.ts", root)).toBe(
+      "cd packages/ui && pnpm run build:types",
     );
   });
 });

@@ -76,9 +76,9 @@ component building fine from a directory that has a Tailwind config).
   `Stylesheets:` line, the same warnings in the same order, the same prop schema, the same governing
   tsconfig path (I1, M109) and the same verdict, and write JSON reports that differ only in
   `timestamp`, `machine`, measured durations, and `componentPath` (the CLI argument as given); after
-  `componentPath` is resolved to an absolute path the two reports are equal. The one permitted
-  difference in the warning text is the start-directory prefix A5 adds to a remedy command
-  (`cd <dir> && `).
+  `componentPath` is resolved to an absolute path the two reports are equal. The permitted differences in the warning
+  text are the start-directory prefix A5 adds to a remedy command (`cd <dir> && `) and the start
+  directory A3 names.
 - **A3** When a member's PostCSS pipeline declares Tailwind 3 and no config governs it, the CSS
   failure names the config filenames searched for, the directories searched (member root through
   workspace root) and the directory a run would have to start from. That message never names a build
@@ -241,19 +241,20 @@ Control, shadcn-admin (`--cwd /e/repositories-run5/shadcn-admin -- src/component
 summary, with the new first line `Root: E:\repositories-run5\shadcn-admin` (one root, a
 single-package project). Closed: yes.
 
-Open against A2. The two midday reports still differ in one field: `css.details[0].matchedRules` is
-11 from the repository root and 22 from the member root, reproducibly (a second repository-root run
-also read 11). Cause, verified: Tailwind 3 resolves a relative `content` glob against
-`process.cwd()`, and midday declares `content: ["./src/**/*.{ts,tsx}"]`
-(`packages/ui/tailwind.config.ts:5`), so from the repository root that scan matches no source and
-only the base rules are generated. The attempt to close it inside this milestone (load the config
-with `tailwindcss/loadConfig`, rewrite its globs to absolute, pass the object as `config`) was
-reverted: with an object config Tailwind re-resolves and re-hashes the config on every PostCSS build,
-and both corpus runs then made no progress in the prop-deltas phase and hit the 20-minute watchdog
-(exit 2) instead of finishing in about 4 minutes. Every decision field A2 names in prose (the
-`Stylesheets:` line, the warnings, the verdict, the roots) is identical; `matchedRules` counts the
-rules that matched the rendered DOM. A follow-up has to anchor the globs without giving up Tailwind's
-context cache, which is keyed by the config file path.
+Open against A2, then closed in code, corpus re-run pending. The two midday reports differed in
+one directory-dependent field, `css.details[0].matchedRules` (11 from the repository root, 22 from
+the member root, reproducibly); `hints` and the CV-derived unstable flags also differ, but a second
+repository-root run reproduces those differences from the same directory, so they are measurement
+noise. Cause, verified: Tailwind 3 resolves a relative `content` glob against `process.cwd()`, and
+midday declares `content: ["./src/**/*.{ts,tsx}"]` (`packages/ui/tailwind.config.ts:5`), so from the
+repository root that scan matches no source and only the base rules are generated. The first attempt
+(load the config with `tailwindcss/loadConfig` and pass the rewritten object as `config`) was
+reverted: an object config makes Tailwind re-resolve and re-hash the config on every PostCSS build,
+and both corpus runs hit the 20-minute watchdog. `writeAnchoredTailwind3Config`
+(`src/harness.ts`) keeps the cache instead: it writes the member's config back out into the harness
+directory with every relative glob resolved against the member root, and passes that *file's path*
+as `config`, so Tailwind's config-path-keyed context cache still hits. Re-run the midday pair and
+assert `matchedRules` is equal before calling A2 closed.
 
 ## Deferred
 
