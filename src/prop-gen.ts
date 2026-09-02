@@ -11,7 +11,12 @@ import {
   type SfcScript,
   type VueSfcCompiler,
 } from "./vue-sfc.js";
-import { detectPropPresets, loadPropPresets, literalValue } from "./prop-presets.js";
+import {
+  describePresetSibling,
+  detectPropPresets,
+  loadPropPresets,
+  literalValue,
+} from "./prop-presets.js";
 import { findCompilerConfig, findProjectRoot, findWorkspaceRoot } from "./project-model.js";
 
 // M36: a fresh ts.Program per extraction re-parses lib.d.ts and the project's
@@ -193,6 +198,18 @@ export interface ExtractPropsOptions {
   onWarning?: (message: string) => void;
 }
 
+// M112 I7: the extraction warnings a preset loaded afterwards can change,
+// carried as data beside their printed text so a caller can re-render them
+// against the applied schema instead of parsing a line.
+export interface PropWarningRecord {
+  kind: "prop-cap" | "collapsed-union" | "degenerate";
+  // The component file's basename without its extension.
+  stem: string;
+  text: string;
+}
+
+type WarningRecorder = (record: PropWarningRecord) => void;
+
 export interface PropsExtraction {
   schemas: PropSchema[];
   // The declaration the schema was bound to, and where it sits. Absent for a
@@ -202,6 +219,7 @@ export interface PropsExtraction {
   targetLine?: number;
   computedAnnotation?: string;
   warnings: string[];
+  warningRecords: PropWarningRecord[];
 }
 
 const ITEMS_PATTERN = /items|options|data|children|entries|records|elements|list/i;
@@ -265,10 +283,17 @@ export async function extractPropsDetailed(
     options?.onWarning?.(message);
   };
   const collecting = options?.onWarning !== undefined;
+  // M112 B3: records are collected whether or not a sink is printing, because
+  // `warnOnce` prints a given warning once per process and the second caller
+  // still has to be able to re-render it.
+  const warningRecords: PropWarningRecord[] = [];
+  const record: WarningRecorder = (entry) => {
+    warningRecords.push(entry);
+  };
 
   if (isVueFile(absolutePath)) {
-    const schemas = await extractVueProps(absolutePath, collecting ? sink : undefined);
-    return { schemas, warnings };
+    const schemas = await extractVueProps(absolutePath, collecting ? sink : undefined, record);
+    return { schemas, warnings, warningRecords };
   }
 
   const compilerOptions = createCompilerOptions(absolutePath);
@@ -318,7 +343,14 @@ export async function extractPropsDetailed(
       warnUnboundTarget(absolutePath, binding.targetName, collecting ? sink : undefined);
     }
     schemas = binding.type
-      ? typeToSchema(binding.type, checker, absolutePath, collecting ? sink : undefined, binding.fn)
+      ? typeToSchema(
+          binding.type,
+          checker,
+          absolutePath,
+          collecting ? sink : undefined,
+          binding.fn,
+          record,
+        )
       : [];
     // M103 (I8): the component's own declared defaults, destructuring first —
     // it is the form a reader of the source sees.
@@ -353,7 +385,7 @@ export async function extractPropsDetailed(
     );
   }
   if (!recursed) {
-    warnDegenerateProps(absolutePath, schemas, collecting ? sink : undefined);
+    warnDegenerateProps(absolutePath, schemas, collecting ? sink : undefined, record);
   }
   // M97 / ADR 0004: an empty JS schema now names its own cause instead of
   // reaching analyze.ts's generic "extraction may have failed" hedge.
@@ -380,6 +412,7 @@ export async function extractPropsDetailed(
       ? { computedAnnotation: binding.computedAnnotation }
       : {}),
     warnings,
+    warningRecords,
   };
 }
 
@@ -649,6 +682,7 @@ export function isUntypedJsComponentWarning(message: string): boolean {
 async function extractVueProps(
   absolutePath: string,
   sink?: (message: string) => void,
+  record?: WarningRecorder,
 ): Promise<PropSchema[]> {
   const compiler = await loadVueCompiler(path.dirname(absolutePath));
   if (!compiler) return [];
@@ -702,10 +736,10 @@ async function extractVueProps(
   // disclosures land in the same warnings list every other extraction
   // warning does (element-plus-F3).
   const schemas = applyWithDefaults(
-    typeToSchema(propsType, checker, absolutePath, sink),
+    typeToSchema(propsType, checker, absolutePath, sink, undefined, record),
     call.defaults,
   );
-  warnDegenerateProps(absolutePath, schemas, sink);
+  warnDegenerateProps(absolutePath, schemas, sink, record);
   return schemas;
 }
 
@@ -1329,18 +1363,28 @@ function warnUnboundTarget(
 }
 
 // The M44 escape hatch, named for the file at hand so the message is a command.
+// M112 B2: the older name belongs to whatever already sits on disk under it, so
+// a remedy that would otherwise name a file the reader cannot create names the
+// preferred `<stem>.120fps.props.tsx` instead.
 function presetFileName(fileName: string): string {
-  const base = path.basename(fileName);
-  const ext = path.extname(base);
-  return `${ext ? base.slice(0, -ext.length) : base}.props.tsx`;
+  const sibling = describePresetSibling(fileName);
+  if (sibling?.shape === "preset") return path.basename(sibling.path);
+  const stem = componentStem(fileName);
+  return sibling ? `${stem}.120fps.props.tsx` : `${stem}.props.tsx`;
 }
 
-function warnPropCap(fileName: string, total: number): void {
-  warnOnce(
-    `${path.resolve(fileName)}::cap`,
+function componentStem(fileName: string): string {
+  const base = path.basename(fileName);
+  const ext = path.extname(base);
+  return ext ? base.slice(0, -ext.length) : base;
+}
+
+function warnPropCap(fileName: string, total: number, record?: WarningRecorder): void {
+  const text =
     `Warning: ${total} props were extracted from ${fileName}; measuring the first ${MAX_PROPS}. ` +
-      `Add ${presetFileName(fileName)} to choose the props that matter.\n`,
-  );
+    `Add ${presetFileName(fileName)} to choose the props that matter.\n`;
+  record?.({ kind: "prop-cap", stem: componentStem(fileName), text: text.trimEnd() });
+  warnOnce(`${path.resolve(fileName)}::cap`, text);
 }
 
 // M84: a union with more than one non-undefined member collapses to one
@@ -1353,14 +1397,14 @@ function warnCollapsedUnion(
   branches: string[],
   chosenKind: string,
   sink?: (message: string) => void,
+  record?: WarningRecorder,
 ): void {
-  emit(
-    `${path.resolve(fileName)}::union::${propName}`,
+  const text =
     `Warning: prop "${propName}" in ${fileName} is a union of ${branches.length} different shapes ` +
-      `(${branches.join(" | ")}); measured as ${chosenKind}. Add ${presetFileName(fileName)} to choose ` +
-      `a different branch.\n`,
-    sink,
-  );
+    `(${branches.join(" | ")}); measured as ${chosenKind}. Add ${presetFileName(fileName)} to choose ` +
+    `a different branch.\n`;
+  record?.({ kind: "collapsed-union", stem: componentStem(fileName), text: text.trimEnd() });
+  emit(`${path.resolve(fileName)}::union::${propName}`, text, sink);
 }
 
 // M60: the props the component is measured with are not the props it declares.
@@ -1370,6 +1414,7 @@ function warnDegenerateProps(
   fileName: string,
   schemas: PropSchema[],
   sink?: (message: string) => void,
+  record?: WarningRecorder,
 ): void {
   const degenerate = schemas.filter((s) => s.degenerate);
   if (degenerate.length === 0) return;
@@ -1377,10 +1422,13 @@ function warnDegenerateProps(
   // has is not told again.
   if (detectPropPresets(fileName)) return;
   const named = degenerate.map((s) => `${s.name} (${s.degenerate})`).join(", ");
+  const text =
+    `Warning: no representative value could be synthesized for ${named} in ${fileName}. ` +
+    `Add ${presetFileName(fileName)} next to it to supply real values.\n`;
+  record?.({ kind: "degenerate", stem: componentStem(fileName), text: text.trimEnd() });
   emit(
     `${path.resolve(fileName)}::degenerate::${degenerate.map((s) => s.name).join(",")}`,
-    `Warning: no representative value could be synthesized for ${named} in ${fileName}. ` +
-      `Add ${presetFileName(fileName)} next to it to supply real values.\n`,
+    text,
     sink,
   );
 }
@@ -1938,6 +1986,7 @@ function typeToSchema(
   fileName?: string,
   sink?: (message: string) => void,
   fn?: ts.SignatureDeclaration,
+  record?: WarningRecorder,
 ): PropSchema[] {
   const kept = type.getProperties().filter((prop) => !isNoiseName(prop.getName()));
 
@@ -1974,7 +2023,7 @@ function typeToSchema(
 
   const totalKept = requiredProps.length + orderedOptional.length;
   if (totalKept > MAX_PROPS && fileName) {
-    warnPropCap(fileName, totalKept);
+    warnPropCap(fileName, totalKept, record);
   }
 
   const optionalBudget = Math.max(0, MAX_PROPS - requiredProps.length);
@@ -1998,7 +2047,7 @@ function typeToSchema(
       // extraction warning uses.
       const branches = collapsedUnionBranches(propType, checker);
       if (branches && fileName) {
-        warnCollapsedUnion(fileName, prop.getName(), branches, schema.kind, sink);
+        warnCollapsedUnion(fileName, prop.getName(), branches, schema.kind, sink, record);
       }
       // M103 (dub-F2): a required prop the synthesizer could only fill with a
       // stand-in object. `warnDegenerateProps` already covers the case where it

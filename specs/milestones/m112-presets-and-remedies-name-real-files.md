@@ -201,6 +201,49 @@ Lanes A, B and C run their existing `test/unit/` suites; nothing green at 717720
 Control: shadcn-admin button (a run-5 repo that reached a report) prints an unchanged `Stylesheets:` line and
 verdict. `tsc --noEmit` clean. Decisive lines pasted here at approval.
 
+### Lane B evidence
+
+Tests: `node node_modules/vitest/vitest.mjs run test/unit/preset-sibling-shape-is-disclosed.test.ts
+--maxWorkers=2` -> `Test Files  1 passed (1)`, `Tests  15 passed (15)`. The lane's existing suites
+(40 `test/unit/*.test.ts` files that import `prop-gen`/`prop-presets`, two batches of 20,
+`--maxWorkers=2`): `Tests  2 failed | 170 passed (172)` and `Tests  18 failed | 380 passed (398)`;
+the 20 failures are the two baseline files (`prop-default-disclosure.test.ts`,
+`vue-dual-block-props.test.ts`) named under "Baseline failures" in `M107-M117-MAP.md`.
+
+`node node_modules/typescript/bin/tsc --noEmit`: clean.
+
+Corpus, scratch dist `C:/Projekte/120fps-fieldtest/scratch/B-M112/dist/cli.js` built from this
+worktree (`build-scratch.sh B-M112`, tree at `ddc79f5` plus the three lanes' uncommitted work):
+
+- radix-themes-F1 (`--cwd .../packages/radix-ui-themes -- src/components/button.tsx
+  --explain-props`, label `M112-radix-themes-after`). Before (`logs/radix-themes/explain-button.log`):
+  `Add button.props.tsx to choose the props that matter.` and 8x
+  `Add button.props.tsx to choose a different branch.`, next to a real
+  `src/components/button.props.tsx`. After:
+  `Warning: 247 props were extracted from E:\repositories-run5\radix-themes\packages\radix-ui-themes\src\components\button.tsx; measuring the first 32. Add button.120fps.props.tsx to choose the props that matter.`
+  and 8x `Add button.120fps.props.tsx to choose a different branch.` Closed for the lane B half (no
+  remedy names an existing file); the "exists, not a preset" disclosure line is C2, not landed yet.
+- epic-stack-F3 (`app/components/ui/button.props.tsx` recreated with
+  `export const variant = "default";`, then `--cwd /e/repositories-run5/epic-stack --
+  app/components/ui/button.tsx --explain-props`, label `M112-epic-stack-after`; the file was removed
+  again afterwards). Before (`logs/epic-stack/ep1-button.log`):
+  `Add button.props.tsx to choose the props that matter.` After:
+  `Warning: 240 props were extracted from E:\repositories-run5\epic-stack\app\components\ui\button.tsx; measuring the first 32. Add button.120fps.props.tsx to choose the props that matter.`
+  Closed for the lane B half; the disclosure line is C2.
+- logto-F4 (`src/ds-components/Button/index.props.tsx` recreated with a default-exported
+  `title`/`type` object, then `--cwd .../packages/console -- src/ds-components/Button/index.tsx
+  --explain-props`, label `M112-logto-after`; the file was removed again afterwards). Before
+  (`logs/logto/explain-button-preset.log`): `Add index.props.tsx to choose the props that matter.`
+  beside `presets:  src/ds-components/Button/index.props.tsx`. After:
+  `Warning: 319 props were extracted from E:\repositories-run5\logto\packages\console\src\ds-components\Button\index.tsx; measuring the first 32. Add index.props.tsx to choose the props that matter.`
+  with `title  unknown  optional  "Sign in", "Sign out"` measured from the preset. Not closed: the
+  remedy is re-rendered after the preset is applied by C1, which consumes lane B's
+  `PropsExtraction.warningRecords` (I7). The remedy correctly names the preset that is on disk.
+- Control shadcn-admin (`-- src/components/ui/button.tsx --explain-props`, label
+  `M112-shadcn-admin-after`): reaches the same report, and with no preset-named sibling on disk the
+  text is unchanged character for character:
+  `Warning: 240 props were extracted from E:\repositories-run5\shadcn-admin\src\components\ui\button.tsx; measuring the first 32. Add button.props.tsx to choose the props that matter.`
+
 ## Deferred
 
 - Lifting the prop cap for a preset: `verify/epic-stack.md:88-92` shows the cap is correct as it stands (M86
