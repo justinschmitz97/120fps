@@ -242,9 +242,9 @@ A6's declared-plugin trigger is not implemented: applied literally it makes ever
 only the specifier shapes (`*/macro`, `*.macro`, `babel-plugin-macros`) fire, and only for bare
 specifiers, so a project's own `./macro` file stays an ordinary graph edge.
 
-Not implemented, blocked on I4 (lane C has not landed the two `ReactCompilerReport` fields): A4's
-report object and terminal line. `ReactCompilerState` (`src/harness.ts`) already carries `target`
-and `skipped` for lane C to read.
+Not implemented at lane A's commit, blocked on I4: A4's report object and terminal line. Lane C
+landed both on 2026-09-03 (Lane C evidence below). `ReactCompilerState` (`src/harness.ts`) already
+carries `target` and `skipped` for lane C to read.
 
 ### Lane C evidence (2026-09-03, scratch dist `C-M108`)
 
@@ -255,7 +255,12 @@ prints them, and `buildReactCompilerReport` (`src/analyze.ts`) forwards lane A's
 Tests, `node node_modules/vitest/vitest.mjs run test/unit/react-compiler-disclosure-names-target.test.ts --maxWorkers=2`:
 
     Test Files  1 passed (1)
-         Tests  9 passed (9)
+         Tests  10 passed (10)
+
+`node node_modules/vitest/vitest.mjs run test/e2e/compiler.test.ts --maxWorkers=2`:
+`Test Files 1 passed (1)`, `Tests 15 passed (15)` — the full-pipeline case now asserts
+`{ active: true, detected: true, version: "1.0.0", target: "19" }`, the target the fixture's
+installed React 19.2.5 implies.
 
 The 54 files that assert on `formatTable` output (`grep -l formatTable test/unit/*.test.ts`),
 same runner: `Test Files 54 passed (54)`, `Tests 1123 passed (1123)` — including
@@ -273,6 +278,12 @@ C:/Projekte/120fps-fieldtest/scratch/C-M108/dist/cli.js`, one run at a time, lab
 - primer-react-F1 — the terminal line cannot be shown here, the rest closed.
   before: `Error: react imports from "./compiler-runtime", a Nuxt build-time virtual module that does not exist until `nuxi prepare` generates the .nuxt/ directory. Run `nuxi prepare` in this project, then measure again.`
   after: `exit=2 killed=false seconds=36` / `Error: component harness failed before it became ready: warning.ts: __DEV__ is not defined. Page errors:` / `  - __DEV__ is not defined`. No `react/compiler-runtime` error, no Nuxt sentence. `React Compiler:` is a report header line and this run writes no report (`__DEV__`, deferred), so the corpus cannot print it: primer-react is the only corpus repository that declares `babel-plugin-react-compiler` (`grep -l babel-plugin-react-compiler` over epic-stack, documenso, hoppscotch and shadcn-admin returns nothing). The wording is covered by the unit tests above.
+
+  CLI witness without a corpus repository, the same scratch dist against
+  `fixtures/compiler-project/MemoParent.tsx --react-compiler --samples 2` (React 19.2.5 installed,
+  `babel-plugin-react-compiler` declared), `exit=0`, report header line 19:
+
+      React Compiler: active (v1.0.0, target 19)
 - epic-stack-F1 — closed, header block unchanged.
   before: `Error: Failed to start Vite dev server in E:\repositories-run5\epic-stack\.120fps-harness-Azc3vv: epic-stack-template imports from "#app", a Nuxt build-time virtual module that does not exist until `nuxi prepare` generates the .nuxt/ directory. Run `nuxi prepare` in this project, then measure again.`
   after: `exit=0 killed=false seconds=84` / `Mode: prop combos (4 measured of 64 generated, +4 scale probes)` / `Result: PASS`. No `React Compiler:` line, as the repository declares no compiler.

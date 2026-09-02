@@ -3172,7 +3172,7 @@ export function formatAccumulatedWarnings(warnings: string[]): string {
 export function buildReactCompilerReport(
   state: ReactCompilerState | undefined,
 ): ReactCompilerReport | undefined {
-  if (!state || !(state.detected || state.active)) return undefined;
+  if (!state || !(state.detected || state.active || state.skipped)) return undefined;
   return {
     active: state.active,
     detected: state.detected,

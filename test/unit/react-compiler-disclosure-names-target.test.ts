@@ -119,6 +119,22 @@ describe("the report's reactCompiler object carries the harness disclosure", () 
     });
   });
 
+  it("still describes a run whose transform was skipped before it was detected", () => {
+    expect(
+      buildReactCompilerReport({
+        detected: false,
+        active: false,
+        target: "18",
+        skipped: { target: "18", missingModule: "react-compiler-runtime" },
+      }),
+    ).toEqual({
+      active: false,
+      detected: false,
+      target: "18",
+      skipped: { target: "18", missingModule: "react-compiler-runtime" },
+    });
+  });
+
   it("describes nothing when the compiler was neither detected nor active", () => {
     expect(buildReactCompilerReport({ detected: false, active: false })).toBeUndefined();
     expect(buildReactCompilerReport(undefined)).toBeUndefined();
