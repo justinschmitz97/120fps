@@ -196,6 +196,95 @@ this worktree, per the map's rule. Commands 1 and 2 are the `EVIDENCE.md` rows, 
    `fixtures/aria-menu.tsx` (click-driven, no state-invariant pattern: the control that must not
    move), 5 interleaved pairs each in one window, medians recorded here before approval.
 
+### Lane C evidence
+
+Recorded 2026-09-02 from `C:\Projekte\120fps-m107` at `0b72589` + this lane's edit. Both A/B arms
+were built from this worktree (`build-scratch.sh C-M116` and `C-M116-before`); the control arm is
+the same dist with `replayPath`'s state-invariant early return disabled in
+`scratch/C-M116-before/dist/explorer.js`, so the two arms differ in C1 and nothing else.
+
+Unit, `node node_modules/vitest/vitest.mjs run
+test/unit/explore-replays-state-invariant-path-once-per-edge.test.ts --maxWorkers=2`:
+
+```
+ Test Files  1 passed (1)
+      Tests  9 passed (9)
+```
+
+Lane regression, the 86 files under `test/unit/` that import `explorer.js`, `stress-patterns.js` or
+`analyze.js` (`--maxWorkers=2`):
+
+```
+ Test Files  86 passed (86)
+      Tests  1479 passed (1479)
+```
+
+`node node_modules/typescript/bin/tsc --noEmit`: clean, no output.
+
+Before the change the same test file failed on the two counting assertions, for the right reason:
+`AssertionError: expected 6 to be 2` (five per-sample mounts plus the initial one, where the edge
+needs one) and `expected 7 to be 3` on the retry case.
+
+#### A/B (E1), 5 interleaved same-window pairs per fixture
+
+`--samples 5 --max-combos 4 --explore-budget 60 --no-deltas`, run alternately before/after in one
+window, medians of `phaseTimings` from the JSON report (ms):
+
+| fixture | arm | `explore` per pair | median | `preflight` median | verdict | warnings |
+|---|---|---|---|---|---|---|
+| `fixtures/large-dom.tsx` (one `:root` `scroll-sweep` edge) | before | 10120, 8581, 9316, 8830, 9965 | **9316** | 47 | PASS | 3 |
+| `fixtures/large-dom.tsx` | after | 8545, 8299, 8294, 9226, 8719 | **8545** | 49 | PASS | 3 |
+| `fixtures/aria-menu.tsx` (control, no state-invariant pattern) | before | 61925, 63244, 62091, 61683, 62587 | **62091** | 50 | PASS | 4 |
+| `fixtures/aria-menu.tsx` | after | 61957, 62702, 60936, 62146, 63057 | **62146** | 50 | PASS | 4 |
+
+`explore` on the scroll subject: **-8.3 %** (9316 ms to 8545 ms). The control moves +0.1 %
+(62091 ms to 62146 ms), inside its own scatter: no state-invariant edge, nothing to hoist.
+`preflight` is unchanged in both (lane A's memo is not in this arm), so the win is C1's alone.
+The verdict and the warning list are identical between arms on both fixtures.
+
+Interaction row, `fixtures/large-dom.tsx`, both arms, every pair: one row, `selector ":root"`,
+`type "scroll"`, `label "document"`, `portal` absent, `stressPattern "scroll-sweep"`,
+`timing.samples.length 5`. `timing.median` per pair, before: 17.49, 21.74, 20.58, 17.51, 16.27 ms
+(mean 18.72, cross-run CV 11.1 %); after: 19.69, 18.15, 17.23, 20.17, 19.52 ms (mean 18.95, CV
+5.8 %). The arm means differ by 1.3 %, inside `NOISE_CV_PERCENT` (15, `src/noise.ts:24`) and well
+inside each arm's own scatter, so the pattern held its state-invariance: nothing to revert.
+
+#### Corpus
+
+Through `node C:/Projekte/120fps-fieldtest/tools/run120.mjs` with
+`--cli C:/Projekte/120fps-fieldtest/scratch/C-M116/dist/cli.js`.
+
+1. shadcn-admin, `EVIDENCE.md` row shadcn-admin-F2, label `M116-shadcn-admin-after`
+   (`-- src/components/data-table/toolbar.tsx --samples 5 --max-combos 4 --explore-budget 60
+   --no-deltas`, `--timeout 1500`). Before (EVIDENCE.md): "toolbar.props.tsx remedy cannot supply a
+   working TanStack Table stand-in". After, verbatim from the digest:
+   `Result: FAIL [render error]`, `Total: 18.7s`,
+   `phaseTimings {"preflight":221,...,"explore":6397,...,"total":18678}`, 10 warnings led by
+   `⚠ vite.config.ts declares plugins, which the harness read but cannot honor: the project's Vite config is never executed`.
+   No `scroll-sweep` in the report: explore unchanged (no state-invariant edge). The row's own
+   finding is M112's remedy wording, not this milestone's; closed: no (out of lane C's scope), and
+   this milestone's expectation — same verdict, same warnings — holds.
+2. calcom control, `EVIDENCE.md` row calcom-R1, label `M116-calcom-after`
+   (`-- packages/ui/components/popover/Popover.tsx --matrix --samples 3 --max-combos 4
+   --explore-budget 60 --no-deltas`, `--timeout 900`). Before (EVIDENCE.md): "--matrix silently has
+   no effect when auto-compose takes over". After: `Result: PASS`, `Total: 1m 13s`, 5 warnings, one
+   combo with 2 interactions, both `open-close-10` — not state-invariant, so explore is unchanged
+   here too (`phaseTimings.explore` 63977 ms against a 60 s budget). Reaches a report with the same
+   verdict and warnings: control holds, closed: n/a.
+3. Sweep memo (command 3) not run: its expectation is that per-component `phaseTimings.preflight`
+   falls after the first component, which lane A's memo (A1-A4) produces. Lane A lands in wave 2;
+   the command is left for that lane.
+4. Unaffected repo, shadcn-admin `-- src/components/ui/button.tsx --explain-props`
+   (label `M116-shadcn-admin-button-after`): still reaches its report,
+   `Estimated real run: ~2m 9s (12 combos x 10 samples; defaults: no phase timings recorded for this component yet)`,
+   `Dry run: nothing was measured, no report was written.`
+
+C4b's `budgetExhausted` trigger is unreachable for the only state-invariant pattern today:
+`scroll-sweep` carries a single step (`src/stress-patterns.ts:134-142`) and
+`executeStressPattern` checks the budget before the first step, which the sample loop already
+guards with `remainingWallClock() <= 0`. The reset is implemented and covered by the retry test
+(`enterAndInvalidatePath`), not by a driven truncation.
+
 Plus, per the map: the milestone's tests pass, both lanes' existing tests stay green (baseline
 failures excepted), and `tsc --noEmit` is clean.
 
