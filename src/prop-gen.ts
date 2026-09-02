@@ -218,6 +218,13 @@ export interface PropsExtraction {
   targetName?: string;
   targetLine?: number;
   computedAnnotation?: string;
+  // M114 B4 (gutenberg-F2): the module the binding was read from, when the
+  // measured file only re-exports the component another module declares.
+  // Absent when the component is declared in the measured file itself.
+  targetFile?: string;
+  // M114 B5 / I7 (react-spectrum-F3): the barrel and the specifier that did not
+  // resolve, in place of a props table nothing could have filled.
+  unresolvedReExport?: { barrel: string; specifier: string };
   warnings: string[];
   warningRecords: PropWarningRecord[];
 }
@@ -408,6 +415,10 @@ export async function extractPropsDetailed(
     schemas,
     ...(binding.targetName !== undefined ? { targetName: binding.targetName } : {}),
     ...(binding.targetLine !== undefined ? { targetLine: binding.targetLine } : {}),
+    ...(binding.targetFile !== undefined ? { targetFile: binding.targetFile } : {}),
+    ...(binding.unresolvedReExport !== undefined
+      ? { unresolvedReExport: binding.unresolvedReExport }
+      : {}),
     ...(binding.computedAnnotation !== undefined
       ? { computedAnnotation: binding.computedAnnotation }
       : {}),
@@ -1565,6 +1576,13 @@ interface PropsBinding {
   // same file did bind. Reported only once the declaration fallback has also
   // come up empty.
   unboundTargetHijacked?: boolean;
+  // M114 B4 (gutenberg-F2): the module the binding was read from, when the
+  // measured file only re-exports the component another module declares.
+  targetFile?: string;
+  // M114 B5 / I7 (react-spectrum-F3): the barrel and the specifier that did not
+  // resolve. A cause the filesystem decides, so no props table is a fact about
+  // this file rather than a failed extraction.
+  unresolvedReExport?: { barrel: string; specifier: string };
 }
 
 // A type reference with arguments (`ComponentProps<typeof X>`,
@@ -1613,11 +1631,99 @@ function firstParameterTypeNode(
   return extractFunctionFromInitializer(expression)?.parameters[0]?.type;
 }
 
+// M114 B4/B5 (gutenberg-F2, react-spectrum-F3): the module a barrel's exported
+// binding is declared in. `export { X } from "./component"` and
+// `import { X } from "./component"; export { X };` both reach it through the
+// checker's alias, so one lookup serves both spellings. An alias whose target
+// has no declaration is a specifier that did not resolve, which is a fact about
+// the filesystem, not a failed extraction.
+type ReExportTarget =
+  | { file: ts.SourceFile; name: string }
+  | { unresolved: { barrel: string; specifier: string } };
+
+function moduleSpecifierFor(sourceFile: ts.SourceFile, name: string): string | undefined {
+  let specifier: string | undefined;
+  for (const statement of sourceFile.statements) {
+    if (
+      ts.isExportDeclaration(statement) &&
+      statement.moduleSpecifier &&
+      ts.isStringLiteral(statement.moduleSpecifier)
+    ) {
+      const clause = statement.exportClause;
+      if (!clause) {
+        specifier ??= statement.moduleSpecifier.text;
+        continue;
+      }
+      if (!ts.isNamedExports(clause)) continue;
+      for (const spec of clause.elements) {
+        if (spec.name.text === name) return statement.moduleSpecifier.text;
+      }
+      continue;
+    }
+    if (
+      ts.isImportDeclaration(statement) &&
+      ts.isStringLiteral(statement.moduleSpecifier) &&
+      statement.importClause
+    ) {
+      const named = statement.importClause.namedBindings;
+      if (named && ts.isNamedImports(named)) {
+        for (const spec of named.elements) {
+          if (spec.name.text === name) return statement.moduleSpecifier.text;
+        }
+      }
+      if (statement.importClause.name?.text === name) return statement.moduleSpecifier.text;
+    }
+  }
+  return specifier;
+}
+
+function followReExportedComponent(
+  sourceFile: ts.SourceFile,
+  checker: ts.TypeChecker,
+  explicitTarget?: string,
+): ReExportTarget | undefined {
+  const name =
+    explicitTarget ??
+    selectMeasuredExport(
+      scanExports(sourceFile.getFullText(), sourceFile.fileName),
+      sourceFile.fileName,
+    );
+  if (!name) return undefined;
+
+  const moduleSymbol = checker.getSymbolAtLocation(sourceFile);
+  const exported = moduleSymbol
+    ? checker.getExportsOfModule(moduleSymbol).find((symbol) => symbol.name === name)
+    : undefined;
+
+  if (exported && exported.flags & ts.SymbolFlags.Alias) {
+    let aliased: ts.Symbol | undefined;
+    try {
+      aliased = checker.getAliasedSymbol(exported);
+    } catch {
+      aliased = undefined;
+    }
+    const declaration = aliased?.getDeclarations()?.[0];
+    const declaringFile = declaration?.getSourceFile();
+    if (declaringFile && declaringFile.fileName !== sourceFile.fileName) {
+      return { file: declaringFile, name: aliased!.getName() };
+    }
+  }
+
+  const specifier = moduleSpecifierFor(sourceFile, name);
+  if (specifier === undefined) return undefined;
+  return { unresolved: { barrel: path.normalize(sourceFile.fileName), specifier } };
+}
+
+// A barrel of barrels still resolves in a bounded number of hops; the bound
+// stops a cycle of two files re-exporting each other.
+const RE_EXPORT_HOPS = 4;
+
 function findComponentPropsType(
   sourceFile: ts.SourceFile,
   checker: ts.TypeChecker,
   explicitTarget?: string,
   sink?: (message: string) => void,
+  hops = 0,
 ): PropsBinding {
   const candidates = collectComponentCandidates(sourceFile);
   const target = selectTargetCandidate(
@@ -1626,7 +1732,16 @@ function findComponentPropsType(
     sourceFile.getFullText(),
     explicitTarget,
   );
-  if (!target) return {};
+  if (!target) {
+    if (hops >= RE_EXPORT_HOPS) return {};
+    const followed = followReExportedComponent(sourceFile, checker, explicitTarget);
+    if (followed === undefined) return {};
+    if ("unresolved" in followed) return { unresolvedReExport: followed.unresolved };
+    const binding = findComponentPropsType(followed.file, checker, followed.name, sink, hops + 1);
+    return binding.targetName === undefined
+      ? binding
+      : { ...binding, targetFile: binding.targetFile ?? path.normalize(followed.file.fileName) };
+  }
 
   const byName = new Map<string, ComponentCandidate>();
   for (const candidate of candidates) {
@@ -2855,9 +2970,13 @@ export function scanExports(sourceText: string, fileName: string): ExportInfo[] 
   ts.forEachChild(sourceFile, (node) => {
     // export default <Identifier>;
     if (ts.isExportAssignment(node)) {
-      if (!node.isExportEquals && ts.isIdentifier(node.expression)) {
-        add(node.expression.text, true);
-      }
+      // M114 B1 / I9 (logto-F1): `export default forwardRef(Button)` and
+      // `memo(forwardRef(Button))` name `Button` as the default. Recording only
+      // a bare identifier dropped the default entirely, so `selectMeasuredExport`
+      // fell through to the first non-Provider export and the header named a
+      // sibling while the props table described the wrapped component.
+      const identifier = !node.isExportEquals ? identifierBehind(node.expression) : undefined;
+      if (identifier) add(identifier.text, true);
       return;
     }
 

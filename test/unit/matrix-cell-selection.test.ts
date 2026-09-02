@@ -37,12 +37,14 @@ describe("the cell a matrix always measures", () => {
     const kept = selectMatrixCombos(combos, axesOf(MODAL), 1);
 
     expect(kept).toHaveLength(1);
+    // M114 B2: `overlay` is an optional boolean, so its anchor member is
+    // absence rather than `false`.
     expect(combos[kept[0]]).toMatchObject({
       size: "small",
-      overlay: false,
       isOpen: false,
       padding: "none",
     });
+    expect("overlay" in combos[kept[0]]).toBe(false);
   });
 
   it("generates the anchor cell even when the axes are covered pairwise", () => {
@@ -84,7 +86,8 @@ describe("which deviation a small cell cap keeps", () => {
     const kept = selectMatrixCombos(combos, axesOf(MODAL), 2);
     const deviation = kept.map((i) => combos[i]).find((c) => c.isOpen === true);
 
-    expect(deviation).toMatchObject({ size: "small", overlay: false, padding: "none" });
+    expect(deviation).toMatchObject({ size: "small", padding: "none" });
+    expect(deviation && "overlay" in deviation).toBe(false);
   });
 
   it("crosses the earliest-declared axis when no axis reads as a reveal", () => {
@@ -199,7 +202,9 @@ describe("a prop the matrix does not vary", () => {
 
 describe("the values an axis is crossed over", () => {
   it("is the same function the cells are generated from", () => {
-    expect(matrixValues(schema({ name: "open" }))).toEqual([false, true]);
+    // M114 B2: an optional boolean crosses absent against present.
+    expect(matrixValues(schema({ name: "open" }))).toEqual([undefined, true]);
+    expect(matrixValues(schema({ name: "open", required: true }))).toEqual([false, true]);
     expect(matrixValues(schema({ name: "tone", kind: "union", values: ["a", "b"] }))).toEqual([
       "a",
       "b",
@@ -474,7 +479,7 @@ describe("a literal union with more values than one axis can cross", () => {
     expect(variant?.declaredValues).toHaveLength(12);
     expect(variant?.measuredValues).toHaveLength(8);
     expect(variant?.values).toEqual(variant?.measuredValues);
-    expect(axes.find((a) => a.propName === "hidden")?.declaredValues).toEqual([false, true]);
+    expect(axes.find((a) => a.propName === "hidden")?.declaredValues).toEqual([undefined, true]);
   });
 
   it("crosses the wide axis in the generated cells", () => {

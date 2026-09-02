@@ -364,7 +364,7 @@ function matrixValueCount(schema: PropSchema): number {
 
 
 export function shouldAutoActivateMatrix(schemas: PropSchema[]): boolean {
-  const eligible = schemas.filter(isMatrixEligible);
+  const eligible = matrixAxisSchemas(schemas);
   if (eligible.length < 2) return false;
   const product = eligible.reduce((acc, s) => acc * matrixValueCount(s), 1);
   return product <= MAX_MATRIX_AUTO_CELLS;
@@ -373,8 +373,39 @@ export function shouldAutoActivateMatrix(schemas: PropSchema[]): boolean {
 // M104 / I10: exported so `runMatrixMode` derives the values it prints as an
 // axis from the same function the cells are generated from, rather than a
 // second inline copy of the predicate.
+// M114 B3 (fluentui-F1): `defaultOpen` is `open`'s uncontrolled twin. Fluent's
+// `useControllableState` rejects a component that receives both, so all four
+// Dialog cells measured the error path. The controlled member is the one a
+// matrix can cross meaningfully, so the twin leaves the axis set and is held
+// absent, which `matrixHeldAbsentProps` then names.
+const UNCONTROLLED_TWIN = /^default([A-Z]\w*)$/;
+
+function controlledTwinOf(name: string): string | undefined {
+  const match = UNCONTROLLED_TWIN.exec(name);
+  if (!match) return undefined;
+  return match[1][0].toLowerCase() + match[1].slice(1);
+}
+
+// The axes a matrix crosses: every eligible schema except an uncontrolled twin
+// whose controlled member is eligible in the same set. One function, so the
+// cells, the header and the held-absent line cannot describe different sets.
+export function matrixAxisSchemas(schemas: PropSchema[]): PropSchema[] {
+  const eligible = schemas.filter(isMatrixEligible);
+  const eligibleNames = new Set(eligible.map((schema) => schema.name));
+  return eligible.filter((schema) => {
+    const controlled = controlledTwinOf(schema.name);
+    return controlled === undefined || !eligibleNames.has(controlled);
+  });
+}
+
 export function matrixValues(schema: PropSchema): unknown[] {
-  if (schema.kind === "boolean") return [false, true];
+  // M114 B2 (fluentui-F1): an optional boolean's two states are absent and
+  // present. `false` is what the component already does when the prop is not
+  // passed, so crossing `false` against `true` measured the resting state twice
+  // and never measured the component without the prop at all -- the case a
+  // controlled/uncontrolled pair makes decisive. A required boolean has no
+  // absent state to cross.
+  if (schema.kind === "boolean") return schema.required ? [false, true] : [undefined, true];
   const declared = schema.values;
   if (declared.length <= MAX_MATRIX_AXIS_VALUES) return declared;
   // The anchor is the value the component itself defaults to when it declares
@@ -394,7 +425,7 @@ export function matrixValues(schema: PropSchema): unknown[] {
 
 // Every value the axis declares, as the schema declares them.
 export function matrixDeclaredValues(schema: PropSchema): unknown[] {
-  return schema.kind === "boolean" ? [false, true] : schema.values;
+  return schema.kind === "boolean" ? matrixValues(schema) : schema.values;
 }
 
 // M104 / I10 (dub-F7): the axes a matrix crosses, with what each one declares
@@ -410,7 +441,7 @@ export interface MatrixAxisValues {
 }
 
 export function matrixAxesFor(schemas: PropSchema[]): MatrixAxisValues[] {
-  return schemas.filter(isMatrixEligible).map((schema) => {
+  return matrixAxisSchemas(schemas).map((schema) => {
     const measuredValues = matrixValues(schema);
     return {
       propName: schema.name,
@@ -458,18 +489,20 @@ function matrixNonAxisValue(schema: PropSchema): { present: boolean; value?: unk
 // header can say so. A cell that silently lost a prop reads as a cell the
 // component rendered without it.
 export function matrixHeldAbsentProps(schemas: PropSchema[]): string[] {
+  const axisNames = new Set(matrixAxisSchemas(schemas).map((schema) => schema.name));
   return schemas
-    .filter((schema) => !isMatrixEligible(schema) && !matrixNonAxisValue(schema).present)
+    .filter((schema) => !axisNames.has(schema.name) && !matrixNonAxisValue(schema).present)
     .map((schema) => schema.name);
 }
 
 export function generatePropMatrix(schemas: PropSchema[]): PropCombination[] {
   if (schemas.length === 0) return [{}];
 
-  const eligible = schemas.filter(isMatrixEligible);
+  const eligible = matrixAxisSchemas(schemas);
+  const axisNames = new Set(eligible.map((schema) => schema.name));
   const anchorProps: PropCombination = {};
   for (const s of schemas) {
-    if (isMatrixEligible(s)) continue;
+    if (axisNames.has(s.name)) continue;
     const held = matrixNonAxisValue(s);
     if (held.present) anchorProps[s.name] = held.value;
   }
@@ -493,7 +526,15 @@ export function generatePropMatrix(schemas: PropSchema[]): PropCombination[] {
     matrixCells = withAnchorCell(pairwiseCover(axes, MAX_MATRIX_CELLS), axes);
   }
 
-  return matrixCells.map((cell) => ({ ...anchorProps, ...cell }));
+  // M114 B2: an axis at its absent member sets no key at all. A cell that
+  // carried `open: undefined` would still be a cell that passed the prop.
+  return matrixCells.map((cell) => {
+    const merged: PropCombination = { ...anchorProps };
+    for (const [name, value] of Object.entries(cell)) {
+      if (value !== undefined) merged[name] = value;
+    }
+    return merged;
+  });
 }
 
 function matrixCartesian(axes: { name: string; values: unknown[] }[]): PropCombination[] {
@@ -660,7 +701,9 @@ const REVEAL_AXIS_NAME = /^(is|has|show|open|visible|expanded|active|enabled)/i;
 function isRevealAxis(axis: MatrixAxisLike): boolean {
   if (!REVEAL_AXIS_NAME.test(axis.propName)) return false;
   if (axis.values.length !== 2) return false;
-  if (!axis.values.every((value) => typeof value === "boolean")) return false;
+  // M114 B2: an optional boolean's off state is absence, which is still the
+  // state whose flip is what makes the component render anything.
+  if (!axis.values.every((value) => typeof value === "boolean" || value === undefined)) return false;
   return !axis.values[0];
 }
 

@@ -2,6 +2,7 @@
 kind: milestone
 status: draft
 tests:
+  - test/unit/vue-setup-inject-evidence.test.ts
   - test/unit/runtime-style-engine-disclosure.test.ts
   - test/unit/vite-root-entry-discovery.test.ts
   - test/unit/console-format-substitution.test.ts
@@ -207,6 +208,59 @@ corpus repo still reaches a report: a bounded shadcn-admin button run.
 - vitesse-F1: `node run120.mjs --cwd /e/repositories-run5/vitesse --label real-input -- src/components/TheInput.vue --samples 5 --max-combos 4 --explore-budget 60 --no-deltas` prints the `defineModels is not defined` abort followed by a hint naming `vite.config.ts` and stating that its declared `plugins` were read but not executed.
 - supabase-F2: `node C:/Projekte/120fps-fieldtest/tools/run120.mjs --cwd /e/repositories-run5/supabase/apps/studio --out C:/Projekte/120fps-fieldtest/logs/supabase --label real-copybutton --timeout 1500 -- components/ui/CopyButton.tsx --samples 5 --max-combos 4 --explore-budg` `[tail: --explore-budget 60 --no-deltas]`: the captured page errors carry substituted text and no bare `%s`.
 - vuetify-F1: `node C:/Projekte/120fps-fieldtest/tools/run120.mjs --cwd /e/repositories-run5/vuetify/packages/vuetify --out C:/Projekte/120fps-fieldtest/logs/vuetify --label vbtn-auto --timeout 1500 -- src/components/VBtn/VBtn.tsx --framework auto --explain-props` prints the fallback warning without the `this package has no application entry` clause (the entry resolves to `dev/index.html` under the config's `root`), keeps `src/components/VField/VField.sass` as the disclosed largest-fallback pick, and its vite-config line still reads `resolve.alias, plugins` with no `root`, because `resolve('dev')` folds.
+
+### Lane B evidence
+
+Run 2026-09-02 in `C:/Projekte/120fps-m107` on `feat/m107-run5-remediation`, scratch dist
+`C:/Projekte/120fps-fieldtest/scratch/B-M114/dist/cli.js`.
+
+1. Tests. `node node_modules/vitest/vitest.mjs run test/unit/default-export-behind-a-wrapper.test.ts
+   test/unit/controlled-pair-matrix-axes.test.ts test/unit/re-exported-props-resolution.test.ts
+   test/unit/vue-setup-inject-evidence.test.ts --maxWorkers=2`:
+   `Test Files  4 passed (4)` / `Tests  16 passed (16)`.
+   The 71 test files that import `src/prop-gen.ts`, `src/prop-gen-values.ts` or `src/vue-sfc.ts`:
+   `Test Files  71 passed (71)` / `Tests  967 passed (967)`, after three assertions this milestone
+   supersedes were rewritten: `matrix-harden.test.ts` H13 and `matrix-cell-selection.test.ts`
+   (an optional boolean's axis is now absent/present, B2) and `tsconfig-export-harden.test.ts` H11
+   (`export default memo(Widget)` names `Widget`, not the filename fallback `Fancy`, B1).
+   The map's baseline failures in `test/unit/vue-dual-block-props.test.ts` and
+   `test/unit/prop-default-disclosure.test.ts` are closed: `Tests  27 passed (27)`, after
+   `fixtures/vue-dual-block` joined `pnpm-workspace.yaml` with a `package.json` declaring `vue`
+   (`pnpm install` adds only that importer to `pnpm-lock.yaml`) and `importVueCompiler` began
+   recording why each specifier failed instead of swallowing the throw.
+2. `node node_modules/typescript/bin/tsc --noEmit`: clean, no output.
+3. Corpus, each through `node C:/Projekte/120fps-fieldtest/tools/run120.mjs ... --cli
+   C:/Projekte/120fps-fieldtest/scratch/B-M114/dist/cli.js`.
+
+- logto-F1 (B1), label `M114-logto-after`, closed.
+  Before: `Component: LinkButton` / `  exports:  LinkButton`.
+  After: `Component: Button` / `  exports:  Button, LinkButton`.
+- gutenberg-F2 (B4), label `M114-gutenberg-after`, closed for the props, open for the file name.
+  Before: `Props (0):` / `  binding:  no component declaration (props read from the file itself)`.
+  After: `Props (32):` / `  binding:  src/confirm-dialog/index.tsx:201`. The line is the declaring
+  module's; the *file* still names the barrel, because `bindingFile` is derived in
+  `src/analyze.ts:2596-2599` from the measured path. `extractPropsDetailed` now returns
+  `targetFile` (`.../confirm-dialog/component.tsx`) for lane C's C1 line to consume.
+- react-spectrum-F3 (B4, B5), label `M114-react-spectrum-after`, closed for lane B.
+  Before: `Props (0):` and `No props extracted: component measured with empty props only; if the
+  component has typed props, extraction may have failed`.
+  After: `Props (32):`, no zero-props warning. The specifier resolves, so the unresolved-re-export
+  record does not fire here; C1's `re-export of` line is lane C's half.
+- fluentui-F1 (B2, B3), label `M114-fluentui-after`, closed.
+  Before: `Prop Matrix (modalType × open × defaultOpen × inertTrapFocus × unmountOnClose)`,
+  13 lines of `A component must be either controlled or uncontrolled (specify either the state or
+  the defaultState, but not both).`, `Result: FAIL`.
+  After: `Prop Matrix (modalType × open × inertTrapFocus × unmountOnClose)`,
+  `Held absent (no value in any cell): defaultOpen, surfaceMotion, onOpenChange.`,
+  zero `but not both` lines, `Result: PASS`. No combo in `M114-fluentui-after.json` carries `open`
+  and `defaultOpen` together (`#2 props={"modalType":"modal","open":true}`).
+  One rendering gap for lane C: an axis held at its absent member prints
+  `Held at one value (not crossed at this cell cap): unmountOnClose=undefined`;
+  `appendAxisCoverage` (`src/report.ts:1932`) prints `absent` only when `measuredValues === 0`.
+- Unaffected repo, label `M114-shadcn-admin-after`: `src/components/ui/button.tsx --explain-props`
+  still reaches `Component: Button` / `Props (32):`.
+- Lane A and lane C repros (fluentui-F3, ark-F2, vitesse-F1, supabase-F2, vuetify-F1) were not run
+  by lane B: nothing in `src/prop-gen.ts`, `src/prop-gen-values.ts` or `src/vue-sfc.ts` decides them.
 
 ## Deferred
 

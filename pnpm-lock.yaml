@@ -75,6 +75,12 @@ importers:
         specifier: ^1.0.0
         version: 1.0.0
 
+  fixtures/vue-dual-block:
+    dependencies:
+      vue:
+        specifier: ^3.5.0
+        version: 3.5.41(typescript@5.9.3)
+
   fixtures/vue-project:
     dependencies:
       vue:
