@@ -2466,6 +2466,9 @@ export function buildCssReport(
       };
     })(),
     ...(resolvedCss.runtimeEngines !== undefined ? { runtimeEngines: resolvedCss.runtimeEngines } : {}),
+    ...(resolvedCss.runtimeEnginesRecognised !== undefined
+      ? { runtimeEnginesRecognised: resolvedCss.runtimeEnginesRecognised }
+      : {}),
     ...(resolvedCss.onlyCandidate !== undefined ? { onlyCandidate: resolvedCss.onlyCandidate } : {}),
     ...(resolvedCss.noEntryInPackage !== undefined
       ? { noEntryInPackage: resolvedCss.noEntryInPackage }
@@ -2544,7 +2547,10 @@ export async function explainProps(
   // run resolves them (resolveWrapPath then resolveCssFiles), so a wrapper's
   // own stylesheet imports are discoverable in both modes.
   const { wrapPath } = resolveWrapPath({}, projectRoot, framework, warnings);
-  const resolvedCss = resolveCssFiles({}, projectRoot, warnings, wrapPath ? { wrapPath } : undefined);
+  const resolvedCss = resolveCssFiles({}, projectRoot, warnings, {
+    ...(wrapPath ? { wrapPath } : {}),
+    measuredFile: resolvedPath,
+  });
   // M100 (preact-app-F1): the real run formats this line the moment the CSS
   // decision is made (analyze.ts's `cssDecisionWarning`) and carries it
   // through every exit path including a crash; the dry run resolved the same
@@ -3634,12 +3640,10 @@ export async function analyze(
   const { wrapPath, wrapAutoDetected } = resolveWrapPath(options, projectRoot, framework, wrapWarnings);
   // M71: what discovery had to guess at, folded into the run's warnings below.
   const cssWarnings: string[] = [];
-  const resolvedCss = resolveCssFiles(
-    options,
-    projectRoot,
-    cssWarnings,
-    wrapPath ? { wrapPath } : undefined,
-  );
+  const resolvedCss = resolveCssFiles(options, projectRoot, cssWarnings, {
+    ...(wrapPath ? { wrapPath } : {}),
+    measuredFile: resolvedPath,
+  });
   const cssReport = buildCssReport(resolvedCss, projectRoot);
   // M90 (ant-design-F6, dub-F3, nuxt-ui-F4, mantine-F5, calcom-F6,
   // shadcn-ui-F3): computed once, right where the decision is made, so it
@@ -4115,6 +4119,7 @@ export async function analyze(
       delete cssReport.onlyCandidate;
       delete cssReport.noEntryInPackage;
       delete cssReport.runtimeEngines;
+      delete cssReport.runtimeEnginesRecognised;
       // The early cache-lookup fingerprint (tryReuseStoredVerdict, above)
       // may already have memoized a value computed with the now-dropped
       // file still in it; un-memoize so a later --save-baseline call
@@ -4617,7 +4622,11 @@ export function resolveCssFiles(
   // walked the project entry only, so a wrapper's imports were invisible and
   // the run measured unstyled while a `120fps.setup.tsx` sat right there
   // importing `@mantine/core/styles.css`.
-  opts?: { wrapPath?: string },
+  // M114 A2 review: `measuredFile` is the component file the run measures. It
+  // is the last read discovery has when no stylesheet and no declared engine
+  // exist, and it decides between "none found" and an engine the recogniser
+  // cannot name.
+  opts?: { wrapPath?: string; measuredFile?: string },
 ): {
   files: string[];
   autoDetected: boolean;
@@ -4625,6 +4634,7 @@ export function resolveCssFiles(
   onlyCandidate?: boolean;
   noEntryInPackage?: boolean;
   runtimeEngines?: string[];
+  runtimeEnginesRecognised?: boolean;
   declaredMissing?: Array<{ field: string; path: string; buildCommand?: string }>;
 } {
   if (options.noCss) return { files: [], autoDetected: false, layer: "disabled" };
@@ -4645,11 +4655,10 @@ export function resolveCssFiles(
     return { files, autoDetected: false, layer: "explicit" };
   }
 
-  const discovered = discoverGlobalCss(
-    projectRoot,
-    warningsOut,
-    opts?.wrapPath ? { extraEntryFiles: [opts.wrapPath] } : undefined,
-  );
+  const discovered = discoverGlobalCss(projectRoot, warningsOut, {
+    ...(opts?.wrapPath ? { extraEntryFiles: [opts.wrapPath] } : {}),
+    ...(opts?.measuredFile ? { measuredFile: opts.measuredFile } : {}),
+  });
   const layer: CssReport["layer"] =
     discovered.source === "entry"
       ? "entry-chain"
@@ -4676,6 +4685,9 @@ export function resolveCssFiles(
       ? { noEntryInPackage: discovered.noEntryInPackage }
       : {}),
     ...(discovered.runtimeEngines !== undefined ? { runtimeEngines: discovered.runtimeEngines } : {}),
+    ...(discovered.runtimeEnginesRecognised !== undefined
+      ? { runtimeEnginesRecognised: discovered.runtimeEnginesRecognised }
+      : {}),
     ...(discovered.declaredMissing !== undefined ? { declaredMissing: discovered.declaredMissing } : {}),
   };
 }

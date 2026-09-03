@@ -189,9 +189,17 @@ same commit, coordinator-owned.
 - A3, A4, A5: `fixtures/vite-root-project/` (`root` a foldable `resolve(...)` call, `dev/index.html`
   loading `/index.js`, one stylesheet under `src/`, plus computed-`root` and
   `build.rollupOptions.input` variants). Assert the entry, the absent no-entry clause, the
-  ignored-keys line for the computed variant.
-- A6: `fixtures/console-format/`, calling `console.error("Warning: %s is invalid", "size")`. Assert
-  the recorded text, `%%`, surplus arguments.
+  ignored-keys line for the computed variant. A third variant,
+  `fixtures/vite-root-mixed-args/`, writes `root: resolve(process.env.APP_ROOT, "dev")` beside a real
+  `dev/` directory: assert `root` is undefined and `ignoredKeys` carries `root`, so a call with one
+  unreadable argument never folds to a root the config did not declare.
+- A6: a fake Playwright page double in test/unit/console-format-substitution.test.ts, emitting
+  `console` with `["Warning: %s is invalid", "size"]`, replaced the planned `fixtures/console-format/`
+  project: substitution reads only the message text and its arg previews, and a browser run would
+  have added a dev server and a real render to assert the same strings. Assert the recorded text,
+  every placeholder the substituter names (`%s`, `%d`, `%i`, `%f`, `%o`, `%O`, `%c`), `%%`, surplus
+  arguments. What the double cannot show — that `String(JSHandle)` yields the preview — is evidenced
+  by the supabase-F2 corpus run below.
 - B1: `fixtures/m58/hoc-default.tsx` (already `export default withTheme(Chart)`, read without
   editing). Assert `scanExports` and `detectComponentExport` both return `Chart`.
 - B2, B3: `fixtures/controlled-pair/` with `open?: boolean` and `defaultOpen?: boolean`. Assert that
@@ -215,7 +223,7 @@ corpus repo still reaches a report: a bounded shadcn-admin button run.
 - logto-F1: `node run120.mjs --cwd .../packages/console --label explain-button --timeout 1500 -- src/ds-components/Button/index.tsx --explain-props` (recorded cwd `E:/repositories-run5/logto/packages/console`) prints `Component: Button` and an `exports:` line containing `Button`.
 - vitesse-F1: `node run120.mjs --cwd /e/repositories-run5/vitesse --label real-input -- src/components/TheInput.vue --samples 5 --max-combos 4 --explore-budget 60 --no-deltas` prints the `defineModels is not defined` abort followed by a hint naming `vite.config.ts` and stating that its declared `plugins` were read but not executed.
 - supabase-F2: `node C:/Projekte/120fps-fieldtest/tools/run120.mjs --cwd /e/repositories-run5/supabase/apps/studio --out C:/Projekte/120fps-fieldtest/logs/supabase --label real-copybutton --timeout 1500 -- components/ui/CopyButton.tsx --samples 5 --max-combos 4 --explore-budg` `[tail: --explore-budget 60 --no-deltas]`: the captured page errors carry substituted text and no bare `%s`.
-- vuetify-F1: `node C:/Projekte/120fps-fieldtest/tools/run120.mjs --cwd /e/repositories-run5/vuetify/packages/vuetify --out C:/Projekte/120fps-fieldtest/logs/vuetify --label vbtn-auto --timeout 1500 -- src/components/VBtn/VBtn.tsx --framework auto --explain-props` prints the fallback warning without the `this package has no application entry` clause (the entry resolves to `dev/index.html` under the config's `root`), keeps `src/components/VField/VField.sass` as the disclosed largest-fallback pick, and its vite-config line still reads `resolve.alias, plugins` with no `root`, because `resolve('dev')` folds.
+- vuetify-F1: `node C:/Projekte/120fps-fieldtest/tools/run120.mjs --cwd /e/repositories-run5/vuetify/packages/vuetify --out C:/Projekte/120fps-fieldtest/logs/vuetify --label vbtn-auto --timeout 1500 -- src/components/VBtn/VBtn.tsx --framework auto --explain-props` no longer reaches the fallback warning at all: M112's declared-but-unbuilt branch returns first with `Stylesheets: none injected — package.json "exports[./styles]" declares lib/styles/main.css, which is not built yet`, so the `this package has no application entry` clause is unreachable here rather than merely absent, and no largest-fallback pick is disclosed. Amended from the earlier prediction of a rendered fallback warning naming `src/components/VField/VField.sass`. The root and entry reads are evidenced instead by `readViteConfigData` and `findProjectEntry` probes through the scratch dist (Lane A evidence below), which return the `dev` root, `ignoredKeys= resolve.alias, plugins` with no `root`, and `dev/index.js`.
 
 ### Lane A evidence
 

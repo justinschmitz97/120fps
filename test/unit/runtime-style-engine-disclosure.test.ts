@@ -81,6 +81,14 @@ describe("a measured file that styles at runtime through an unlisted package", (
 
   it("stays quiet for a measured file that imports no styling binding", () => {
     const discovered = discoverGlobalCss(UNLISTED_PROJECT, undefined, {
+      measuredFile: path.join(UNLISTED_PROJECT, "src/Plain.tsx"),
+    });
+    expect(discovered.source).toBe("none");
+    expect(discovered.runtimeEngines).toBeUndefined();
+  });
+
+  it("stays quiet for a measured file that cannot be parsed as a module", () => {
+    const discovered = discoverGlobalCss(UNLISTED_PROJECT, undefined, {
       measuredFile: path.join(UNLISTED_PROJECT, "package.json"),
     });
     expect(discovered.source).toBe("none");

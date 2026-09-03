@@ -10,6 +10,7 @@ import {
 const ROOT_PROJECT = path.resolve("fixtures/vite-root-project");
 const COMPUTED_ROOT_PROJECT = path.resolve("fixtures/vite-root-computed");
 const ROLLUP_INPUT_PROJECT = path.resolve("fixtures/vite-rollup-input");
+const MIXED_ARGS_ROOT_PROJECT = path.resolve("fixtures/vite-root-mixed-args");
 
 describe("a vite config that declares its own root", () => {
   it("folds a resolve() call into the directory it names", () => {
@@ -59,6 +60,14 @@ describe("a vite config whose root cannot be folded", () => {
     const discovered = discoverGlobalCss(COMPUTED_ROOT_PROJECT, warnings);
     expect(discovered.noEntryInPackage).toBe(true);
     expect(warnings.join("\n")).toContain("this package has no application entry");
+  });
+});
+
+describe("a vite config whose root call mixes literal and computed arguments", () => {
+  it("ignores the root instead of folding the literal arguments alone", () => {
+    const data = readViteConfigData(MIXED_ARGS_ROOT_PROJECT);
+    expect(data.root).toBeUndefined();
+    expect(data.ignoredKeys).toContain("root");
   });
 });
 

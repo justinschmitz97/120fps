@@ -1540,7 +1540,9 @@ export function discoverGlobalCss(
       files: [],
       source: "none",
       declaredMissing,
-      ...(declaredRuntimeEngines.length > 0 ? { runtimeEngines: declaredRuntimeEngines } : {}),
+      ...(declaredRuntimeEngines.length > 0
+        ? { runtimeEngines: declaredRuntimeEngines, runtimeEnginesRecognised: true }
+        : {}),
     };
   }
 
@@ -2343,6 +2345,14 @@ export function foldPathArray(node: ts.Expression, configDir: string): string[] 
   return dirs;
 }
 
+// An argument whose value the config text states outright: a string literal,
+// or `__dirname`, which is the config's own directory and so already the base
+// every fold resolves against.
+function isFoldableCallArgument(arg: ts.Expression): boolean {
+  if (stringLiteralValue(arg) !== undefined) return true;
+  return ts.isIdentifier(arg) && arg.text === "__dirname";
+}
+
 function resolveCallExpressionPath(node: ts.Expression, configDir: string): string | undefined {
   if (!ts.isCallExpression(node)) return undefined;
   const name = calleeName(node.expression);
@@ -2517,6 +2527,18 @@ function parseViteConfigFile(configFile: string): ParsedViteConfig | undefined {
     // asserted the package has no application entry.
     if (name === "root") {
       const literal = stringLiteralValue(property.initializer);
+      // M114 A3 review: `resolve(process.env.APP_ROOT, "dev")` folds to
+      // <configDir>/dev once the non-literal argument is dropped, which would
+      // name a root the config never declared. A call folds only when every
+      // argument is readable from the config text.
+      if (
+        literal === undefined &&
+        ts.isCallExpression(property.initializer) &&
+        !property.initializer.arguments.every(isFoldableCallArgument)
+      ) {
+        ignored.add("root");
+        continue;
+      }
       const resolved =
         literal === undefined
           ? resolveCallExpressionPath(property.initializer, configDir)

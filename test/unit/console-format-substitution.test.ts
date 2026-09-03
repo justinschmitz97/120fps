@@ -37,6 +37,12 @@ describe("substituting console format placeholders", () => {
     ).toBe("x rendered 12 times as [object Object]");
   });
 
+  it("fills the integer, float and full-object placeholders", () => {
+    expect(
+      substituteConsoleFormat("%i of %f as %O", ["%i of %f as %O", "3", "1.5", "[object Object]"]),
+    ).toBe("3 of 1.5 as [object Object]");
+  });
+
   it("turns a literal %% into one percent sign and consumes no argument", () => {
     expect(substituteConsoleFormat("100%% of %s done all", ["100%% of %s done", "all"])).toBe(
       "100% of all done",

@@ -100,9 +100,13 @@ of scope (see Does NOT include).
 ```ts
 export const RUNTIME_STYLE_ENGINES = [
   "@ant-design/cssinjs",
+  "antd-style",
   "@emotion/react",
   "@emotion/styled",
   "@emotion/css",
+  "@griffel/react",
+  "@griffel/core",
+  "css-render",
   "styled-components",
   "primevue",
 ];
