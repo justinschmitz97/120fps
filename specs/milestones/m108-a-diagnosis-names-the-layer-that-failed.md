@@ -1,6 +1,6 @@
 ---
 kind: milestone
-status: draft
+status: approved
 tests:
   - test/unit/subpath-imports-resolve-locally.test.ts
   - test/unit/nuxt-diagnosis-requires-nuxt.test.ts
@@ -302,6 +302,40 @@ C:/Projekte/120fps-fieldtest/scratch/C-M108/dist/cli.js`, one run at a time, lab
 - Running any project Vite plugin: 120fps never reads vite.config (`src/preflight.ts:853-855`).
 - The dry run printing the two new hits: `src/analyze.ts:2375` consumes only
   `preflight.soft`/`hard` (lane C, M110's dry-run/real-run parity MUST).
+- Resolving `#` specifiers through a workspace-root `imports` map the importer does not inherit.
+- The M107 rescue-alias widening and the `externalPkgs` "no installed dir" warning (M107, M110).
+- Substituting console `%s`/`%o` placeholders and the Vue provide/inject wording (M114).
+
+## Approval
+
+Approved 2026-09-03. Commits: `6709a51` and `63d3c54` (lane A), `4d34a69` and `a261145` (lane C).
+
+- Lane A (A1-A3, A5-A9) — `node node_modules/vitest/vitest.mjs run <the six spec files> --maxWorkers=2`
+  re-run at approval: `Test Files 6 passed (6)`, `Tests 60 passed (60)`; lane A's own run of the 13
+  milestone-plus-guard files reported `Test Files 13 passed (13)`, `Tests 282 passed (282)`, and
+  `tsc --noEmit` was clean. Corpus: epic-stack-F1 `exit=0` with no `Missing "#app" specifier` and no
+  Nuxt wording, primer-react-F1 reaching the expected `__DEV__ is not defined`, hoppscotch-F2 exit 2
+  naming `unplugin-icons` with no build-command clause, documenso-F1 leading with the captured throw
+  and a `[transform:babel-macro]` warning with no env-file remedy, shadcn-admin control `exit=0`.
+- Lane C (A4, I4) — `test/unit/react-compiler-disclosure-names-target.test.ts` `Tests 10 passed (10)`,
+  `test/e2e/compiler.test.ts` `Tests 15 passed (15)`, the 54 `formatTable` files
+  `Test Files 54 passed (54)` / `Tests 1123 passed (1123)`, `tsc --noEmit` clean. Corpus: the four
+  repositories re-run on the `C-M108` dist with the lane A outcomes unchanged; the
+  `React Compiler: active (v1.0.0, target 19)` header line witnessed on
+  `fixtures/compiler-project/MemoParent.tsx` because no corpus repository declares
+  `babel-plugin-react-compiler`.
+
+### Deferred / open
+
+- A6's declared-plugin trigger: only the specifier shapes (`*/macro`, `*.macro`,
+  `babel-plugin-macros`) fire, and only for bare specifiers.
+- documenso's throwing module is unnamed (the delivered stack carries no source frame), and the
+  macro warning's owner stays generic because `vite-plugin-babel-macros` is declared in a sibling
+  workspace member.
+- primer-react's `__DEV__` injection (`babel-plugin-transform-replace-expressions`).
+- Honouring the project's `unsupportedPatterns` React Compiler opt-out list.
+- Running any project Vite plugin: 120fps never reads vite.config.
+- The dry run printing the two new hits (lane C, M110's dry-run/real-run parity MUST).
 - Resolving `#` specifiers through a workspace-root `imports` map the importer does not inherit.
 - The M107 rescue-alias widening and the `externalPkgs` "no installed dir" warning (M107, M110).
 - Substituting console `%s`/`%o` placeholders and the Vue provide/inject wording (M114).
