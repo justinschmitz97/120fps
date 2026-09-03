@@ -1,6 +1,6 @@
 ---
 kind: milestone
-status: draft
+status: approved
 tests:
   - test/unit/signal-teardown-removes-harness-dirs.test.ts
   - test/unit/harness-dir-removal-retries-and-discloses.test.ts
@@ -361,3 +361,34 @@ parent would be the corpus-level check, and neither is scriptable from this shel
 - Correcting the M101 spec's two falsified claims (`m101:54-57`, `:153-156`: a plain `rmSync`
   succeeds while another live process holds a file inside the directory open). Editing a shipped,
   approved spec is the coordinator's change, not this milestone's.
+
+## Approval
+
+Approved 2026-09-03. Commits: `4be73af` (lane A: every run leaves nothing behind, even on a signal),
+`a5260be` (lane F: the signal sweep covers directories created before the pool exists), `3676fc9`
+(lane F: review fix-ups). Wave 1, lane A files only.
+
+- Lane A (A1-A6) — tests: `node node_modules/vitest/vitest.mjs run
+  test/unit/signal-teardown-removes-harness-dirs.test.ts
+  test/unit/harness-dir-removal-retries-and-discloses.test.ts
+  test/unit/stale-sweep-discloses-what-it-removed.test.ts
+  test/unit/signal-teardown-sweeps-before-any-pool-exists.test.ts --maxWorkers=2` →
+  `Test Files 4 passed (4) / Tests 24 passed (24)` on re-run at approval; `tsc --noEmit` clean.
+  Corpus: base-ui SIGTERM repro clean on disk on every attempt (exit 143, no
+  `.120fps-harness-*` in the repository root or `packages/react`, empty `git status --porcelain`),
+  completion run `exit=0 killed=false seconds=41 Result: PASS`, A5's removal line observed on the
+  shadcn-admin-F3 pass-gate (`Removed a stale harness directory from an earlier run:
+  .120fps-harness-planted (its owner process is gone).`), unaffected repo reaches its report with no
+  leftover and no sweep warning text.
+
+Deferred / open:
+
+- The corpus cannot demonstrate the signal path from msys bash on this machine: `kill -TERM`
+  terminates the CLI (`TerminateProcess`) rather than signalling it, so no in-process handler runs.
+  A1's signal-path claim and A6's budget on that path are held by the unit tests; a console Ctrl-C or
+  a `process.kill` from a Node parent would be the corpus-level check, neither scriptable here.
+- Moving the harness directory outside the project root (temp dir plus a Vite alias).
+- A cross-process lock on `.120fps-harness-*` for concurrent runs.
+- Making the pre-close sweep unnecessary by closing the pools first.
+- Forwarding signals from `tools/run120.mjs` to the child (field-test harness, not 120fps).
+- Correcting the M101 spec's two falsified claims (`m101:54-57`, `:153-156`) — coordinator's change.
