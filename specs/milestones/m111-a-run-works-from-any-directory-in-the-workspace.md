@@ -1,6 +1,6 @@
 ---
 kind: milestone
-status: draft
+status: approved
 tests:
   - test/unit/tailwind-config-resolves-from-the-member-root.test.ts
   - test/unit/run-prints-the-roots-it-resolved.test.ts
@@ -271,3 +271,34 @@ assert `matchedRules` is equal before calling A2 closed.
   support.
 - Byte-equal reports as the assertion the G5 brief proposed. A report carries a timestamp, machine
   data and measured durations, so A2 compares the decision fields instead.
+
+## Approval
+
+Approved 2026-09-03. Commits `0e8e06f` ("M111 (lane A): a run works from any directory in the
+workspace") and `416e4f8` ("M111 (lane A): review fix-ups"), wave 1 of lane A.
+
+Lane A: the three spec test files re-run at approval pass, `Test Files 3 passed (3)`,
+`Tests 26 passed (26)` (the evidence section's `15 passed` predates the review fix-ups in
+`416e4f8`; the file set is unchanged). Every MUST carries an assertion: A1 the nearest-config and
+ancestor cases plus the Tailwind 4 no-op, A2 the same style tooling and the same governing tsconfig
+across two start directories, A3 the message naming the four filenames, the searched directories and
+the start directory, A4 the roots line for a workspace member, the single root for a single-package
+project, one line per component across a two-component sweep and the empty line under `--ci`, A5 the
+`cd <dir> && pnpm run build` prefix, the bare command from inside the package, the absent command
+without a script, the yarn workspace, the absolute path with no relative path and the never-printed
+raw script body. `tsc --noEmit` clean. Corpus: midday from the repository root exits 0 with
+`content option` and `border-border` at zero occurrences and one roots line (midday-F1 closed);
+midday from the member root exits 0 with the same `Stylesheets:`, verdict, roots line and warnings
+JSON; the shadcn-admin control still reaches its dry-run summary with the new single-root line.
+
+### Deferred / open
+
+- A2 exact JSON parity on midday: `css.details[0].matchedRules` differed between the two start
+  directories (11 vs 22). Cause verified as Tailwind 3 resolving relative `content` globs against
+  `process.cwd()`; `writeAnchoredTailwind3Config` anchors them against the member root. The corpus
+  re-run that asserts `matchedRules` equal is pending. Accepted as a documented deferral.
+- Member root and workspace root in the JSON report and in `--report-md` (`src/report.ts`, lane C).
+- Running the server's lifetime under `process.chdir(projectRoot)`.
+- Tailwind 4 (`@tailwindcss/vite`) config resolution.
+- A general guard for any PostCSS or Vite plugin that reads `process.cwd()` on its own.
+- Byte-equal reports as the A2 assertion; the decision fields are compared instead.
