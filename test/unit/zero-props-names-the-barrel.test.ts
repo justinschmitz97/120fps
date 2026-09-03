@@ -8,6 +8,7 @@ import {
   UNRESOLVED_RE_EXPORT_WARNING,
   ZERO_PROPS_WARNING,
 } from "../../src/analyze.js";
+import { extractPropsDetailed } from "../../src/prop-gen.js";
 
 // gutenberg-F2 and react-spectrum-F3: a barrel printed `Props (0):` and then
 // the generic "extraction may have failed" sentence, whose floated malfunction
@@ -28,6 +29,14 @@ describe("a component reached through a re-export", () => {
     });
   });
 
+  it("points the binding line at the declaring module, not at the barrel", async () => {
+    const explained = await explainProps(fixture("index.tsx"), {});
+
+    expect(explained.bindingFile).toBe(relative("component.tsx"));
+    expect(explained.bindingLine).toBe(8);
+    expect(formatExplainProps(explained)).toContain(`binding:  ${relative("component.tsx")}:8`);
+  });
+
   it("prints the disclosure beside the binding line", async () => {
     const explained = await explainProps(fixture("index.tsx"), {});
 
@@ -46,6 +55,22 @@ describe("a component reached through a re-export", () => {
       "title",
     ]);
     expect(explained.warnings).not.toContain(ZERO_PROPS_WARNING);
+  });
+
+  // M114 review: the real run builds the same two disclosures from
+  // extractPropsDetailed's record, so the record the run reads carries the
+  // declaring module and produces byte-identical text.
+  it("gives the measured run the same declaring module the dry run printed", async () => {
+    const extracted = await extractPropsDetailed(fixture("index.tsx"), {});
+    const explained = await explainProps(fixture("index.tsx"), {});
+
+    expect(extracted.targetFile).toBeDefined();
+    expect(path.relative(REPO_ROOT, extracted.targetFile!).split(path.sep).join("/")).toBe(
+      relative("component.tsx"),
+    );
+    expect(
+      RE_EXPORT_MEASURED_DISCLOSURE(relative("index.tsx"), relative("component.tsx")),
+    ).toBe(RE_EXPORT_MEASURED_DISCLOSURE(explained.reExport!.barrel, explained.reExport!.module));
   });
 
   it("says nothing about a re-export for a component declared in the measured file", async () => {

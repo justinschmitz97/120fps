@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
 import { formatMountAbortHints, hintsForMountAbort } from "../../src/hints.js";
+import { SFC_INJECT_READ_FAILED_WARNING, viteConfigIgnoredKeys } from "../../src/analyze.js";
+import {
+  VITE_CONFIG_IGNORED_WARNING,
+  VITE_CONFIG_PREPROCESSOR_OPTION_WARNING,
+} from "../../src/harness.js";
 
 // ark-F2: `at Proxy._sfc_render` matched the optional `$` in the proxy-frame
 // signature, so a plain provide/inject failure was reported as a missing Vue
@@ -86,5 +91,39 @@ describe("a mount abort naming an identifier nothing defined", () => {
         viteConfig: { file: "vite.config.ts", ignoredKeys: ["resolve.alias"] },
       }),
     ).toEqual([]);
+  });
+});
+
+// M114 review: VITE_CONFIG_PREPROCESSOR_OPTION_WARNING opens with the same
+// prefix as VITE_CONFIG_IGNORED_WARNING, so a run that emits it first must
+// still hand C3 the ignored-plugins keys.
+describe("the vite-config evidence read back out of a run's warnings", () => {
+  it("skips the preprocessor warning that shares the ignored warning's prefix", () => {
+    const evidence = viteConfigIgnoredKeys([
+      VITE_CONFIG_PREPROCESSOR_OPTION_WARNING("vite.config.ts", ["css.preprocessorOptions.scss.api"]),
+      VITE_CONFIG_IGNORED_WARNING("vite.config.ts", ["plugins", "resolve.alias"]),
+    ]);
+
+    expect(evidence?.viteConfig.ignoredKeys).toEqual(["plugins", "resolve.alias"]);
+    expect(hintsForMountAbort(MACRO_ABORT, evidence)).toContain("vitePluginsNotExecuted");
+  });
+
+  it("returns nothing when no warning recorded an ignored plugins key", () => {
+    expect(
+      viteConfigIgnoredKeys([
+        VITE_CONFIG_PREPROCESSOR_OPTION_WARNING("vite.config.ts", ["css.preprocessorOptions.scss.api"]),
+      ]),
+    ).toBeUndefined();
+  });
+});
+
+// M114 review: an unreadable SFC used to be indistinguishable from one with no
+// inject( call, because the catch returned false with nothing said.
+describe("an SFC the abort path could not re-read", () => {
+  it("names the component and the read failure instead of implying no inject( call", () => {
+    expect(SFC_INJECT_READ_FAILED_WARNING("src/Dialog.vue", "EACCES: permission denied")).toBe(
+      "src/Dialog.vue could not be re-read to check for an inject( call (EACCES: permission " +
+        "denied), so no provide/inject hint is offered for this abort",
+    );
   });
 });

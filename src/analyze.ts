@@ -2847,9 +2847,12 @@ export async function explainProps(
     componentPath,
     componentName,
     ...(options.target ? { target: options.target } : {}),
+    // M114 review: the line belongs to the file the declaration was read from.
+    // Pairing it with the barrel's path printed a file:line the barrel does not
+    // contain; the re-export line below still names the barrel.
     ...(detail.targetLine !== undefined
       ? {
-          bindingFile: path.relative(projectRoot, resolvedPath).replace(/\\/g, "/"),
+          bindingFile: projectRel(detail.targetFile ?? resolvedPath),
           bindingLine: detail.targetLine,
         }
       : {}),
@@ -4410,7 +4413,9 @@ export async function analyze(
     // this run read — the measured SFC's own setup block (I8) and the vite
     // config keys the harness recorded as read-but-not-honored (I10).
     const abortHints = formatMountAbortHints(message, {
-      usesInject: await measuredSfcUsesInject(resolvedPath, projectRoot),
+      usesInject: await measuredSfcUsesInject(resolvedPath, projectRoot, (warning) => {
+        combined.push(warning);
+      }),
       ...(viteConfigIgnoredKeys(combined) ?? {}),
     });
     throw new Error(presented + formatAccumulatedWarnings(combined) + abortHints, { cause: err });
@@ -4460,9 +4465,22 @@ const UNRESOLVED_RE_EXPORT_SIGNATURE = / re-exports .+, which did not resolve: n
 // failure path only. No compiler, an unreadable file or a malformed SFC all
 // mean the run read no `inject(` call, and a hint may not name a cause the run
 // did not read.
+// M114 review: the read covers `<script setup>` only -- parseSfcScript
+// (src/vue-sfc.ts) returns undefined without one, so an Options-API SFC whose
+// setup() injects records false and prints no hint. A read or compiler failure
+// is a different case from "no inject( call", so it is disclosed rather than
+// swallowed.
+export function SFC_INJECT_READ_FAILED_WARNING(component: string, reason: string): string {
+  return (
+    `${component} could not be re-read to check for an inject( call (${reason}), so no ` +
+    "provide/inject hint is offered for this abort"
+  );
+}
+
 async function measuredSfcUsesInject(
   componentPath: string,
   projectRoot: string,
+  onWarning?: (warning: string) => void,
 ): Promise<boolean> {
   if (!isVueFile(componentPath)) return false;
   try {
@@ -4470,7 +4488,13 @@ async function measuredSfcUsesInject(
     if (!compiler) return false;
     const source = fs.readFileSync(componentPath, "utf-8");
     return parseSfcScript(source, componentPath, compiler)?.usesInject === true;
-  } catch {
+  } catch (err) {
+    onWarning?.(
+      SFC_INJECT_READ_FAILED_WARNING(
+        path.relative(projectRoot, componentPath).replace(/\\/g, "/"),
+        err instanceof Error ? err.message : String(err),
+      ),
+    );
     return false;
   }
 }
@@ -4482,15 +4506,19 @@ async function measuredSfcUsesInject(
 const VITE_CONFIG_IGNORED_SHAPE =
   /^(\S+) declares (.+?), which the harness read but cannot honor: the project's Vite config is never executed/;
 
-function viteConfigIgnoredKeys(
+export function viteConfigIgnoredKeys(
   warnings: string[],
 ): { viteConfig: { file: string; ignoredKeys: string[] } } | undefined {
+  // M114 review: VITE_CONFIG_PREPROCESSOR_OPTION_WARNING (src/harness.ts)
+  // opens with the identical prefix, so the first match is not necessarily the
+  // ignored-keys warning. Only a warning that carries `plugins` can feed C3's
+  // hint, so that is what the scan keeps.
   for (const warning of warnings) {
     const match = VITE_CONFIG_IGNORED_SHAPE.exec(warning);
     if (!match) continue;
-    return {
-      viteConfig: { file: match[1]!, ignoredKeys: match[2]!.split(", ") },
-    };
+    const ignoredKeys = match[2]!.split(", ");
+    if (!ignoredKeys.includes("plugins")) continue;
+    return { viteConfig: { file: match[1]!, ignoredKeys } };
   }
   return undefined;
 }

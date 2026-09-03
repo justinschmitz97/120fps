@@ -109,8 +109,10 @@ Every line below was re-checked in `C:\Projekte\120fps-m107\src`. Two differ fro
   path and line the binding line names.
 - B5 When that resolution fails, the run names the barrel and the specifier that did not resolve
   instead of a props table; the record carrying them is I7.
-- B6 The run records whether the measured SFC's setup block calls `inject(`, so C2's hint has read
-  evidence; the field is I8.
+- B6 The run records whether the measured SFC's `<script setup>` block calls `inject(`, so C2's
+  hint has read evidence; the field is I8. `<script setup>` is the whole scope: an Options-API or
+  plain `<script>` SFC whose `setup()` injects records `usesInject` false and gets no hint, and a
+  component the run cannot re-read discloses that read failure instead of recording a silent false.
 
 ### Lane C (`src/analyze.ts`, `src/hints.ts`, `src/report.ts`)
 
@@ -121,7 +123,9 @@ Every line below was re-checked in `C:\Projekte\120fps-m107\src`. Two differ fro
 - C2 The Vue plugin hint prints only for a `$`-prefixed proxy frame together with a read of
   undefined. A read of undefined inside an ordinary SFC render frame prints the provide/inject hint
   with the `120fps.setup.vue` provide remedy only when the same run recorded an `inject(` call in the
-  measured component (B6); otherwise the abort prints no hint.
+  measured component's `<script setup>` block (B6); otherwise the abort prints no hint. When that
+  re-read throws, the run says so in its warnings rather than presenting the failure as "no
+  `inject(` call".
 - C3 A mount abort reading `<identifier> is not defined` prints a hint naming the config file and
   stating that its declared `plugins` were read but not executed, together with the identifier, when
   the run recorded `plugins` among the ignored keys; with an empty ignored list the abort prints no
@@ -147,7 +151,10 @@ Every line below was re-checked in `C:\Projekte\120fps-m107\src`. Two differ fro
 - I5: producer A (`discoverGlobalCss`), consumer C (`formatStylesheetsLine`, `report.ts:696-699`):
   the CSS result already carries `runtimeEngines: string[]` (`harness.ts:1349`, `report.ts:473`);
   M114 adds `runtimeEnginesRecognised: boolean` beside the `declaredMissing` M112 lands on the same
-  record. Needed by A1, A2, C4.
+  record. Needed by A1, A2, C4. A2's unrecognised outcome must reach C4 as layer `"runtime"` with
+  `runtimeEnginesRecognised` false and a non-empty `runtimeEngines`: C4's branch renders inside
+  `case "runtime"` only, so a layer of `"none"` would fall through to "none found" and leave A2
+  undisclosed. Until lane A lands, C4 is unit-verified only; the fluentui-F3 repro is rerun then.
 - I10: producer A (`ViteConfigData.ignoredKeys`, set at `harness.ts:2011`), consumer C
   (`hintsForMountAbort`, `analyze.ts:3740`), which receives that list and the config path beside the
   message. Needed by C3.
@@ -204,7 +211,7 @@ corpus repo still reaches a report: a bounded shadcn-admin button run.
 - fluentui-F1: `node C:/Projekte/120fps-fieldtest/tools/run120.mjs --cwd /e/repositories-run5/fluentui/packages/react-components/react-dialog/library --out C:/Projekte/120fps-fieldtest/logs/fluentui --label run-dialog --timeout 1500 -- src/components/Dialog/Dialog.tsx --sampl` `[tail: --samples 5 --max-combos 4 --explore-budget 60 --no-deltas]`: no combo in `run-dialog.json` carries `open` and `defaultOpen` together and the `useControllableState` console errors are gone. The verdict may stay FAIL on mount timing.
 - gutenberg-F2: `node C:/Projekte/120fps-fieldtest/tools/run120.mjs --cwd /e/repositories-run5/gutenberg/packages/components --out C:/Projekte/120fps-fieldtest/logs/gutenberg --label ep-confirm-dialog --timeout 1500 -- src/confirm-dialog/index.tsx --explain-props` prints `Props (32):` and `  binding:  src/confirm-dialog/component.tsx:201`, matching the `F2-verify` run on the declaring file.
 - react-spectrum-F3: `node C:/Projekte/120fps-fieldtest/tools/run120.mjs --cwd /e/repositories-run5/react-spectrum/packages/react-aria-components --out C:/Projekte/120fps-fieldtest/logs/react-spectrum --label explain-shim-button --timeout 1500 -- ../@react-spectrum/button/src/index` `[tail: .ts --explain-props]` prints the `re-export of` line naming `@adobe/react-spectrum/Button` with a non-zero props count, or the named unresolved-re-export cause. Never `ZERO_PROPS_WARNING`.
-- ark-F2: `node run120.mjs --cwd .../ark/packages/vue --label vue-dialog-trigger-real -- src/components/dialog/dialog-trigger.vue --samples 5 --max-combos 4 --explore-budget 60 --no-deltas` (recorded cwd `E:/repositories-run5/ark/packages/vue`) prints no `the component reads a global that a Vue plugin installs` line, and the provide/inject hint in its place, because ark's `create-context.ts` uses `provide`/`inject`.
+- ark-F2: `node run120.mjs --cwd .../ark/packages/vue --label vue-dialog-trigger-real -- src/components/dialog/dialog-trigger.vue --samples 5 --max-combos 4 --explore-budget 60 --no-deltas` (recorded cwd `E:/repositories-run5/ark/packages/vue`) prints no `the component reads a global that a Vue plugin installs` line, and no hint in its place: ark's `create-context.ts` uses `provide`/`inject`, but the measured `dialog-trigger.vue` calls `useDialogContext()`, so B6 reads no `inject(` call in it and C2 forbids a hint. Amended from "the provide/inject hint in its place", which contradicted C2's MUST.
 - logto-F1: `node run120.mjs --cwd .../packages/console --label explain-button --timeout 1500 -- src/ds-components/Button/index.tsx --explain-props` (recorded cwd `E:/repositories-run5/logto/packages/console`) prints `Component: Button` and an `exports:` line containing `Button`.
 - vitesse-F1: `node run120.mjs --cwd /e/repositories-run5/vitesse --label real-input -- src/components/TheInput.vue --samples 5 --max-combos 4 --explore-budget 60 --no-deltas` prints the `defineModels is not defined` abort followed by a hint naming `vite.config.ts` and stating that its declared `plugins` were read but not executed.
 - supabase-F2: `node C:/Projekte/120fps-fieldtest/tools/run120.mjs --cwd /e/repositories-run5/supabase/apps/studio --out C:/Projekte/120fps-fieldtest/logs/supabase --label real-copybutton --timeout 1500 -- components/ui/CopyButton.tsx --samples 5 --max-combos 4 --explore-budg` `[tail: --explore-budget 60 --no-deltas]`: the captured page errors carry substituted text and no bare `%s`.
@@ -301,15 +308,16 @@ Run 2026-09-03 in `C:/Projekte/120fps-m107` on `feat/m107-run5-remediation`, scr
   `  a global the config's plugins would have defined is missing` /
   `    vite.config.ts declares plugins, which the harness read but did not execute; nothing defined
   defineModels.` / `    README #project-transforms`.
-- ark-F2 (C2), label `M114-ark-after`, closed for the false claim, open for the replacement hint.
+- ark-F2 (C2), label `M114-ark-after`, closed: the false claim is gone and the corpus row above is
+  amended to the outcome C2's MUST requires.
   Before: `What to do about it:` / `  the component reads a global that a Vue plugin installs`.
   After: the abort prints no `What to do about it:` block at all. The plugin claim is gone, which is
   the finding. The provide/inject hint does not take its place here: the measured SFC
   (`src/components/dialog/dialog-trigger.vue:18`) calls `useDialogContext()`, and B6 records
   `usesInject` from the measured component's own setup block, so this run read no `inject(` call.
   C2's own rule ("only when the same run recorded an `inject(` call in the measured component;
-  otherwise the abort prints no hint") and the MUST NOT decide this over the corpus row's
-  expectation, which rests on `create-context.ts`, a file no lane reads.
+  otherwise the abort prints no hint") and the MUST NOT decide this over the row's original
+  expectation, which rested on `create-context.ts`, a file no lane reads.
 - Unaffected repo, label `M114-C-shadcn-admin-after`: `src/components/ui/button.tsx
   --explain-props` still reaches `Component: Button` / `Props (32):`.
 - Lane A's repros (fluentui-F3, vuetify-F1, supabase-F2) were not run by lane C: A1/A2 fill the
