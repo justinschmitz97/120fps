@@ -187,6 +187,23 @@ describe("a stylesheet the package declared but never built", () => {
     expect(line).not.toContain("none found");
   });
 
+  it("says \"are\" when two declared fields are missing", () => {
+    const line = formatStylesheetsLine({
+      files: [],
+      autoDetected: true,
+      layer: "none",
+      declaredMissing: ["a.css", "b.css"],
+      declaredMissingFields: [
+        { field: "style", path: "a.css", buildCommand: "pnpm build" },
+        { field: "exports", path: "b.css", buildCommand: "pnpm build" },
+      ],
+    });
+    expect(line).toContain('package.json "style" declares a.css');
+    expect(line).toContain('package.json "exports" declares b.css');
+    expect(line).toContain("which are not built yet");
+    expect(line).not.toContain("which is not built yet");
+  });
+
   it("falls back to the paths alone when no field came with them", () => {
     const line = formatStylesheetsLine({
       files: [],
@@ -211,11 +228,12 @@ describe("a stylesheet the package declared but never built", () => {
         files: [],
         autoDetected: true,
         layer: "none",
-        declaredMissing: ["styles.css"],
+        declaredMissing: [{ field: "style", path: "styles.css" }],
       } as unknown as Parameters<typeof buildCssReport>[0],
       process.cwd(),
     );
     expect(report.declaredMissing).toEqual(["styles.css"]);
+    expect(report.declaredMissingFields).toEqual([{ field: "style", path: "styles.css" }]);
   });
 });
 

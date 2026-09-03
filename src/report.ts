@@ -925,7 +925,8 @@ export function formatStylesheetsLine(css: CssReport): string {
           .join("; ");
         const build = css.declaredMissingFields.find((d) => d.buildCommand)?.buildCommand;
         return (
-          `Stylesheets: none injected — ${named}, which is not built yet; ` +
+          `Stylesheets: none injected — ${named}, which ${css.declaredMissingFields.length === 1 ? "is" : "are"} ` +
+          "not built yet; " +
           (build
             ? `run \`${build}\` in that package, then re-run`
             : "build the package, then re-run")

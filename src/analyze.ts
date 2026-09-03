@@ -2446,32 +2446,23 @@ export function buildCssReport(
         rules: stylesheetRuleCount(f),
       };
     }),
-    // M112 C4 / I5: read structurally because lane A owns the producer
-    // (`discoverGlobalCss`, src/harness.ts) and its `declaredMissing` member
-    // lands on its own schedule; a project root-relative posix path here
-    // regardless of which form the producer hands over.
+    // M112 C4 / I5: lane A's `discoverGlobalCss` (src/harness.ts) declares the
+    // shape, `resolveCssFiles` re-exports it, and it is read as typed here; a
+    // project-root-relative posix path regardless of where the producer put it.
     ...(() => {
-      type DeclaredMissing = string | { field: string; path: string; buildCommand?: string };
-      const declared = (resolvedCss as { declaredMissing?: DeclaredMissing[] }).declaredMissing;
+      const declared = resolvedCss.declaredMissing;
       // An empty array is a producer that found nothing: no key at all, so a
       // report of a project with no declaration is byte-identical.
       if (declared === undefined || declared.length === 0) return {};
       const rel = (f: string): string =>
         (path.isAbsolute(f) ? path.relative(projectRoot, f) : f).replace(/\\/g, "/");
-      const fields = declared.filter(
-        (d): d is Exclude<DeclaredMissing, string> => typeof d !== "string",
-      );
       return {
-        declaredMissing: declared.map((d) => rel(typeof d === "string" ? d : d.path)),
-        ...(fields.length > 0
-          ? {
-              declaredMissingFields: fields.map((d) => ({
-                field: d.field,
-                path: rel(d.path),
-                ...(d.buildCommand !== undefined ? { buildCommand: d.buildCommand } : {}),
-              })),
-            }
-          : {}),
+        declaredMissing: declared.map((d) => rel(d.path)),
+        declaredMissingFields: declared.map((d) => ({
+          field: d.field,
+          path: rel(d.path),
+          ...(d.buildCommand !== undefined ? { buildCommand: d.buildCommand } : {}),
+        })),
       };
     })(),
     ...(resolvedCss.runtimeEngines !== undefined ? { runtimeEngines: resolvedCss.runtimeEngines } : {}),
@@ -3256,17 +3247,21 @@ export function presetShapeDisclosure(
 // M112 C1 (logto-F4): the extraction warnings a preset answers. A collapsed
 // union whose prop the preset supplies values for has no subject left — the
 // branch the extraction guessed at was replaced by the values the user named —
-// so it is dropped rather than re-worded. With no preset applied the list is
-// returned untouched, character for character.
+// so it is dropped rather than re-worded. With no preset candidate on disk
+// the list is returned untouched, character for character.
 function remediesAfterPreset(
   warnings: string[],
   appliedPropNames: string[],
   presetFile?: string,
 ): string[] {
-  if (appliedPropNames.length === 0) return warnings;
-  return warnings
-    .filter((warning) => !presetAnswersRemedy(warning, appliedPropNames))
-    .map((warning) => (presetFile ? remedyNamesLoadedPreset(warning, presetFile) : warning));
+  // The loaded preset governs the wording, the applied names govern the
+  // filter: a preset whose keys miss the extracted schema applies nothing yet
+  // is still on disk, so the remedy still must not ask for it.
+  const named = presetFile
+    ? warnings.map((warning) => remedyNamesLoadedPreset(warning, presetFile))
+    : warnings;
+  if (appliedPropNames.length === 0) return named;
+  return named.filter((warning) => !presetAnswersRemedy(warning, appliedPropNames));
 }
 
 // The predicate both modes share: the dry run filters a list with it, the real

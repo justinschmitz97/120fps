@@ -128,6 +128,17 @@ describe("the capped-extraction remedy in a run that applied a preset", () => {
     expect(explained.warnings.some((w) => w.includes("Add wide"))).toBe(false);
   });
 
+  it("names a loaded preset that applied nothing", async () => {
+    const explained = await explainProps(fixture("wide-stale.tsx"), {});
+    const cap = explained.warnings.find((w) => w.includes("measuring the first"));
+    expect(cap).toBeDefined();
+    expect(cap).not.toContain("Add ");
+    expect(cap).toContain(
+      `The applied preset ${relative("wide-stale.120fps.props.tsx")} is already loaded; ` +
+        "extend it to choose the props that matter.",
+    );
+  });
+
   it("keeps the original wording for a capped component with no preset on disk", async () => {
     const explained = await explainProps(fixture("wide-uncovered.tsx"), {});
     expect(
