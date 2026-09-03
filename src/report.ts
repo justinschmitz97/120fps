@@ -474,6 +474,12 @@ export interface CssReport {
     unreadable?: string;
     matchedRules?: number;
   }>;
+  // M112 C4 / I5 (radix-themes-F2): the stylesheets the measured package's own
+  // package.json declares (`style`, `exports[...].style`) whose target is not
+  // on disk yet, as projectRoot-relative posix paths. Present whenever the
+  // manifest declared one, so `layer: "none"` can say "declared, not built"
+  // instead of asserting nothing was declared.
+  declaredMissing?: string[];
   // present only when layer === "runtime"
   runtimeEngines?: string[];
   // present only when layer === "largest-fallback"
@@ -885,6 +891,16 @@ export function formatStylesheetsLine(css: CssReport): string {
     case "unreadable":
       return "Stylesheets: dropped after a read failure -- measured unstyled (see warnings)";
     case "none":
+      // M112 C4: "none found" is false when the package named one. The
+      // declaration is the fact the user acts on, so it replaces the sentence
+      // rather than being appended to it.
+      if (css.declaredMissing && css.declaredMissing.length > 0) {
+        return (
+          `Stylesheets: none injected — the measured package's package.json declares ` +
+          `${css.declaredMissing.join(", ")}, which ${css.declaredMissing.length === 1 ? "is" : "are"} ` +
+          "not built yet; build the package, then re-run"
+        );
+      }
       return (
         "Stylesheets: none found (checked the project entry, conventional filenames, and the " +
         "largest stylesheet under the project)"

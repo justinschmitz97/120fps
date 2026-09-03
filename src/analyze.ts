@@ -22,9 +22,11 @@ import {
 } from "./noise.js";
 import {
   detectPropPresets,
+  describePresetSibling,
   loadPropPresets,
   applyPropPresets,
   isPresetRef,
+  PRESET_SHAPE_WARNING,
   UNKNOWN_PRESET_PROPS_WARNING,
 } from "./prop-presets.js";
 import {
@@ -45,6 +47,7 @@ import {
   inferComposition,
   shouldRollbackComposition,
   buildFixtureScaffold,
+  buildUncomposedFixtureScaffold,
   fixtureScaffoldPath,
   COMPOSITION_EMPTY_WARNING,
   declaredCompositionSiblings,
@@ -2440,6 +2443,19 @@ export function buildCssReport(
         rules: stylesheetRuleCount(f),
       };
     }),
+    // M112 C4 / I5: read structurally because lane A owns the producer
+    // (`discoverGlobalCss`, src/harness.ts) and its `declaredMissing` member
+    // lands on its own schedule; a project root-relative posix path here
+    // regardless of which form the producer hands over.
+    ...(() => {
+      const declared = (resolvedCss as { declaredMissing?: string[] }).declaredMissing;
+      if (declared === undefined) return {};
+      return {
+        declaredMissing: declared.map((f) =>
+          (path.isAbsolute(f) ? path.relative(projectRoot, f) : f).replace(/\\/g, "/"),
+        ),
+      };
+    })(),
     ...(resolvedCss.runtimeEngines !== undefined ? { runtimeEngines: resolvedCss.runtimeEngines } : {}),
     ...(resolvedCss.onlyCandidate !== undefined ? { onlyCandidate: resolvedCss.onlyCandidate } : {}),
     ...(resolvedCss.noEntryInPackage !== undefined
@@ -2638,17 +2654,28 @@ export async function explainProps(
     // A sink, not stderr: a dry run prints its diagnostics in its own output.
     onWarning: () => {},
   });
-  warnings.push(...detail.warnings);
-
+  // M112 C1: the preset decides which extraction remedies still have a
+  // subject, so it is detected and applied before any of them is pushed. The
+  // old order pushed them three lines before the preset loaded, which made the
+  // capped-extraction remedy stale by construction (logto-F4).
   let schemas = detail.schemas;
   const presetPath = detectPropPresets(resolvedPath);
   const presets = presetPath ? loadPropPresets(presetPath, projectRoot) : undefined;
+  let appliedPropNames: string[] = [];
+  let unknownPresetProps: string[] = [];
   if (presets) {
     const applied = applyPropPresets(schemas, presets);
     schemas = applied.schemas;
-    if (applied.unknown.length > 0) {
-      warnings.push(UNKNOWN_PRESET_PROPS_WARNING(presets.path, applied.unknown));
-    }
+    appliedPropNames = applied.applied;
+    unknownPresetProps = applied.unknown;
+  }
+  warnings.push(...remediesAfterPreset(detail.warnings, appliedPropNames));
+  // M112 C2: the sibling that carries the preset name without the preset
+  // shape, disclosed once by its path instead of dropped.
+  const shapeDisclosure = presetShapeDisclosure(resolvedPath, projectRoot);
+  if (shapeDisclosure) warnings.push(shapeDisclosure);
+  if (presets && unknownPresetProps.length > 0) {
+    warnings.push(UNKNOWN_PRESET_PROPS_WARNING(presets.path, unknownPresetProps));
   }
   // M92 (element-plus-F3): same suppression as runComboMode -- a zero-prop
   // count `detail.warnings` already attributes to a Vue scope exclusion does
@@ -3146,6 +3173,49 @@ function writeFixtureScaffold(
   return `wrote fixture scaffold ${target}; edit it to render the real composition, then re-run`;
 }
 
+// M112 C3 (radix-themes-F3): the same outcome for the never-composed path,
+// where there is no `CompositionTree` to hand `writeFixtureScaffold` — that
+// value is `undefined` exactly because auto-composition found no root, so the
+// flag could not act there even in principle. Returning the line rather than
+// printing it keeps both emission sites on the run's one warning channel, and
+// makes "accepted the flag and wrote nothing in silence" unrepresentable.
+export function initFixtureOutcome(componentPath: string, root: string, siblings: string[]): string {
+  const target = fixtureScaffoldPath(componentPath);
+  if (fs.existsSync(target)) {
+    return `--init-fixture skipped: ${target} already exists`;
+  }
+  const stem = path.basename(componentPath, path.extname(componentPath));
+  fs.writeFileSync(target, buildUncomposedFixtureScaffold(stem, root, siblings), "utf8");
+  return `wrote fixture scaffold ${target}; edit it to render the real composition, then re-run`;
+}
+
+// M112 C2 (radix-themes-F1, epic-stack-F3): the sibling that carries a preset's
+// name without its shape. One producer for both modes, so the dry run and the
+// real run disclose it in the same words (M100 parity).
+export function presetShapeDisclosure(
+  componentPath: string,
+  projectRoot: string,
+): string | undefined {
+  const sibling = describePresetSibling(componentPath);
+  if (sibling === undefined || sibling.shape === "preset") return undefined;
+  return PRESET_SHAPE_WARNING(path.relative(projectRoot, sibling.path).replace(/\\/g, "/"));
+}
+
+// M112 C1 (logto-F4): the extraction warnings a preset answers. A collapsed
+// union whose prop the preset supplies values for has no subject left — the
+// branch the extraction guessed at was replaced by the values the user named —
+// so it is dropped rather than re-worded. With no preset applied the list is
+// returned untouched, character for character.
+function remediesAfterPreset(warnings: string[], appliedPropNames: string[]): string[] {
+  if (appliedPropNames.length === 0) return warnings;
+  return warnings.filter(
+    (warning) =>
+      !appliedPropNames.some(
+        (name) => warning.includes(`prop "${name}"`) && warning.includes("is a union of"),
+      ),
+  );
+}
+
 // One untimed mount, before calibration, purely to find out whether the
 // inferred tree renders. Errors are returned rather than thrown: an invalid
 // composition is a fallback signal, not a run failure.
@@ -3438,6 +3508,9 @@ export async function analyze(
   // below can fire before that point.
   let disclosureReason: "uncomposed" | "propsExcluded" | undefined;
   let uncomposedWarning: string | undefined;
+  // M112 C3: what `--init-fixture` did on the never-composed path, folded into
+  // the run's warnings below beside the disclosure that recommended it.
+  let uncomposedFixtureLine: string | undefined;
   // M65: an explicit target names the one export to render, which is the
   // opposite of inferring a scene from several.
   if (!fixturePath && !inputIsFixture && !options.skipAutoCompose && !rendererIsVue && !options.target) {
@@ -3460,6 +3533,17 @@ export async function analyze(
       if (siblings.length > 0) {
         disclosureReason = "uncomposed";
         uncomposedWarning = UNCOMPOSED_SIBLINGS_WARNING(boundName, siblings.map((s) => s.name));
+        // M112 C3 (radix-themes-F3): the flag was accepted on the one path
+        // whose warning recommends it and wrote nothing. There is no inferred
+        // tree here, so the scaffold is the bound root plus a placeholder per
+        // declared sibling; either way the run says what the flag did.
+        if (options.initFixture) {
+          uncomposedFixtureLine = initFixtureOutcome(
+            resolvedPath,
+            boundName,
+            siblings.map((s) => s.name),
+          );
+        }
       }
     }
   }
@@ -3507,6 +3591,17 @@ export async function analyze(
   // M44: a fixture already owns its scene, so presets never apply there.
   const presetPath = useFixture ? undefined : detectPropPresets(resolvedPath);
   const presets = presetPath ? loadPropPresets(presetPath, projectRoot) : undefined;
+  // M112 C2: the same disclosure the dry run prints, from the same producer, so
+  // both modes name the rejected sibling in the same words (M100 parity). A
+  // fixture owns its scene, so a preset-named sibling is irrelevant there.
+  const presetShapeWarning = useFixture
+    ? undefined
+    : presetShapeDisclosure(resolvedPath, projectRoot);
+  // M112 C1: the props the preset supplies values for, known before extraction
+  // runs, so the remedies it answers never reach the terminal.
+  const presetSuppliedProps = presets
+    ? [...presets.entries].filter(([, values]) => values.length > 0).map(([name]) => name)
+    : [];
 
   // M65: provider-dependent imports found by the preflight walk.
   let providerCandidates: string[] = [];
@@ -3521,6 +3616,8 @@ export async function analyze(
     ...cssWarnings,
     ...wrapWarnings,
     ...(uncomposedWarning ? [uncomposedWarning] : []),
+    ...(uncomposedFixtureLine ? [uncomposedFixtureLine] : []),
+    ...(presetShapeWarning ? [presetShapeWarning] : []),
   ];
   // M46: counted before dedup: one surviving reload is a noise signal, and the
   // warning list deliberately shows it once however often it happened.
@@ -3559,6 +3656,13 @@ export async function analyze(
       ...(options.target ? { target: options.target } : {}),
       onWarning: (warning) => {
         if (isVuePropsScopeExclusionWarning(warning)) sawPropsScopeExclusion = true;
+        // M112 C1: the preset is loaded before extraction runs here, so a
+        // collapsed-union remedy for a prop it supplies values for is dropped
+        // as it is produced rather than printed and then contradicted. The
+        // same rule the dry run applies, on the same warning texts.
+        if (presetSuppliedProps.length > 0 && remediesAfterPreset([warning], presetSuppliedProps).length === 0) {
+          return;
+        }
         onWarning(warning);
       },
     });

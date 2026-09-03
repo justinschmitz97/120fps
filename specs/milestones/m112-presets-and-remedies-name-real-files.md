@@ -7,6 +7,7 @@ tests:
   # Lane C
   - test/unit/remedy-follows-the-applied-preset.test.ts
   - test/unit/init-fixture-scaffolds-or-explains.test.ts
+  - test/unit/stylesheet-disclosure-completeness.test.ts
   # Lane A
   - test/unit/declared-stylesheet-absent-is-named.test.ts
 ---
@@ -243,6 +244,78 @@ worktree (`build-scratch.sh B-M112`, tree at `ddc79f5` plus the three lanes' unc
   `M112-shadcn-admin-after`): reaches the same report, and with no preset-named sibling on disk the
   text is unchanged character for character:
   `Warning: 240 props were extracted from E:\repositories-run5\shadcn-admin\src\components\ui\button.tsx; measuring the first 32. Add button.props.tsx to choose the props that matter.`
+
+### Lane C evidence
+
+Tests: `node node_modules/vitest/vitest.mjs run test/unit/remedy-follows-the-applied-preset.test.ts
+test/unit/init-fixture-scaffolds-or-explains.test.ts
+test/unit/stylesheet-disclosure-completeness.test.ts --maxWorkers=2` -> `Test Files  3 passed (3)`,
+`Tests  26 passed (26)`. Full `test/unit` suite (`--maxWorkers=2`), after this lane's commit:
+`Test Files  308 passed (308)`, `Tests  4578 passed | 1 skipped (4579)` — the four "Baseline
+failures" files included, all four now green (lanes A and B fixed them under M108 and M114).
+
+`node node_modules/typescript/bin/tsc --noEmit`: clean.
+
+Corpus, scratch dist `C:/Projekte/120fps-fieldtest/scratch/C-M112/dist/cli.js`
+(`build-scratch.sh C-M112`, tree at `4be73af` plus the lanes' uncommitted work):
+
+- radix-themes-F1 / C2 (`--cwd .../packages/radix-ui-themes -- src/components/button.tsx
+  --explain-props`, label `M112-radix-themes-after`). Before
+  (`logs/radix-themes/explain-button.log:1`): `Add button.props.tsx to choose the props that
+  matter.` next to a real `src/components/button.props.tsx`, dropped in silence. After:
+  "  src/components/button.props.tsx exists, not a preset: no default-exported object literal
+  (expected `export default { prop: [values] }`)", beside `Add button.120fps.props.tsx to choose the
+  props that matter.` Closed.
+- epic-stack-F3 / C2 (`app/components/ui/button.props.tsx` recreated with
+  `export const variant = "default";`, then `--cwd /e/repositories-run5/epic-stack --
+  app/components/ui/button.tsx --explain-props`, label `M112-epic-stack-after`; the file was removed
+  again afterwards). Before (`logs/epic-stack/ep1-button.log`): `Add button.props.tsx to choose the
+  props that matter.`, and no word about the sibling. After:
+  "  app/components/ui/button.props.tsx exists, not a preset: no default-exported object literal
+  (expected `export default { prop: [values] }`)", beside `Add button.120fps.props.tsx to choose the
+  props that matter.` Closed.
+- radix-themes-F3 / C3 (`--cwd .../packages/radix-ui-themes -- src/components/dialog.tsx --samples 5
+  --max-combos 4 --explore-budget 60 --no-deltas --init-fixture`, label
+  `M112-radix-dialog-init-fixture-after`). Before (`logs/radix-themes/dialog-init-fixture.log:57`):
+  the uncomposed disclosure printed and the flag wrote nothing at all. After:
+  `wrote fixture scaffold E:\repositories-run5\radix-themes\packages\radix-ui-themes\src\components\dialog.fixture.tsx; edit it to render the real composition, then re-run`
+  on its own line and again inside the run's warning block, beside
+  `W Root declares sibling parts (Trigger, Content, Title, Description, Close) recognized by
+  auto-composition, but none were composed in`; the file was on disk after the run (956 bytes,
+  removed again to leave the corpus clean). `exit=0`, verdict unchanged. Closed.
+- logto-F4 / C1 (`src/ds-components/Button/index.props.tsx` recreated with a default-exported
+  `title`/`type` object, then `--cwd .../packages/console -- src/ds-components/Button/index.tsx
+  --explain-props`, label `M112-logto-after`; the file was removed again afterwards). Before
+  (`logs/logto/explain-button-preset.log:6`): `Add index.props.tsx to choose the props that matter.`
+  beside `presets:  src/ds-components/Button/index.props.tsx`. After, unchanged:
+  `Warning: 319 props were extracted from ...\index.tsx; measuring the first 32. Add index.props.tsx to choose the props that matter.`
+  with `  presets:  src/ds-components/Button/index.props.tsx` and
+  `  title              unknown    optional             "Sign in", "Sign out"` measured from the
+  preset. Not closed; see "Open against I7" below.
+- Control shadcn-admin (`-- src/components/ui/button.tsx --explain-props`, label
+  `M112-shadcn-admin-after`): `exit=0`, same report, and with no preset-named sibling on disk the
+  text is unchanged character for character:
+  `Warning: 240 props were extracted from E:\repositories-run5\shadcn-admin\src\components\ui\button.tsx; measuring the first 32. Add button.props.tsx to choose the props that matter.`
+
+Open against I7 (producer lane B, `src/prop-gen.ts`). `warnPropCap` records the cap warning and then
+writes it through `warnOnce`, straight to `process.stderr`; it takes no `sink` parameter, unlike
+`warnCollapsedUnion` and `warnDegenerateProps`. A consumer in `src/analyze.ts` therefore cannot
+withhold the stale capped-extraction remedy on a run that loaded a preset: by the time
+`extractPropsDetailed` returns, the line is already on the terminal. Re-rendering it into the run's
+`warnings` channel would print two contradictory remedies for one subject, which is the defect M112
+exists to remove, so lane C does neither. Closing logto-F4 needs one lane B change: route
+`warnPropCap` through `emit(key, text, sink)` as its two neighbours already do. The collapsed-union
+half of C1 is implemented and needs nothing (`remediesAfterPreset`, `src/analyze.ts`), because those
+warnings do reach the sink.
+
+Open against I5 (producer lane A, `src/harness.ts`). The `discoverGlobalCss` result carries no
+`declaredMissing` yet, so `buildCssReport` reads the member structurally and the field is absent on
+every run today; radix-themes-F2's `Stylesheets:` line is still `src/styles/tokens/color.css
+(largest-stylesheet fallback, low confidence - verify with --css)`. C4's consumer half is in place
+and unit-tested: `CssReport.declaredMissing`, the `none` branch of `formatStylesheetsLine`, and the
+projectRoot-relative posix normalisation in `buildCssReport`. The declaring field name and the
+package's build command are not on I5's record (`declaredMissing: string[]`), so the `Stylesheets:`
+line names the missing paths and A1's own warning carries the field and the command.
 
 ## Deferred
 

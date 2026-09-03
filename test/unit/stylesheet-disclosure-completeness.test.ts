@@ -129,3 +129,53 @@ describe("a stylesheet the package itself declared is labelled as such", () => {
     expect(line).toContain("matched a conventional filename");
   });
 });
+
+// radix-themes-F2 / M112 C4: the package's own package.json declared a
+// stylesheet the build had not produced yet, and the run said "none found".
+describe("a stylesheet the package declared but never built", () => {
+  it("is named on the Stylesheets line instead of 'none found'", () => {
+    const line = formatStylesheetsLine({
+      files: [],
+      autoDetected: true,
+      layer: "none",
+      declaredMissing: ["styles.css"],
+    });
+    expect(line).toContain("styles.css");
+    expect(line).toContain("declares");
+    expect(line).not.toContain("none found");
+  });
+
+  it("names every declared target that is missing", () => {
+    const line = formatStylesheetsLine({
+      files: [],
+      autoDetected: true,
+      layer: "none",
+      declaredMissing: ["styles.css", "dist/theme.css"],
+    });
+    expect(line).toContain("styles.css");
+    expect(line).toContain("dist/theme.css");
+  });
+
+  it("leaves the none branch alone when nothing was declared", () => {
+    const line = formatStylesheetsLine({
+      files: [],
+      autoDetected: true,
+      layer: "none",
+      declaredMissing: [],
+    });
+    expect(line).toContain("none found");
+  });
+
+  it("carries the declared targets into the report's css object", () => {
+    const report = buildCssReport(
+      {
+        files: [],
+        autoDetected: true,
+        layer: "none",
+        declaredMissing: ["styles.css"],
+      } as unknown as Parameters<typeof buildCssReport>[0],
+      process.cwd(),
+    );
+    expect(report.declaredMissing).toEqual(["styles.css"]);
+  });
+});
