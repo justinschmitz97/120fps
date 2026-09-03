@@ -287,6 +287,11 @@ export const HARNESS_SWEEP_BUDGET_MS = 1500;
 // injected remover) says the next attempt would fail the same way.
 const HARNESS_DIR_RETRY_CODES = new Set(["EBUSY", "EPERM", "EACCES", "ENOTEMPTY", "EMFILE", "ENFILE"]);
 
+// The pending-delete shape: the removal reported success and the directory is
+// still on disk. Leads with EBUSY so the retry decision reads it as retryable.
+export const HARNESS_DIR_PENDING_DELETE_REASON =
+  "EBUSY (still on disk after a removal that reported success)";
+
 // The `process.on("exit")` handler permits synchronous work only, so the wait
 // between attempts cannot be a timer.
 function sleepSync(ms: number): void {
@@ -313,7 +318,10 @@ function attemptHarnessDirRemoval(dir: string, remove: (dir: string) => void): s
   } catch (err) {
     return (err as NodeJS.ErrnoException).code ?? (err as Error).message;
   }
-  return fs.existsSync(dir) ? "EBUSY" : undefined;
+  // A4 asks for the error code. No error occurred on this path, so the
+  // reason says what the disk said instead of naming a code the OS never
+  // produced; the retry decision below reads its leading code.
+  return fs.existsSync(dir) ? HARNESS_DIR_PENDING_DELETE_REASON : undefined;
 }
 
 // Returns the error code of the last failed attempt, or undefined once the
@@ -327,7 +335,7 @@ export function removeHarnessDirWithRetries(
   for (let attempt = 1; ; attempt++) {
     const reason = attemptHarnessDirRemoval(dir, remove);
     if (reason === undefined) return undefined;
-    if (!HARNESS_DIR_RETRY_CODES.has(reason)) return reason;
+    if (!HARNESS_DIR_RETRY_CODES.has(reason.split(" ")[0])) return reason;
     const spent = Date.now() - started;
     const budgetSpent =
       attempt >= HARNESS_DIR_REMOVAL_MIN_ATTEMPTS && spent >= HARNESS_DIR_REMOVAL_BUDGET_MS;
@@ -434,6 +442,12 @@ function registerHarnessDirExitSweep(): void {
 }
 registerHarnessDirExitSweep();
 
+// M113: what a build reads when it asked for a harness directory after the
+// teardown sweep latched. The directory was created and removed again, so
+// there is no path to hand back.
+export const HARNESS_DIR_TEARDOWN_IN_PROGRESS =
+  "120fps is shutting down: the harness directory was removed by the teardown sweep.";
+
 // accessSync answers POSIX permission bits; the real mkdtempSync answers
 // everything it cannot see (Windows ACLs, a read-only mount, a root that is a
 // file or does not exist).
@@ -449,41 +463,47 @@ export function createHarnessDir(projectRoot: string): string {
   } catch (err) {
     return fail(err);
   }
+  let dir: string;
   try {
-    const dir = fs.mkdtempSync(path.join(projectRoot, ".120fps-harness-"));
+    dir = fs.mkdtempSync(path.join(projectRoot, ".120fps-harness-"));
     // M83 #7: tracked from the moment it exists, regardless of what happens
     // next — `cleanup()` and the bootServer catch's own rmSync both remove
     // it as soon as they remove the directory; anything left when the
     // process exits is a leftover the exit sweep above still has to catch.
     activeHarnessDirs.add(dir);
-    // M113 (final re-test): the signal arrived while this directory was being
-    // created, so the handler's sweep could not have seen it. The handler's
-    // work happens here instead, on the same budget, rather than leaving the
-    // directory for the next run to find.
-    if (harnessDirTeardownStarted) {
-      const reason = removeHarnessDirWithRetries(dir);
-      if (reason === undefined) activeHarnessDirs.delete(dir);
-      else {
-        process.stderr.write(
-          HARNESS_DIR_REMOVAL_FAILED_WARNING(harnessDirDisplayPath(dir, process.cwd()), reason) +
-            "\n",
-        );
-      }
-      return dir;
-    }
-    // M101: the marker that lets a later run tell an abandoned directory from
-    // one a live run is still writing into. Best-effort: a marker that cannot
-    // be written costs the directory only the older, more conservative age
-    // gate, and must never fail the run that was about to measure.
+    // M101: written before the teardown branch below, so a directory whose
+    // retry budget runs out down there carries its owner pid, and the next
+    // run's stale sweep removes it on the dead-pid path instead of waiting
+    // out the one-hour age gate the line below promises it will not wait out.
+    // Best-effort: a marker that cannot be written costs the directory only
+    // the older, more conservative age gate, and must never fail the run that
+    // was about to measure.
     try {
       fs.writeFileSync(path.join(dir, HARNESS_PID_FILE), `${process.pid}\n`);
     } catch {
       // Unwritable marker: sweepStaleHarnessDirs falls back to age alone.
     }
-    return dir;
   } catch (err) {
     return fail(err);
   }
+  // M113 (final re-test): the signal arrived while this directory was being
+  // created, so the handler's sweep could not have seen it. The handler's
+  // work happens here instead, on the same budget, rather than leaving the
+  // directory for the next run to find.
+  if (harnessDirTeardownStarted) {
+    const reason = removeHarnessDirWithRetries(dir);
+    if (reason === undefined) activeHarnessDirs.delete(dir);
+    else {
+      process.stderr.write(
+        HARNESS_DIR_REMOVAL_FAILED_WARNING(harnessDirDisplayPath(dir, process.cwd()), reason) + "\n",
+      );
+    }
+    // The directory is gone either way, so handing its path back would fail
+    // the build on an unrelated ENOENT for entry.tsx after the abort
+    // sentence. The build stops here instead, named.
+    throw new Error(HARNESS_DIR_TEARDOWN_IN_PROGRESS);
+  }
+  return dir;
 }
 
 // M101 (V2 repro 5): the process that owns a harness directory, so a later run

@@ -214,7 +214,10 @@ msys `kill -TERM` reached Chromium in the job's process group but not the CLI, s
 entered the signal path. Its disk was clean all the same (same two `No such file or directory` lines,
 empty `git status --porcelain`). Attempt 6 replaces it, so the signal path itself ran five times, exit
 143 each time, with no `.120fps-harness-*` left in the repository root or in `packages/react` and an
-empty `git status --porcelain` on five of five. Closed: yes.
+empty `git status --porcelain` on five of five. Superseded by the fix-up measurement below
+(:318-330): msys `kill -TERM` reaches the CLI as TerminateProcess, so these six attempts prove a
+clean disk after a hard kill, not that the signal handler ran. A1's corpus check stays open; the
+unit tests hold it. Closed: disk-clean claim yes; signal-path claim open (see below).
 
 Run to completion on the same root (`M113-base-ui-after-complete`): `"exit": 0`, `"seconds": 40`,
 report reached (`#7 verdict=pass domNodeCount=101 scaleProbe=50 mount=60.5 rerender=24.7`), no
