@@ -253,6 +253,27 @@ export function RUN_WATCHDOG_ABORT_ERROR(
   );
 }
 
+// M116 end-game fix-up (midday-NEW1): what an aborted run says on its way out.
+// It used to be the abort sentence alone -- no roots line (M111 A4), no total
+// (M115 A1), no report -- and then a second, unrelated error from the analyze()
+// call still running under the closing pools. The two lines a finished run
+// prints around its table are the two an aborted run needs most: which roots it
+// resolved, and how long it spent before it was stopped.
+export function watchdogAbortOutput(
+  componentPath: string,
+  budgetMs: number,
+  bound: "stalled" | "total",
+  elapsedMs: number,
+  ci: boolean,
+): { stderr: string; stdout: string } {
+  return {
+    stderr: RUN_WATCHDOG_ABORT_ERROR(componentPath, budgetMs, bound),
+    stdout: ci
+      ? ""
+      : resolvedRootsOutput(componentPath, false) + formatTotalLine(elapsedMs, undefined) + "\n",
+  };
+}
+
 const ISOLATE_USAGE_ERROR =
   "--isolate requires a comma-separated list of phases (mount,rerender,unmount,memory,strictmode,all)";
 
@@ -1556,8 +1577,18 @@ async function main(): Promise<void> {
     // every path, --ci included. The total-budget wording stays for a caller
     // that omits it.
     const bound = "stalled" as const;
+    // M116 end-game fix-up (midday-NEW1): the aborted run's own analyze() call
+    // keeps running until the pools close under it, and whatever it throws on
+    // the way down ("Cannot read properties of undefined (reading 'props')" on
+    // midday) used to print as a second, unrelated Error after the abort
+    // sentence -- two errors for one failure, the second of them noise. The
+    // abort owns the exit from here on.
+    let aborted = false;
     const runWatchdog = createRunWatchdog(budgetMs, () => {
-      process.stderr.write(RUN_WATCHDOG_ABORT_ERROR(componentPath, budgetMs, bound));
+      aborted = true;
+      const out = watchdogAbortOutput(componentPath, budgetMs, bound, Date.now() - started, args.ci);
+      process.stderr.write(out.stderr);
+      if (out.stdout) process.stdout.write(out.stdout);
       void abortRun(2, { pool, serverPool });
     });
     try {
@@ -1588,6 +1619,10 @@ async function main(): Promise<void> {
       }
       if (!report.pass) anyFail = true;
     } catch (err: unknown) {
+      // The abort already printed the one error this run failed on and owns
+      // the teardown and the exit code (2); returning leaves it that one exit
+      // and prints no second error for the same failure.
+      if (aborted) return;
       if (!multi) {
         process.stderr.write(formatCliError(err, process.env.DEBUG));
         const watchdog = armExitWatchdog(2);

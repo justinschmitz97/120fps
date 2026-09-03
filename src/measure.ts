@@ -678,6 +678,63 @@ function classifyStall(err: unknown): StallKind | undefined {
 
 export const MAX_FRAME_STARVATION_RETRIES = 2;
 
+// M116 end-game fix-up (midday-F1): `withFrameStarvationRetry` bounds one
+// combo; nothing bounded a pass. A renderer that wedges (an infinite render
+// loop from one combo's props, a crashed target that re-enters into the same
+// wedge) starves every combo that follows, so a delta pass of ~40 combos spent
+// three bounded retries each and made no progress for the twenty minutes the
+// run watchdog allows -- no report, no verdict. Three combos in a row that
+// measured nothing is the signal that the page, not the combo, is what failed:
+// the pass stops there and the run reports what it measured.
+export const MAX_CONSECUTIVE_DEGRADED_COMBOS = 3;
+
+// M116 end-game fix-up (midday-NEW1): both measurement passes keep one slot per
+// combo (`new Array(combos.length)`) and leave the slot of a combo that measured
+// nothing unset, so their result arrays are sparse. `for..of` yields `undefined`
+// for a hole -- which is how the delta pass read `.props` of undefined and ended
+// midday's run with a TypeError about the teardown instead of a report
+// (`animatedIndices` in analyze.ts had already met the same holes and guarded
+// with `m?.`). Positional consumers (`buildCurveReport`, report.ts) still need
+// the holes to line up with their scale points, so the arrays keep them and
+// every iterating consumer asks for the measured entries.
+export function measuredOnly<T>(results: T[]): NonNullable<T>[] {
+  return results.filter((r): r is NonNullable<T> => r !== undefined && r !== null);
+}
+
+export const measurementAbandonedWarning = (
+  phase: "mount" | "rerender",
+  degraded: number,
+  skipped: number,
+): string =>
+  `${phase}: ${degraded} combos in a row produced no measurement after their retries; ` +
+  `skipped the remaining ${skipped} of this pass and kept what was measured. ` +
+  "The page stopped answering, so measuring further combos on it would spend the run's budget for nothing.";
+
+export interface DegradedPassBound {
+  // `true` once this pass has to stop; the caller breaks out of its combo loop.
+  degraded(position: number): boolean;
+  measured(): void;
+}
+
+export function createDegradedPassBound(
+  phase: "mount" | "rerender",
+  total: number,
+  onWarning?: (warning: string) => void,
+): DegradedPassBound {
+  let run = 0;
+  return {
+    degraded(position: number): boolean {
+      run++;
+      if (run < MAX_CONSECUTIVE_DEGRADED_COMBOS) return false;
+      onWarning?.(measurementAbandonedWarning(phase, run, total - position - 1));
+      return true;
+    },
+    measured(): void {
+      run = 0;
+    },
+  };
+}
+
 export const frameStarvationRetryWarning = (comboIndex: number): string =>
   `combo ${comboIndex}: rAF fence starved for frames; retrying against a freshly re-entered harness session`;
 
@@ -1674,6 +1731,9 @@ export async function measureRerender(
     };
     await enter();
     const retryBudget = createRetryBudget();
+    // M116 end-game fix-up (midday-F1): the same pass-level bound the mount
+    // pass carries -- a wedged page starves every combo that follows.
+    const passBound = createDegradedPassBound("rerender", indices.length, options.onWarning);
 
     for (const [position, ci] of indices.entries()) {
       inFlight.combo = ci;
@@ -1701,6 +1761,7 @@ export async function measureRerender(
         );
         if (!warmed) {
           ms.errorCapture.drain();
+          if (passBound.degraded(position)) break;
           continue;
         }
       }
@@ -1741,8 +1802,10 @@ export async function measureRerender(
         // next combo's own window, the exact mis-attribution I4 exists to
         // prevent. The warmup path above already drains before its `continue`.
         ms.errorCapture.drain();
+        if (passBound.degraded(position)) break;
         continue;
       }
+      passBound.measured();
 
       const result: RerenderResult = {
         comboIndex: ci,
@@ -1874,6 +1937,9 @@ export async function measureMount(
     };
     await enter();
     const retryBudget = createRetryBudget();
+    // M116 end-game fix-up (midday-F1): combos that measured nothing, back to
+    // back. Reset by any combo that measures.
+    const passBound = createDegradedPassBound("mount", indices.length, options.onWarning);
 
     for (const [position, ci] of indices.entries()) {
       inFlight.combo = ci;
@@ -1901,6 +1967,7 @@ export async function measureMount(
         );
         if (!warmed) {
           ms.errorCapture.drain();
+          if (passBound.degraded(position)) break;
           continue;
         }
       }
@@ -1968,7 +2035,11 @@ export async function measureMount(
       // M89: every sample for this combo starved out even after retrying —
       // omitted entirely (a disclosed partial result), not reported as an
       // all-zero mount that nothing was actually measured on.
-      if (mountSamples.length === 0) continue;
+      if (mountSamples.length === 0) {
+        if (passBound.degraded(position)) break;
+        continue;
+      }
+      passBound.measured();
       const pageErrors = mergeDrains(carriedErrors.get(ci), drained);
 
       let heapDelta = 0;

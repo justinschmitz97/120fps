@@ -6,6 +6,9 @@ tests:
   - test/unit/explore-replays-state-invariant-path-once-per-edge.test.ts
   # Lane A
   - test/unit/import-graph-walk-parses-each-file-once.test.ts
+  # End-game fix-up
+  - test/unit/a-wedged-page-cannot-consume-the-whole-run.test.ts
+  - test/unit/an-aborted-run-still-prints-its-roots-and-total.test.ts
 ---
 
 # M116: Explore replays and graph walks are paid for once
@@ -402,6 +405,85 @@ no entry in the signature, so a source file created mid-process does not invalid
 bounded by the first-party import graph — neither walk parses `node_modules` (`src/preflight.ts:520`,
 `src/preflight.ts:832`) — and both live for the process, so the retained set is the first-party files
 one process walks.
+
+### End-game fix-up evidence
+
+Run 2026-09-03 in `C:\Projekte\120fps-m107`. Two defects the final corpus re-test recorded on
+branch head `b1921fa` (`C:\Projekte\120fps-fieldtest\retest\midday.md`, rows midday-F1 and
+midday-NEW1; log `logs/midday/final-midday-F1.log`, `"exit": 2, "seconds": 1269`). Both are older
+than this milestone's lanes; they surface only once combos degrade, which no pre-wave-3 midday run
+did.
+
+Reproduction (before), scratch dist `scratch/F-M116/dist/cli.js` at `3360c58`, `DEBUG=120fps`:
+
+    node C:/Projekte/120fps-fieldtest/tools/run120.mjs --cwd /e/repositories-run5/midday --out C:/Projekte/120fps-fieldtest/logs/midday --label fixup-midday-1 --timeout 1500 --cli C:/Projekte/120fps-fieldtest/scratch/F-M116/dist/cli.js -- packages/ui/src/components/button.tsx
+
+`logs/midday/fixup-midday-1.log`, exit 2 after 1272 s, reproducing both defects verbatim:
+
+    prop deltas  (1:04)
+    Error: packages/ui/src/components/button.tsx made no progress for 20 minutes; aborting the run, ...
+    Error: Cannot read properties of undefined (reading 'props')
+      at analyze (file:///C:/Projekte/120fps-fieldtest/scratch/F-M116/dist/analyze.js:3496:15)
+      at async main (file:///C:/Projekte/120fps-fieldtest/scratch/F-M116/dist/cli.js:1375:28)
+
+Observed during the stall (`Get-Process chrome-headless-shell`): one renderer at 100 % of a core for
+the whole 20 minutes, started 2 minutes into `prop deltas`, and per-combo warnings for combos 22-40
+("rAF fence starved", then "browser target closed"). The last progress line is `prop deltas`, so the
+stall is the delta pass, not explore (explore finished at 0:29-1:04 in both arms).
+
+Defect 2, root cause with file:line. `measureMount` (`src/measure.ts:1899`) and `measureRerender`
+(`:1707`) allocate `new Array(combos.length)` and leave the slot of a combo that measured nothing
+unset, so their result arrays are sparse; `for..of` yields `undefined` for a hole. The delta pass
+iterates them at `src/analyze.ts:1742`, `:1746`, `:1806`, `:1809` (matrix mode at `:1643`, `:1654`),
+and every midday delta combo from 22 on was omitted, so `m.props` read a hole. `animatedIndices`
+(`src/analyze.ts:4437`) had already met the same holes and guards with `m?.`. Fixed by
+`measuredOnly` (`src/measure.ts`), used at all six iterating consumers; the arrays keep their holes
+because `buildCurveReport` (`src/report.ts:1740`) aligns them with its scale points by position.
+
+Defect 2, the abort path. `watchdogAbortOutput` (`src/cli.ts`) now prints the roots line (M111 A4)
+and the `Total:` line (M115 A1) on stdout beside the abort sentence, and the component's `catch`
+returns once the abort fired, so `abortRun` owns the one error and the one exit (2) instead of a
+second, unrelated error printing after it.
+
+Defect 1, partial. `withFrameStarvationRetry` bounds one combo; nothing bounded a pass, so a wedged
+renderer costs three retries per combo for every remaining combo. `createDegradedPassBound`
+(`src/measure.ts`, `MAX_CONSECUTIVE_DEGRADED_COMBOS = 3`) ends a pass after three consecutive combos
+that measured nothing, in both `runPass` bodies, and `measureStandardPropDeltas` no longer seeds an
+unmeasured combo with a zero timing (a pair missing either side is dropped instead of reported as a
+0.00 ms delta). This does not close midday-F1: with `--samples 10` a combo whose samples partly
+survive is not "degraded", so the pass can still grind. Re-run
+(`logs/midday/fixup-midday-2.log`, label `fixup-midday-2`, same command against
+`scratch/F-M116-after`) reached `prop deltas (0:57)` and was still in that phase 9 minutes later
+when the wall-time budget ended the attempt; the phases before it were unchanged and slightly
+faster (`mount 0:03`, `explore 0:22`). Open: a wall-clock bound for the delta pass (or a per-combo
+heartbeat) needs its own MUST, because it changes what a run measures.
+
+Tests (`node node_modules/vitest/vitest.mjs run <files> --maxWorkers=2`):
+
+    Test Files  2 passed (2)
+         Tests  22 passed (22)
+
+Both files fail on the pre-change tree at import (`createDegradedPassBound`, `measuredOnly` and
+`watchdogAbortOutput` did not exist) and their source-wiring assertions fail against the old bodies.
+
+The 40 `test/unit` files that import `src/measure.js` or `src/cli.js`:
+
+    Test Files  40 passed (40)
+         Tests  801 passed (801)
+
+The 11 files that exercise the prop-delta pass:
+
+    Test Files  11 passed (11)
+         Tests  154 passed (154)
+
+`node node_modules/typescript/bin/tsc --noEmit`: clean, no output.
+
+Corpus control (unaffected repo, `scratch/F-M116-after`, label `M116-fixup-control`):
+
+    node C:/Projekte/120fps-fieldtest/tools/run120.mjs --cwd /e/repositories-run5/shadcn-admin --out C:/Projekte/120fps-fieldtest/logs/shadcn-admin --label M116-fixup-control --timeout 300 --cli C:/Projekte/120fps-fieldtest/scratch/F-M116-after/dist/cli.js -- src/components/ui/button.tsx --explain-props
+
+`exit=0 seconds=2`, same `Props (32)` table, same warnings, and the M115 estimate line
+(`Estimated real run: ~2m 9s`). Closed: yes.
 
 ## Deferred
 

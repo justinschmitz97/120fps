@@ -72,7 +72,7 @@ import {
   DEFAULT_MEASURED_COMBOS,
   type PropCombination,
 } from "./prop-gen-values.js";
-import { applyWrapperViewport, createBrowserPool, measureMount, measureRerender, measureWrapperOverhead, openMeasurementSession, settleStyles, reportFontSettle, suspendThrottle, CONTEXT_RETRY_WARNING, HARNESS_NAV_WAIT, type BrowserPool, type MeasurementSession, type MountResult, type RerenderResult } from "./measure.js";
+import { applyWrapperViewport, createBrowserPool, measuredOnly, measureMount, measureRerender, measureWrapperOverhead, openMeasurementSession, settleStyles, reportFontSettle, suspendThrottle, CONTEXT_RETRY_WARNING, HARNESS_NAV_WAIT, type BrowserPool, type MeasurementSession, type MountResult, type RerenderResult } from "./measure.js";
 import {
   explore,
   restoreComboIndices,
@@ -1640,7 +1640,7 @@ async function runMatrixMode(ctx: ModeContext, matrixAutoActivated: boolean): Pr
       runWarnings.push(DELTA_PAIR_CAP_WARNING(deltaPairs.length, totalDeltaPairs));
     }
     const measured = new Map<string, { mount: MountResult; rerender?: RerenderResult }>();
-    for (const m of matrixMounts) {
+    for (const m of measuredOnly(matrixMounts)) {
       measured.set(JSON.stringify(m.props), { mount: m, rerender: matrixRerenders.find((r) => r.comboIndex === m.comboIndex) });
     }
     const missingPairs = deltaPairs.filter((p) => !measured.has(JSON.stringify(p.baseCombo)) || !measured.has(JSON.stringify(p.flipCombo)));
@@ -1651,7 +1651,7 @@ async function runMatrixMode(ctx: ModeContext, matrixAutoActivated: boolean): Pr
         // would merge a differently-estimated number into one report.
         const extraMounts = await measureMount(harness, { samples: matrixEffectiveSamples, cpuThrottle, warmupRuns, combos: missingCombos, pool });
         const extraRerenders = await measureRerender(harness, { samples: matrixEffectiveSamples, cpuThrottle, warmupRuns, combos: missingCombos, animatedComboIndices: animatedIndices(extraMounts), pool });
-        for (const m of extraMounts) measured.set(JSON.stringify(m.props), { mount: m, rerender: extraRerenders.find((r) => r.comboIndex === m.comboIndex) });
+        for (const m of measuredOnly(extraMounts)) measured.set(JSON.stringify(m.props), { mount: m, rerender: extraRerenders.find((r) => r.comboIndex === m.comboIndex) });
       }
     }
     matrixDeltas = [];
@@ -1739,11 +1739,11 @@ async function measureStandardPropDeltas(
   if (pairs.length === 0) return undefined;
 
   const measured = new Map<string, { mount: number; rerender: number }>();
-  for (const m of mounts) {
+  for (const m of measuredOnly(mounts)) {
     const key = JSON.stringify(m.props);
     measured.set(key, { mount: m.mount.median, rerender: 0 });
   }
-  for (const r of rerenders) {
+  for (const r of measuredOnly(rerenders)) {
     const key = JSON.stringify(r.props);
     const existing = measured.get(key);
     if (existing) {
@@ -1751,13 +1751,19 @@ async function measureStandardPropDeltas(
     }
   }
 
+  // M116 end-game fix-up (midday-F1): the combos this pass still owes a
+  // measurement. They used to be seeded into `measured` with zeros, so a combo
+  // the mount pass omitted (frame starvation, a wedged page) reported a
+  // fabricated 0 ms delta instead of nothing at all -- and the pass-level bound
+  // in measure.ts makes omitted combos an ordinary outcome, not a rarity.
   const needed: PropCombination[] = [];
+  const requested = new Set<string>();
   for (const pair of pairs) {
     for (const combo of [pair.baseCombo, pair.flipCombo]) {
       const key = JSON.stringify(combo);
-      if (!measured.has(key)) {
+      if (!measured.has(key) && !requested.has(key)) {
         needed.push(combo);
-        measured.set(key, { mount: 0, rerender: 0 });
+        requested.add(key);
       }
     }
   }
@@ -1797,10 +1803,10 @@ async function measureStandardPropDeltas(
     } catch (err) {
       throw retagPhaseError(err, deltaPhaseContext);
     }
-    for (const m of extraMounts) {
+    for (const m of measuredOnly(extraMounts)) {
       measured.set(JSON.stringify(m.props), { mount: m.mount.median, rerender: 0 });
     }
-    for (const r of extraRerenders) {
+    for (const r of measuredOnly(extraRerenders)) {
       const key = JSON.stringify(r.props);
       const existing = measured.get(key);
       if (existing) {
@@ -1809,19 +1815,20 @@ async function measureStandardPropDeltas(
     }
   }
 
-  const propDeltas = pairs.map((pair) => {
-    const baseKey = JSON.stringify(pair.baseCombo);
-    const flipKey = JSON.stringify(pair.flipCombo);
-    const base = measured.get(baseKey) ?? { mount: 0, rerender: 0 };
-    const flip = measured.get(flipKey) ?? { mount: 0, rerender: 0 };
-    return {
+  const propDeltas = pairs.flatMap((pair) => {
+    const base = measured.get(JSON.stringify(pair.baseCombo));
+    const flip = measured.get(JSON.stringify(pair.flipCombo));
+    // A pair one of whose sides was never measured has no delta to report.
+    if (!base || !flip) return [];
+    return [{
       propName: pair.propName,
       baseValue: pair.baseValue,
       flipValue: pair.flipValue,
       mountDelta: flip.mount - base.mount,
       rerenderDelta: flip.rerender - base.rerender,
-    };
+    }];
   });
+  if (propDeltas.length === 0) return undefined;
   propDeltas.sort((a, b) => Math.abs(b.mountDelta) - Math.abs(a.mountDelta));
   return propDeltas;
 }
