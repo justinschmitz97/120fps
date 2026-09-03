@@ -1,5 +1,5 @@
 import type { Report, ScalingCurveReport, Thresholds } from "./report.js";
-import { computeCurveVerdict, deriveReportMode, describePhaseBreakdown } from "./report.js";
+import { computeCurveVerdict, deriveReportMode, describePhaseBreakdown, presentWarnings } from "./report.js";
 import type { IsolationReport } from "./isolation.js";
 import { CHURN_DEGRADATION_LIMIT, LEAK_BYTES_PER_CYCLE } from "./isolation.js";
 
@@ -286,6 +286,22 @@ export function formatMarkdown(reports: Report[]): string {
       lines.push("");
     }
     lines.push("</details>");
+  }
+
+  // M117 C2: README.md promises the markdown output carries the run's
+  // warnings, and this serializer never read `report.warnings` at all. One fold
+  // per component that has any, deduped and counted exactly as the terminal
+  // prints them, so the two channels cannot disagree about what the run said.
+  for (const report of reports) {
+    const warnings = presentWarnings(report);
+    if (warnings.length === 0) continue;
+    lines.push(
+      "",
+      `<details><summary>Warnings: <code>${escapeMdCell(report.componentPath)}</code></summary>`,
+      "",
+    );
+    for (const warning of warnings) lines.push(`- ${warning}`);
+    lines.push("", "</details>");
   }
 
   const first = reports[0];

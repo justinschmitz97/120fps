@@ -259,6 +259,63 @@ Lane A only (A1, A2, A3 and I10's producer); C1-C7 are lane C's and land after t
    `logs/midday/real-button-v2.log:98`. shadcn-admin `src/components/ui/button.tsx --explain-props` (label
    `M117-shadcn-button-explain-after`) still reaches `Dry run: nothing was measured, no report was written.`
 
+### Lane C evidence
+
+Lane C only (C1-C7, consuming I10's `ViteConfigData.pluginNames`), on top of lane A's commits.
+
+- Tests: `node node_modules/vitest/vitest.mjs run test/unit/warnings-print-once-per-run.test.ts
+  test/unit/noise-warning-is-one-terminal-line.test.ts
+  test/unit/vite-plugin-note-names-what-it-dropped.test.ts --maxWorkers=2` -> `Test Files  3 passed (3)`,
+  `Tests  37 passed (37)`. Whole suite (`test/unit`, `--maxWorkers=2`): `Test Files  321 passed (321)`,
+  `Tests  4735 passed | 1 skipped (4736)` -- the four MAP baseline failures included, green since lanes A
+  and B fixed them. Two assertions moved with C5/C6:
+  `test/unit/verdict-report-clarity.test.ts` ("keeps the baseline clause in the JSON text and out of the
+  terminal") and `test/unit/verdict-report-clarity-harden.test.ts` H12 now assert the baseline sentence on
+  `report.warnings[0]` (the JSON's full text) and its absence from `formatTable`.
+- `node node_modules/typescript/bin/tsc --noEmit`: clean, no output.
+- Corpus, scratch dist `C:/Projekte/120fps-fieldtest/scratch/C-M117/dist/cli.js`, one run at a time,
+  `--timeout 1500`. Labels carry a `-c-` infix so lane A's logs stay readable.
+
+1. shadcn-admin `src/components/ui/dialog.tsx --samples 5 --max-combos 4 --explore-budget 60 --no-deltas`
+   (label `M117-c-shadcn-admin-after`). Before (`logs/shadcn-admin/dialog-real2.log:52`, `:55`):
+   `grep -c "cannot honor"` = 2, both reading
+   `⚠ vite.config.ts declares plugins, which the harness read but cannot honor: the project's Vite config is never executed`.
+   After: `grep -c "cannot honor"` = 1, line 36 reading
+   `⚠ vite.config.ts declares plugins the harness cannot honor: tanstackRouter, react, tailwindcss — the project's Vite config is never executed`.
+   `Result: FAIL` (line 34) keeps its wording. The noise line, before at `dialog-real2.log:57` in four
+   sentences, is line 38:
+   `⚠ machine: hostile (probe CV 60%); raise --samples to measure through it.` -- 33% of metrics unstable is
+   below the hostile threshold, so it is not named. The JSON keeps the long form:
+   `machine: hostile (probe CV 60%, 33% of metrics unstable). The machine was too busy to measure against. Budget verdicts still print, but treat every number as provisional.`
+   C1, C3, C5, C6, C7 closed.
+2. shadcn-admin `src/components/data-table/toolbar.tsx --samples 5 --max-combos 4 --explore-budget 60
+   --no-deltas` (label `M117-c-toolbar-after`). Before (`logs/shadcn-admin/toolbar-remedy.log:57`): the tip
+   named all three patterns. After, line 57:
+   `Tip: 120fps writes report/baseline files into this repo. Consider adding to .gitignore: .120fps-harness-*`
+   -- the report path is outside the repository, and the one pattern left is a stale
+   `/e/repositories-run5/shadcn-admin/.120fps-harness-CBXUBP/` from run 5, which A1 counts and A2 names
+   alone. `Result: FAIL [render error]` (line 30) unchanged; the six `(×N)` page-error replay lines
+   (`:41-46`) are byte-identical to the before log, so C1's suffix did not disturb them. A1, A2 hold under
+   lane C's collector.
+3. ark `src/components/accordion/accordion-root.tsx` (labels `M117-c-ark-after`,
+   `M117-c-ark-explain-after`). Before (`logs/ark/react-accordion-nomatrix.log:101`):
+   `vite.config.mts declares plugins, which the harness read but cannot honor: ...`. After,
+   `grep -c "cannot honor"` = 1 in each channel: real run line 118 and `--explain-props` line 49, both
+   reading
+   `vite.config.mts declares plugins the harness cannot honor: dts, react — the project's Vite config is never executed`.
+   `Result: PASS` at line 114. C3, C4 parity closed; neither `dts` nor `react` is a transform the harness
+   applies, so both stay named.
+4. midday `packages/ui/src/components/button.tsx` (label `M117-c-midday-after`): `Result: PASS`, exit 0,
+   as at `logs/midday/real-button-v2.log:98`. shadcn-admin `src/components/ui/button.tsx --explain-props`
+   (label `M117-c-shadcn-button-explain-after`) still reaches
+   `Dry run: nothing was measured, no report was written.` with the note printed once (line 50).
+
+C2 is decided by unit assertions only: no corpus command in this milestone passes `--report-md`.
+C4's positive half (a note that empties and disappears) is covered by
+`fixtures/vite-config-supported-plugins/`, whose only plugin is `vue()` and whose package.json declares
+`@vitejs/plugin-vue`; no corpus repository in run 5 declares a plugins array made up entirely of
+transforms the harness applies.
+
 ## Deferred
 
 - A `--no-warn-vite-plugins` flag or a per-cwd acknowledgment file, `dx-audit.md:17`'s alternative. Suppression across

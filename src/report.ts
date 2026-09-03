@@ -11,9 +11,12 @@ import {
 import type { ReactOptimizations } from "./react-profiler.js";
 import { computeMedian, computeP95, type MeasuredState } from "./measure.js";
 import {
-  formatNoiseWarning,
+  HOSTILE_CV_PERCENT,
   HOSTILE_RUN_WARNING,
+  HOSTILE_UNSTABLE_FRACTION,
+  NOISE_CV_PERCENT,
   NOISY_RUN_WARNING,
+  NOISY_UNSTABLE_FRACTION,
   type NoiseReport,
 } from "./noise.js";
 import { hintsForReport, formatHints, MEASUREMENT_BASIS_LINE, type HintId } from "./hints.js";
@@ -1363,21 +1366,73 @@ function appendEmptyRenderNote(lines: string[], report: Report): void {
 // Every output mode ends with the run's warnings; a mode that swallowed them
 // would hide the reason its own numbers are what they are.
 function appendWarnings(lines: string[], report: Report): void {
-  for (const warning of report.warnings ?? []) {
-    lines.push(`⚠ ${enrichNoiseWarning(warning, report)}`);
+  for (const warning of presentWarnings(report)) {
+    lines.push(`⚠ ${warning}`);
   }
 }
 
-// The noise warning reaches `report.warnings` as a fixed sentence, because the
-// signals behind it live on `report.noise` and the baseline clause depends on
-// whether a comparison happened at all. Both are known here, so the terminal
-// prints the specific version of the sentence the JSON's numbers describe.
-function enrichNoiseWarning(warning: string, report: Report): string {
-  if (warning !== NOISY_RUN_WARNING && warning !== HOSTILE_RUN_WARNING) return warning;
+// M117 C1 (dx-audit item 6): a run that rebuilds its harness collected the same
+// static pre-build warning list twice, so one identical sentence printed twice.
+// The key is the exact string: two texts that differ by one character are two
+// warnings. The count reuses the page-error shape (src/page-errors.ts).
+export function dedupeWarnings(warnings: readonly string[]): string[] {
+  const counts = new Map<string, number>();
+  const order: string[] = [];
+  for (const warning of warnings) {
+    const seen = counts.get(warning);
+    if (seen === undefined) {
+      counts.set(warning, 1);
+      order.push(warning);
+    } else {
+      counts.set(warning, seen + 1);
+    }
+  }
+  return order.map((warning) => {
+    const count = counts.get(warning)!;
+    return count > 1 ? `${warning} (×${count})` : warning;
+  });
+}
+
+// M117 C1, C5: what a reader-facing channel prints — the terminal here, the
+// markdown fold in src/ci-report.ts. One line per distinct text, and the noise
+// warning shortened to the one line C5 defines. `report.warnings` itself keeps
+// the long form for the JSON (C6).
+export function presentWarnings(report: Report): string[] {
+  return dedupeWarnings(report.warnings ?? []).map((warning) =>
+    shortenNoiseWarning(warning, report),
+  );
+}
+
+// M117 C5 (dx-audit item 7): the four-sentence form listed both signals at
+// their raw values whether or not either crossed its threshold and named no
+// flag, in the one place a reader is scanning. One line, only the signals that
+// fired against the level's own thresholds, and the one flag that helps.
+export function formatNoiseLine(noise: NoiseReport): string {
+  if (noise.level === "quiet") return "";
+  const hostile = noise.level === "hostile";
+  const cvLimit = hostile ? HOSTILE_CV_PERCENT : NOISE_CV_PERCENT;
+  const unstableLimit = hostile ? HOSTILE_UNSTABLE_FRACTION : NOISY_UNSTABLE_FRACTION;
+  const { probeCv, unstableFraction, contextRetries } = noise.signals;
+  const signals: string[] = [];
+  if (probeCv > cvLimit) signals.push(`probe CV ${Math.round(probeCv)}%`);
+  if (unstableFraction >= unstableLimit) {
+    signals.push(`${Math.round(unstableFraction * 100)}% of metrics unstable`);
+  }
+  if (contextRetries > 0) {
+    signals.push(`${contextRetries} context ${contextRetries === 1 ? "retry" : "retries"}`);
+  }
+  if (signals.length === 0) return "";
+  return `machine: ${noise.level} (${signals.join(", ")}); raise --samples to measure through it.`;
+}
+
+// The noise warning is the one text that differs by channel (M117 C6): the JSON
+// carries the full sentences `formatNoiseWarning` builds, a reader gets one
+// line. Recognized by the fixed sentence the full form is built around, so both
+// the bare constant and the expanded text shorten to the same line.
+function shortenNoiseWarning(warning: string, report: Report): string {
+  if (!warning.includes(NOISY_RUN_WARNING) && !warning.includes(HOSTILE_RUN_WARNING)) return warning;
   if (!report.noise) return warning;
-  // `analyze.ts` sets `report.baseline` only when --check found an entry to
-  // compare against, which is exactly when a comparison was skippable.
-  return formatNoiseWarning(report.noise, report.baseline !== undefined) || warning;
+  return formatNoiseLine(report.noise) || warning;
 }
 
 // M64: WARN rows under "Result: PASS" read as a contradiction without the

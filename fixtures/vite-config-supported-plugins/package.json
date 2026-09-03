@@ -1,0 +1,8 @@
+{
+  "name": "vite-config-supported-plugins-fixture",
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.0.0"
+  }
+}

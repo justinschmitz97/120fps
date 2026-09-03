@@ -2,7 +2,7 @@ import ts from "typescript";
 import os from "node:os";
 import fs from "node:fs";
 import path from "node:path";
-import { buildAndServe, collectStaticPreBuildWarnings, detectComponentExport, detectProjectTransforms, discoverGlobalCss, detectScaleExport, detectWrapper, findProjectRoot, resolveReactCompilerState, assertReactDomClient, assertRendererSupported, rendererFor, detectBundlerReactDomAlias, BUNDLER_PREACT_ALIAS_WARNING, stylesheetRuleCount, hasAnyEnvFile, NO_ENV_FILE_REMEDY_NOTE, presentBundlerFailure, stylesheetReadFailureTarget, CSS_UNREADABLE_DROPPED_WARNING, type HarnessResult, type ReactCompilerState } from "./harness.js";
+import { buildAndServe, collectStaticPreBuildWarnings, detectComponentExport, detectProjectTransforms, discoverGlobalCss, detectScaleExport, detectWrapper, findProjectRoot, resolveReactCompilerState, assertReactDomClient, assertRendererSupported, rendererFor, detectBundlerReactDomAlias, BUNDLER_PREACT_ALIAS_WARNING, stylesheetRuleCount, hasAnyEnvFile, NO_ENV_FILE_REMEDY_NOTE, presentBundlerFailure, stylesheetReadFailureTarget, CSS_UNREADABLE_DROPPED_WARNING, SUPPORTED_TRANSFORM_PLUGINS, VITE_CONFIG_IGNORED_WARNING, readViteConfigData, type HarnessResult, type ReactCompilerState, type ViteConfigData } from "./harness.js";
 import {
   attachPageErrorCapture,
   gotoWithErrorContext,
@@ -17,8 +17,7 @@ import { hintsForReport, formatHints, formatMountAbortHints } from "./hints.js";
 import {
   probeMachineNoise,
   buildNoiseReport,
-  NOISY_RUN_WARNING,
-  HOSTILE_RUN_WARNING,
+  formatNoiseWarning,
 } from "./noise.js";
 import {
   detectPropPresets,
@@ -158,6 +157,7 @@ import {
   type PhaseClock,
   type PhaseTimings,
   type ReactCompilerReport,
+  dedupeWarnings,
 } from "./report.js";
 
 // M40: the numbers are real, but they describe a transient scene. Warn, never
@@ -994,6 +994,15 @@ function applyBaselineWorkflow(
       }
 
       report.baseline = comparison;
+      // M117 C6: whether a comparison was applicable is only known here, and
+      // the noise text was recorded before this ran.
+      if (report.noise && report.warnings) {
+        const uncompared = formatNoiseWarning(report.noise, false);
+        const compared = formatNoiseWarning(report.noise, true);
+        if (uncompared && compared !== uncompared) {
+          report.warnings = report.warnings.map((w) => (w === uncompared ? compared : w));
+        }
+      }
       // A noisy run's regressions are reported but do not fail: the same
       // philosophy as M22's unstable-metric downgrade, run-scoped instead of
       // metric-scoped. Budget breaches are unaffected; they are absolute.
@@ -2573,12 +2582,18 @@ export async function explainProps(
   // tooling check. All of it was unreachable from a dry run only because it
   // was nested inside the function that starts a server, so the cheap probe
   // said nothing about the fact that then killed the real run.
+  // M117 C4: the same filter the real run applies to the same list, from the
+  // same two reads, so a note the dry run prints is a note the real run prints.
   warnings.push(
-    ...collectStaticPreBuildWarnings(projectRoot, {
-      componentPath: resolvedPath,
-      ...(wrapPath ? { wrapPath } : {}),
-      ...(options.noShims ? { noShims: true } : {}),
-    }).warnings,
+    ...suppressHonoredPluginNote(
+      collectStaticPreBuildWarnings(projectRoot, {
+        componentPath: resolvedPath,
+        ...(wrapPath ? { wrapPath } : {}),
+        ...(options.noShims ? { noShims: true } : {}),
+      }).warnings,
+      projectRoot,
+      options.noTransforms ? { noTransforms: true } : {},
+    ),
   );
 
   // M78: the comment at this function's cli.ts call site has always promised
@@ -2876,7 +2891,9 @@ export async function explainProps(
       : {}),
     ...(presets ? { presetPath: presets.path } : {}),
     costEstimate,
-    warnings,
+    // M117 C1: the dry run deduplicates its own list by the same rule, so the
+    // parity the real run owes it (M100/M110) is parity of what a reader sees.
+    warnings: dedupeWarnings(warnings),
   };
 }
 
@@ -3682,6 +3699,10 @@ export async function analyze(
   // M48: kept outside the try so a failure on the way out can still name them.
   let transformHits: import("./preflight.js").PreflightHit[] = [];
   let activeTransforms: string[] | undefined;
+  // M117 C4: applied to every harness build, so a rebuilt harness cannot bring
+  // back a note about a plugin this run applies itself.
+  const withoutHonoredPlugins = (list: string[]): string[] =>
+    suppressHonoredPluginNote(list, projectRoot, options.noTransforms ? { noTransforms: true } : {});
   const runWarnings: string[] = [
     ...frameworkWarnings,
     ...cssWarnings,
@@ -3846,7 +3867,11 @@ export async function analyze(
 
   const attachHarnessContext = (report: Report): void => {
     if (runWarnings.length > 0) {
-      report.warnings = [...(report.warnings ?? []), ...runWarnings];
+      // M117 C1: one entry per distinct text, in first-occurrence order,
+      // counted when the run produced it more than once. The three sites that
+      // collect `harness.warnings` each append the whole static pre-build list,
+      // so a run that rebuilt its harness recorded identical sentences twice.
+      report.warnings = dedupeWarnings([...(report.warnings ?? []), ...runWarnings]);
     }
     if (cssReport) report.css = cssReport;
 
@@ -3880,10 +3905,13 @@ export async function analyze(
         contextRetries,
       });
       report.noise = noise;
-      if (noise.level === "noisy") {
-        report.warnings = [...(report.warnings ?? []), NOISY_RUN_WARNING];
-      } else if (noise.level === "hostile") {
-        report.warnings = [...(report.warnings ?? []), HOSTILE_RUN_WARNING];
+      // M117 C6: the JSON carries the full text — the machine sentence, the
+      // provisional-numbers sentence, and (once the baseline step below knows a
+      // comparison happened) the baseline sentence. The terminal and the
+      // markdown fold shorten it to one line, in src/report.ts.
+      const noiseWarning = formatNoiseWarning(noise, report.baseline !== undefined);
+      if (noiseWarning) {
+        report.warnings = dedupeWarnings([...(report.warnings ?? []), noiseWarning]);
       }
     }
 
@@ -4023,7 +4051,7 @@ export async function analyze(
     };
     progress("harness: building");
     harness = await buildAndServe(harnessPath, composedHarnessOpts);
-    if (harness.warnings) runWarnings.push(...harness.warnings);
+    if (harness.warnings) runWarnings.push(...withoutHonoredPlugins(harness.warnings));
 
     // M35: calibration, trial mount, and wrapper overhead run under the same
     // driven frame pacing as the measurement passes they normalize.
@@ -4128,7 +4156,7 @@ export async function analyze(
       fingerprintValue = undefined;
       await harness!.cleanup();
       harness = await buildAndServe(harnessPath, { ...composedHarnessOpts, cssFiles: undefined });
-      if (harness.warnings) runWarnings.push(...harness.warnings);
+      if (harness.warnings) runWarnings.push(...withoutHonoredPlugins(harness.warnings));
       // Not wrapped again: a second failure here is a different, genuine
       // problem (or the same page never recovering for an unrelated
       // reason) and must propagate and fail the run like any other.
@@ -4167,7 +4195,7 @@ export async function analyze(
         componentExports = undefined;
         await harness.cleanup();
         harness = await buildAndServe(harnessPath, baseHarnessOpts);
-        if (harness.warnings) runWarnings.push(...harness.warnings);
+        if (harness.warnings) runWarnings.push(...withoutHonoredPlugins(harness.warnings));
         await enterHarnessPage();
       }
     }
@@ -4474,8 +4502,13 @@ async function measuredSfcUsesInject(
 // could not honor, as `VITE_CONFIG_IGNORED_WARNING` (src/harness.ts) recorded
 // them for this run. Read from the run's own warnings until lane A carries
 // `ViteConfigData` to this call site; the hint may name only what is here.
+// M117 C3 / I10 hand-off: A3 gave the note a second wording, the one a config
+// with a named plugin list now prints ("... declares resolve.alias and plugins
+// the harness cannot honor: react — ..."). Both wordings are live: a `plugins`
+// value that is not an array literal still carries no names and keeps the
+// key-only sentence, so the scan reads either and normalizes to the key list.
 const VITE_CONFIG_IGNORED_SHAPE =
-  /^(\S+) declares (.+?), which the harness read but cannot honor: the project's Vite config is never executed/;
+  /^(\S+) declares (.+?)(?:, which the harness read but cannot honor: the project's Vite config is never executed| the harness cannot honor: )/;
 
 export function viteConfigIgnoredKeys(
   warnings: string[],
@@ -4487,11 +4520,70 @@ export function viteConfigIgnoredKeys(
   for (const warning of warnings) {
     const match = VITE_CONFIG_IGNORED_SHAPE.exec(warning);
     if (!match) continue;
-    const ignoredKeys = match[2]!.split(", ");
+    const ignoredKeys = match[2]!.split(", ").flatMap((key) => key.split(" and "));
     if (!ignoredKeys.includes("plugins")) continue;
     return { viteConfig: { file: match[1]!, ignoredKeys } };
   }
   return undefined;
+}
+
+// M117 C4 (dx-audit item 6): the note is true only about plugins the run did
+// not apply. `@vitejs/plugin-vue` declared in a config the harness loads the
+// same plugin for is not a dropped plugin, and a note listing it sends a reader
+// after a difference that does not exist. A declared name matches a transform
+// by the recognizer code or by the factory the harness imports for it.
+function honoredPluginNames(appliedTransforms: readonly string[]): Set<string> {
+  const names = new Set<string>();
+  for (const plugin of SUPPORTED_TRANSFORM_PLUGINS) {
+    if (!appliedTransforms.includes(plugin.code)) continue;
+    names.add(plugin.code);
+    if (plugin.exportName) names.add(plugin.exportName);
+  }
+  return names;
+}
+
+// The note the run printed is rebuilt, never edited as text: the same
+// constructor lane A's constants own (M108), fed the plugins that are still
+// news to the reader. When none are left the `plugins` key goes with them, and
+// a config that had no other ignored key loses the note entirely.
+export function withoutHonoredPluginNote(
+  warnings: string[],
+  viteConfig: Pick<ViteConfigData, "configFile" | "ignoredKeys" | "pluginNames">,
+  appliedTransforms: readonly string[],
+): string[] {
+  const { configFile, ignoredKeys, pluginNames } = viteConfig;
+  if (!configFile || !pluginNames || pluginNames.length === 0) return warnings;
+  if (!ignoredKeys.includes("plugins")) return warnings;
+  const honored = honoredPluginNames(appliedTransforms);
+  const kept = pluginNames.filter((name) => !honored.has(name));
+  if (kept.length === pluginNames.length) return warnings;
+  const file = path.basename(configFile);
+  const printed = VITE_CONFIG_IGNORED_WARNING(file, ignoredKeys, pluginNames);
+  const remainingKeys = kept.length > 0 ? ignoredKeys : ignoredKeys.filter((key) => key !== "plugins");
+  const replacement =
+    kept.length > 0
+      ? VITE_CONFIG_IGNORED_WARNING(file, remainingKeys, kept)
+      : remainingKeys.length > 0
+        ? VITE_CONFIG_IGNORED_WARNING(file, remainingKeys)
+        : undefined;
+  return warnings.flatMap((warning) =>
+    warning === printed ? (replacement ? [replacement] : []) : [warning],
+  );
+}
+
+// M117 C4: the one entry point both modes use, so `--explain-props` and the
+// real run cannot disagree about which plugins the run applied. Reads the same
+// two sources the run itself reads (the config's text, the installed
+// transforms) and nothing that only exists after a measurement.
+export function suppressHonoredPluginNote(
+  warnings: string[],
+  projectRoot: string,
+  opts: { noTransforms?: boolean } = {},
+): string[] {
+  const applied = opts.noTransforms
+    ? []
+    : detectProjectTransforms(projectRoot).map((plugin) => plugin.code);
+  return withoutHonoredPluginNote(warnings, readViteConfigData(projectRoot), applied);
 }
 
 export function explainsZeroPropCount(warning: string): boolean {
