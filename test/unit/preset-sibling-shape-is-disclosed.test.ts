@@ -158,6 +158,10 @@ describe("the cap warning routed through the warning sink", () => {
     expect(extraction.warnings.some((w) => w.includes("props were extracted"))).toBe(true);
     expect(collected.some((w) => w.includes("props were extracted"))).toBe(true);
     expect(stderr.lines().some((line) => line.includes("props were extracted"))).toBe(false);
+    // The sink consumer renders each entry as a list line; a trailing newline
+    // there prints a stray blank line and rides along in the report JSON.
+    expect(collected.some((w) => w.endsWith("\n"))).toBe(false);
+    expect(collected[0]?.endsWith("\n")).toBe(false);
   });
 
   it("still prints to stderr, once, when no sink is passed", async () => {

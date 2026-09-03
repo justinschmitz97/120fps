@@ -286,8 +286,12 @@ export async function extractPropsDetailed(
   const absolutePath = path.resolve(filePath);
   const warnings: string[] = [];
   const sink = (message: string): void => {
-    warnings.push(message.trimEnd());
-    options?.onWarning?.(message);
+    const line = message.trimEnd();
+    warnings.push(line);
+    // The trailing newline belongs to the stderr write inside `warnOnce`. A
+    // sink consumer renders the text as a list entry; a newline there prints a
+    // stray blank line in the report and rides along in the report JSON.
+    options?.onWarning?.(line);
   };
   const collecting = options?.onWarning !== undefined;
   // M112 B3: records are collected whether or not a sink is printing, because

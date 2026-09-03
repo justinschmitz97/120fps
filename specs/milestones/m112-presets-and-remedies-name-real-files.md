@@ -81,7 +81,8 @@ Lines re-checked against this worktree's `src`; where the cluster brief differs,
   every remedy that would have named it names `<stem>.120fps.props.tsx` instead.
 - B3 A cap or collapsed-union warning that a later preset would change is re-renderable after the preset loads:
   its subject and its text are recoverable per component stem, not only as a printed line. With no preset
-  candidate on disk the printed text is unchanged, character for character.
+  candidate on disk the sentence is unchanged, character for character; its channel is the run's warning
+  list on any run that passes a warning sink, no longer stderr.
 
 ### Lane C (`src/analyze.ts`, `src/composition.ts`, `src/report.ts`)
 
@@ -123,7 +124,9 @@ Lines re-checked against this worktree's `src`; where the cluster brief differs,
   the ranking, `presetPropNames`, `src/prop-gen.ts:1795-1800`), and `test/unit/prop-cap-preset-exempt.test.ts`
   stays green.
 - Change a verdict, an exit code or a measured number on any run that has no declared-but-absent stylesheet and
-  no preset-shaped sibling — the control (shadcn-admin) is byte-identical. On radix-themes the fallback sheet is
+  no preset-shaped sibling — the control (shadcn-admin) is byte-identical, except that the prop-cap sentence
+  moves from stderr into the run's warning block (same words, two-space indent, stdout), which is the channel
+  move B3 and C1 require. On radix-themes the fallback sheet is
   deliberately no longer injected; that scene change is the fix, and no verdict or exit code changes with it.
 
 ## Interfaces needed
@@ -286,9 +289,43 @@ worktree at `27c0015` plus this change:
   `  Warning: 240 props were extracted from E:\repositories-run5\epic-stack\app\components\ui\button.tsx; measuring the first 32. Add button.120fps.props.tsx to choose the props that matter.`
   and `  app/components/ui/button.props.tsx exists, not a preset: no default-exported object literal (expected ...)`. Closed.
 - Control shadcn-admin (`-- src/components/ui/button.tsx --explain-props`, label
-  `M112-shadcn-admin-after`): reaches the same report; the cap line is unchanged character for
-  character:
+  `M112-shadcn-admin-after`): reaches the same report; the cap sentence is unchanged word for word; it now
+  prints in the run's warning block (two-space indent, stdout) instead of on stderr — the channel move B3 and
+  C1 parity require:
   `  Warning: 240 props were extracted from E:\repositories-run5\shadcn-admin\src\components\ui\button.tsx; measuring the first 32. Add button.props.tsx to choose the props that matter.`
+
+##### The real measurement path moves onto the warning channel too
+
+The four runs above are `--explain-props`. The real path passes an `onWarning` to
+`extractPropsDetailed` (`src/analyze.ts:3727`), so on every real run over a component with more than
+32 props the cap sentence now travels sink -> `runWarnings` -> `report.warnings`
+(`src/analyze.ts:3850`) into the terminal warning block, the report JSON `warnings` array and the
+markdown report, no longer to stderr. Verdicts, exit codes and numbers are unchanged. Two real runs
+against the scratch dist confirm it, both `exit=0`:
+
+- Control shadcn-admin (`--cwd /e/repositories-run5/shadcn-admin -- src/components/ui/button.tsx
+  --samples 5 --max-combos 4 --explore-budget 60 --no-deltas`, label `M112-B-shadcn-admin-real`,
+  `exit=0`, digest `pass=true noise=hostile`, `warnings=6`). Warning block:
+  `⚠ Warning: 240 props were extracted from E:\repositories-run5\shadcn-admin\src\components\ui\button.tsx; measuring the first 32. Add button.props.tsx to choose the props that matter.`
+  and the same sentence, with no trailing newline, in the report JSON `warnings` array:
+  `"Warning: 240 props were extracted from E:\repositories-run5\shadcn-admin\src\components\ui\button.tsx; measuring the first 32. Add button.props.tsx to choose the props that matter."`
+- radix-themes-F2 (`--cwd .../packages/radix-ui-themes -- src/components/button.tsx --samples 5
+  --max-combos 4 --explore-budget 60 --no-deltas`, label `M112-B-radix-themes-real`, `exit=0`,
+  digest `css layer=none files=0`, `warnings=14`). The Stylesheets line is lane A's landed text,
+  unchanged by this lane:
+  `Stylesheets: none injected - package.json "style" declares styles.css, which is not built yet; run `pnpm run build` in that package, then re-run`
+  and the cap sentence prints in the same warning block:
+  `⚠ Warning: 247 props were extracted from E:\repositories-run5\radix-themes\packages\radix-ui-themes\src\components\button.tsx; measuring the first 32. Add button.120fps.props.tsx to choose the props that matter.`
+
+Tests after the trim and the two real runs: `node node_modules/vitest/vitest.mjs run
+test/unit/preset-sibling-shape-is-disclosed.test.ts --maxWorkers=2` -> `Test Files  1 passed (1)`,
+`Tests  18 passed (18)`; whole `test/unit` suite (`--maxWorkers=2`): `Test Files  315 passed (315)`,
+`Tests  4667 passed | 1 skipped (4668)`. `node node_modules/typescript/bin/tsc --noEmit`: clean.
+
+The sink hands `options.onWarning` the trimmed line (`src/prop-gen.ts:290`), so the entry
+`src/report.ts:1365` renders carries no trailing newline and prints no stray blank line; the JSON
+string above is the evidence, and `test/unit/preset-sibling-shape-is-disclosed.test.ts` asserts it
+at the sink.
 
 ### Lane C evidence
 
