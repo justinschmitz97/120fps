@@ -312,6 +312,74 @@ Two implementation facts worth recording, both inside Lane C's own files:
   with this machine's own `os.cpus()` values. A dry run launches no browser, so the match is on
   `cpu`, `cores` and `os` and never on `chromiumVersion`.
 
+### Lane A evidence
+
+Run 2026-09-03 in `C:/Projekte/120fps-m107` on `feat/m107-run5-remediation`, on top of Lane C's
+`661ab79`/`0b72589` (I11 and I12 both landed before this commit).
+
+Tests, `node node_modules/vitest/vitest.mjs run test/unit/total-line-breaks-down-by-phase.test.ts
+test/unit/dry-run-flag-forwarding.test.ts --maxWorkers=2`:
+
+```
+ Test Files  2 passed (2)
+      Tests  14 passed (14)
+```
+
+Every test file that imports `src/cli.js` (41 files, `grep -l "src/cli.js" test/unit/*.test.ts`),
+`--maxWorkers=2`: `40 passed (40)` / `866 passed (866)` for the first 40 and `1 passed (1)` /
+`68 passed (68)` for `vue-support.test.ts`. No baseline-green test turned red.
+
+`node node_modules/typescript/bin/tsc --noEmit`: clean, no output.
+
+Corpus, scratch dist `C:/Projekte/120fps-fieldtest/scratch/A-M115/dist/cli.js` built from this
+worktree, through `node C:/Projekte/120fps-fieldtest/tools/run120.mjs`:
+
+- **A1, shadcn-admin-F2 real run** (`--label M115-shadcn-toolbar-after`, exit=1, 23 s). Before
+  (Lane C's `M115-shadcn-toolbar-after` run of the same command): `Total: 26.0s`, no parenthesis.
+  After:
+
+  ```
+  Total: 21.6s  (preflight 0s, build 1s, calibration 1s, mount 6s, rerender 5s, explore 7s, attribution 0s, analysis 2s)
+  ```
+
+  `phaseTimings` in `logs/shadcn-admin/M115-shadcn-toolbar-after.json`:
+
+  ```
+  {"preflight":257,"build":1206,"calibration":1442,"mount":5773,"rerender":4615,"explore":6731,"scale":0,"deltas":0,"attribution":2,"analysis":1541,"total":21567}
+  sum 21567 total 21567
+  ```
+
+  The ten phase keys sum to `total` exactly; the printed `Total: 21.6s` differs from
+  `phaseTimings.total` by 33 ms. `scale` and `deltas` are `0` and are omitted from the parenthesis.
+  A phase under half a second (`preflight` 257 ms, `attribution` 2 ms) is present and reads `0s`:
+  `formatPhaseDuration` (`src/report.ts:721`) rounds to whole seconds, and A1's omission rule is on
+  the millisecond value, not on the rendered one. Closed: yes.
+- **A2, n8n Button dry run with the cost flags** (`--label M115-n8n-button-flags-after`, exit=0,
+  14 s):
+  `-- src/components/N8nButton/Button.vue --explain-props --samples 5 --max-combos 4`. Before, the
+  same command line named the defaults. After:
+
+  ```
+  Estimated real run: ~1m 3s (8 combos x 5 samples; defaults: no phase timings recorded for this component yet)
+  ```
+
+  The same component without the two flags (`--label M115-n8n-button-noflags-after`, exit=0, 15 s)
+  still names the defaults, `~2m 9s (12 combos x 10 samples; ...)`, so the counts are flag-derived
+  and not a coincidence: `--max-combos 4` gives 4 capped prop combos plus the 4 scale anchors
+  `runComboMode` appends (C6), and `--samples 5` replaces the default 10. Closed: yes.
+- **n8n-F4 dry run** (`--label M115-n8n-after`, exit=0, 7 s), the spec's verbatim row:
+  `Estimated real run: ~2m 9s (12 combos x 10 samples; defaults: no phase timings recorded for this
+  component yet)`; the flags are absent from that command line, so the defaults are the right
+  answer. Closed: yes.
+- **n8n-F3 real run** (`--label M115-n8n-real-after`, exit=2, 41 s). Still no report, so no `Total:`
+  line to break down: the row aborts on its own unresolved `~icons/` import, which is M108/M110
+  work. What it shows is Lane C's C4, unchanged by this commit:
+  `preflight: walking the import graph  (0:01)` / `harness: building  (0:01)`. Closed: no, and not
+  by this milestone.
+- **Unaffected repo** (`--label M115-shadcn-button-laneA-after`, exit=0, 2 s):
+  `src/components/ui/button.tsx --explain-props` still reaches its full schema (`Props (32):`,
+  `Curve mode:`, `Scale probe:`, `Matrix mode:`) and the estimate line. Closed: yes.
+
 ## Deferred
 
 - Levers B, C and D of `perf-levers.md`. B and C are M116, gated on the numbers this milestone

@@ -77,3 +77,35 @@ describe("mode flags a dry run needs to predict the same mode", () => {
     expect(options).not.toHaveProperty("noShims");
   });
 });
+
+// M115 A2 / I12: the dry run prices the real run from combos and samples, so
+// the two flags that decide those counts have to reach it. Without them
+// `--explain-props --samples 5 --max-combos 4` priced the defaults instead of
+// the run the same command line would take.
+describe("cost flags a dry run needs to price the real run", () => {
+  it("carries --samples and --max-combos", () => {
+    const options = explainPropsOptions(
+      parseArgs(["a.tsx", "--explain-props", "--samples", "5", "--max-combos", "4"]),
+      "a.tsx",
+    );
+    expect(options.samples).toBe(5);
+    expect(options.maxCombos).toBe(4);
+  });
+
+  it("omits both when neither flag was passed", () => {
+    const options = explainPropsOptions(parseArgs(["a.tsx", "--explain-props"]), "a.tsx");
+    expect(options).not.toHaveProperty("samples");
+    expect(options).not.toHaveProperty("maxCombos");
+  });
+
+  it("carries each of the two flags on its own", () => {
+    expect(
+      explainPropsOptions(parseArgs(["a.tsx", "--samples", "3"]), "a.tsx"),
+    ).not.toHaveProperty("maxCombos");
+    expect(explainPropsOptions(parseArgs(["a.tsx", "--samples", "3"]), "a.tsx").samples).toBe(3);
+    expect(
+      explainPropsOptions(parseArgs(["a.tsx", "--max-combos", "2"]), "a.tsx"),
+    ).not.toHaveProperty("samples");
+    expect(explainPropsOptions(parseArgs(["a.tsx", "--max-combos", "2"]), "a.tsx").maxCombos).toBe(2);
+  });
+});

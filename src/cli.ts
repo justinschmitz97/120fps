@@ -19,7 +19,8 @@ import { scanExports } from "./prop-gen.js";
 import { formatResolvedRoots, resolveProjectModel } from "./project-model.js";
 import { parseIsolationPhases, strictModeUnsupported, VUE_STRICTMODE_ERROR } from "./isolation.js";
 import { setPreflightBypassed } from "./preflight.js";
-import { formatTable, DEFAULT_THRESHOLDS } from "./report.js";
+import { formatTable, formatPhaseBreakdown, DEFAULT_THRESHOLDS } from "./report.js";
+import type { PhaseTimings } from "./report.js";
 
 // M88: the taxonomy hang -- a fatal error printed in full, then the process
 // stayed alive until an external `timeout` killed it (EXIT=124). Pool/server
@@ -392,6 +393,16 @@ export function formatWallClock(elapsedMs: number): string {
   const wholeSeconds = Math.round(elapsedMs / 1000);
   const minutes = Math.floor(wholeSeconds / 60);
   return `Total: ${minutes}m ${wholeSeconds - minutes * 60}s`;
+}
+
+// M115 A1: the wait and where it went, on one line. A run whose report carries
+// no phase timings (a cached verdict, a report written before M115) prints the
+// line it printed before, so the breakdown is an addition and never a rewrite.
+export function formatTotalLine(
+  elapsedMs: number,
+  timings: PhaseTimings | undefined,
+): string {
+  return formatWallClock(elapsedMs) + formatPhaseBreakdown(timings);
 }
 
 export function parseArgs(argv: string[]): CliArgs {
@@ -1343,6 +1354,8 @@ export function explainPropsOptions(
   skipAutoCompose?: boolean;
   noTransforms?: boolean;
   noShims?: boolean;
+  samples?: number;
+  maxCombos?: number;
 } {
   // C-5: the four flags below decide which mode the real run takes, and the
   // dry run's whole job is to predict that mode. They are resolved with the
@@ -1370,6 +1383,12 @@ export function explainPropsOptions(
     // scan resolves against, so the shared static pre-build only reports the
     // same unresolved externals in both modes when the dry run gets it too.
     ...(args.noShims ? { noShims: true } : {}),
+    // M115 A2, I12: the dry run prices the real run from the combo and sample
+    // counts that run would measure, and both are flags. Same two names the
+    // real run forwards to AnalyzeOptions, so the estimate is priced against
+    // the command line the user typed rather than the defaults.
+    ...(args.samples !== undefined ? { samples: args.samples } : {}),
+    ...(args.maxCombos !== undefined ? { maxCombos: args.maxCombos } : {}),
   };
 }
 
@@ -1560,7 +1579,12 @@ async function main(): Promise<void> {
         // M111 A4: ahead of this component's table, once per component.
         process.stdout.write(resolvedRootsOutput(componentPath, false));
         process.stdout.write(formatTable(report) + "\n");
-        process.stdout.write(formatWallClock(Date.now() - started) + "\n");
+        // M115 A1: the breakdown rides on the line that already prints the
+        // wait, under the same `!args.ci` guard -- `--ci` owns stdout for JSON
+        // and reads `phaseTimings` from the report instead.
+        process.stdout.write(
+          formatTotalLine(Date.now() - started, report.phaseTimings) + "\n",
+        );
       }
       if (!report.pass) anyFail = true;
     } catch (err: unknown) {
