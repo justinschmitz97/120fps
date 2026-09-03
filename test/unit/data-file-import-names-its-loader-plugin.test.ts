@@ -78,6 +78,33 @@ describe("an import of a file type Vite cannot load on its own", () => {
     expect(result.transforms.map((t) => t.specifier)).toContain("./messages.yaml");
   });
 
+
+  // Review: TypeScript 5 leaves `baseUrl` undefined for a tsconfig that
+  // declares only `paths` (every Vite template's shape), and the alias walk
+  // used to give up there, so the directus fix never applied.
+  it("follows the alias when the tsconfig declares paths without baseUrl", () => {
+    fs.writeFileSync(path.join(tmpDir, "package.json"), JSON.stringify({ name: "p" }));
+    fs.writeFileSync(
+      path.join(tmpDir, "tsconfig.json"),
+      JSON.stringify({ compilerOptions: { paths: { "@/*": ["./src/*"] } } }),
+    );
+    fs.mkdirSync(path.join(tmpDir, "src"));
+    fs.writeFileSync(
+      path.join(tmpDir, "src", "Child.vue"),
+      `<script setup lang="ts">\nimport messages from "./messages.yaml";\n</script>\n`,
+    );
+    fs.writeFileSync(path.join(tmpDir, "src", "messages.yaml"), "title: hello\n");
+    const entry = path.join(tmpDir, "src", "Parent.vue");
+    fs.writeFileSync(
+      entry,
+      `<script setup lang="ts">\nimport Child from "@/Child.vue";\n</script>\n`,
+    );
+
+    const result = runPreflight({ projectRoot: tmpDir, entries: [entry], vueCompiler });
+
+    expect(result.transforms.map((t) => t.specifier)).toContain("./messages.yaml");
+  });
+
   it("recognizes every extension Vite has no loader for", () => {
     expect(recognizeTransform("./en-US.yaml")?.code).toBe("yaml");
     expect(recognizeTransform("./en-US.yml")?.code).toBe("yaml");

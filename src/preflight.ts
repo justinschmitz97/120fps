@@ -94,6 +94,11 @@ export const TRANSFORM_RECOGNIZERS: TransformRecognizer[] = [
   },
   // M75: Vite core serves `.wasm?init` and `.wasm?url`; the bare specifier is
   // the one that needs a plugin, so only that shape is claimed here.
+  {
+    code: "wasm",
+    test: (s) => /\.wasm$/.test(s),
+    owner: "vite-plugin-wasm",
+  },
   // M110 (A5, directus): Vite parses an imported file as JavaScript unless a
   // plugin claims it. A YAML, TOML or Markdown import therefore ends the run on
   // a parse error that never names the plugin the project itself declares for
@@ -112,11 +117,6 @@ export const TRANSFORM_RECOGNIZERS: TransformRecognizer[] = [
     code: "markdown",
     test: (s) => /\.md$/.test(s),
     owner: "a Markdown loader plugin (e.g. unplugin-vue-markdown)",
-  },
-  {
-    code: "wasm",
-    test: (s) => /\.wasm$/.test(s),
-    owner: "vite-plugin-wasm",
   },
   {
     code: "shader",
@@ -495,8 +495,17 @@ function resolveVueImport(
 // The two `paths` shapes TypeScript itself supports: an exact key, or one `*`.
 function aliasCandidates(specifier: string, compilerOptions?: ts.CompilerOptions): string[] {
   const paths = compilerOptions?.paths;
-  const baseUrl = compilerOptions?.baseUrl;
-  if (!paths || !baseUrl) return [];
+  // Same alias base as src/harness.ts:5804 and src/project-model.ts:326:
+  // TypeScript 5 leaves `baseUrl` undefined for a tsconfig that declares only
+  // `paths`, and records the declaring config through `pathsBasePath` /
+  // `configFilePath` instead.
+  const base =
+    compilerOptions?.baseUrl ??
+    (compilerOptions as { pathsBasePath?: string } | undefined)?.pathsBasePath ??
+    (compilerOptions?.configFilePath
+      ? path.dirname(compilerOptions.configFilePath as string)
+      : undefined);
+  if (!paths || !base) return [];
   const candidates: string[] = [];
   for (const [pattern, targets] of Object.entries(paths)) {
     const star = pattern.indexOf("*");
@@ -511,7 +520,7 @@ function aliasCandidates(specifier: string, compilerOptions?: ts.CompilerOptions
       rest = specifier.slice(prefix.length, specifier.length - suffix.length);
     }
     for (const target of targets) {
-      candidates.push(path.resolve(baseUrl, target.replace("*", rest)));
+      candidates.push(path.resolve(base, target.replace("*", rest)));
     }
   }
   return candidates;

@@ -61,4 +61,25 @@ describe("an import clause spread over several lines", () => {
       scan(`export {\n  Button,\n} from "@wordpress/components";\n`),
     ).toContain("@wordpress/components");
   });
+
+  // Review: the clause class must not scan past the end of a statement. A
+  // comment, a JSX string and a template literal each sit behind an `export`
+  // keyword and each contain `from "…"`; none of them is an import.
+  it("stops at prose in a comment below an export keyword", () => {
+    expect(scan('export function useX() {\n  // pulled from "the store"\n  return 1;\n}\n')).toEqual(
+      [],
+    );
+  });
+
+  it("stops at JSX text below an export keyword", () => {
+    expect(scan('export const W = () => <p>copied from "the docs"</p>;\n')).toEqual([]);
+  });
+
+  it("does not read a data: URL body as an import clause", () => {
+    expect(
+      scan(
+        "export const src = `data:text/javascript,export default {}`;\nexport const W = () => src;\n",
+      ),
+    ).toEqual([]);
+  });
 });

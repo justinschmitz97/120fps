@@ -3959,6 +3959,7 @@ export function collectStaticPreBuildWarnings(
   // M110 (A2/I2): filled by the same walk that produces the include list, so
   // the dry run reports what the real run's optimizer would have choked on.
   const unresolvedExternals: Array<{ specifier: string; importer: string }> = [];
+  const reportedUnresolvedSpecifiers = new Set<string>();
   const externalDeps = [
     ...new Set([
       ...scanExternalDeps(
@@ -3970,6 +3971,7 @@ export function collectStaticPreBuildWarnings(
         workspaceRoot,
         aliases,
         unresolvedExternals,
+        reportedUnresolvedSpecifiers,
       ),
       ...(opts.wrapPath
         ? scanExternalDeps(
@@ -3981,6 +3983,7 @@ export function collectStaticPreBuildWarnings(
             workspaceRoot,
             aliases,
             unresolvedExternals,
+            reportedUnresolvedSpecifiers,
           )
         : []),
     ]),
@@ -4750,13 +4753,14 @@ function resolveLocalImport(
 // value import and "x" genuinely needs runtime resolution.
 // M110 (A4, gutenberg): a clause written over several lines
 // (`import {`, `  escapeHTML,`, `} from "@wordpress/escape-html"`) is the same
-// import. `[^;'"]*?` spans newlines where `.` did not, and stops at the two
-// characters that can end a statement before its own `from`: a `;`, or the
-// quote of a side-effect import standing above the clause
-// (`import "./a.css"`), which stays its own match instead of being swallowed
-// into the one below it.
+// import. `[\w$*,{}\s]*?` spans newlines where `.` did not, and stops at the
+// first character an import clause cannot contain — a `;`, a quote, a `(`, a
+// comment slash — so a side-effect import standing above the clause
+// (`import "./a.css"`, with or without its semicolon) stays its own match, and
+// prose or JSX below an `export` keyword ends the scan instead of reaching a
+// later `from "…"` and reporting its string as a specifier.
 const STATIC_IMPORT_PATTERN =
-  /(?:^|\s)(?:import|export)\s+(?!type\s)[^;'"]*?from\s+["']([^"']+)["']|(?:^|\s)import\s+["']([^"']+)["']/gm;
+  /(?:^|\s)(?:import|export)\s+(?!type\s)[\w$*,{}\s]*?from\s+["']([^"']+)["']|(?:^|\s)import\s+["']([^"']+)["']/gm;
 const DYNAMIC_IMPORT_PATTERN = /\bimport\s*\(\s*["']([^"']+)["']/g;
 const REQUIRE_PATTERN = /\brequire\s*\(\s*["']([^"']+)["']/g;
 
@@ -5204,13 +5208,17 @@ export function scanExternalDeps(
   // M110 (A2/I2): the specifiers this walk could not resolve, in the order it
   // read them, for the caller that publishes them on `StaticPreBuild`.
   unresolvedOut?: Array<{ specifier: string; importer: string }>,
+  // M110 (A1, review): a caller that walks twice into one `unresolvedOut`
+  // (component and wrapper) shares the dedupe set, so a specifier unresolved in
+  // both walks is still reported once.
+  reportedUnresolvedOut?: Set<string>,
 ): string[] {
   const externalPkgs = new Set<string>();
   const visited = new Set<string>();
   const reportedBrokenAliases = new Set<string>();
   const reportedWorkspaceRootAliases = new Set<string>();
   // M110 (A1): one report per specifier, however many files import it.
-  const reportedUnresolved = new Set<string>();
+  const reportedUnresolved = reportedUnresolvedOut ?? new Set<string>();
   const queue = [componentPath];
   const pkgNameOf = (spec: string) =>
     spec.startsWith("@") ? spec.split("/").slice(0, 2).join("/") : spec.split("/")[0];
@@ -5219,6 +5227,9 @@ export function scanExternalDeps(
   // node_modules chain never carries. The directory the specifier was first
   // read from answers for it; projectRoot stays the first probe.
   const firstImporterDir = new Map<string, string>();
+  // M110 (A1, review): the same bookkeeping at file granularity, so a specifier
+  // that resolves nowhere can name the file that imported it.
+  const firstImporterFile = new Map<string, string>();
   // M107 (review): a specifier whose package directory no importer has yet
   // produced re-reads its importer from the newest file that imported it.
   const unresolvedImporters = new Set<string>();
@@ -5315,10 +5326,12 @@ export function scanExternalDeps(
         const importerDir = path.dirname(normalizedFile);
         if (!firstImporterDir.has(spec) || unresolvedImporters.has(spec)) {
           firstImporterDir.set(spec, importerDir);
+          firstImporterFile.set(spec, normalizedFile);
           unresolvedImporters.delete(spec);
         }
         if (!firstImporterDir.has(pkg) || unresolvedImporters.has(pkg)) {
           firstImporterDir.set(pkg, importerDir);
+          firstImporterFile.set(pkg, normalizedFile);
           unresolvedImporters.delete(pkg);
         }
         if (spec === pkg) {
@@ -5539,6 +5552,28 @@ export function scanExternalDeps(
     walk();
     dropIgnored();
     if (!resolvePackages()) break;
+  }
+
+  // M110 (A1, review): the `#`-specifier branch above covers only what M108
+  // already keeps out of the include list. The root cause is here: a bare
+  // package that resolves to no installed directory in any round survives the
+  // fixed point, reaches optimizeDeps.include and kills the run at
+  // dep-optimization. The entry itself stays (M77/M94: an entry excluded on a
+  // resolution this scanner cannot see is worse than one Vite resolves per
+  // request); the report is what was missing.
+  for (const entry of externalPkgs) {
+    if (reportedUnresolved.has(entry)) continue;
+    const pkg = pkgNameOf(entry);
+    const importerDir = firstImporterDir.get(entry) ?? firstImporterDir.get(pkg);
+    const dir =
+      installedPackageDir(pkg, projectRoot) ??
+      (importerDir === undefined ? undefined : resolvePackageDir(pkg, importerDir));
+    if (dir !== undefined) continue;
+    reportedUnresolved.add(entry);
+    const importerFile = firstImporterFile.get(entry) ?? firstImporterFile.get(pkg);
+    const importer = importerFile === undefined ? "" : relativeToRoot(importerFile, projectRoot);
+    unresolvedOut?.push({ specifier: entry, importer });
+    warningsOut?.push(UNRESOLVED_PREBUNDLE_ENTRY_WARNING(entry, importer));
   }
 
   return [...externalPkgs];

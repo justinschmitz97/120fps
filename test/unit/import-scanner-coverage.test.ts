@@ -350,6 +350,8 @@ describe("type-only package exclusion", () => {
     const pkgs = scanExternalDeps(entry, tmpDir, [], undefined, warnings);
 
     expect(pkgs).toContain("nowhere-to-be-found");
-    expect(warnings).toEqual([]);
+    // M110 (A1) reports the entry the pre-bundle cannot resolve; this case is
+    // about the exclusion warnings, which stay silent.
+    expect(warnings.filter((w) => !w.includes("resolves to no installed package"))).toEqual([]);
   });
 });

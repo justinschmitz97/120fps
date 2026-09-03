@@ -81,7 +81,8 @@ describe("an alias that matches but points nowhere", () => {
     const pkgs = scanExternalDeps(entry, tmpDir, srcAlias(), undefined, warnings);
 
     expect(pkgs).toEqual(["clsx"]);
-    expect(warnings).toEqual([]);
+    // M110 (A1) reports the unresolvable entry; no alias warning is due.
+    expect(warnings.filter((w) => !w.includes("resolves to no installed package"))).toEqual([]);
   });
 
   it("says nothing about a relative import that resolves to nothing", () => {
