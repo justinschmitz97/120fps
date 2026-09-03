@@ -480,6 +480,11 @@ export interface CssReport {
   // manifest declared one, so `layer: "none"` can say "declared, not built"
   // instead of asserting nothing was declared.
   declaredMissing?: string[];
+  // M112 C4 / I5: the same declarations with the manifest field that named
+  // each one and the package's own build command, when lane A's producer
+  // supplied them. The `none` branch names the field, the path and the
+  // command; without them it names the paths alone.
+  declaredMissingFields?: Array<{ field: string; path: string; buildCommand?: string }>;
   // present only when layer === "runtime"
   runtimeEngines?: string[];
   // present only when layer === "largest-fallback"
@@ -894,6 +899,20 @@ export function formatStylesheetsLine(css: CssReport): string {
       // M112 C4: "none found" is false when the package named one. The
       // declaration is the fact the user acts on, so it replaces the sentence
       // rather than being appended to it.
+      // C4: the field and the build command when the producer named them,
+      // the paths alone when it did not.
+      if (css.declaredMissingFields && css.declaredMissingFields.length > 0) {
+        const named = css.declaredMissingFields
+          .map((d) => `package.json "${d.field}" declares ${d.path}`)
+          .join("; ");
+        const build = css.declaredMissingFields.find((d) => d.buildCommand)?.buildCommand;
+        return (
+          `Stylesheets: none injected — ${named}, which is not built yet; ` +
+          (build
+            ? `run \`${build}\` in that package, then re-run`
+            : "build the package, then re-run")
+        );
+      }
       if (css.declaredMissing && css.declaredMissing.length > 0) {
         return (
           `Stylesheets: none injected — the measured package's package.json declares ` +

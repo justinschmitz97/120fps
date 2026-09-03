@@ -55,6 +55,7 @@ import {
   scanJsxComposedLocalImports,
   UNCOMPOSED_SIBLINGS_WARNING,
   type CompositionTree,
+  type ExportInfo,
 } from "./composition.js";
 import { detectFramework, runReactAnalysis, hasReactWarning, type ReactOptimizations } from "./react-profiler.js";
 import { findWorkspaceRoot } from "./project-model.js";
@@ -2448,12 +2449,27 @@ export function buildCssReport(
     // lands on its own schedule; a project root-relative posix path here
     // regardless of which form the producer hands over.
     ...(() => {
-      const declared = (resolvedCss as { declaredMissing?: string[] }).declaredMissing;
-      if (declared === undefined) return {};
+      type DeclaredMissing = string | { field: string; path: string; buildCommand?: string };
+      const declared = (resolvedCss as { declaredMissing?: DeclaredMissing[] }).declaredMissing;
+      // An empty array is a producer that found nothing: no key at all, so a
+      // report of a project with no declaration is byte-identical.
+      if (declared === undefined || declared.length === 0) return {};
+      const rel = (f: string): string =>
+        (path.isAbsolute(f) ? path.relative(projectRoot, f) : f).replace(/\\/g, "/");
+      const fields = declared.filter(
+        (d): d is Exclude<DeclaredMissing, string> => typeof d !== "string",
+      );
       return {
-        declaredMissing: declared.map((f) =>
-          (path.isAbsolute(f) ? path.relative(projectRoot, f) : f).replace(/\\/g, "/"),
-        ),
+        declaredMissing: declared.map((d) => rel(typeof d === "string" ? d : d.path)),
+        ...(fields.length > 0
+          ? {
+              declaredMissingFields: fields.map((d) => ({
+                field: d.field,
+                path: rel(d.path),
+                ...(d.buildCommand !== undefined ? { buildCommand: d.buildCommand } : {}),
+              })),
+            }
+          : {}),
       };
     })(),
     ...(resolvedCss.runtimeEngines !== undefined ? { runtimeEngines: resolvedCss.runtimeEngines } : {}),
@@ -2669,11 +2685,7 @@ export async function explainProps(
     appliedPropNames = applied.applied;
     unknownPresetProps = applied.unknown;
   }
-  warnings.push(...remediesAfterPreset(detail.warnings, appliedPropNames));
-  // M112 C2: the sibling that carries the preset name without the preset
-  // shape, disclosed once by its path instead of dropped.
-  const shapeDisclosure = presetShapeDisclosure(resolvedPath, projectRoot);
-  if (shapeDisclosure) warnings.push(shapeDisclosure);
+  warnings.push(...remediesAfterPreset(detail.warnings, appliedPropNames, presets?.path));
   if (presets && unknownPresetProps.length > 0) {
     warnings.push(UNKNOWN_PRESET_PROPS_WARNING(presets.path, unknownPresetProps));
   }
@@ -2704,6 +2716,15 @@ export async function explainProps(
         ? undefined
         : detectFixture(resolvedPath);
   const dryRunUsesFixture = dryRunFixturePath !== undefined;
+  // M112 C2: the sibling that carries the preset name without the preset
+  // shape, disclosed once by its path instead of dropped. Gated on the fixture
+  // decision the real run makes (src/analyze.ts's `presetShapeWarning`): a
+  // fixture owns its scene, so both modes stay silent about a preset-named
+  // sibling there (M100 parity).
+  const shapeDisclosure = dryRunUsesFixture
+    ? undefined
+    : presetShapeDisclosure(resolvedPath, projectRoot);
+  if (shapeDisclosure) warnings.push(shapeDisclosure);
   const dryRunFixtureFile = dryRunFixturePath
     ? path.relative(projectRoot, dryRunFixturePath).replace(/\\/g, "/")
     : undefined;
@@ -3179,13 +3200,31 @@ function writeFixtureScaffold(
 // flag could not act there even in principle. Returning the line rather than
 // printing it keeps both emission sites on the run's one warning channel, and
 // makes "accepted the flag and wrote nothing in silence" unrepresentable.
-export function initFixtureOutcome(componentPath: string, root: string, siblings: string[]): string {
+export function initFixtureOutcome(
+  componentPath: string,
+  root: string,
+  siblings: string[],
+  // The measured file's own exports, so the scaffold imports only names that
+  // resolve from it and leaves the rest as placeholders.
+  exports: ExportInfo[] = [],
+): string {
   const target = fixtureScaffoldPath(componentPath);
   if (fs.existsSync(target)) {
     return `--init-fixture skipped: ${target} already exists`;
   }
   const stem = path.basename(componentPath, path.extname(componentPath));
-  fs.writeFileSync(target, buildUncomposedFixtureScaffold(stem, root, siblings), "utf8");
+  // The write runs early in analyze(), before measurement: an EACCES or a
+  // read-only checkout would otherwise throw out of the run and produce the
+  // silence C3 forbids. The failure is an outcome line like any other.
+  try {
+    fs.writeFileSync(
+      target,
+      buildUncomposedFixtureScaffold(stem, root, siblings, exports),
+      "utf8",
+    );
+  } catch (error) {
+    return `--init-fixture skipped: ${target} could not be written (${(error as Error).message})`;
+  }
   return `wrote fixture scaffold ${target}; edit it to render the real composition, then re-run`;
 }
 
@@ -3206,13 +3245,32 @@ export function presetShapeDisclosure(
 // branch the extraction guessed at was replaced by the values the user named —
 // so it is dropped rather than re-worded. With no preset applied the list is
 // returned untouched, character for character.
-function remediesAfterPreset(warnings: string[], appliedPropNames: string[]): string[] {
+function remediesAfterPreset(
+  warnings: string[],
+  appliedPropNames: string[],
+  presetFile?: string,
+): string[] {
   if (appliedPropNames.length === 0) return warnings;
-  return warnings.filter(
-    (warning) =>
-      !appliedPropNames.some(
-        (name) => warning.includes(`prop "${name}"`) && warning.includes("is a union of"),
-      ),
+  return warnings
+    .filter((warning) => !presetAnswersRemedy(warning, appliedPropNames))
+    .map((warning) => (presetFile ? remedyNamesLoadedPreset(warning, presetFile) : warning));
+}
+
+// The predicate both modes share: the dry run filters a list with it, the real
+// run's `onWarning` filters one warning at a time as extraction produces it.
+export function presetAnswersRemedy(warning: string, appliedPropNames: string[]): boolean {
+  return appliedPropNames.some(
+    (name) => warning.includes(`prop "${name}"`) && warning.includes("is a union of"),
+  );
+}
+
+// M112 C1, second half: a remedy the preset did not answer still prints, and
+// asking for a file the run already loaded is the MUST NOT. The clause names
+// the loaded preset instead, and the rest of the sentence is untouched.
+export function remedyNamesLoadedPreset(warning: string, presetFile: string): string {
+  return warning.replace(
+    /Add (\S+\.props\.tsx?) to /,
+    `The applied preset ${presetFile} is already loaded; extend it to `,
   );
 }
 
@@ -3542,6 +3600,7 @@ export async function analyze(
             resolvedPath,
             boundName,
             siblings.map((s) => s.name),
+            componentExports,
           );
         }
       }
@@ -3660,10 +3719,12 @@ export async function analyze(
         // collapsed-union remedy for a prop it supplies values for is dropped
         // as it is produced rather than printed and then contradicted. The
         // same rule the dry run applies, on the same warning texts.
-        if (presetSuppliedProps.length > 0 && remediesAfterPreset([warning], presetSuppliedProps).length === 0) {
+        if (presetSuppliedProps.length > 0 && presetAnswersRemedy(warning, presetSuppliedProps)) {
           return;
         }
-        onWarning(warning);
+        // M112 C1: a remedy the preset did not answer survives, and names the
+        // preset the run already loaded instead of asking for a file.
+        onWarning(presets ? remedyNamesLoadedPreset(warning, presets.path) : warning);
       },
     });
     // The producer for BuildReportInput.disclosureReason's "propsExcluded"

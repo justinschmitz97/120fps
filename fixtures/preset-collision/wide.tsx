@@ -3,6 +3,9 @@
 export interface WideProps {
   variant?: "solid" | "soft";
   size?: "1" | "2";
+  // A union the extraction actually collapses (a string literal beside an
+  // object), so the preset below has a remedy to answer.
+  tone?: "solid" | { level: number };
   p1?: string;
   p2?: string;
   p3?: string;

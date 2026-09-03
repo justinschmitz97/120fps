@@ -1,4 +1,6 @@
 import { describe, it, expect } from "vitest";
+import path from "node:path";
+import { discoverGlobalCss } from "../../src/harness.js";
 import { STYLESHEET_MATCHED_NOTHING_WARNING, buildCssReport } from "../../src/analyze.js";
 import { formatStylesheetsLine, type CssReport } from "../../src/report.js";
 
@@ -166,6 +168,39 @@ describe("a stylesheet the package declared but never built", () => {
     expect(line).toContain("none found");
   });
 
+  it("names the declaring field and the build command when the producer supplies them", () => {
+    const line = formatStylesheetsLine({
+      files: [],
+      autoDetected: true,
+      layer: "none",
+      declaredMissing: ["styles.css"],
+      declaredMissingFields: [
+        { field: "style", path: "styles.css", buildCommand: "pnpm build" },
+      ],
+    });
+    expect(line).toContain('package.json "style" declares styles.css');
+    expect(line).toContain("pnpm build");
+    expect(line).not.toContain("none found");
+  });
+
+  it("falls back to the paths alone when no field came with them", () => {
+    const line = formatStylesheetsLine({
+      files: [],
+      autoDetected: true,
+      layer: "none",
+      declaredMissing: ["styles.css"],
+    });
+    expect(line).toContain("styles.css");
+    expect(line).toContain("declares");
+  });
+
+  it("adds no declaredMissing key to a report built from a real discovery", () => {
+    // The producer, not a cast literal: a project with nothing declared must
+    // not grow an empty array in every report.
+    const discovered = discoverGlobalCss(path.resolve("fixtures/css-font"), undefined);
+    const report = buildCssReport(discovered, path.resolve("fixtures/css-font"));
+    expect(Object.prototype.hasOwnProperty.call(report, "declaredMissing")).toBe(false);
+  });
   it("carries the declared targets into the report's css object", () => {
     const report = buildCssReport(
       {
