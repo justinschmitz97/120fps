@@ -2630,6 +2630,12 @@ export async function explainProps(
   // stopped at the first SFC import. A refusal five files deeper was therefore
   // invisible here and fatal there. Same compiler, same edges, same decision.
   const vueCompiler = framework === "vue" ? await loadVueCompiler(projectRoot) : undefined;
+  // Same gate the run path applies (M57): without the SFC parser the walk sees
+  // no edge out of a `.vue` target at all, so predicting a clean run here while
+  // the run refuses outright is the parity break this whole block closes.
+  if (framework === "vue" && !vueCompiler && isVueFile(resolvedPath)) {
+    throw new Error(VUE_COMPILER_MISSING(projectRoot));
+  }
   const preflight = runPreflight({
     projectRoot,
     entries: [resolvedPath],

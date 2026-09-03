@@ -87,7 +87,15 @@ describe("an import of a file type no supported transform can load", () => {
 
     const hit = preflight.hard.find((h) => h.kind === "unloadable-file-type");
     expect(hit?.transformCode).toBe("toml");
-    expect(preflightFailureMessage(preflight.hard)).toContain("TOML loader plugin");
+    expect(hit?.transformOwnerDeclared).toBeUndefined();
+    // M92: every printed sentence is true of this project. It declares no
+    // loader, so the message may not say it compiles the file with one.
+    const message = preflightFailureMessage(preflight.hard);
+    expect(message).toContain(
+      "Nothing in this project declares a TOML loader plugin (e.g. @rollup/plugin-toml), " +
+        "which Vite needs to load it.",
+    );
+    expect(message).not.toContain("This project compiles that with");
   });
 
   it("leaves a transform the run applies or Vite resolves itself alone", () => {
@@ -161,6 +169,46 @@ describe("the dry run's prediction of that refusal", () => {
     const entry = path.join(FIXTURE, "src", "widget.tsx");
 
     await expect(explainProps(entry, {})).rejects.toThrow("./messages.yaml");
+  });
+});
+
+// A refusal that is not this one names an edge that fails before Vite reaches
+// the data file, and the promotion above appends to `hard` after every hit the
+// walk already found (both call sites then append composed-child hits after
+// that), so precedence cannot be positional.
+describe("a component that reaches both a data file and an earlier refusal", () => {
+  it("is still reported by the refusal that is not the data file", () => {
+    const message = preflightFailureMessage([
+      {
+        kind: "unloadable-file-type",
+        chain: ["src/Widget.tsx"],
+        specifier: "./messages.yaml",
+        transformCode: "yaml",
+        transformOwner: "@rollup/plugin-yaml",
+        transformOwnerDeclared: true,
+      },
+      { kind: "async-component", chain: ["src/Widget.tsx"] },
+    ]);
+
+    expect(message).toContain("exports an async function component");
+    expect(message).not.toContain("./messages.yaml");
+  });
+});
+
+// The dry run reads a Vue graph only through the project's own SFC parser, so
+// what it finds two SFCs down is pinned by behaviour, not by a source grep.
+// (The refusal when no compiler resolves has its own file:
+// vue-target-without-sfc-compiler-is-refused.test.ts.)
+describe("the dry run on a real Vue project", () => {
+  const VUE_FIXTURE = path.resolve(import.meta.dirname, "..", "..", "fixtures", "vue-project");
+
+  it("reaches a data-file import two SFCs down and names the whole chain", async () => {
+    const error = await explainProps(path.join(VUE_FIXTURE, "YamlLeak.vue")).catch(
+      (e: Error) => e,
+    );
+
+    expect(error.message).toContain("YamlChild.vue imports ./data.yaml");
+    expect(error.message).toContain("YamlLeak.vue → YamlChild.vue → ./data.yaml");
   });
 });
 

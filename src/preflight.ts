@@ -266,6 +266,10 @@ export interface PreflightHit {
   // M48: recognizer code and the plugin family that owns the transform.
   transformCode?: string;
   transformOwner?: string;
+  // M110: true when `transformOwner` is a package this project declares, false
+  // when it is the recognizer's generic wording. The refusal message may only
+  // claim "this project compiles that with X" in the first case.
+  transformOwnerDeclared?: boolean;
 }
 
 export interface PreflightResult {
@@ -804,17 +808,22 @@ export function runPreflight(options: PreflightOptions): PreflightResult {
 
       const recognizer = recognizeTransform(edge.specifier, file);
       if (recognizer) {
+        // M108 A6/A7: a macro or virtual-namespace hit names the plugin this
+        // repository declares for it; the recognizer's generic owner stands
+        // when no candidate is declared.
+        const declaredOwner = declaredTransformOwner(
+          recognizer.code,
+          edge.specifier,
+          projectRoot,
+          workspaceRoot,
+        );
         transforms.push({
           kind: "project-transform",
           chain: chainTo(file),
           specifier: edge.specifier,
           transformCode: recognizer.code,
-          // M108 A6/A7: a macro or virtual-namespace hit names the plugin this
-          // repository declares for it; the recognizer's generic owner stands
-          // when no candidate is declared.
-          transformOwner:
-            declaredTransformOwner(recognizer.code, edge.specifier, projectRoot, workspaceRoot) ??
-            recognizer.owner,
+          transformOwner: declaredOwner ?? recognizer.owner,
+          ...(declaredOwner ? { transformOwnerDeclared: true } : {}),
         });
         // A `.vue` edge is a graph edge as well as a transform note: the note
         // must not end the walk, or a server-only import one SFC deep would
@@ -891,11 +900,11 @@ export function runPreflight(options: PreflightOptions): PreflightResult {
   // refusal when nothing 120fps loads claims that extension; the hit stays in
   // `transforms` as well, so --no-preflight still prints the plugin the
   // project declares for it.
-  const loadableCodes = new Set(SUPPORTED_TRANSFORM_PLUGINS.map((plugin) => plugin.code));
+  // UNLOADABLE_FILE_TYPE_CODES holds only codes 120fps cannot load (see its
+  // own comment above), so membership alone decides this.
   for (const hit of transforms) {
     if (!hit.transformCode) continue;
     if (!UNLOADABLE_FILE_TYPE_CODES.has(hit.transformCode)) continue;
-    if (loadableCodes.has(hit.transformCode)) continue;
     hard.push({ ...hit, kind: "unloadable-file-type" });
   }
 
@@ -995,7 +1004,11 @@ export class PreflightHardRejectionError extends Error {
 // The first hit is the one to fix: everything below it is unreachable until
 // that edge moves.
 export function preflightFailureMessage(hits: PreflightHit[]): string {
-  const hit = hits[0];
+  // M110: the unloadable-file-type promotion appends to `hard` after the walk,
+  // and both call sites append composed-child hits after that, so position no
+  // longer encodes precedence. Every other refusal names an edge that fails
+  // before Vite reaches the data file, so it stays the one reported.
+  const hit = hits.find((candidate) => candidate.kind !== "unloadable-file-type") ?? hits[0];
   const where = hit.chain[hit.chain.length - 1];
   const kind = hit.kind as HardKind;
   // M94: a Vite failure is re-presented as a 120fps error naming target,
@@ -1010,10 +1023,12 @@ export function preflightFailureMessage(hits: PreflightHit[]): string {
       "",
       `  ${chainText(hit)}`,
       "",
-      `This project compiles that with ${hit.transformOwner}. 120fps loads only its supported ` +
-        `transforms (${supported}) and never reads your vite.config, so nothing here can load ` +
-        "that import: the dev server would answer it with a 500 and the run would end inside " +
-        "Vite's import analysis.",
+      (hit.transformOwnerDeclared
+        ? `This project compiles that with ${hit.transformOwner}.`
+        : `Nothing in this project declares ${hit.transformOwner}, which Vite needs to load it.`) +
+        ` 120fps loads only its supported transforms (${supported}) and never reads your ` +
+        "vite.config, so nothing here can load that import: the dev server would answer it " +
+        "with a 500 and the run would end inside Vite's import analysis.",
       hardRemedyFor(kind),
     ].join("\n");
   }
