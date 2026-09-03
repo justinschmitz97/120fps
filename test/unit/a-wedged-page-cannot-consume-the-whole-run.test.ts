@@ -5,7 +5,11 @@ import {
   MAX_CONSECUTIVE_DEGRADED_COMBOS,
   createDegradedPassBound,
   measurementAbandonedWarning,
+  type MountResult,
+  type RerenderResult,
 } from "../../src/measure.js";
+import { buildReport, propDeltasFromMeasured, type BuildReportInput } from "../../src/analyze.js";
+import type { DeltaPair } from "../../src/prop-gen-values.js";
 
 // midday-F1, end-game fix-up. `withFrameStarvationRetry` bounds one combo;
 // nothing bounded a pass. On midday's button the renderer wedged during the
@@ -82,15 +86,152 @@ describe("both measurement passes are bounded by it", () => {
   });
 });
 
-describe("a prop delta whose combos were never measured is not reported as zero", () => {
-  it("no longer seeds an unmeasured combo with a zero timing", () => {
-    expect(analyzeSrc).not.toContain("measured.set(key, { mount: 0, rerender: 0 });");
-    expect(analyzeSrc).toContain("const requested = new Set<string>();");
+// The pass loops in measure.ts need a browser to run, so this stands in for
+// one: the same bound, the same `new Array(total)` results array written by
+// index, the same break. It is here to execute what the bound does to the run
+// downstream -- holes in the results array -- which the source greps above
+// cannot.
+function runBoundedPass(
+  phase: "mount" | "rerender",
+  total: number,
+  measures: (position: number) => boolean,
+  onWarning: (warning: string) => void,
+): (MountResult | undefined)[] {
+  const results: (MountResult | undefined)[] = new Array(total);
+  const bound = createDegradedPassBound(phase, total, onWarning);
+  for (let position = 0; position < total; position++) {
+    if (!measures(position)) {
+      if (bound.degraded(position)) break;
+      continue;
+    }
+    bound.measured();
+    results[position] = makeMount(position);
+  }
+  return results;
+}
+
+function makeMount(comboIndex: number): MountResult {
+  return {
+    comboIndex,
+    props: { size: comboIndex },
+    mount: { samples: [2, 2, 2], median: 2, p95: 2 },
+    unmount: { samples: [1, 1, 1], median: 1, p95: 1 },
+    domNodeCount: 10,
+  };
+}
+
+function makeRerender(comboIndex: number, median: number): RerenderResult {
+  return {
+    comboIndex,
+    props: { size: comboIndex },
+    stable: { samples: [median, median, median], median, p95: median },
+  };
+}
+
+function reportInput(
+  mounts: (MountResult | undefined)[],
+  rerenders?: (RerenderResult | undefined)[],
+): BuildReportInput {
+  return {
+    componentPath: "./Button.tsx",
+    componentName: "Button",
+    machine: { cpu: "Test", cores: 4, ramMb: 16384, os: "Linux 6.0", nodeVersion: "v22.0.0", chromiumVersion: "120.0.0.0" },
+    calibration: { totalDuration: 10, scriptDuration: 5 },
+    mounts: mounts as MountResult[],
+    rerenders: rerenders as RerenderResult[] | undefined,
+    explores: [],
+    heapDeltas: [],
+    thresholds: { mountMs: 16, interactionMs: 100, relativeMount: 2.0, rerenderMs: 8 },
+  };
+}
+
+describe("what a pass that stopped early leaves behind", () => {
+  it("keeps the combos measured before the bound and none after it", () => {
+    const onWarning = vi.fn();
+    const wedgesAtFive = (position: number) => position < 5;
+    const results = runBoundedPass("mount", 40, wedgesAtFive, onWarning);
+    expect(results.filter((r) => r !== undefined).map((r) => r?.comboIndex)).toEqual([0, 1, 2, 3, 4]);
+    expect(results.length).toBe(40);
   });
 
-  it("drops the pair instead of subtracting two zeros", () => {
-    const deltas = analyzeSrc.slice(analyzeSrc.indexOf("const propDeltas = pairs.flatMap"));
-    expect(deltas).toContain("if (!base || !flip) return [];");
-    expect(deltas.slice(0, 800)).toContain("if (propDeltas.length === 0) return undefined;");
+  it("warns the caller, naming the phase and what it skipped", () => {
+    const onWarning = vi.fn();
+    runBoundedPass("mount", 40, (position) => position < 5, onWarning);
+    expect(onWarning).toHaveBeenCalledWith(measurementAbandonedWarning("mount", 3, 32));
+  });
+
+  it("says nothing when the pass reached its last combo anyway", () => {
+    const onWarning = vi.fn();
+    const results = runBoundedPass("rerender", 4, (position) => position < 1, onWarning);
+    expect(results.filter((r) => r !== undefined)).toHaveLength(1);
+    expect(onWarning).not.toHaveBeenCalled();
+  });
+
+  it("builds a report out of what the pass did measure", () => {
+    const results = runBoundedPass("mount", 40, (position) => position < 5, vi.fn());
+    const report = buildReport(reportInput(results));
+    expect(report.combos.map((c) => c.comboIndex)).toEqual([0, 1, 2, 3, 4]);
+  });
+});
+
+describe("the report is built from the measured combos, holes and all", () => {
+  it("reports the one combo a wedged pass measured instead of throwing", () => {
+    const mounts: (MountResult | undefined)[] = new Array(3);
+    mounts[2] = makeMount(2);
+    const report = buildReport(reportInput(mounts));
+    expect(report.combos).toHaveLength(1);
+    expect(report.combos[0].comboIndex).toBe(2);
+  });
+
+  it("pairs a measured mount with its rerender across holes in both arrays", () => {
+    const mounts: (MountResult | undefined)[] = new Array(3);
+    mounts[2] = makeMount(2);
+    const rerenders: (RerenderResult | undefined)[] = new Array(3);
+    rerenders[2] = makeRerender(2, 4);
+    const report = buildReport(reportInput(mounts, rerenders));
+    expect(report.combos[0].rerender?.median).toBe(4);
+  });
+});
+
+const PAIR: DeltaPair = {
+  propName: "size",
+  baseCombo: { size: 0 },
+  flipCombo: { size: 1 },
+  baseValue: 0,
+  flipValue: 1,
+};
+
+describe("a prop delta whose combos were never measured is not reported as zero", () => {
+  it("reports the pair when both sides measured both timings", () => {
+    const measured = new Map([
+      [JSON.stringify(PAIR.baseCombo), { mount: 2, rerender: 1 }],
+      [JSON.stringify(PAIR.flipCombo), { mount: 5, rerender: 3 }],
+    ]);
+    expect(propDeltasFromMeasured([PAIR], measured)).toEqual([
+      { propName: "size", baseValue: 0, flipValue: 1, mountDelta: 3, rerenderDelta: 2 },
+    ]);
+  });
+
+  it("drops a pair whose flip side the mount pass never reached", () => {
+    const measured = new Map([[JSON.stringify(PAIR.baseCombo), { mount: 2, rerender: 1 }]]);
+    expect(propDeltasFromMeasured([PAIR], measured)).toEqual([]);
+  });
+
+  it("drops a pair whose rerender the rerender pass omitted, rather than subtracting a zero", () => {
+    const measured = new Map<string, { mount: number; rerender?: number }>([
+      [JSON.stringify(PAIR.baseCombo), { mount: 2, rerender: 1 }],
+      [JSON.stringify(PAIR.flipCombo), { mount: 5 }],
+    ]);
+    expect(propDeltasFromMeasured([PAIR], measured)).toEqual([]);
+  });
+
+  it("no longer seeds an unmeasured combo with a zero timing", () => {
+    expect(analyzeSrc).not.toContain("measured.set(key, { mount: 0, rerender: 0 });");
+    expect(analyzeSrc).not.toContain("rerender: 0 });");
+  });
+
+  it("both delta paths go through the same guard", () => {
+    expect(analyzeSrc).toContain("matrixDeltas = propDeltasFromMeasured(deltaPairs, matrixMedians);");
+    expect(analyzeSrc).toContain("const propDeltas = propDeltasFromMeasured(pairs, measured);");
   });
 });

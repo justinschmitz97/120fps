@@ -266,11 +266,22 @@ export function watchdogAbortOutput(
   elapsedMs: number,
   ci: boolean,
 ): { stderr: string; stdout: string } {
+  // The roots line resolves the project model, which reads the filesystem --
+  // inside the watchdog's timer callback, on a machine already in the state
+  // that caused the abort. An exception there would escape the timer and skip
+  // the `abortRun` that closes the pools and sweeps the harness dirs, so the
+  // roots line is the only part of this output that can be lost.
+  let stdout = "";
+  if (!ci) {
+    try {
+      stdout = resolvedRootsOutput(componentPath, false) + formatTotalLine(elapsedMs, undefined) + "\n";
+    } catch {
+      stdout = formatTotalLine(elapsedMs, undefined) + "\n";
+    }
+  }
   return {
     stderr: RUN_WATCHDOG_ABORT_ERROR(componentPath, budgetMs, bound),
-    stdout: ci
-      ? ""
-      : resolvedRootsOutput(componentPath, false) + formatTotalLine(elapsedMs, undefined) + "\n",
+    stdout,
   };
 }
 

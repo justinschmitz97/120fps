@@ -726,7 +726,10 @@ export function createDegradedPassBound(
     degraded(position: number): boolean {
       run++;
       if (run < MAX_CONSECUTIVE_DEGRADED_COMBOS) return false;
-      onWarning?.(measurementAbandonedWarning(phase, run, total - position - 1));
+      // A bound that trips on the pass's last combo skipped nothing: the pass
+      // reached its end, so warning about it would be noise.
+      const skipped = total - position - 1;
+      if (skipped > 0) onWarning?.(measurementAbandonedWarning(phase, run, skipped));
       return true;
     },
     measured(): void {

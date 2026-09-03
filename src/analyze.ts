@@ -70,6 +70,7 @@ import {
   countCombinationSpace,
   countDeltaPairSpace,
   DEFAULT_MEASURED_COMBOS,
+  type DeltaPair,
   type PropCombination,
 } from "./prop-gen-values.js";
 import { applyWrapperViewport, createBrowserPool, measuredOnly, measureMount, measureRerender, measureWrapperOverhead, openMeasurementSession, settleStyles, reportFontSettle, suspendThrottle, CONTEXT_RETRY_WARNING, HARNESS_NAV_WAIT, type BrowserPool, type MeasurementSession, type MountResult, type RerenderResult } from "./measure.js";
@@ -631,7 +632,11 @@ function valueEvidencedInText(value: unknown, errorText: string, depth = 0): boo
 export function buildReport(input: BuildReportInput): Report {
   const combos: ComboReport[] = [];
 
-  for (const mount of input.mounts) {
+  // M116 end-game fix-up (midday-F1): a pass that stopped early leaves holes in
+  // `mounts`/`rerenders`. `for...of` yields `undefined` for a hole and
+  // `Array.prototype.find` calls its predicate with it, so every consumer here
+  // asks for the measured entries.
+  for (const mount of measuredOnly(input.mounts)) {
     const exploreResult = input.explores.find(
       (e) => e.comboIndex === mount.comboIndex,
     );
@@ -675,7 +680,7 @@ export function buildReport(input: BuildReportInput): Report {
         ? mount.mount.median / input.calibration.totalDuration
         : 0;
 
-    const rerenderResult = input.rerenders?.find(
+    const rerenderResult = measuredOnly(input.rerenders ?? []).find(
       (r) => r.comboIndex === mount.comboIndex,
     );
 
@@ -800,7 +805,7 @@ export function buildReport(input: BuildReportInput): Report {
       const isScaleCombo = combo.scaleProbe !== undefined && probesAccompanyPropCombos;
       const hasPortal = combo.interactions.some((i) => i.portal === true);
       const hasScaling = combo.scalingCurve != null || combo.rerenderScalingCurve != null;
-      const mountResult = input.mounts.find((m) => m.comboIndex === combo.comboIndex);
+      const mountResult = measuredOnly(input.mounts).find((m) => m.comboIndex === combo.comboIndex);
       const hasAnimation = mountResult?.hasAnimation ?? false;
       const tier = classifyTier({ domNodeCount: combo.domNodeCount, hasPortal, hasScaling, hasAnimation });
       combo.tier = tier;
@@ -1640,8 +1645,9 @@ async function runMatrixMode(ctx: ModeContext, matrixAutoActivated: boolean): Pr
       runWarnings.push(DELTA_PAIR_CAP_WARNING(deltaPairs.length, totalDeltaPairs));
     }
     const measured = new Map<string, { mount: MountResult; rerender?: RerenderResult }>();
+    const measuredMatrixRerenders = measuredOnly(matrixRerenders);
     for (const m of measuredOnly(matrixMounts)) {
-      measured.set(JSON.stringify(m.props), { mount: m, rerender: matrixRerenders.find((r) => r.comboIndex === m.comboIndex) });
+      measured.set(JSON.stringify(m.props), { mount: m, rerender: measuredMatrixRerenders.find((r) => r.comboIndex === m.comboIndex) });
     }
     const missingPairs = deltaPairs.filter((p) => !measured.has(JSON.stringify(p.baseCombo)) || !measured.has(JSON.stringify(p.flipCombo)));
     if (missingPairs.length > 0) {
@@ -1651,23 +1657,17 @@ async function runMatrixMode(ctx: ModeContext, matrixAutoActivated: boolean): Pr
         // would merge a differently-estimated number into one report.
         const extraMounts = await measureMount(harness, { samples: matrixEffectiveSamples, cpuThrottle, warmupRuns, combos: missingCombos, pool });
         const extraRerenders = await measureRerender(harness, { samples: matrixEffectiveSamples, cpuThrottle, warmupRuns, combos: missingCombos, animatedComboIndices: animatedIndices(extraMounts), pool });
-        for (const m of measuredOnly(extraMounts)) measured.set(JSON.stringify(m.props), { mount: m, rerender: extraRerenders.find((r) => r.comboIndex === m.comboIndex) });
+        const measuredExtraRerenders = measuredOnly(extraRerenders);
+        for (const m of measuredOnly(extraMounts)) measured.set(JSON.stringify(m.props), { mount: m, rerender: measuredExtraRerenders.find((r) => r.comboIndex === m.comboIndex) });
       }
     }
-    matrixDeltas = [];
-    for (const pair of deltaPairs) {
-      const base = measured.get(JSON.stringify(pair.baseCombo));
-      const flip = measured.get(JSON.stringify(pair.flipCombo));
-      if (base && flip) {
-        matrixDeltas.push({
-          propName: pair.propName,
-          baseValue: pair.baseValue,
-          flipValue: pair.flipValue,
-          mountDelta: flip.mount.mount.median - base.mount.mount.median,
-          rerenderDelta: (flip.rerender?.stable.median ?? 0) - (base.rerender?.stable.median ?? 0),
-        });
-      }
-    }
+    const matrixMedians = new Map(
+      [...measured].map(([key, cell]) => [
+        key,
+        { mount: cell.mount.mount.median, rerender: cell.rerender?.stable.median },
+      ]),
+    );
+    matrixDeltas = propDeltasFromMeasured(deltaPairs, matrixMedians);
   }
 
   const heapDeltas = matrixMounts.map((m) => m.heapDelta ?? 0);
@@ -1723,6 +1723,29 @@ async function runMatrixMode(ctx: ModeContext, matrixAutoActivated: boolean): Pr
 // M11: pairwise deltas for the standard combo path. Pairs whose combos the
 // sweep already measured reuse those numbers; the rest are measured at the
 // same effective sample count. Sorted by absolute mount impact.
+// M116 end-game fix-up (midday-F2): the one place a pair becomes a delta, for
+// both the standard and the matrix path. A pair is reported only when both
+// sides measured both timings: a side the pass never reached used to be
+// subtracted as a fabricated 0.00 ms.
+export function propDeltasFromMeasured(
+  pairs: DeltaPair[],
+  measured: Map<string, { mount: number; rerender?: number }>,
+): PropDelta[] {
+  return pairs.flatMap((pair) => {
+    const base = measured.get(JSON.stringify(pair.baseCombo));
+    const flip = measured.get(JSON.stringify(pair.flipCombo));
+    if (!base || !flip) return [];
+    if (base.rerender === undefined || flip.rerender === undefined) return [];
+    return [{
+      propName: pair.propName,
+      baseValue: pair.baseValue,
+      flipValue: pair.flipValue,
+      mountDelta: flip.mount - base.mount,
+      rerenderDelta: flip.rerender - base.rerender,
+    }];
+  });
+}
+
 async function measureStandardPropDeltas(
   ctx: ModeContext,
   schemas: PropSchema[],
@@ -1738,10 +1761,13 @@ async function measureStandardPropDeltas(
   }
   if (pairs.length === 0) return undefined;
 
-  const measured = new Map<string, { mount: number; rerender: number }>();
+  // M116 end-game fix-up (midday-F2): `rerender` stays absent until a rerender
+  // was actually measured for that combo. The rerender pass can now end before
+  // the mount pass did, so a mount-only combo is an ordinary outcome.
+  const measured = new Map<string, { mount: number; rerender?: number }>();
   for (const m of measuredOnly(mounts)) {
     const key = JSON.stringify(m.props);
-    measured.set(key, { mount: m.mount.median, rerender: 0 });
+    measured.set(key, { mount: m.mount.median });
   }
   for (const r of measuredOnly(rerenders)) {
     const key = JSON.stringify(r.props);
@@ -1804,7 +1830,7 @@ async function measureStandardPropDeltas(
       throw retagPhaseError(err, deltaPhaseContext);
     }
     for (const m of measuredOnly(extraMounts)) {
-      measured.set(JSON.stringify(m.props), { mount: m.mount.median, rerender: 0 });
+      measured.set(JSON.stringify(m.props), { mount: m.mount.median });
     }
     for (const r of measuredOnly(extraRerenders)) {
       const key = JSON.stringify(r.props);
@@ -1815,19 +1841,7 @@ async function measureStandardPropDeltas(
     }
   }
 
-  const propDeltas = pairs.flatMap((pair) => {
-    const base = measured.get(JSON.stringify(pair.baseCombo));
-    const flip = measured.get(JSON.stringify(pair.flipCombo));
-    // A pair one of whose sides was never measured has no delta to report.
-    if (!base || !flip) return [];
-    return [{
-      propName: pair.propName,
-      baseValue: pair.baseValue,
-      flipValue: pair.flipValue,
-      mountDelta: flip.mount - base.mount,
-      rerenderDelta: flip.rerender - base.rerender,
-    }];
-  });
+  const propDeltas = propDeltasFromMeasured(pairs, measured);
   if (propDeltas.length === 0) return undefined;
   propDeltas.sort((a, b) => Math.abs(b.mountDelta) - Math.abs(a.mountDelta));
   return propDeltas;

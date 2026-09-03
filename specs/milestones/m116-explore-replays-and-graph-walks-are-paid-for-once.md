@@ -128,8 +128,27 @@ differs, the map's number is named and the worktree's number is used.
   is the evidence the pattern was not state-invariant (a virtualized list retaining its offset, a warm
   cache), per perf-levers.md lever B.
 
+### Lane F (`src/measure.ts`, `src/analyze.ts`, `src/cli.ts`) — end-game fix-up
+
+- F1 A measurement pass that produces no measurement at all for
+  `MAX_CONSECUTIVE_DEGRADED_COMBOS` (3) combos in a row ends there. It warns through
+  `options.onWarning`, naming the phase (`mount` or `rerender`) and how many combos of that pass it
+  skipped, and the run still builds its report from the combos the pass did measure: an array with
+  holes reaches `buildReport`, and every consumer of it reads the measured entries only.
+- F2 A prop-delta pair is reported only when both sides measured both timings. A pair whose combo the
+  mount pass never reached, or whose rerender the rerender pass omitted, is dropped rather than
+  reported as a delta against a fabricated `0.00 ms`, on the standard path and the matrix path alike.
+  A run whose every pair was dropped reports no `propDeltas` section rather than an empty one.
+- F3 A run the watchdog aborts prints the abort sentence on stderr and, outside `--ci`, the roots
+  line (M111 A4) and the `Total:` line (M115 A1) on stdout, then exits once with code 2 and prints
+  no second error. Composing that stdout never prevents the abort: a failure while resolving the
+  roots costs the roots line, not the abort.
+
 ## MUST NOT
 
+- Shorten a pass that is still measuring. The bound in F1 counts only consecutive combos that
+  produced no measurement at all after their retries, and a single measured combo resets it: a pass
+  no combo of which starves measures every combo it was given, as before.
 - Change any measured number: no cache read, memo write or timestamp inside `collectTrace`
   (`src/measure.ts`), and no change to calibration (M39 excludes calibration from reuse) or to the
   fresh-context-per-phase rule (M37: each phase's pages get a cold renderer).
@@ -456,7 +475,27 @@ survive is not "degraded", so the pass can still grind. Re-run
 `scratch/F-M116-after`) reached `prop deltas (0:57)` and was still in that phase 9 minutes later
 when the wall-time budget ended the attempt; the phases before it were unchanged and slightly
 faster (`mount 0:03`, `explore 0:22`). Open: a wall-clock bound for the delta pass (or a per-combo
-heartbeat) needs its own MUST, because it changes what a run measures.
+heartbeat) needs its own MUST, because it changes what a run measures. **midday-F1 is open**; the
+lane ships F1-F3 above, not the wedged-run cure.
+
+Review fix-up, second pass. The bound made holes ordinary but `buildReport` still iterated the raw
+arrays (`for (const mount of input.mounts)`, and two `Array.prototype.find` calls, which visit holes
+and call their predicate with `undefined`), so an abandoned pass would have ended in a TypeError one
+frame later: all three now read `measuredOnly(...)`, as do the matrix path's rerender lookups. Only
+the mount side of the delta pass had stopped fabricating: a combo whose mount measured but whose
+rerender the pass omitted still carried `rerender: 0` and printed a delta against it. The map value
+is now `{ mount: number; rerender?: number }` and both paths go through one exported
+`propDeltasFromMeasured` (`src/analyze.ts`), which drops a pair missing either side or either
+rerender. `watchdogAbortOutput` composes its stdout inside a `try`, so a `resolveProjectModel` throw
+in the watchdog's timer callback can no longer skip `abortRun` (F3's second sentence), and the bound
+stays silent when it trips on a pass's last combo, where it skipped nothing.
+
+The pass-level tests are behavioural now, not source greps alone: `runBoundedPass` in
+`test/unit/a-wedged-page-cannot-consume-the-whole-run.test.ts` drives the same bound over the same
+`new Array(total)` results array the two `runPass` bodies write, and asserts the entries kept, the
+warning delivered, and that `buildReport` over the resulting sparse array produces a report. The
+source greps stay as the wiring backstop between that stand-in and the two real loops, which need a
+browser (only `test/e2e` drives `measureMount`).
 
 Tests (`node node_modules/vitest/vitest.mjs run <files> --maxWorkers=2`):
 
@@ -484,6 +523,13 @@ Corpus control (unaffected repo, `scratch/F-M116-after`, label `M116-fixup-contr
 
 `exit=0 seconds=2`, same `Props (32)` table, same warnings, and the M115 estimate line
 (`Estimated real run: ~2m 9s`). Closed: yes.
+
+No corpus run exercises F1 or F3. The watchdog budget has a floor no flag reaches
+(`runWatchdogBudgetMs`, `src/cli.ts:184-187`: `max(exploreBudget + 10 min, 20 min)`), so forcing an
+abort on the corpus costs a subject that stalls a phase for twenty minutes, and the pass bound needs
+a renderer that wedges on demand -- midday's button wedged, and midday-F1 is open precisely because
+the wedge was not reproduced on the after-tree. Both are covered by unit tests that execute the
+behaviour (above), not by source text alone. A corpus repro stays owed with midday-F1.
 
 ## Deferred
 

@@ -43,6 +43,13 @@ describe("what an aborted run prints on its way out", () => {
     expect(out.stderr).not.toBe("");
   });
 
+  it("still prints the abort sentence and the total when the roots cannot be resolved", () => {
+    const missing = path.resolve("no-such-directory-116", "Button.tsx");
+    const out = watchdogAbortOutput(missing, 20 * 60_000, "stalled", 1_269_000, false);
+    expect(out.stderr).toBe(RUN_WATCHDOG_ABORT_ERROR(missing, 20 * 60_000, "stalled"));
+    expect(out.stdout).toContain("Total: 21m 9s");
+  });
+
   it("carries the total-budget wording through unchanged", () => {
     const out = watchdogAbortOutput(COMPONENT, 20 * 60_000, "total", 1_000, false);
     expect(out.stderr).toContain("exceeded its total budget");
