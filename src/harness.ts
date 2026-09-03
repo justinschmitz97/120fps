@@ -1235,20 +1235,33 @@ export interface CssDiscovery {
   noEntryInPackage?: boolean;
   // present only when source === "runtime"
   runtimeEngines?: string[];
+  // M112 A1, A2 / I5 (radix-themes-F2): the measured package's own declarations
+  // whose target is not on disk, as projectRoot-relative posix paths beside the
+  // manifest field that named them. Present only when `source` is "none"
+  // because the declaration is what stopped the size-ranked fallback.
+  declaredMissing?: Array<{ field: string; path: string; buildCommand?: string }>;
 }
 
 // M102 (heroui-F1): the fields a package uses to tell a bundler where its own
 // stylesheet is. Read in the order a "style" condition would be looked up, and
 // only for the measured package itself — never an ancestor application's
 // manifest (M82).
-export function packageStylesheetCandidates(projectRoot: string): string[] {
+// M112 A1 / I5 (radix-themes-F2): a declaration whose target is absent used to
+// leave no trace, so a package that names its own stylesheet and has not built
+// it read exactly like a package that names none. The two answers are kept
+// apart in the `StylesheetImportTarget` shape this file already uses, and the
+// declared arm carries the manifest field that named it so a remedy can quote
+// it back.
+export type PackageStylesheetCandidate = { file: string } | { declared: string; field: string };
+
+export function packageStylesheetCandidates(projectRoot: string): PackageStylesheetCandidate[] {
   const manifest = readProjectManifest(projectRoot);
   if (!manifest) return [];
-  const declared: string[] = [];
-  const add = (value: unknown): void => {
-    if (typeof value === "string" && isStylesheet(value)) declared.push(value);
+  const declared: Array<{ field: string; value: string }> = [];
+  const add = (field: string, value: unknown): void => {
+    if (typeof value === "string" && isStylesheet(value)) declared.push({ field, value });
   };
-  add(manifest.style);
+  add("style", manifest.style);
   const exportsField = manifest.exports;
   if (exportsField && typeof exportsField === "object" && !Array.isArray(exportsField)) {
     const entries = exportsField as Record<string, unknown>;
@@ -1258,20 +1271,44 @@ export function packageStylesheetCandidates(projectRoot: string): string[] {
         : entry && typeof entry === "object" && !Array.isArray(entry)
           ? (entry as Record<string, unknown>).style ?? (entry as Record<string, unknown>).default
           : undefined;
-    add(styleOf(entries["./styles"]));
-    add(styleOf(entries["./style.css"]));
+    add("exports[./styles]", styleOf(entries["./styles"]));
+    add("exports[./style.css]", styleOf(entries["./style.css"]));
     for (const [subpath, entry] of Object.entries(entries)) {
       if (subpath === "./styles" || subpath === "./style.css") continue;
       if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
-      add((entry as Record<string, unknown>).style);
+      add(`exports[${subpath}].style`, (entry as Record<string, unknown>).style);
     }
   }
-  const files: string[] = [];
-  for (const value of declared) {
+  const targets: PackageStylesheetCandidate[] = [];
+  const seen = new Set<string>();
+  for (const { field, value } of declared) {
     const resolved = path.resolve(projectRoot, value);
-    if (isFile(resolved) && !files.includes(resolved)) files.push(resolved);
+    if (seen.has(resolved)) continue;
+    seen.add(resolved);
+    targets.push(isFile(resolved) ? { file: resolved } : { declared: resolved, field });
   }
-  return files;
+  return targets;
+}
+
+// M112 A1 (radix-themes-F2): the package said where its stylesheet is; the
+// build that writes it has not run. Named by the field that declared it, the
+// path it points at and the package's own build script, on the M95 rule that a
+// remedy quotes a script the manifest declares or none at all.
+export function CSS_DECLARED_UNBUILT_WARNING(
+  declarations: Array<{ field: string; path: string }>,
+  buildCommand?: string,
+): string {
+  const named = declarations
+    .map((d) => `"${d.field}" declares ${d.path}`)
+    .join(declarations.length === 2 ? " and " : ", ");
+  const one = declarations.length === 1;
+  return (
+    `this package's package.json ${named}, which ${one ? "is" : "are"} not on disk yet — ` +
+    `most likely because a build this harness never runs produces ${one ? "it" : "them"}. ` +
+    "No stylesheet was injected and the component is measured unstyled; " +
+    (buildCommand ? `run \`${buildCommand}\` in this package` : "build this package") +
+    ", then re-run, or pass --css to name a stylesheet that exists."
+  );
 }
 
 export function CSS_PASSTHROUGH_RESOLVED_WARNING(candidate: string, targets: string[]): string {
@@ -1397,11 +1434,14 @@ export function discoverGlobalCss(
 
   // M102 (heroui-F1): what the package says about itself, above a filename
   // convention and above the size-ranked guess.
+  const packageDeclared = packageStylesheetCandidates(projectRoot);
   const declaredCandidates: Array<{ file: string; source: "package-declared" | "candidate" }> = [
-    ...packageStylesheetCandidates(projectRoot).map((file) => ({
-      file,
-      source: "package-declared" as const,
-    })),
+    ...packageDeclared
+      .filter((target): target is { file: string } => "file" in target)
+      .map((target) => ({
+        file: target.file,
+        source: "package-declared" as const,
+      })),
     ...GLOBAL_CSS_CANDIDATES.map((name) => path.join(projectRoot, name))
       .filter(isFile)
       .map((file) => ({ file, source: "candidate" as const })),
@@ -1424,6 +1464,24 @@ export function discoverGlobalCss(
       continue;
     }
     return { files, source };
+  }
+
+  // M112 A1, A2 (radix-themes-F2): a package that declares its own stylesheet
+  // and has not built it yet is not a package without one. The size-ranked
+  // walk below would inject an unrelated file and call it the global sheet,
+  // so the declaration is disclosed and the walk never starts.
+  const declaredMissingTargets = packageDeclared.filter(
+    (target): target is { declared: string; field: string } => "declared" in target,
+  );
+  if (declaredMissingTargets.length > 0) {
+    const buildCommand = packageScriptCommand(projectRoot, "build");
+    const declaredMissing = declaredMissingTargets.map((target) => ({
+      field: target.field,
+      path: relativeToRoot(target.declared, projectRoot),
+      ...(buildCommand !== undefined ? { buildCommand } : {}),
+    }));
+    warningsOut?.push(CSS_DECLARED_UNBUILT_WARNING(declaredMissing, buildCommand));
+    return { files: [], source: "none", declaredMissing };
   }
 
   const ranked = rankedStylesheets(projectRoot);

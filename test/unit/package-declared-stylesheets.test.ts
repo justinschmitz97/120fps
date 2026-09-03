@@ -180,14 +180,14 @@ describe("stylesheets the measured package declares about itself", () => {
       }),
     );
     expect(packageStylesheetCandidates(root)).toEqual([
-      styleField,
-      stylesExport,
-      styleCssExport,
-      subpathStyle,
+      { file: styleField },
+      { file: stylesExport },
+      { file: styleCssExport },
+      { file: subpathStyle },
     ]);
   });
 
-  it("ignores declarations that name no file on disk and non-stylesheet targets", () => {
+  it("names a declaration whose file is not on disk as a declared target, ignoring non-stylesheets", () => {
     write(
       "package.json",
       JSON.stringify({
@@ -196,7 +196,9 @@ describe("stylesheets the measured package declares about itself", () => {
         exports: { "./styles": "./src/styles.js" },
       }),
     );
-    expect(packageStylesheetCandidates(root)).toEqual([]);
+    expect(packageStylesheetCandidates(root)).toEqual([
+      { declared: path.join(root, "dist", "missing.css"), field: "style" },
+    ]);
   });
 
   it("is empty for a package with no manifest at all", () => {

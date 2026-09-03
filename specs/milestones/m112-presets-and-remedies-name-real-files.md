@@ -10,6 +10,7 @@ tests:
   - test/unit/stylesheet-disclosure-completeness.test.ts
   # Lane A
   - test/unit/declared-stylesheet-absent-is-named.test.ts
+  - test/unit/package-declared-stylesheets.test.ts
 ---
 
 # M112: presets and remedies name real files
@@ -316,6 +317,47 @@ and unit-tested: `CssReport.declaredMissing`, the `none` branch of `formatStyles
 projectRoot-relative posix normalisation in `buildCssReport`. The declaring field name and the
 package's build command are not on I5's record (`declaredMissing: string[]`), so the `Stylesheets:`
 line names the missing paths and A1's own warning carries the field and the command.
+
+### Lane A evidence
+
+Tests: `node node_modules/vitest/vitest.mjs run test/unit/declared-stylesheet-absent-is-named.test.ts
+test/unit/package-declared-stylesheets.test.ts --maxWorkers=2` -> `Test Files  2 passed (2)`,
+`Tests  37 passed (37)`. Full `test/unit` suite (`--maxWorkers=2`) after this lane's change:
+`Test Files  312 passed (312)`, `Tests  4630 passed | 1 skipped (4631)` — the four "Baseline
+failures" files included, all four green.
+
+`node node_modules/typescript/bin/tsc --noEmit`: clean.
+
+Corpus, scratch dist `C:/Projekte/120fps-fieldtest/scratch/A-M112/dist/cli.js` (`build-scratch.sh
+A-M112`, tree at `88a1d61` plus this lane's uncommitted work):
+
+- radix-themes-F2 / A1, A2 (`--cwd .../packages/radix-ui-themes -- src/components/button.tsx
+  --samples 5 --max-combos 4 --explore-budget 60 --no-deltas`, label `M112-radix-themes-after`).
+  Before (`logs/radix-themes/real-button.log:17,113`):
+  `Stylesheets: src/styles/tokens/color.css (largest-stylesheet fallback, low confidence — verify with --css)`
+  and
+  `⚠ no entry stylesheet import and no conventional global stylesheet were found, so src/styles/tokens/color.css was injected because it is the largest stylesheet found under this project; ...`
+  After (`logs/radix-themes/M112-radix-themes-after.log:114`, digest `css layer=none files=0`):
+  `⚠ this package's package.json "style" declares styles.css, which is not on disk yet — most likely because a build this harness never runs produces it. No stylesheet was injected and the component is measured unstyled; run `pnpm run build` in this package, then re-run, or pass --css to name a stylesheet that exists.`
+  The fallback sheet is gone (`css layer=none`, `files=0`, no `CSS_FALLBACK_WARNING`), `exit=0` and the
+  verdicts are unchanged. Closed for A1 and for A2's fallback half.
+  Not closed: line 18 still reads
+  `Stylesheets: none found (checked the project entry, conventional filenames, and the largest stylesheet under the project)`
+  — see "Open against I5" below.
+- Control shadcn-admin (`-- src/components/ui/button.tsx --explain-props`, label
+  `M112-A-shadcn-admin-after`): `exit=0`, same report, and the stylesheet line is unchanged:
+  `Stylesheets: src/styles/index.css (found in the project entry's own imports)`.
+
+Open against I5 (consumer lane C, `src/analyze.ts`). `discoverGlobalCss` now returns
+`declaredMissing: Array<{ field, path, buildCommand? }>` and `buildCssReport` already reads that
+member structurally, but `resolveCssFiles` (`src/analyze.ts`, the return object at the end of the
+function) sits between them and does not forward it, so `css.declaredMissing` is absent from every
+report and `formatStylesheetsLine`'s `none` branch keeps printing "none found". Closing A2's report
+half needs one lane C change: `declaredMissing?: Array<{ field: string; path: string; buildCommand?:
+string }>` on `resolveCssFiles`'s inline return type plus
+`...(discovered.declaredMissing !== undefined ? { declaredMissing: discovered.declaredMissing } : {})`
+in its return object. The producer supplies the rich record form (field, path and build command),
+which `buildCssReport` maps to `css.declaredMissing` and `css.declaredMissingFields`.
 
 ## Deferred
 
