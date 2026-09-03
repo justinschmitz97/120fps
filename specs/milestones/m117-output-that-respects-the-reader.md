@@ -1,6 +1,6 @@
 ---
 kind: milestone
-status: draft
+status: approved
 tests:
   # Lane C
   - test/unit/warnings-print-once-per-run.test.ts
@@ -326,5 +326,35 @@ transforms the harness applies.
   correct tool behaviour on a contended machine.
 - Warnings in the JUnit output, which `README.md:118` also claims and `formatJUnit` (`src/ci-report.ts:358-382`) does
   not carry: a JUnit `failure` body describes a failing testcase, and a passing component has no element to attach a
+  warning to. That README line is the coordinator's.
+- Wall-clock and phase-breakdown lines, which M115 owns.
+
+## Approval
+
+2026-09-03. Landed in 55a8c3a and 7e67dcd (lane A: A1, A2, A3 and I10's producer) and c7952c0 (lane C: C1-C7,
+consuming `ViteConfigData.pluginNames`).
+
+- Lane A: `test/unit/gitignore-tip-follows-the-written-path.test.ts` and
+  `test/unit/vite-plugin-note-names-what-it-dropped.test.ts` pass (`Test Files  2 passed (2)`,
+  `Tests  20 passed (20)`), the 20-file sweep over the changed regions passes, `tsc --noEmit` clean. Corpus, the
+  `A-M117` scratch dist, all four commands quote their after line: one `cannot honor` line naming `tanstackRouter,
+  react, tailwindcss`; no `Tip:` line for a report written outside the repository; `dts, react` once in each of the
+  real and `--explain-props` channels; midday `Result: PASS`.
+- Lane C: `test/unit/warnings-print-once-per-run.test.ts`, `test/unit/noise-warning-is-one-terminal-line.test.ts` and
+  `test/unit/vite-plugin-note-names-what-it-dropped.test.ts` pass (`Test Files  3 passed (3)`,
+  `Tests  37 passed (37)`), whole `test/unit` suite `Test Files  321 passed (321)`,
+  `Tests  4735 passed | 1 skipped (4736)`, `tsc --noEmit` clean. Corpus, the `C-M117` scratch dist, all four commands
+  quote their after line: `cannot honor` once; the noise line as one terminal sentence with the long form kept in the
+  JSON; the tip reduced to `.120fps-harness-*`; `dts, react` in both channels; midday `Result: PASS`. C2 and C4's
+  empty-list half are decided by unit assertions, as the spec records.
+- Re-run at approval: the four spec test files -> `Test Files  4 passed (4)`, `Tests  48 passed (48)`.
+
+### Deferred / open
+
+- A `--no-warn-vite-plugins` flag or a per-cwd acknowledgment file: suppression across invocations hides a true
+  statement about what the run measured, and M100/M110 parity requires the dry run and the real run to print the same
+  set.
+- Downgrading noise-tagged FAILs to WARN before a verdict prints: C7 forbids changing a verdict.
+- Warnings in the JUnit output, which `README.md:118` also claims: a passing component has no element to attach a
   warning to. That README line is the coordinator's.
 - Wall-clock and phase-breakdown lines, which M115 owns.
