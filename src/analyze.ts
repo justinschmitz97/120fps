@@ -13,7 +13,7 @@ import {
   waitForReadyOrFatal,
 } from "./page-errors.js";
 import { extractProps, extractPropsDetailed, extractExports, extractAllProps, detectScalingProps, projectSourceFiles, isVuePropsScopeExclusionWarning, isVueUnresolvedPropsTypeWarning, isUntypedJsComponentWarning, projectCompilerOptions, type PropSchema, type ScalingPropMatch } from "./prop-gen.js";
-import { hintsForReport, hintsForMountAbort, formatHints } from "./hints.js";
+import { hintsForReport, formatHints, formatMountAbortHints } from "./hints.js";
 import {
   probeMachineNoise,
   buildNoiseReport,
@@ -59,7 +59,7 @@ import {
 } from "./composition.js";
 import { detectFramework, runReactAnalysis, hasReactWarning, type ReactOptimizations } from "./react-profiler.js";
 import { findWorkspaceRoot } from "./project-model.js";
-import { isVueFile, loadVueCompiler, VUE_COMPILER_MISSING } from "./vue-sfc.js";
+import { isVueFile, loadVueCompiler, parseSfcScript, VUE_COMPILER_MISSING } from "./vue-sfc.js";
 import {
   generateCombinations,
   generateDeltaPairs,
@@ -2315,6 +2315,10 @@ export interface PropsExplanation {
   // the schema bound to. Absent for a Vue SFC and for a file with no component.
   bindingFile?: string;
   bindingLine?: number;
+  // M114 C1 (gutenberg-F2): the measured file re-exports the component another
+  // module declares, and the props below are that module's. Both paths, posix,
+  // relative to the project root.
+  reExport?: { barrel: string; module: string };
   exports: string[];
   props: ExplainedProp[];
   curve?: { propName: string; reason: string };
@@ -2692,7 +2696,24 @@ export async function explainProps(
   // M92 (element-plus-F3): same suppression as runComboMode -- a zero-prop
   // count `detail.warnings` already attributes to a Vue scope exclusion does
   // not also get the generic "extraction may have failed" text.
-  if (schemas.length === 0 && !detail.warnings.some(explainsZeroPropCount)) {
+  // M114 C1 (react-spectrum-F3): a specifier that did not resolve is the whole
+  // explanation of the zero count, so it replaces the generic text rather than
+  // preceding it.
+  const projectRel = (file: string): string =>
+    path.relative(projectRoot, file).replace(/\\/g, "/");
+  if (detail.unresolvedReExport) {
+    warnings.push(
+      UNRESOLVED_RE_EXPORT_WARNING(
+        projectRel(detail.unresolvedReExport.barrel),
+        detail.unresolvedReExport.specifier,
+      ),
+    );
+  }
+  if (
+    schemas.length === 0 &&
+    !detail.unresolvedReExport &&
+    !detail.warnings.some(explainsZeroPropCount)
+  ) {
     warnings.push(ZERO_PROPS_WARNING);
   }
 
@@ -2830,6 +2851,17 @@ export async function explainProps(
       ? {
           bindingFile: path.relative(projectRoot, resolvedPath).replace(/\\/g, "/"),
           bindingLine: detail.targetLine,
+        }
+      : {}),
+    // M114 C1: only when the declaring module is a different file; a component
+    // declared where it was measured has no re-export to disclose.
+    ...(detail.targetFile !== undefined &&
+    path.resolve(detail.targetFile) !== path.resolve(resolvedPath)
+      ? {
+          reExport: {
+            barrel: projectRel(resolvedPath),
+            module: projectRel(detail.targetFile),
+          },
         }
       : {}),
     exports,
@@ -3034,6 +3066,13 @@ export function formatExplainProps(explained: PropsExplanation): string {
       ? `  binding:  ${explained.bindingFile}:${explained.bindingLine}`
       : "  binding:  no component declaration (props read from the file itself)",
   );
+  // M114 C1: beside the binding, because it is the reason the binding names a
+  // file the reader did not pass.
+  if (explained.reExport) {
+    lines.push(
+      `  ${RE_EXPORT_MEASURED_DISCLOSURE(explained.reExport.barrel, explained.reExport.module)}`,
+    );
+  }
   lines.push(
     `  exports:  ${explained.exports.length > 0 ? explained.exports.join(", ") : "(none)"}`,
   );
@@ -3711,7 +3750,7 @@ export async function analyze(
     // defineProps({...}) call -- so either one downgrades to the same
     // disclosure instead of the generic "extraction may have failed" text.
     let sawPropsScopeExclusion = false;
-    const raw = await extractProps(file, {
+    const extracted = await extractPropsDetailed(file, {
       ...(options.target ? { target: options.target } : {}),
       onWarning: (warning) => {
         if (isVuePropsScopeExclusionWarning(warning)) sawPropsScopeExclusion = true;
@@ -3727,6 +3766,28 @@ export async function analyze(
         onWarning(presets ? remedyNamesLoadedPreset(warning, presets.path) : warning);
       },
     });
+    const raw = extracted.schemas;
+    // M114 C1 (gutenberg-F2, react-spectrum-F3): the same two disclosures the
+    // dry run prints, in the same words, from the same extraction record. Both
+    // are decided by the filesystem, so M100's parity rule covers them.
+    const asProjectPath = (target: string): string =>
+      path.relative(projectRoot, target).replace(/\\/g, "/");
+    if (
+      extracted.targetFile !== undefined &&
+      path.resolve(extracted.targetFile) !== path.resolve(file)
+    ) {
+      onWarning(
+        RE_EXPORT_MEASURED_DISCLOSURE(asProjectPath(file), asProjectPath(extracted.targetFile)),
+      );
+    }
+    if (extracted.unresolvedReExport) {
+      onWarning(
+        UNRESOLVED_RE_EXPORT_WARNING(
+          asProjectPath(extracted.unresolvedReExport.barrel),
+          extracted.unresolvedReExport.specifier,
+        ),
+      );
+    }
     // The producer for BuildReportInput.disclosureReason's "propsExcluded"
     // value (M80 scope 1 built the downgrade; nothing produced this value
     // until now). `disclosureReason` is untouched by the auto-composition
@@ -4345,7 +4406,13 @@ export async function analyze(
     // printed a bare browser stack with no remediation text at all. The block
     // is appended next to the accumulated warnings, so every consumer of this
     // message shows it without a new channel.
-    const abortHints = formatHints(hintsForMountAbort(message));
+    // M114 C2, C3 (ark-F2, vitesse-F1): both hints name a cause only from what
+    // this run read — the measured SFC's own setup block (I8) and the vite
+    // config keys the harness recorded as read-but-not-honored (I10).
+    const abortHints = formatMountAbortHints(message, {
+      usesInject: await measuredSfcUsesInject(resolvedPath, projectRoot),
+      ...(viteConfigIgnoredKeys(combined) ?? {}),
+    });
     throw new Error(presented + formatAccumulatedWarnings(combined) + abortHints, { cause: err });
   } finally {
     if (msession) await msession.close();
@@ -4369,11 +4436,71 @@ export const ZERO_PROPS_WARNING =
 // ADR 0002 defines, a `defineProps<T>()` type argument that did not resolve,
 // or a JS component with no declaration to bind -- that phrase is false and
 // must not stack on top of the disclosure that explains it.
+// M114 C1 (gutenberg-F2): the measured file only re-exports the component; the
+// props on the table are the declaring module's. Both paths print this text, so
+// a dry run and a real run name the same two modules (M100's parity rule).
+export function RE_EXPORT_MEASURED_DISCLOSURE(barrel: string, module: string): string {
+  return `re-export of ${barrel}: measuring ${module}`;
+}
+
+// M114 C1 (react-spectrum-F3): the specifier the barrel re-exports resolves to
+// nothing on disk, so no props table could have been filled. A cause the
+// filesystem decides, stated instead of ZERO_PROPS_WARNING's floated
+// "extraction may have failed".
+export function UNRESOLVED_RE_EXPORT_WARNING(barrel: string, specifier: string): string {
+  return (
+    `${barrel} re-exports ${specifier}, which did not resolve: no props were read there`
+  );
+}
+
+const UNRESOLVED_RE_EXPORT_SIGNATURE = / re-exports .+, which did not resolve: no props were read there$/;
+
+// M114 C2 / I8 (ark-F2): read evidence for the provide/inject hint. A mount
+// abort throws before any report exists, so the SFC is re-read here, on the
+// failure path only. No compiler, an unreadable file or a malformed SFC all
+// mean the run read no `inject(` call, and a hint may not name a cause the run
+// did not read.
+async function measuredSfcUsesInject(
+  componentPath: string,
+  projectRoot: string,
+): Promise<boolean> {
+  if (!isVueFile(componentPath)) return false;
+  try {
+    const compiler = await loadVueCompiler(projectRoot);
+    if (!compiler) return false;
+    const source = fs.readFileSync(componentPath, "utf-8");
+    return parseSfcScript(source, componentPath, compiler)?.usesInject === true;
+  } catch {
+    return false;
+  }
+}
+
+// M114 C3 / I10 (vitesse-F1): the config file and the keys the harness read and
+// could not honor, as `VITE_CONFIG_IGNORED_WARNING` (src/harness.ts) recorded
+// them for this run. Read from the run's own warnings until lane A carries
+// `ViteConfigData` to this call site; the hint may name only what is here.
+const VITE_CONFIG_IGNORED_SHAPE =
+  /^(\S+) declares (.+?), which the harness read but cannot honor: the project's Vite config is never executed/;
+
+function viteConfigIgnoredKeys(
+  warnings: string[],
+): { viteConfig: { file: string; ignoredKeys: string[] } } | undefined {
+  for (const warning of warnings) {
+    const match = VITE_CONFIG_IGNORED_SHAPE.exec(warning);
+    if (!match) continue;
+    return {
+      viteConfig: { file: match[1]!, ignoredKeys: match[2]!.split(", ") },
+    };
+  }
+  return undefined;
+}
+
 export function explainsZeroPropCount(warning: string): boolean {
   return (
     isVuePropsScopeExclusionWarning(warning) ||
     isVueUnresolvedPropsTypeWarning(warning) ||
-    isUntypedJsComponentWarning(warning)
+    isUntypedJsComponentWarning(warning) ||
+    UNRESOLVED_RE_EXPORT_SIGNATURE.test(warning)
   );
 }
 

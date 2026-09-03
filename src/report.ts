@@ -487,6 +487,12 @@ export interface CssReport {
   declaredMissingFields?: Array<{ field: string; path: string; buildCommand?: string }>;
   // present only when layer === "runtime"
   runtimeEngines?: string[];
+  // M114 C4 / I5 (fluentui-F3): whether the engines above are ones the
+  // recogniser names. `false` is a read of a `makeStyles`/`styled` import from
+  // a package the list does not carry, which is weaker evidence than a
+  // declared dependency and says so in its own wording. Absent reads as
+  // recognised: every producer before M114 resolved from the closed list.
+  runtimeEnginesRecognised?: boolean;
   // present only when layer === "largest-fallback"
   onlyCandidate?: boolean;
   noEntryInPackage?: boolean;
@@ -887,6 +893,18 @@ export function formatStylesheetsLine(css: CssReport): string {
         "verify with --css)"
       );
     case "runtime":
+      // M114 C4 (fluentui-F3): a recognised engine is a fact about the
+      // measured package's dependencies, so it closes the question. An
+      // unlisted package read from a `makeStyles`/`styled` import is an
+      // observation, so it names the escape hatch instead of asserting that
+      // no stylesheet was needed.
+      if (css.runtimeEnginesRecognised === false) {
+        return (
+          "Stylesheets: none — styling appears to be generated at runtime by " +
+          `${(css.runtimeEngines ?? []).join(", ")} (unrecognised engine); pass --css if a ` +
+          "stylesheet is needed"
+        );
+      }
       return (
         `Stylesheets: none — styling is generated at runtime by ${(css.runtimeEngines ?? []).join(", ")}; ` +
         "no stylesheet was needed"

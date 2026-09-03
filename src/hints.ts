@@ -31,7 +31,14 @@ export type HintId =
   // false here, so this case gets its own.
   | "curveRenderedNothing"
   // M106 C4 (calcom-F5): the numbers are real and the graphic is not.
-  | "unresolvedSprite";
+  | "unresolvedSprite"
+  // M114 C2 (ark-F2): a read of undefined in an ordinary SFC render frame,
+  // where the run read an `inject(` call in the measured component. The
+  // plugin hint asserted a plugin nobody installed for exactly this case.
+  | "vueProvideInject"
+  // M114 C3 (vitesse-F1): an identifier nothing defined, in a run whose vite
+  // config declared plugins the harness read and never executed.
+  | "vitePluginsNotExecuted";
 
 export interface Hint {
   id: HintId;
@@ -217,6 +224,28 @@ export const HINTS: Record<HintId, Hint> = {
     ],
     anchor: "#provider-wrapper",
   },
+  vueProvideInject: {
+    id: "vueProvideInject",
+    title: "the component reads an injected value nothing provided",
+    lines: [
+      "The abort reads a property of undefined inside the component's own render, and this",
+      "component's setup block calls inject(). The harness mounts the component alone, so no",
+      "ancestor ran provide() for that key. Add a 120fps.setup.vue whose own setup calls",
+      "provide() with the same key and value the application supplies, and point --wrap at it.",
+    ],
+    anchor: "#provider-wrapper",
+  },
+  vitePluginsNotExecuted: {
+    id: "vitePluginsNotExecuted",
+    title: "a global the config's plugins would have defined is missing",
+    lines: [
+      "The abort names an identifier nothing defined. The project's Vite config declares plugins,",
+      "which the harness reads and never executes, so a compile-time macro or auto-import they",
+      "install never reaches the transformed source. Write the call out by hand in the component,",
+      "or measure a component that does not depend on the plugin.",
+    ],
+    anchor: "#project-transforms",
+  },
 };
 
 // M105 I12 (primevue-F2): a mount-phase abort throws before any report exists,
@@ -229,7 +258,17 @@ export const HINTS: Record<HintId, Hint> = {
 // so that frame together with a read of `undefined` identifies a missing
 // injected global without needing the plugin's name to appear.
 const VUE_PLUGIN_GLOBAL_SIGNATURE = /\$primevue|app\.use\(|\binject\(\)/i;
-const VUE_PROXY_FRAME_SIGNATURE = /\bat Proxy\.\$?\w/;
+// M114 C2 (ark-F2): the `$` is what makes the frame evidence of a plugin
+// global. With it optional, `at Proxy._sfc_render` — an ordinary SFC render —
+// asserted a plugin the run had never read. `m105-lane-c-hints.md:72` asked
+// for the `at Proxy.$` form.
+const VUE_PROXY_FRAME_SIGNATURE = /\bat Proxy\.\$\w/;
+// An ordinary component render frame: Vue's compiled render function, or a
+// component-proxy frame whose member is not a `$`-prefixed global.
+const VUE_RENDER_FRAME_SIGNATURE = /\b_sfc_render\b|\bat Proxy\.(?!\$)\w/;
+// M114 C3 (vitesse-F1): `defineModels is not defined`. The identifier is the
+// one fact the abort carries about the global the transform never installed.
+const UNDEFINED_IDENTIFIER_SIGNATURE = /\b([A-Za-z_$][\w$]*) is not defined\b/;
 const UNDEFINED_READ_SIGNATURE = /Cannot read propert(?:y|ies) of undefined/i;
 const VUE_SLOT_SIGNATURE = /\$slots\b/;
 
@@ -241,7 +280,21 @@ const VUE_SLOT_SIGNATURE = /\$slots\b/;
 const MOUNT_ABORT_PROVIDER_SIGNATURE =
   /useContext|must be used within|<[A-Z]\w*Provider\b|\binject\(/;
 
-export function hintsForMountAbort(errorText: string): HintId[] {
+// M114 C2, C3 (ark-F2, vitesse-F1): what the run read from the repository
+// while it was measuring, beside the abort's own text. A hint names a cause
+// only from evidence one of these two carries; neither is inferred here.
+export interface MountAbortEvidence {
+  // I8: the measured SFC's setup block calls `inject(` (`src/vue-sfc.ts`).
+  usesInject?: boolean;
+  // I10: the project's vite config and the keys the harness read and could not
+  // honor (`ViteConfigData.ignoredKeys`, `src/harness.ts`).
+  viteConfig?: { file: string; ignoredKeys: string[] };
+}
+
+export function hintsForMountAbort(
+  errorText: string,
+  evidence?: MountAbortEvidence,
+): HintId[] {
   const found = new Set<HintId>();
   if (VUE_SLOT_SIGNATURE.test(errorText)) found.add("vueSlotContent");
   if (
@@ -250,11 +303,53 @@ export function hintsForMountAbort(errorText: string): HintId[] {
   ) {
     found.add("vuePluginGlobals");
   }
+  // M114 C2: the same read of undefined, one frame class down. Provide/inject
+  // is named only because this run read an `inject(` call in the measured
+  // component; without that read the abort gets no Vue hint at all.
+  if (
+    evidence?.usesInject === true &&
+    !found.has("vuePluginGlobals") &&
+    VUE_RENDER_FRAME_SIGNATURE.test(errorText) &&
+    UNDEFINED_READ_SIGNATURE.test(errorText)
+  ) {
+    found.add("vueProvideInject");
+  }
+  // M114 C3: the identifier and the ignored `plugins` key are both records the
+  // run made. An empty ignored list means the config declared nothing the
+  // harness dropped, so the abort has no explanation to offer.
+  if (
+    UNDEFINED_IDENTIFIER_SIGNATURE.test(errorText) &&
+    (evidence?.viteConfig?.ignoredKeys ?? []).includes("plugins")
+  ) {
+    found.add("vitePluginsNotExecuted");
+  }
   // C-4: narrow, and with its own copy. A stack naming none of these gets no
   // guess at all, which is M105's MUST NOT stated as code.
   if (MOUNT_ABORT_PROVIDER_SIGNATURE.test(errorText)) found.add("mountAbortProvider");
   const order = Object.keys(HINTS) as HintId[];
   return order.filter((id) => found.has(id));
+}
+
+// M114 C3: the hint catalog is static copy; the config file name and the
+// identifier are this run's facts, so they arrive as extra lines rather than
+// as a second catalog entry per project.
+export function formatMountAbortHints(
+  errorText: string,
+  evidence?: MountAbortEvidence,
+): string {
+  const ids = hintsForMountAbort(errorText, evidence);
+  const identifier = UNDEFINED_IDENTIFIER_SIGNATURE.exec(errorText)?.[1];
+  const configFile = evidence?.viteConfig?.file;
+  const extra: Partial<Record<HintId, string[]>> =
+    ids.includes("vitePluginsNotExecuted") && configFile && identifier
+      ? {
+          vitePluginsNotExecuted: [
+            `${configFile} declares plugins, which the harness read but did not execute; ` +
+              `nothing defined ${identifier}.`,
+          ],
+        }
+      : {};
+  return formatHints(ids, undefined, extra);
 }
 
 // Derived from the report alone, so a hint can never depend on a heuristic
@@ -449,7 +544,13 @@ function extraHintLines(id: HintId, report: Report | undefined): string[] {
   );
 }
 
-export function formatHints(ids: HintId[], report?: Report): string {
+export function formatHints(
+  ids: HintId[],
+  report?: Report,
+  // M114 C3: run-specific lines the catalog cannot carry, keyed by the hint
+  // they belong under.
+  extra?: Partial<Record<HintId, string[]>>,
+): string {
   if (ids.length === 0) return "";
   const lines: string[] = ["", "What to do about it:"];
   for (const id of ids) {
@@ -457,6 +558,7 @@ export function formatHints(ids: HintId[], report?: Report): string {
     lines.push("", `  ${hint.title}`);
     for (const line of hint.lines) lines.push(`    ${line}`);
     for (const line of extraHintLines(id, report)) lines.push(`    ${line}`);
+    for (const line of extra?.[id] ?? []) lines.push(`    ${line}`);
     lines.push(`    README ${hint.anchor}`);
   }
   return lines.join("\n");

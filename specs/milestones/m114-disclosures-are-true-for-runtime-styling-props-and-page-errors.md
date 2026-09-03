@@ -11,6 +11,7 @@ tests:
   - test/unit/re-exported-props-resolution.test.ts
   - test/unit/zero-props-names-the-barrel.test.ts
   - test/unit/mount-abort-hints-name-read-evidence.test.ts
+  - test/unit/runtime-style-engine-line.test.ts
 ---
 
 # M114: Disclosures are true for runtime styling, props and page errors
@@ -261,6 +262,59 @@ Run 2026-09-02 in `C:/Projekte/120fps-m107` on `feat/m107-run5-remediation`, scr
   still reaches `Component: Button` / `Props (32):`.
 - Lane A and lane C repros (fluentui-F3, ark-F2, vitesse-F1, supabase-F2, vuetify-F1) were not run
   by lane B: nothing in `src/prop-gen.ts`, `src/prop-gen-values.ts` or `src/vue-sfc.ts` decides them.
+
+### Lane C evidence
+
+Run 2026-09-03 in `C:/Projekte/120fps-m107` on `feat/m107-run5-remediation`, scratch dist
+`C:/Projekte/120fps-fieldtest/scratch/C-M114/dist/cli.js`.
+
+1. Tests. `node node_modules/vitest/vitest.mjs run test/unit/zero-props-names-the-barrel.test.ts
+   test/unit/mount-abort-hints-name-read-evidence.test.ts
+   test/unit/runtime-style-engine-line.test.ts --maxWorkers=2`:
+   `Test Files  3 passed (3)` / `Tests  19 passed (19)`.
+   The 42 test files that import `src/hints.js` or exercise the zero-props, `--explain-props` and
+   `Stylesheets:` surfaces of `src/analyze.ts` and `src/report.ts`:
+   `Test Files  42 passed (42)` / `Tests  677 passed (677)`, no assertion rewritten. The whole
+   `test/unit` suite, run after them: `Test Files  311 passed (311)` /
+   `Tests  4609 passed | 1 skipped (4610)`, so the map's four baseline-failure files are green too
+   (lane B closed them under this milestone).
+2. `node node_modules/typescript/bin/tsc --noEmit`: clean, no output.
+3. Corpus, each through `node C:/Projekte/120fps-fieldtest/tools/run120.mjs ... --cli
+   C:/Projekte/120fps-fieldtest/scratch/C-M114/dist/cli.js`.
+
+- gutenberg-F2 (C1), label `M114-gutenberg-after`, closed.
+  Before: `  binding:  no component declaration (props read from the file itself)` with `Props (0):`.
+  After: `  binding:  src/confirm-dialog/index.tsx:201` /
+  `  re-export of src/confirm-dialog/index.tsx: measuring src/confirm-dialog/component.tsx` /
+  `Props (32):`. The line lane B left open — the barrel named as the binding file — is now
+  disclosed beside it, from `extractPropsDetailed`'s `targetFile` (I7).
+- react-spectrum-F3 (C1), label `M114-react-spectrum-after`, closed.
+  Before: `Props (0):` and `No props extracted: component measured with empty props only; if the
+  component has typed props, extraction may have failed`.
+  After: `  binding:  src/index.ts:77` /
+  `  re-export of src/index.ts: measuring ../../@adobe/react-spectrum/src/button/Button.tsx` /
+  `Props (32):`, and no `No props extracted` line anywhere in the log.
+- vitesse-F1 (C3), label `M114-vitesse-after`, closed.
+  Before: `Error: mount phase failed on combo 0 of TheInput.vue: page.evaluate: ReferenceError:
+  defineModels is not defined` and no `What to do about it:` block.
+  After: the same abort, then `What to do about it:` /
+  `  a global the config's plugins would have defined is missing` /
+  `    vite.config.ts declares plugins, which the harness read but did not execute; nothing defined
+  defineModels.` / `    README #project-transforms`.
+- ark-F2 (C2), label `M114-ark-after`, closed for the false claim, open for the replacement hint.
+  Before: `What to do about it:` / `  the component reads a global that a Vue plugin installs`.
+  After: the abort prints no `What to do about it:` block at all. The plugin claim is gone, which is
+  the finding. The provide/inject hint does not take its place here: the measured SFC
+  (`src/components/dialog/dialog-trigger.vue:18`) calls `useDialogContext()`, and B6 records
+  `usesInject` from the measured component's own setup block, so this run read no `inject(` call.
+  C2's own rule ("only when the same run recorded an `inject(` call in the measured component;
+  otherwise the abort prints no hint") and the MUST NOT decide this over the corpus row's
+  expectation, which rests on `create-context.ts`, a file no lane reads.
+- Unaffected repo, label `M114-C-shadcn-admin-after`: `src/components/ui/button.tsx
+  --explain-props` still reaches `Component: Button` / `Props (32):`.
+- Lane A's repros (fluentui-F3, vuetify-F1, supabase-F2) were not run by lane C: A1/A2 fill the
+  `runtimeEnginesRecognised` field C4 renders, and nothing in `src/analyze.ts`, `src/hints.ts` or
+  `src/report.ts` decides the entry chain or the console capture.
 
 ## Deferred
 
