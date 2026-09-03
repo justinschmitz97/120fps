@@ -301,6 +301,21 @@ function removeHarnessDirOnce(dir: string): void {
   fs.rmSync(dir, { recursive: true, force: true, maxRetries: 2, retryDelay: 25 });
 }
 
+// M113 (final re-test): a removal that returns without throwing has not
+// necessarily removed anything. On Windows a file another process opened with
+// FILE_SHARE_DELETE unlinks into a pending-delete state and the directory
+// survives the rmdir that reported success, so every caller crossed the
+// directory off its list while it was still in `git status`. One attempt,
+// answered by the disk: removal means gone.
+function attemptHarnessDirRemoval(dir: string, remove: (dir: string) => void): string | undefined {
+  try {
+    remove(dir);
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code ?? (err as Error).message;
+  }
+  return fs.existsSync(dir) ? "EBUSY" : undefined;
+}
+
 // Returns the error code of the last failed attempt, or undefined once the
 // directory is gone. Never throws: every caller is on a teardown path.
 export function removeHarnessDirWithRetries(
@@ -310,19 +325,14 @@ export function removeHarnessDirWithRetries(
 ): string | undefined {
   const started = Date.now();
   for (let attempt = 1; ; attempt++) {
-    try {
-      remove(dir);
-      return undefined;
-    } catch (err) {
-      const code = (err as NodeJS.ErrnoException).code;
-      const reason = code ?? (err as Error).message;
-      if (code === undefined || !HARNESS_DIR_RETRY_CODES.has(code)) return reason;
-      const spent = Date.now() - started;
-      const budgetSpent =
-        attempt >= HARNESS_DIR_REMOVAL_MIN_ATTEMPTS && spent >= HARNESS_DIR_REMOVAL_BUDGET_MS;
-      if (budgetSpent || Date.now() >= deadline) return reason;
-      sleepSync(Math.min(HARNESS_DIR_REMOVAL_DELAY_MS, deadline - Date.now()));
-    }
+    const reason = attemptHarnessDirRemoval(dir, remove);
+    if (reason === undefined) return undefined;
+    if (!HARNESS_DIR_RETRY_CODES.has(reason)) return reason;
+    const spent = Date.now() - started;
+    const budgetSpent =
+      attempt >= HARNESS_DIR_REMOVAL_MIN_ATTEMPTS && spent >= HARNESS_DIR_REMOVAL_BUDGET_MS;
+    if (budgetSpent || Date.now() >= deadline) return reason;
+    sleepSync(Math.min(HARNESS_DIR_REMOVAL_DELAY_MS, deadline - Date.now()));
   }
 }
 
@@ -338,6 +348,15 @@ export function HARNESS_DIR_REMOVAL_FAILED_WARNING(dir: string, reason: string):
     `Could not remove the harness directory ${dir} (${reason}). It is this run's own scratch ` +
     "directory, not part of your project; remove it by hand, or the next run in this project will."
   );
+}
+
+// M113 (final re-test): the run's own removal sites (`cleanup()` and the
+// bootServer catch) crossed the directory off the moment their rmSync
+// returned. On Windows that call returns on a directory that is still there,
+// and the crossed-off directory became invisible to every later sweep,
+// including the signal handler's. A directory is forgotten once it is gone.
+export function forgetHarnessDirIfRemoved(dir: string): void {
+  if (!fs.existsSync(dir)) activeHarnessDirs.delete(dir);
 }
 
 // The body the `process.on("exit")` handler below runs, and the pass the CLI
@@ -362,11 +381,7 @@ export function removeActiveHarnessDirs(
     if (options.retry) {
       reason = removeHarnessDirWithRetries(dir, remove, deadline);
     } else {
-      try {
-        remove(dir);
-      } catch (err) {
-        reason = (err as NodeJS.ErrnoException).code ?? (err as Error).message;
-      }
+      reason = attemptHarnessDirRemoval(dir, remove);
     }
     if (reason === undefined) activeHarnessDirs.delete(dir);
     else failures.push({ dir: harnessDirDisplayPath(dir, cwd), reason });
@@ -384,11 +399,38 @@ export function sweepActiveHarnessDirs(): void {
   removeActiveHarnessDirs();
 }
 
+// M113 (final re-test): the signal handler's last pass reads a set, and a
+// harness directory the build creates a millisecond later is not in it. The
+// pass latches this flag instead of racing: createHarnessDir below removes
+// what it creates from that point on, under the same budget and with the same
+// disclosure, so the handler covers every directory this process created,
+// including the ones it created after the sweep started.
+let harnessDirTeardownStarted = false;
+
+export function beginHarnessDirTeardown(): void {
+  harnessDirTeardownStarted = true;
+}
+
+// M113 (final re-test): the last exit any run can take, and until now the one
+// that spent a single attempt and said nothing. `abortRun`'s deadline timer
+// and `closePoolsBounded`'s own are both unref'd, so a signalled run whose
+// `closeAll` never settles drains its loop and leaves through here, with the
+// signal's code already recorded and the pass that retries never reached: exit
+// 143, a silent EBUSY, and `.120fps-harness-FeVcEh/` in `git status`. This
+// handler spends the same budget and prints the same line. The retries are
+// synchronous (`sleepSync`), which is all this event permits, and a run that
+// left nothing behind reads an empty set and costs nothing.
+export function sweepActiveHarnessDirsOnExit(): void {
+  for (const failure of removeActiveHarnessDirs({ retry: true })) {
+    process.stderr.write(HARNESS_DIR_REMOVAL_FAILED_WARNING(failure.dir, failure.reason) + "\n");
+  }
+}
+
 let exitSweepRegistered = false;
 function registerHarnessDirExitSweep(): void {
   if (exitSweepRegistered) return;
   exitSweepRegistered = true;
-  process.on("exit", sweepActiveHarnessDirs);
+  process.on("exit", sweepActiveHarnessDirsOnExit);
 }
 registerHarnessDirExitSweep();
 
@@ -414,6 +456,21 @@ export function createHarnessDir(projectRoot: string): string {
     // it as soon as they remove the directory; anything left when the
     // process exits is a leftover the exit sweep above still has to catch.
     activeHarnessDirs.add(dir);
+    // M113 (final re-test): the signal arrived while this directory was being
+    // created, so the handler's sweep could not have seen it. The handler's
+    // work happens here instead, on the same budget, rather than leaving the
+    // directory for the next run to find.
+    if (harnessDirTeardownStarted) {
+      const reason = removeHarnessDirWithRetries(dir);
+      if (reason === undefined) activeHarnessDirs.delete(dir);
+      else {
+        process.stderr.write(
+          HARNESS_DIR_REMOVAL_FAILED_WARNING(harnessDirDisplayPath(dir, process.cwd()), reason) +
+            "\n",
+        );
+      }
+      return dir;
+    }
     // M101: the marker that lets a later run tell an abandoned directory from
     // one a live run is still writing into. Best-effort: a marker that cannot
     // be written costs the directory only the older, more conservative age
@@ -4713,7 +4770,7 @@ export async function buildAndServe(
     // constructed on the success path, so this catch is the one place the
     // directory would otherwise leak on every one of these.
     fs.rmSync(harnessDir, { recursive: true, force: true });
-    activeHarnessDirs.delete(harnessDir);
+    forgetHarnessDirIfRemoved(harnessDir);
     // M79 (1a): everything buildWarnings would have carried on the success
     // path travels with the thrown error too, so a crash after a computed
     // warning (VITE_CONFIG_IGNORED_WARNING, an unreplicated style engine, a
@@ -4738,7 +4795,7 @@ export async function buildAndServe(
   const cleanup = async () => {
     if (ownsServer) await closeServerBounded(server);
     fs.rmSync(harnessDir, { recursive: true, force: true });
-    activeHarnessDirs.delete(harnessDir);
+    forgetHarnessDirIfRemoved(harnessDir);
   };
 
   return {

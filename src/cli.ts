@@ -8,6 +8,7 @@ import { compareAgainstRef, formatCompare, validateCompareOptions } from "./comp
 import { formatMarkdown, formatJUnit } from "./ci-report.js";
 import { createBrowserPool } from "./measure.js";
 import {
+  beginHarnessDirTeardown,
   createServerPool,
   HARNESS_DIR_REMOVAL_FAILED_WARNING,
   presentBundlerFailure,
@@ -125,6 +126,12 @@ export function sweepHarnessDirsAfterClose(
   } = {},
 ): void {
   const warn = hooks.warn ?? ((line: string) => console.error(line));
+  // M113 (final re-test): from here on a harness directory the build is still
+  // creating removes itself the moment it exists. The set this pass reads was
+  // fixed when the pass started, and the build does not stop because a signal
+  // arrived; latching is what makes "every directory this process created"
+  // true rather than "every directory that existed when the sweep began".
+  beginHarnessDirTeardown();
   for (const failure of removeActiveHarnessDirs({
     retry: true,
     remove: hooks.remove,
@@ -152,9 +159,20 @@ export async function abortRun(
   // to process.exit: the deadline has to leave through the same door as the
   // ordinary path, so a caller (and a test) sees exactly one exit.
   let exited = false;
+  // M113 (final re-test): the retrying, disclosing pass runs on both ways out.
+  // The deadline used to leave through exit() alone, so a run whose pools never
+  // settled reached process.exit with only the pre-close attempt spent: the
+  // directory stayed and nothing said so. One pass either way, at most once.
+  let sweptAfterClose = false;
+  const sweepAfterClose = (): void => {
+    if (sweptAfterClose) return;
+    sweptAfterClose = true;
+    (hooks.finalSweep ?? hooks.sweep ?? (() => sweepHarnessDirsAfterClose()))();
+  };
   const exitOnce = (): void => {
     if (exited) return;
     exited = true;
+    sweepAfterClose();
     exit(exitCode);
   };
   // Review A8: both this deadline and closePoolsBounded's own timer are
@@ -168,7 +186,7 @@ export async function abortRun(
   clearTimeout(deadline);
   // The pass that actually leaves the working tree clean: the handles are gone
   // by now, and a directory the first pass could not remove is still tracked.
-  (hooks.finalSweep ?? hooks.sweep ?? (() => sweepHarnessDirsAfterClose()))();
+  sweepAfterClose();
   exitOnce();
 }
 

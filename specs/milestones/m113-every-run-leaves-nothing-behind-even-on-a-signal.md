@@ -5,6 +5,7 @@ tests:
   - test/unit/signal-teardown-removes-harness-dirs.test.ts
   - test/unit/harness-dir-removal-retries-and-discloses.test.ts
   - test/unit/stale-sweep-discloses-what-it-removed.test.ts
+  - test/unit/signal-teardown-sweeps-before-any-pool-exists.test.ts
 ---
 
 # M113: Every run leaves nothing behind, even on a signal
@@ -239,6 +240,105 @@ text, and `ls -d /e/repositories-run5/shadcn-admin/.120fps-harness-*` prints
 `No such file or directory`. `src/components/ui/button.tsx --explain-props`
 (`M113-shadcn-button-explain-after`) still reaches its explanation: `"exit": 0`,
 `Component: Button`.
+
+### End-game fix-up evidence (lane F, 2026-09-03)
+
+The final re-test (`C:/Projekte/120fps-fieldtest/retest/regression-calcom-base-ui.md`, logs
+`logs/regression-base-ui/final-base-ui-R1-2.log`, `-3.log`) left base-ui-R1 open: a kill 6 s into the
+run exited 143 and left `packages/react/.120fps-harness-8DUjr5/` with no retry and no disclosure
+line, and the next run's stale sweep removed it.
+
+Fix, both in lane A's own files:
+
+- `src/harness.ts` — a removal now counts as a removal only when the directory is gone.
+  `attemptHarnessDirRemoval` answers the disk (`fs.existsSync`) after the remover returns and reports
+  `EBUSY` when the directory is still there, so a Windows `rmSync` that returned on a file another
+  process holds open with `FILE_SHARE_DELETE` (unlinked into a pending-delete state) no longer lets a
+  caller cross the directory off. `cleanup()` and the bootServer catch forget a directory through
+  `forgetHarnessDirIfRemoved` for the same reason.
+- `src/harness.ts` — `beginHarnessDirTeardown()` latches the teardown, and `createHarnessDir` removes
+  what it creates from that point on, under the A3 budget with the A4 line. A directory created after
+  the sweep started is removed by the same handler instead of waiting for the next run.
+- `src/cli.ts` — `sweepHarnessDirsAfterClose` latches the teardown before its pass, and `abortRun`'s
+  pass after the close runs on both ways out: the deadline exit used to leave through `exit()` alone,
+  so a signalled run whose `closeAll` never settled drained its loop with only the pre-close attempt
+  spent (A3/A4 never ran). At most one such pass either way.
+- `src/harness.ts` — the `process.on("exit")` handler, the last exit any run can take, spends the
+  same retry budget and prints the same line (`sweepActiveHarnessDirsOnExit`). The retries are
+  synchronous, which is all that event permits, and an empty set costs nothing.
+
+Tests: `node node_modules/vitest/vitest.mjs run
+test/unit/signal-teardown-sweeps-before-any-pool-exists.test.ts --maxWorkers=2` →
+`Test Files 1 passed (1) / Tests 6 passed (6)`. Against the code before the fix, 3 of the 6 fail; one
+failing assertion verbatim:
+
+```
+FAIL test/unit/signal-teardown-sweeps-before-any-pool-exists.test.ts > a signal that arrives before any browser pool exists > removes a harness directory created after the sweep started
+AssertionError: expected true to be false // Object.is equality
+```
+
+The lane's thirteen neighbouring files together (`an-aborted-run-still-prints-its-roots-and-total`,
+`exit-watchdog`, `harness-crash-warnings`, `harness-dir-cleanup`,
+`harness-dir-removal-retries-and-discloses`, `harness-dir-writability`, `harness-fault`,
+`harness-fault-harden`, `harness-sweep`, `killed-run-cleanup`,
+`signal-teardown-removes-harness-dirs`, `signal-teardown-sweeps-before-any-pool-exists`,
+`stale-sweep-discloses-what-it-removed`) → `Test Files 13 passed (13) / Tests 136 passed | 1 skipped
+(137)`. No existing assertion changed.
+
+`node node_modules/typescript/bin/tsc --noEmit`: clean.
+
+Corpus, through `C:/Projekte/120fps-fieldtest/scratch/F-M113/dist/cli.js`, the repro from the
+Verification section above, `/e/repositories/base-ui`, labels `fixup-base-ui-1` … `-10`:
+
+| label | kill point | exit | left behind |
+|---|---|---|---|
+| fixup-base-ui-1, -2, -5, -6 | t+6 s | 143 | nothing; `git status --porcelain` empty |
+| fixup-base-ui-3 | first `calibration` line | 143 | nothing |
+| fixup-base-ui-4, -7, -8, -9, -10 | first `calibration` line | 143 | one `packages/react/.120fps-harness-*` |
+
+The five leftovers are not the signal path. A scratch dist instrumented with one `process.stderr.write`
+at the top of the `SIGTERM` handler, one at the top of `abortRun`, one in the pre-close sweep and one
+in the `process.on("exit")` sweep, killed at the same point five times
+(`logs/regression-base-ui/fixup-base-ui-dbg*.log`), recorded:
+
+```
+=== dbga exit="exit": 143
+  (no DBG line at all)
+/e/repositories/base-ui/packages/react/.120fps-harness-NYcsNv/
+```
+
+— four attempts out of four with exit 143 and not one marker, so the handler never ran, `abortRun`
+never ran, and Node's own `exit` event never fired. msys `kill -TERM` on the bash job reaches the CLI
+as `TerminateProcess`, and 143 is the exit code that carries, not `terminationExitCode("SIGTERM")`.
+The fifth (`fixup-base-ui-dbg`) exited 2 with the run continuing past the kill and
+`DBG exit handler size=0` at the end: there the kill reached Chromium only, the run failed on the
+closed target and removed its own directory. This is the falsifier `EVIDENCE.md:265` already records
+for heroui-R1 ("a wrapper `taskkill /F` delivers no signal, so a hard kill does not exercise this
+path"), now measured for msys `kill -TERM` at this kill point: after `TerminateProcess` no in-process
+handler exists to sweep anything, and the next run's stale sweep is the whole remedy — which is what
+`fixup-base-ui-5` and the completion run recorded, e.g.
+`logs/regression-base-ui/fixup-base-ui-complete.log:101`:
+
+```
+⚠ Removed a stale harness directory from an earlier run: .120fps-harness-lKU68F (its owner process is gone).
+```
+
+Run to completion on the same root (`fixup-base-ui-complete`): `exit=0 killed=false seconds=41`,
+`Result: PASS`,
+`Total: 39.9s  (preflight 0s, build 1s, calibration 2s, mount 7s, rerender 3s, explore 5s, scale 0s, attribution 0s, analysis 22s)`,
+`ls -d /e/repositories/base-ui/.120fps-harness-* /e/repositories/base-ui/packages/react/.120fps-harness-*`
+→ `No such file or directory` for both, `git -C /e/repositories/base-ui status --porcelain` empty.
+
+Unaffected repo (`M113-F-shadcn-button-explain-after`,
+`/e/repositories-run5/shadcn-admin src/components/ui/button.tsx --explain-props`):
+`exit=0 killed=false seconds=2`, `Component: Button`, `Props (32):`,
+`ls -d /e/repositories-run5/shadcn-admin/.120fps-harness-*` → `No such file or directory`,
+`git status --porcelain` empty. Closed: yes.
+
+Open: the corpus cannot demonstrate the signal path from msys bash on this machine, because
+`kill -TERM` terminates the CLI rather than signalling it. A6 and the retry budget on the signal path
+are held by the unit tests above; a real SIGINT (console Ctrl-C) or a `process.kill` from a Node
+parent would be the corpus-level check, and neither is scriptable from this shell.
 
 ## Deferred
 
