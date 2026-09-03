@@ -1,0 +1,8 @@
+{
+  "name": "yaml-loader-project-fixture",
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "@rollup/plugin-yaml": "^4.1.2"
+  }
+}

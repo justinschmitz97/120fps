@@ -8,6 +8,9 @@ tests:
   - test/unit/dry-run-prints-project-transform-warnings.test.ts
   # Lane A
   - test/unit/prebundle-entry-that-resolves-to-nothing-warns.test.ts
+  - test/unit/import-clause-across-lines-is-scanned.test.ts
+  - test/unit/data-file-import-names-its-loader-plugin.test.ts
+  - test/unit/project-transform-hits-are-classified-once.test.ts
 ---
 
 # M110: The dry run decides everything the real run decides from disk
@@ -107,6 +110,20 @@ run's transform site: the map and `verify/logto.md` cite `src/analyze.ts:3177-31
 - **A3** For any project root, the transform warnings the real run prints and the warnings
   `--explain-props` prints are the same strings in the same order, including when `--no-transforms`
   empties both; a hit newly recognized by M108 appears in both modes on the same run.
+- **A4** `scanExternalDeps` reads an import clause spread over several lines exactly as it reads the
+  one-line form: an `import {` line, an `  x,` line and a `} from "pkg"` line yield `pkg`. A
+  side-effect import
+  (`import "./a.css"`) standing immediately above such a clause is still read as its own specifier,
+  with or without a terminating semicolon, never swallowed into the clause below it. (gutenberg
+  `packages/element/src/serialize.ts` imports `@wordpress/escape-html` across three lines; the missed
+  edge hid the sibling behind it from M107's source rescue, and the run died on a Vite parse error.)
+- **A5** An import of a file type Vite cannot load without a plugin (`.yaml`, `.yml`, `.toml`, `.md`,
+  beside the already-recognized `.graphql`/`.gql`) is a `project-transform` preflight hit. Its owner
+  names the loader plugin the project declares for that extension when it declares one (directus
+  declares `@rollup/plugin-yaml` in `app/package.json` and its `vite.config.js` loads
+  `src/lang/translations/en-US.yaml` with it), and keeps the recognizer's generic wording otherwise.
+  The hit travels in `preflight.transforms`, the one list both modes read, so the dry run and the
+  real run print it identically.
 
 ## MUST NOT
 
@@ -160,6 +177,18 @@ Unit tests, `vitest run <file> --maxWorkers=2`.
   `fixtures/transform-project/` (existing; declares `@vanilla-extract/*` and `vite-plugin-svgr`, none
   installed). Asserts `explainProps(...).warnings` and the run path's `runWarnings` carry the same
   `[transform:...]` lines in the same order, and that `noTransforms: true` empties both.
+- **A3** `test/unit/project-transform-hits-are-classified-once.test.ts`. Fixture:
+  `fixtures/transform-project/`. Asserts I3's `classifyProjectTransformHits` (exported from
+  `src/preflight.ts`) drops a hit whose plugin the project can load, drops an installed
+  preprocessor, keeps the input order, and returns nothing under `noTransforms`.
+- **A4** `test/unit/import-clause-across-lines-is-scanned.test.ts`. Asserts both shapes on one file:
+  the multi-line clause's package is returned, and the side-effect import above it is still reported
+  as an imported specifier (semicolon and no semicolon).
+- **A5** `test/unit/data-file-import-names-its-loader-plugin.test.ts`. New fixture
+  `fixtures/yaml-loader-project/` (a `package.json` declaring `@rollup/plugin-yaml`,
+  `src/widget.tsx` importing `./messages.yaml`). Asserts `runPreflight` returns one
+  `project-transform` hit for the `.yaml` edge whose `transformOwner` is `@rollup/plugin-yaml`, and
+  that a project declaring no loader keeps the generic owner wording.
 - **A1, A2** `test/unit/prebundle-entry-that-resolves-to-nothing-warns.test.ts`. New fixture
   `fixtures/unresolvable-include/` (a `package.json` with no `imports` field, `app/widget.tsx`
   importing `#app/root`). Asserts `scanExternalDeps` drops the entry, returns it on
@@ -270,6 +299,94 @@ Lane C open against lane A:
   `--no-auto-compose --explain-props` and `--no-transforms --explain-props` still reach `explainProps`
   without those flags. `explainProps` accepts both (lane C's half of C1 and C4); the forwarding is
   lane A's line in `src/cli.ts`.
+
+### Lane A evidence (2026-09-03, worktree `C:\Projekte\120fps-m107` on `feat/m107-run5-remediation`)
+
+Tests, `node node_modules/vitest/vitest.mjs run <files> --maxWorkers=2`
+(`test/unit/prebundle-entry-that-resolves-to-nothing-warns.test.ts`,
+`test/unit/import-clause-across-lines-is-scanned.test.ts`,
+`test/unit/data-file-import-names-its-loader-plugin.test.ts`,
+`test/unit/project-transform-hits-are-classified-once.test.ts`):
+
+```
+ Test Files  4 passed (4)
+      Tests  21 passed (21)
+```
+
+Every test file that imports `src/harness.ts` or `src/preflight.ts`, same flags:
+
+```
+ Test Files  103 passed (103)
+      Tests  1625 passed | 1 skipped (1626)
+```
+
+`node node_modules/typescript/bin/tsc --noEmit`: clean (no output).
+
+Corpus, scratch dist `C:/Projekte/120fps-fieldtest/scratch/A-M110/dist/cli.js`, via
+`C:/Projekte/120fps-fieldtest/tools/run120.mjs`:
+
+- **epic-stack-F2, A1/A2 parity** (`--cwd /e/repositories-run5/epic-stack`,
+  `app/components/ui/dropdown-menu.tsx`, labels `M110-epic-stack-dry-after` (`--explain-props`,
+  exit 0) and `M110-epic-stack-real-after` (`--samples 5 --max-combos 4 --explore-budget 60
+  --no-deltas`, exit 0)). Before (`logs/epic-stack/ep7-dropdown-real.log`): the real run died at
+  dep-optimization on `#app` while the dry run said nothing. After: neither mode prints an
+  unresolved-include line, because M108's `imports` resolver resolves `#app/*`, and the real run
+  reaches a report:
+
+  ```
+  mode: prop matrix  (0:01)
+  Result: PASS
+  ```
+
+  A1's own line is proved by `fixtures/unresolvable-include/` (unit test above), the only
+  `#`-specifier in the corpus that resolves to nothing. Closed: yes.
+- **A4, gutenberg** (`--cwd /e/repositories-run5/gutenberg/packages/components`,
+  `src/button/index.tsx --samples 5 --max-combos 4 --explore-budget 60 --no-deltas`, label
+  `M110-gutenberg-after`, exit 0, `Total: 2m 20s`). Before (`logs/gutenberg/real-button.log`): exit 2
+  on a Vite parse error, `@wordpress/escape-html` never reached because its import clause spans three
+  lines. After, verbatim from the digest:
+
+  ```
+  component=Button path=src/button/index.tsx mode=curve pass=true noise=hostile cached=false
+  W @wordpress/escape-html is a workspace package whose exports["."] names ./build-module/index.mjs, which does not exist on disk; its own source at E:/repositories-run5/gute ...
+  ```
+
+  Closed: yes.
+- **A5, directus** (`--cwd /e/repositories-run5/directus/app`,
+  `src/components/v-button.vue --samples 5 --max-combos 4 --explore-budget 60 --no-deltas`, label
+  `M110-directus-after2`, exit 2 in 34s). Before (`logs/directus/M110-directus-after.log`): the Vite
+  parse error alone, no warning naming a plugin. After, the named hit is printed before the failure,
+  verbatim:
+
+  ```
+  [transform:yaml] src/components/v-button.vue → src/components/v-icon/v-icon.vue → src/stores/user.ts → src/lang/set-language.ts → src/lang/index.ts → ./translations/en-US.yaml: this project compiles that with @rollup/plugin-yaml, which 1 ...
+  ```
+
+  The run still cannot mount (Vite parses the YAML as JavaScript without that plugin), so the exit
+  code stays 2; what changed is that the cause is named. Closed: yes, as "prints the named hit".
+- **Unaffected control** (`--cwd /e/repositories-run5/shadcn-admin`,
+  `src/components/ui/button.tsx --explain-props`, label `M110-shadcn-admin-after-A`, exit 0): the
+  same verdict lane C recorded, no new warning:
+
+  ```
+  Matrix mode:  would not auto-activate
+  ```
+
+  Closed: yes.
+
+Lane A notes:
+
+- **I3** is exported from `src/preflight.ts` as `classifyProjectTransformHits`. The real-run and
+  dry-run call sites still go through lane C's identical `classifiedProjectTransformHits` in
+  `src/analyze.ts`; swapping those two call sites onto the export is lane C's line in its own file.
+- A5 needed one more edge in the walk lane A owns: `resolveVueImport` (`src/preflight.ts`) resolved
+  relative SFC imports only, so the walk stopped at the first aliased `.vue` import and never reached
+  the `.yaml` five files deeper. It now substitutes the governing tsconfig's `paths` before probing
+  disk, the same resolution the rest of the walk already performs.
+- Observed while running the epic-stack pair, for lane C: the dry run predicts
+  `Matrix mode:  predicate matches, but an auto-composed scene supplies the props ...` for
+  `app/components/ui/dropdown-menu.tsx`, and the real run then prints `mode: prop matrix`. Not lane
+  A's files; recorded here as evidence for C1/C2.
 
 ## Deferred
 

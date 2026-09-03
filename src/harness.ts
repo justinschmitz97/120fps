@@ -709,6 +709,10 @@ export interface StaticPreBuild {
     fromWorkspaceRoot?: WorkspaceRootAliasSource;
   }>;
   importedSpecifiers: Set<string>;
+  // M110 (A2/I2, epic-stack-F2): every specifier the scan could not resolve to
+  // a package, an alias or an `imports` entry, so both modes report the same
+  // set without walking the graph again.
+  unresolvedExternals: Array<{ specifier: string; importer: string }>;
   workspaceRoot: string;
 }
 
@@ -3952,6 +3956,9 @@ export function collectStaticPreBuildWarnings(
   // The wrapper is imported by the entry, so its packages must be pre-bundled
   // too: otherwise the first mount pays Vite's on-demand optimize cost.
   const importedSpecifiers = new Set<string>();
+  // M110 (A2/I2): filled by the same walk that produces the include list, so
+  // the dry run reports what the real run's optimizer would have choked on.
+  const unresolvedExternals: Array<{ specifier: string; importer: string }> = [];
   const externalDeps = [
     ...new Set([
       ...scanExternalDeps(
@@ -3962,6 +3969,7 @@ export function collectStaticPreBuildWarnings(
         warnings,
         workspaceRoot,
         aliases,
+        unresolvedExternals,
       ),
       ...(opts.wrapPath
         ? scanExternalDeps(
@@ -3972,6 +3980,7 @@ export function collectStaticPreBuildWarnings(
             warnings,
             workspaceRoot,
             aliases,
+            unresolvedExternals,
           )
         : []),
     ]),
@@ -4006,6 +4015,7 @@ export function collectStaticPreBuildWarnings(
     nextModules: { detected, ...(activeShims ? { activeShims } : {}), unsupported },
     aliases,
     importedSpecifiers,
+    unresolvedExternals,
     workspaceRoot,
   };
 }
@@ -4738,8 +4748,15 @@ function resolveLocalImport(
 // type` from-specifier: type-space, never loaded at runtime. A mixed clause
 // (`import { type A, b } from "x"`) still matches, because `b` is a real
 // value import and "x" genuinely needs runtime resolution.
+// M110 (A4, gutenberg): a clause written over several lines
+// (`import {`, `  escapeHTML,`, `} from "@wordpress/escape-html"`) is the same
+// import. `[^;'"]*?` spans newlines where `.` did not, and stops at the two
+// characters that can end a statement before its own `from`: a `;`, or the
+// quote of a side-effect import standing above the clause
+// (`import "./a.css"`), which stays its own match instead of being swallowed
+// into the one below it.
 const STATIC_IMPORT_PATTERN =
-  /(?:^|\s)(?:import|export)\s+(?!type\s).*?from\s+["']([^"']+)["']|(?:^|\s)import\s+["']([^"']+)["']/gm;
+  /(?:^|\s)(?:import|export)\s+(?!type\s)[^;'"]*?from\s+["']([^"']+)["']|(?:^|\s)import\s+["']([^"']+)["']/gm;
 const DYNAMIC_IMPORT_PATTERN = /\bimport\s*\(\s*["']([^"']+)["']/g;
 const REQUIRE_PATTERN = /\brequire\s*\(\s*["']([^"']+)["']/g;
 
@@ -4754,6 +4771,17 @@ function readSpecifiers(content: string): string[] {
     }
   }
   return specifiers;
+}
+
+// M110 (A1, epic-stack-F2): the scan used to `continue` past a specifier that
+// resolved to nothing, so `--explain-props` and the real run both stayed silent
+// until the dev server died on it at dep-optimization.
+export function UNRESOLVED_PREBUNDLE_ENTRY_WARNING(specifier: string, importer: string): string {
+  return (
+    `"${specifier}" (imported by ${importer}) resolves to no installed package, no alias and no ` +
+    "`imports` entry, so the pre-bundle cannot include it: the browser resolves it at request time " +
+    "or fails on it."
+  );
 }
 
 export function BROKEN_ALIAS_WARNING(specifier: string, target: string): string {
@@ -5173,11 +5201,16 @@ export function scanExternalDeps(
   // from, so the rescue applies to Vite's real per-request resolution too,
   // not only to optimizeDeps.
   extraAliasesOut?: Array<{ find: RegExp; replacement: string }>,
+  // M110 (A2/I2): the specifiers this walk could not resolve, in the order it
+  // read them, for the caller that publishes them on `StaticPreBuild`.
+  unresolvedOut?: Array<{ specifier: string; importer: string }>,
 ): string[] {
   const externalPkgs = new Set<string>();
   const visited = new Set<string>();
   const reportedBrokenAliases = new Set<string>();
   const reportedWorkspaceRootAliases = new Set<string>();
+  // M110 (A1): one report per specifier, however many files import it.
+  const reportedUnresolved = new Set<string>();
   const queue = [componentPath];
   const pkgNameOf = (spec: string) =>
     spec.startsWith("@") ? spec.split("/").slice(0, 2).join("/") : spec.split("/")[0];
@@ -5264,6 +5297,14 @@ export function scanExternalDeps(
           if (viaPackage) {
             specifiersOut?.add(viaPackage);
             externalPkgs.add(pkgNameOf(viaPackage));
+          } else if (!reportedUnresolved.has(spec)) {
+            // M110 (A1): no file, no package, no alias. Nothing can pre-bundle
+            // it, and the specifier stays out of the include list (M108) — the
+            // report is the only thing that was missing.
+            reportedUnresolved.add(spec);
+            const importer = relativeToRoot(normalizedFile, projectRoot);
+            unresolvedOut?.push({ specifier: spec, importer });
+            warningsOut?.push(UNRESOLVED_PREBUNDLE_ENTRY_WARNING(spec, importer));
           }
         }
       } else if (isBareSpecifier) {

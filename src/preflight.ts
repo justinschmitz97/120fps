@@ -12,6 +12,11 @@ import {
   isPackageDeclared,
   workspaceLevels,
 } from "./project-model.js";
+// M110 (I3): the loadable-plugin probe the classifier below filters against.
+// harness.ts imports this module in turn; the call sits inside a function body,
+// so the binding is resolved when the classifier runs, never while either
+// module is still evaluating.
+import { detectProjectTransforms } from "./harness.js";
 
 // The marker package a server module imports to make the boundary explicit.
 // M72: "next/server-only" was never a real module (Next.js re-exports the
@@ -89,6 +94,25 @@ export const TRANSFORM_RECOGNIZERS: TransformRecognizer[] = [
   },
   // M75: Vite core serves `.wasm?init` and `.wasm?url`; the bare specifier is
   // the one that needs a plugin, so only that shape is claimed here.
+  // M110 (A5, directus): Vite parses an imported file as JavaScript unless a
+  // plugin claims it. A YAML, TOML or Markdown import therefore ends the run on
+  // a parse error that never names the plugin the project itself declares for
+  // that extension.
+  {
+    code: "yaml",
+    test: (s) => /\.ya?ml$/.test(s),
+    owner: "a YAML loader plugin (e.g. @rollup/plugin-yaml)",
+  },
+  {
+    code: "toml",
+    test: (s) => /\.toml$/.test(s),
+    owner: "a TOML loader plugin (e.g. @rollup/plugin-toml)",
+  },
+  {
+    code: "markdown",
+    test: (s) => /\.md$/.test(s),
+    owner: "a Markdown loader plugin (e.g. unplugin-vue-markdown)",
+  },
   {
     code: "wasm",
     test: (s) => /\.wasm$/.test(s),
@@ -176,6 +200,17 @@ export function isMacroSpecifier(specifier: string): boolean {
   );
 }
 
+// M110 (A5): the loader packages that claim each extension, most common first.
+// The project declaring one of them is the project naming its own plugin
+// (directus declares `@rollup/plugin-yaml` and its vite.config loads
+// `src/lang/translations/en-US.yaml` with it).
+const DATA_LOADER_CANDIDATES: Record<string, string[]> = {
+  yaml: ["@rollup/plugin-yaml", "@modyfi/vite-plugin-yaml", "vite-plugin-yaml"],
+  toml: ["@rollup/plugin-toml", "vite-plugin-toml"],
+  markdown: ["unplugin-vue-markdown", "vite-plugin-md", "vite-plugin-markdown"],
+  graphql: ["@rollup/plugin-graphql", "vite-plugin-graphql-loader", "@graphql-tools/vite"],
+};
+
 function macroCompilerCandidates(specifier: string): string[] {
   const candidates = ["vite-plugin-babel-macros", "babel-plugin-macros"];
   // A scoped package that ships a macro usually ships the Vite plugin that
@@ -197,7 +232,7 @@ export function declaredTransformOwner(
       ? macroCompilerCandidates(specifier)
       : code === "virtual-module"
         ? (recognizeVirtualNamespace(specifier)?.candidates ?? [])
-        : [];
+        : (DATA_LOADER_CANDIDATES[code] ?? []);
   return candidates.find((pkg) => isPackageDeclared(pkg, memberRoot, workspaceRoot));
 }
 
@@ -434,11 +469,52 @@ function parse(fileName: string, vueCompiler?: VueSfcCompiler): ts.SourceFile | 
 // TypeScript cannot resolve a `.vue` specifier, so relative SFC edges are
 // resolved by hand. Aliased ones are not: preflight is a best-effort net, and
 // an unresolved edge costs coverage, never a false failure.
-function resolveVueImport(fromFile: string, specifier: string): string | undefined {
-  if (!specifier.startsWith(".") && !specifier.startsWith("/")) return undefined;
-  const target = path.normalize(path.resolve(path.dirname(fromFile), specifier));
-  if (/[\\/]node_modules[\\/]/.test(target)) return undefined;
-  return fs.existsSync(target) ? target : undefined;
+function resolveVueImport(
+  fromFile: string,
+  specifier: string,
+  compilerOptions?: ts.CompilerOptions,
+): string | undefined {
+  // M110 (A5, directus): an SFC imported through a tsconfig path alias
+  // (`@/components/v-menu.vue`) is the same graph edge as a relative one.
+  // TypeScript's own resolver does not answer for a `.vue` file, so the alias
+  // is substituted here and the result probed on disk, the way the relative
+  // form already is. Without it the walk stopped at the first aliased SFC and
+  // never reached the `.yaml` import four files deeper.
+  const candidates =
+    specifier.startsWith(".") || specifier.startsWith("/")
+      ? [path.resolve(path.dirname(fromFile), specifier)]
+      : aliasCandidates(specifier, compilerOptions);
+  for (const candidate of candidates) {
+    const target = path.normalize(candidate);
+    if (/[\\/]node_modules[\\/]/.test(target)) continue;
+    if (fs.existsSync(target)) return target;
+  }
+  return undefined;
+}
+
+// The two `paths` shapes TypeScript itself supports: an exact key, or one `*`.
+function aliasCandidates(specifier: string, compilerOptions?: ts.CompilerOptions): string[] {
+  const paths = compilerOptions?.paths;
+  const baseUrl = compilerOptions?.baseUrl;
+  if (!paths || !baseUrl) return [];
+  const candidates: string[] = [];
+  for (const [pattern, targets] of Object.entries(paths)) {
+    const star = pattern.indexOf("*");
+    let rest: string;
+    if (star === -1) {
+      if (pattern !== specifier) continue;
+      rest = "";
+    } else {
+      const prefix = pattern.slice(0, star);
+      const suffix = pattern.slice(star + 1);
+      if (!specifier.startsWith(prefix) || !specifier.endsWith(suffix)) continue;
+      rest = specifier.slice(prefix.length, specifier.length - suffix.length);
+    }
+    for (const target of targets) {
+      candidates.push(path.resolve(baseUrl, target.replace("*", rest)));
+    }
+  }
+  return candidates;
 }
 
 // A statement whose specifiers are all type-only is erased before it reaches a
@@ -692,7 +768,7 @@ export function runPreflight(options: PreflightOptions): PreflightResult {
         // must not end the walk, or a server-only import one SFC deep would
         // never be reached.
         if (recognizer.code === "vue" && vueCompiler) {
-          const sfc = resolveVueImport(file, edge.specifier);
+          const sfc = resolveVueImport(file, edge.specifier, compilerOptions);
           if (sfc && !seen.has(sfc)) {
             seen.add(sfc);
             parents.set(sfc, file);
@@ -923,6 +999,31 @@ export function classifyPreprocessorAvailability(
     return "declared-not-installed";
   }
   return "neither";
+}
+
+// M110 (I3): one filter for both modes. The real run and `--explain-props` read
+// the same `preflight.transforms` list, and drifting filters were why a dry run
+// stayed silent about the 13 preprocessor imports the real run named a minute
+// later from the same files on disk.
+//
+// Dropped here: a transform the run actually applies (the project's plugin is
+// installed and loadable), and a preprocessor Vite resolves on its own because
+// the project has it installed. Everything else keeps its input order.
+export function classifyProjectTransformHits(
+  projectRoot: string,
+  transforms: PreflightHit[],
+  opts: { noTransforms?: boolean; workspaceRoot?: string } = {},
+): Array<{ hit: PreflightHit; availability: PreprocessorAvailability | undefined }> {
+  if (opts.noTransforms) return [];
+  const loadable = new Set(detectProjectTransforms(projectRoot).map((t) => t.code));
+  const workspaceRoot = opts.workspaceRoot ?? findWorkspaceRoot(projectRoot);
+  return transforms
+    .filter((hit) => !hit.transformCode || !loadable.has(hit.transformCode))
+    .map((hit) => ({
+      hit,
+      availability: classifyPreprocessorAvailability(hit, projectRoot, workspaceRoot),
+    }))
+    .filter(({ availability }) => availability !== "installed");
 }
 
 // Names the transform, not the symptom. Without this the run fails deep inside
