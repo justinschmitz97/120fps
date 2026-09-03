@@ -248,6 +248,48 @@ worktree (`build-scratch.sh B-M112`, tree at `ddc79f5` plus the three lanes' unc
   text is unchanged character for character:
   `Warning: 240 props were extracted from E:\repositories-run5\shadcn-admin\src\components\ui\button.tsx; measuring the first 32. Add button.props.tsx to choose the props that matter.`
 
+#### Lane B follow-up: the cap warning goes through the record sink
+
+`warnPropCap` (`src/prop-gen.ts:1393`) wrote its text with `warnOnce` straight to `process.stderr`
+and took no sink parameter, unlike `warnCollapsedUnion` and `warnDegenerateProps`, so `analyze.ts`
+could neither withhold nor re-render the cap remedy after a preset loaded (B3 / C1, logto-F4). It
+now takes the same `sink` parameter in the same position and emits through `emit`, so the text
+reaches `PropsExtraction.warnings` whenever a caller passes `onWarning` and still prints once to
+stderr, character for character, when no sink is passed.
+
+Tests: `node node_modules/vitest/vitest.mjs run test/unit/preset-sibling-shape-is-disclosed.test.ts
+--maxWorkers=2` -> `Test Files  1 passed (1)`, `Tests  18 passed (18)`. The lane's existing suites
+(71 `test/unit/*.test.ts` files that import `prop-gen`/`prop-presets`, two batches):
+`Test Files  36 passed (36)`, `Tests  488 passed (488)` and `Test Files  35 passed (35)`,
+`Tests  490 passed (490)`. Whole `test/unit` suite: `Test Files  313 passed (313)`,
+`Tests  4640 passed | 1 skipped (4641)`.
+
+`node node_modules/typescript/bin/tsc --noEmit`: clean.
+
+Corpus, scratch dist `C:/Projekte/120fps-fieldtest/scratch/B-M112/dist/cli.js` built from this
+worktree at `27c0015` plus this change:
+
+- logto-F4 (`--cwd .../packages/console -- src/ds-components/Button/index.tsx --explain-props`,
+  label `M112-logto-after`; the preset file was recreated with a default-exported `title`/`type`
+  object and removed again afterwards). Before (`logs/logto/explain-button-preset.log`):
+  `Add index.props.tsx to choose the props that matter.` beside
+  `presets:  src/ds-components/Button/index.props.tsx`. After:
+  `  Warning: 319 props were extracted from E:\repositories-run5\logto\packages\console\src\ds-components\Button\index.tsx; measuring the first 32. The applied preset src/ds-components/Button/index.props.tsx is already loaded; extend it to choose the props that matter.`
+  beside `  presets:  src/ds-components/Button/index.props.tsx`. Closed.
+- radix-themes-F1 (`--cwd .../packages/radix-ui-themes -- src/components/button.tsx
+  --explain-props`, label `M112-radix-themes-after`). After:
+  `  Warning: 247 props were extracted from E:\repositories-run5\radix-themes\packages\radix-ui-themes\src\components\button.tsx; measuring the first 32. Add button.120fps.props.tsx to choose the props that matter.`
+  and, once, `  src/components/button.props.tsx exists, not a preset: no default-exported object literal (expected ...)`. Closed.
+- epic-stack-F3 (`app/components/ui/button.props.tsx` recreated with
+  `export const variant = "default";`, removed again afterwards; `--cwd /e/repositories-run5/epic-stack
+  -- app/components/ui/button.tsx --explain-props`, label `M112-epic-stack-after`). After:
+  `  Warning: 240 props were extracted from E:\repositories-run5\epic-stack\app\components\ui\button.tsx; measuring the first 32. Add button.120fps.props.tsx to choose the props that matter.`
+  and `  app/components/ui/button.props.tsx exists, not a preset: no default-exported object literal (expected ...)`. Closed.
+- Control shadcn-admin (`-- src/components/ui/button.tsx --explain-props`, label
+  `M112-shadcn-admin-after`): reaches the same report; the cap line is unchanged character for
+  character:
+  `  Warning: 240 props were extracted from E:\repositories-run5\shadcn-admin\src\components\ui\button.tsx; measuring the first 32. Add button.props.tsx to choose the props that matter.`
+
 ### Lane C evidence
 
 Tests: `node node_modules/vitest/vitest.mjs run test/unit/remedy-follows-the-applied-preset.test.ts

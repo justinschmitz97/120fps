@@ -1390,12 +1390,20 @@ function componentStem(fileName: string): string {
   return ext ? base.slice(0, -ext.length) : base;
 }
 
-function warnPropCap(fileName: string, total: number, record?: WarningRecorder): void {
+// M112 B3 (logto-F4): the sink carries this warning the way it already carries
+// the collapsed-union and degenerate ones, so a caller that applies a preset
+// afterwards can withhold the line and re-render it from the record.
+function warnPropCap(
+  fileName: string,
+  total: number,
+  sink?: (message: string) => void,
+  record?: WarningRecorder,
+): void {
   const text =
     `Warning: ${total} props were extracted from ${fileName}; measuring the first ${MAX_PROPS}. ` +
     `Add ${presetFileName(fileName)} to choose the props that matter.\n`;
   record?.({ kind: "prop-cap", stem: componentStem(fileName), text: text.trimEnd() });
-  warnOnce(`${path.resolve(fileName)}::cap`, text);
+  emit(`${path.resolve(fileName)}::cap`, text, sink);
 }
 
 // M84: a union with more than one non-undefined member collapses to one
@@ -2207,7 +2215,7 @@ function typeToSchema(
 
   const totalKept = requiredProps.length + orderedOptional.length;
   if (totalKept > MAX_PROPS && fileName) {
-    warnPropCap(fileName, totalKept, record);
+    warnPropCap(fileName, totalKept, sink, record);
   }
 
   const optionalBudget = Math.max(0, MAX_PROPS - requiredProps.length);

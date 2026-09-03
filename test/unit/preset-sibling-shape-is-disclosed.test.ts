@@ -144,3 +144,40 @@ describe("extraction warnings are recoverable per component stem", () => {
     expect(first.warnings).toEqual([]);
   });
 });
+
+// B3 (I7, logto-F4): the cap warning travels the sink every other extraction
+// warning travels, so a caller that loads a preset afterwards can withhold the
+// printed line and re-render it.
+describe("the cap warning routed through the warning sink", () => {
+  it("reaches the sink instead of stderr when one is passed", async () => {
+    const stderr = captureStderr();
+    const collected: string[] = [];
+    const extraction = await extractPropsDetailed(fixture("re-export.tsx"), {
+      onWarning: (message) => collected.push(message),
+    });
+    expect(extraction.warnings.some((w) => w.includes("props were extracted"))).toBe(true);
+    expect(collected.some((w) => w.includes("props were extracted"))).toBe(true);
+    expect(stderr.lines().some((line) => line.includes("props were extracted"))).toBe(false);
+  });
+
+  it("still prints to stderr, once, when no sink is passed", async () => {
+    const stderr = captureStderr();
+    const first = await extractPropsDetailed(fixture("re-export.tsx"));
+    const second = await extractPropsDetailed(fixture("re-export.tsx"));
+    expect(first.warnings).toEqual([]);
+    expect(second.warnings).toEqual([]);
+    const printed = stderr.lines().filter((line) => line.includes("props were extracted"));
+    expect(printed).toHaveLength(1);
+    expect(printed[0]).toBe(`${first.warningRecords.find((r) => r.kind === "prop-cap")?.text}\n`);
+  });
+
+  it("records the cap warning even when the sink carries the text", async () => {
+    resetExtractionCache();
+    const extraction = await extractPropsDetailed(fixture("re-export.tsx"), {
+      onWarning: () => {},
+    });
+    const cap = extraction.warningRecords.find((r) => r.kind === "prop-cap");
+    expect(cap?.stem).toBe("re-export");
+    expect(extraction.warnings).toContain(cap?.text);
+  });
+});
