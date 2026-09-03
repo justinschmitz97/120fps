@@ -1,6 +1,6 @@
 ---
 kind: milestone
-status: draft
+status: approved
 tests:
   # Lane A
   - test/unit/tsconfig-references-select-the-governing-config.test.ts
@@ -328,3 +328,34 @@ Corpus (commands verbatim from the `EVIDENCE.md` rows named above):
   no MUST adds a version probe.
 - Reading `references` for anything but compiler options (project-wide checking, program
   construction): the harness constructs no multi-project program.
+
+## Approval
+
+Approved 2026-09-03. Commits: `bce625f` and `7d4b121` (lane A), `e075f90` and `332eeb6` (lane B).
+
+- **Lane A** — `test/unit/tsconfig-references-select-the-governing-config.test.ts`,
+  `jsx-automatic-regardless-of-project-jsx.test.ts`, `root-absolute-path-alias-rejected.test.ts`,
+  `tsconfig-custom-conditions-forwarded.test.ts` pass on re-run (28 tests; the evidence block's
+  `24 passed` predates the `7d4b121` fix-ups), `tsc --noEmit` clean. Corpus: ark-F1 `Result: PASS`
+  with 0 `React is not defined`, react-spectrum-F2 `Result: PASS` with 0 `@vite/client` 404s and
+  both disclosures in the report warnings, coordinator-F1 `Result: PASS` with A2's sentence in
+  `warnings`, shadcn-admin unchanged (`Props (32):`, no references disclosure).
+- **Lane B** — `test/unit/prop-extraction-shares-the-tsconfig-reader.test.ts` passes on re-run
+  (`Test Files 1 passed (1)`, `Tests 4 passed (4)`), `tsc --noEmit` clean. Corpus: the
+  `--explain-props` dry run on `C:/Projekte/tmp-vite-refs` prints `Props (2):` and the same
+  disclosure sentence the real run prints, ark-F1 `Result: PASS` under `jsx: "preserve"`,
+  shadcn-admin unchanged.
+
+A4's "answers HTTP 200" half is carried by the react-spectrum corpus run rather than a unit test,
+for the reason the Lane A evidence states (no fixture ships its own `node_modules`).
+
+### Deferred / open
+
+- Solution-style references with build semantics (`outDir`/`.d.ts` redirection, `--build` ordering).
+- A config declaring both `compilerOptions.paths` and `references`: the nearest config wins.
+- The baseUrl-only workspace-root fallback, as the M76 spec states.
+- Per-file `jsxImportSource`: one project-level value continues to serve.
+- react-spectrum's workspace-sibling wall stays M107's (react-spectrum-F1).
+- A Vue-renderer project's `.tsx` with no `jsxImportSource`: A3's default stays `react`.
+- React without a `react/jsx-runtime` export (<16.14): no version probe.
+- Reading `references` for anything but compiler options.
