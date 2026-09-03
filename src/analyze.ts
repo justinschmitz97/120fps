@@ -39,9 +39,7 @@ import {
   PROJECT_TRANSFORM_WARNING,
   PREFLIGHT_BYPASSED_WARNING,
   PreflightHardRejectionError,
-  classifyPreprocessorAvailability,
-  type PreflightHit,
-  type PreprocessorAvailability,
+  classifyProjectTransformHits,
 } from "./preflight.js";
 import {
   inferComposition,
@@ -2484,39 +2482,6 @@ export function buildCssReport(
   };
 }
 
-// M110 C4 (logto-F3): the filter the real run built inline, called by both
-// modes so a dry run cannot classify the same hits differently or in another
-// order. `--no-transforms` answers empty in both, because a run told to apply
-// no project transform has nothing to warn about not applying.
-//
-// I3 places this classifier in `src/preflight.ts` (lane A). Until that export
-// lands, this is the single copy both call sites in this file read; the body
-// is the filter the run path carried at `src/analyze.ts:3596-3614`.
-export function classifiedProjectTransformHits(
-  projectRoot: string,
-  transforms: PreflightHit[],
-  opts: { noTransforms?: boolean; workspaceRoot?: string } = {},
-): Array<{ hit: PreflightHit; availability: PreprocessorAvailability | undefined }> {
-  if (opts.noTransforms) return [];
-  // M48: only warn about transforms the harness will not apply. A project
-  // whose plugin is on the supported list and installed gets it loaded, and
-  // crying wolf about a transform that worked is worse than silence.
-  const loadable = new Set(detectProjectTransforms(projectRoot).map((t) => t.code));
-  // M79 (twenty-F3, half 2): a css-preprocessor hit fires unconditionally
-  // (recognizeTransform performs no availability check by design). Vite's own
-  // CSS pipeline resolves sass/less/stylus directly, so an installed
-  // preprocessor needs no warning at all, and a declared-but-uninstalled one
-  // needs different wording than the genuinely-neither case.
-  const workspaceRoot = opts.workspaceRoot ?? findWorkspaceRoot(projectRoot);
-  return transforms
-    .filter((hit) => !hit.transformCode || !loadable.has(hit.transformCode))
-    .map((hit) => ({
-      hit,
-      availability: classifyPreprocessorAvailability(hit, projectRoot, workspaceRoot),
-    }))
-    .filter(({ availability }) => availability !== "installed");
-}
-
 // The same resolution the pipeline performs, stopped before its first side
 // effect: no harness directory, no dev server, no browser, no report file.
 export async function explainProps(
@@ -2628,9 +2593,9 @@ export async function explainProps(
   for (const hit of preflight.soft) warnings.push(NODE_BUILTIN_WARNING(hit));
   // M110 C4 (logto-F3): `runPreflight` returned `transforms` on this path all
   // along and only the run path read it, so the dry run stayed silent about
-  // the lines the real run printed a minute later from the same files. Same
-  // classifier, same order, same text.
-  for (const { hit, availability } of classifiedProjectTransformHits(
+  // the lines the real run printed a minute later from the same files. I3's
+  // one classifier, same order, same text.
+  for (const { hit, availability } of classifyProjectTransformHits(
     projectRoot,
     preflight.transforms,
     { ...(options.noTransforms ? { noTransforms: true } : {}) },
@@ -4000,10 +3965,10 @@ export async function analyze(
     const loadableTransforms = new Set(
       (options.noTransforms ? [] : detectProjectTransforms(projectRoot)).map((t) => t.code),
     );
-    // M110 C4 (logto-F3): one classifier, shared with the dry run's own
-    // warning list, so the two modes cannot disagree about which transform
-    // hits are worth a warning or in which order they are said.
-    const candidateTransformHits = classifiedProjectTransformHits(projectRoot, preflight.transforms, {
+    // M110 C4 (logto-F3): I3's classifier in `src/preflight.ts`, shared with
+    // the dry run's own warning list, so the two modes cannot disagree about
+    // which transform hits are worth a warning or in which order they are said.
+    const candidateTransformHits = classifyProjectTransformHits(projectRoot, preflight.transforms, {
       ...(options.noTransforms ? { noTransforms: true } : {}),
     });
     transformHits = candidateTransformHits.map(({ hit }) => hit);

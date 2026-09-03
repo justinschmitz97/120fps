@@ -2,8 +2,12 @@ import { describe, it, expect, afterEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { explainProps, classifiedProjectTransformHits } from "../../src/analyze.js";
-import { runPreflight, PROJECT_TRANSFORM_WARNING } from "../../src/preflight.js";
+import { explainProps } from "../../src/analyze.js";
+import {
+  runPreflight,
+  classifyProjectTransformHits,
+  PROJECT_TRANSFORM_WARNING,
+} from "../../src/preflight.js";
 
 // logto-F3: `runPreflight` returns `transforms` on both paths, and only the
 // real run read it -- the dry run stayed silent about the 13
@@ -45,7 +49,7 @@ function runPathTransformWarnings(
   opts: { noTransforms?: boolean } = {},
 ): string[] {
   const preflight = runPreflight({ projectRoot, entries: [entry], componentName: "Card" });
-  return classifiedProjectTransformHits(projectRoot, preflight.transforms, opts).map(
+  return classifyProjectTransformHits(projectRoot, preflight.transforms, opts).map(
     ({ hit, availability }) => PROJECT_TRANSFORM_WARNING(hit, availability),
   );
 }
@@ -107,7 +111,7 @@ describe("the run path's own transform warnings", () => {
   );
 
   it("pushes exactly what the shared classifier returns", () => {
-    expect(block).toContain("classifiedProjectTransformHits(projectRoot, preflight.transforms, {");
+    expect(block).toContain("classifyProjectTransformHits(projectRoot, preflight.transforms, {");
     expect(block).toContain("for (const { hit, availability } of candidateTransformHits)");
     expect(block).toContain("runWarnings.push(PROJECT_TRANSFORM_WARNING(hit, availability));");
     // No second, independent filter: the dry run and the run path cannot
@@ -117,6 +121,17 @@ describe("the run path's own transform warnings", () => {
 
   it("forwards --no-transforms into the classifier, so the run stays silent too", () => {
     expect(block).toContain('...(options.noTransforms ? { noTransforms: true } : {})');
-    expect(classifiedProjectTransformHits(path.resolve("."), [], { noTransforms: true })).toEqual([]);
+    expect(classifyProjectTransformHits(path.resolve("."), [], { noTransforms: true })).toEqual([]);
+  });
+
+  // I3: one exported classifier, no second copy anywhere. A duplicate is how
+  // the two modes drifted apart in the first place.
+  it("reads the classifier `src/preflight.ts` exports, in both modes", () => {
+    expect(analyzeSrc).not.toContain("function classifiedProjectTransformHits");
+    const dryRunBlock = analyzeSrc.slice(
+      analyzeSrc.indexOf("for (const hit of preflight.soft) warnings.push(NODE_BUILTIN_WARNING(hit));"),
+      analyzeSrc.indexOf("if (preflight.hard.length > 0) {"),
+    );
+    expect(dryRunBlock).toContain("classifyProjectTransformHits(");
   });
 });

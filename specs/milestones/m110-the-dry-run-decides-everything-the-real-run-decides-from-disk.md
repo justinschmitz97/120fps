@@ -6,6 +6,7 @@ tests:
   - test/unit/dry-run-predicts-the-composed-scene.test.ts
   - test/unit/requested-matrix-names-what-took-precedence.test.ts
   - test/unit/dry-run-prints-project-transform-warnings.test.ts
+  - test/unit/dry-run-names-the-unresolved-prebundle-entry.test.ts
   # Lane A
   - test/unit/prebundle-entry-that-resolves-to-nothing-warns.test.ts
   - test/unit/import-clause-across-lines-is-scanned.test.ts
@@ -292,13 +293,91 @@ Corpus, scratch dist `C:/Projekte/120fps-fieldtest/scratch/C-M110/dist/cli.js`, 
 
 Lane C open against lane A:
 
-- **I3** (`classifyProjectTransformHits` in `src/preflight.ts`) had not landed. C4's classifier lives
-  as `classifiedProjectTransformHits` in `src/analyze.ts`, called by the dry run and by the real-run
-  site, so the two modes share one filter; the body moves behind lane A's export when I3 lands.
+- **I3** (`classifyProjectTransformHits` in `src/preflight.ts`) had not landed at that commit. C4's
+  classifier lived as `classifiedProjectTransformHits` in `src/analyze.ts`, called by the dry run and
+  by the real-run site, so the two modes shared one filter. Closed by the follow-up below: the
+  duplicate is deleted and both sites call lane A's export.
 - `src/cli.ts`'s `explainPropsOptions` does not forward `skipAutoCompose` or `noTransforms`, so
   `--no-auto-compose --explain-props` and `--no-transforms --explain-props` still reach `explainProps`
   without those flags. `explainProps` accepts both (lane C's half of C1 and C4); the forwarding is
   lane A's line in `src/cli.ts`.
+
+#### Lane C follow-up (2026-09-03, after lane A landed `ffba273`/`ec6ec61`)
+
+`src/analyze.ts` no longer declares a classifier: `classifiedProjectTransformHits` is deleted and the
+dry-run site and the run-path site both call `classifyProjectTransformHits` from `src/preflight.ts`
+(I3). I2's `StaticPreBuild.unresolvedExternals` needed no new call site: lane A pushes
+`UNRESOLVED_PREBUNDLE_ENTRY_WARNING` onto the `warnings` array of the one static pre-build both modes
+read (`src/analyze.ts` dry run, `src/harness.ts` `buildAndServe`), so the dry run already prints that
+line verbatim. `test/unit/dry-run-names-the-unresolved-prebundle-entry.test.ts` pins the parity
+against `unresolvedExternals` itself: the dry run's unresolved lines equal
+`unresolvedExternals.map(UNRESOLVED_PREBUNDLE_ENTRY_WARNING)`, and a project whose manifest `imports`
+map resolves the specifier (the epic-stack shape) prints none.
+
+Tests, `node node_modules/vitest/vitest.mjs run <files> --maxWorkers=2`
+(the four lane C files plus lane A's `project-transform-hits-are-classified-once.test.ts`):
+
+```
+ Test Files  5 passed (5)
+      Tests  39 passed (39)
+```
+
+Every test file importing `src/analyze.js` or `src/composition.js`, same flags:
+
+```
+ Test Files  89 passed (89)
+      Tests  1562 passed (1562)
+```
+
+`node node_modules/typescript/bin/tsc --noEmit`: clean (no output).
+
+Corpus, scratch dist `C:/Projekte/120fps-fieldtest/scratch/C-M110/dist/cli.js`, via
+`C:/Projekte/120fps-fieldtest/tools/run120.mjs`:
+
+- **epic-stack-F2, alias and unresolved parity** (`--cwd /e/repositories-run5/epic-stack`,
+  `app/components/ui/button.tsx`, labels `M110-epic-stack-button-dry-after` (`--explain-props`,
+  exit 0, 2s) and `M110-epic-stack-button-real-after` (`--samples 5 --max-combos 4 --explore-budget
+  60 --no-deltas`, exit 0)). Both modes print the same two lines and no unresolved-include line
+  (M108's `imports` resolver resolves `#app/*`), verbatim:
+
+  ```
+  tsconfig path alias "@/icon-name" -> "./app/components/ui/icons/types.ts" resolves to a location with no runtime entry (no package.json main/module/exports, no index file);
+  import "openimg" resolved to an installed package with no runtime entry (no package.json main/module/exports, no index file);
+  ```
+
+  `grep -c "resolves to no installed package"` is 0 in both logs, and the real run reaches
+  `Result: PASS`. Closed: yes.
+- **logto-F3, through lane A's classifier** (`--cwd /e/repositories-run5/logto/packages/console`,
+  `src/ds-components/ConfirmModal/index.tsx --explain-props`, label `M110-logto-after2`, exit 0).
+  The 13 `[transform:css-preprocessor]` lines `diff` byte-identical against
+  `logs/logto/real-confirmmodal.log`, first one verbatim:
+
+  ```
+  [transform:css-preprocessor] src/ds-components/ConfirmModal/index.tsx → @/scss/modal.module.scss: this project compiles that with a CSS preprocessor (Vite needs sass/less/stylus installed in the pro ...
+  ```
+
+  Closed: yes.
+- **supabase-F3, unchanged by the re-point** (label `M110-supabase-after2`, exit 0):
+
+  ```
+  Composition:  would auto-compose from Popover (5 exports)
+  Matrix mode:  predicate matches, but an auto-composed scene supplies the props, so this run would measure that scene's single combo (auto-composed from Popover)
+  ```
+
+  Closed: yes.
+- **Unaffected control** (`--cwd /e/repositories-run5/shadcn-admin`,
+  `src/components/ui/button.tsx --explain-props`, label `M110-shadcn-admin-after-C2`, exit 0): the
+  same verdict, no `[transform:` line, no new warning:
+
+  ```
+  Composition:  would measure Button alone
+  Matrix mode:  would not auto-activate
+  ```
+
+  Closed: yes.
+
+Still open for lane A: `src/cli.ts`'s `explainPropsOptions` forwarding of `skipAutoCompose` and
+`noTransforms` (unchanged from the note above).
 
 ### Lane A evidence (2026-09-03, worktree `C:\Projekte\120fps-m107` on `feat/m107-run5-remediation`)
 
