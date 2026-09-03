@@ -295,6 +295,104 @@ is also covered by the retry test (`enterAndInvalidatePath`).
 Plus, per the map: the milestone's tests pass, both lanes' existing tests stay green (baseline
 failures excepted), and `tsc --noEmit` is clean.
 
+### Lane A evidence
+
+Recorded 2026-09-03 from `C:\Projekte\120fps-m107` at `755d26d` + this lane's edit. Both A/B arms
+were built from this worktree (`build-scratch.sh A-M116` and `A-M116-before`); the control arm is
+the same dist with the two memo reads disabled in `scratch/A-M116-before/dist/preflight.js`
+(`parsedFiles.get`) and `.../harness.js` (`externalDepsWalks.get`), so the two arms differ in
+A1-A4 and nothing else.
+
+Unit, `node node_modules/vitest/vitest.mjs run
+test/unit/import-graph-walk-parses-each-file-once.test.ts --maxWorkers=2`:
+
+```
+ Test Files  1 passed (1)
+      Tests  7 passed (7)
+```
+
+Lane regression, the 111 files under `test/unit/` that import `preflight.js` or `harness.js`
+(`--maxWorkers=2`):
+
+```
+ Test Files  111 passed (111)
+      Tests  1726 passed | 1 skipped (1727)
+```
+
+`node node_modules/typescript/bin/tsc --noEmit`: clean, no output.
+
+Before the change the same test file failed on the two counting assertions, for the right reason:
+`AssertionError: expected 2 to be 1` at the shared-chain read count (`a.tsx` read once per walk) and
+the same message at `scanExternalDeps`'s entry read count.
+
+#### A/B (E1), 5 interleaved same-window pairs per subject
+
+`phaseTimings.preflight` in ms, alternating before/after in one window. Subject 1 is the single
+component of corpus command 1; subject 2 is the 7-component sweep of corpus command 3, summed over
+its per-component reports (the memo's subject is the shared chain, which only a sweep re-walks), 3
+pairs there because one sweep pair costs 6 minutes of wall clock.
+
+| subject | arm | `preflight` per pair | median | verdict | warnings |
+|---|---|---|---|---|---|
+| `src/components/data-table/toolbar.tsx` | before | 269, 301, 301, 243, 229 | **269** | FAIL [render error] | 10 |
+| `src/components/data-table/toolbar.tsx` | after | 267, 248, 259, 262, 250 | **259** | FAIL [render error] | 10 |
+| `src/components/data-table` sweep (sum of 7) | before | 1235, 1379, 1237 | **1237** | 7 reports | 3/6/9/4/3/10/3 |
+| `src/components/data-table` sweep (sum of 7) | after | 1129, 1207, 1053 | **1129** | 7 reports | 3/6/9/4/3/10/3 |
+
+`preflight` on the sweep: **-8.7 %** (1237 ms to 1129 ms), and **-3.7 %** on the single component
+(269 ms to 259 ms), where only the dry-run, composed-child and real-run walks of one component share
+the memo. Per component of the sweep, medians of 3 pairs (before / after, ms): bulk-actions 183/202
+(the first component, nothing to reuse yet), column-header 132/119, faceted-filter 272/223,
+pagination 145/114, toolbar 153/130, view-options 117/93, index 237/240. Every component after the
+first falls except `index`, whose +3 ms sits inside its own scatter (before 230, 280, 237; after 255,
+240, 217). The verdict and the warning list are identical between arms in all 10 single-component
+runs and all 6 sweep runs; the only text that differs between two arms is the noise sentinel's own
+measured number (`machine: hostile (probe CV 34%...)` before against `52%` after), which no memo
+touches. `explore` is untouched in both arms (lane C's change is in both dists).
+
+#### Corpus
+
+Through `node C:/Projekte/120fps-fieldtest/tools/run120.mjs` with
+`--cli C:/Projekte/120fps-fieldtest/scratch/A-M116/dist/cli.js`.
+
+1. shadcn-admin, `EVIDENCE.md` row shadcn-admin-F2, label `M116-shadcn-admin-after`
+   (`-- src/components/data-table/toolbar.tsx --samples 5 --max-combos 4 --explore-budget 60
+   --no-deltas`, `--timeout 1500`). Before (EVIDENCE.md): "toolbar.props.tsx remedy cannot supply a
+   working TanStack Table stand-in". After, verbatim from the digest:
+   `Result: FAIL [render error]`, `Total: 23.7s`,
+   `component=DataTableToolbar path=src/components/data-table/toolbar.tsx mode=curve pass=false noise=hostile cached=false`,
+   `warnings=10` led by
+   `W vite.config.ts declares plugins the harness cannot honor: tanstackRouter, react, tailwindcss — the project's Vite config is never executed`,
+   `phaseTimings.preflight` median 259 ms against the before arm's 269 ms (table above). Same verdict
+   and same warning list as the before arm. The row's own finding is M112's remedy wording, not this
+   milestone's; closed: no (out of lane A's scope).
+2. calcom control, `EVIDENCE.md` row calcom-R1, label `M116-calcom-after`
+   (`-- packages/ui/components/popover/Popover.tsx --matrix --samples 3 --max-combos 4
+   --explore-budget 60 --no-deltas`, `--timeout 900`). Before (EVIDENCE.md): "--matrix silently has
+   no effect when auto-compose takes over". After: `Total: 1m 15s`,
+   `component=Popover path=packages/ui/components/popover/Popover.tsx mode=combo pass=true noise=hostile cached=false`,
+   `warnings=8`, `combos=1`, `#0 verdict=warn domNodeCount=1 mount=11.5 rerender=4.3 interactions=2`.
+   Reaches a report with the verdict the row records: control holds, closed: n/a.
+3. Sweep memo, command 1 with `src/components/data-table` in place of the file, labels
+   `M116-shadcn-admin-sweep-before`/`-after` plus pairs 2 and 3. After, verbatim from the digest:
+   `Total: 11.2s`,
+   `JSON: 7 per-component reports: C:\Projekte\120fps-fieldtest\logs\shadcn-admin\M116-shadcn-admin-sweep-after.bulk-actions.json, ...`.
+   Per-component `phaseTimings.preflight` falls after the first component (medians above: 6 of the 7
+   components are cheaper, the exception being the first one, which has nothing to reuse, and
+   `index`, +3 ms inside its scatter), and each component's warning list in the sweep is identical to
+   its arm-matched before run, `toolbar`'s among them (10 warnings, same order, same text as its
+   single-file run of command 1). Closed: yes.
+4. Unaffected repo, shadcn-admin `-- src/components/ui/button.tsx --explain-props`
+   (label `M116-A-button-explain-after`): still reaches its report,
+   `Estimated real run: ~2m 9s (12 combos x 10 samples; defaults: no phase timings recorded for this component yet)`,
+   `Dry run: nothing was measured, no report was written.`
+
+The memo is keyed on the walk's inputs and on the mtime and size of every file the walk read, so a
+walk with a different alias set, `projectRoot` or `workspaceRoot` re-walks (A2) and an edited or
+newly created file is read again (A3). Resolution probes into `node_modules` are not part of the
+signature: a package installed mid-process would not invalidate an entry, which no run does and no
+corpus repro exercises.
+
 ## Deferred
 
 - **Lever D — one driven session shared by the delta and scale-curve passes**

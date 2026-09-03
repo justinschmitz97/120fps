@@ -445,10 +445,41 @@ function scriptKind(fileName: string): ts.ScriptKind {
   return ts.ScriptKind.TS;
 }
 
+// M116 A1: the same file is walked by the dry run, by every composed child and
+// by every component of a sweep, and its parse cannot differ between them while
+// it sits unchanged on disk. Keyed by mtime and size, so an edit invalidates the
+// entry without a flag; a file with no stat (missing, unreadable) is never
+// cached, so a file that appears later is read then. Process-local by design:
+// nothing here survives the run (M116 MUST NOT).
+const parsedFiles = new Map<string, { signature: string; sourceFile: ts.SourceFile | undefined }>();
+
+function fileSignature(fileName: string): string | undefined {
+  try {
+    const stat = fs.statSync(fileName);
+    return `${stat.mtimeMs}:${stat.size}`;
+  } catch {
+    return undefined;
+  }
+}
+
 // M57: a `.vue` file is not TypeScript. Its `<script setup>` block is, and that
 // is where its imports live: without this the walk would stop at the measured
 // file and every guarantee below it would silently become a no-op.
 function parse(fileName: string, vueCompiler?: VueSfcCompiler): ts.SourceFile | undefined {
+  // A compiler-less walk reads a `.vue` file as unreadable, so the two answers
+  // are different facts about the same file and never share a cache entry.
+  const cacheKey = `${vueCompiler ? "sfc" : "ts"} ${path.resolve(fileName)}`;
+  const signature = fileSignature(fileName);
+  if (signature !== undefined) {
+    const cached = parsedFiles.get(cacheKey);
+    if (cached && cached.signature === signature) return cached.sourceFile;
+  }
+  const sourceFile = parseUncached(fileName, vueCompiler);
+  if (signature !== undefined) parsedFiles.set(cacheKey, { signature, sourceFile });
+  return sourceFile;
+}
+
+function parseUncached(fileName: string, vueCompiler?: VueSfcCompiler): ts.SourceFile | undefined {
   const text = ts.sys.readFile(fileName);
   if (text === undefined) return undefined;
   if (isVueFile(fileName)) {

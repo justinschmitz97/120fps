@@ -5527,7 +5527,133 @@ export function subpathImportPackage(
   return target;
 }
 
+type ExternalDepsAliases = Array<{
+  find: RegExp;
+  replacement: string;
+  isShim?: boolean;
+  fromWorkspaceRoot?: WorkspaceRootAliasSource;
+}>;
+
+interface ExternalDepsWalkRecord {
+  packages: string[];
+  specifiers: string[];
+  warnings: string[];
+  extraAliases: Array<{ find: RegExp; replacement: string }>;
+  unresolved: Array<{ specifier: string; importer: string }>;
+  // Specifiers the walk added to the caller's dedupe set, replayed so a second
+  // walk sharing that set reports what the first one left it reporting.
+  reported: string[];
+  files: Array<[string, string | undefined]>;
+}
+
+// M116 A2: the component walk and the wrapper walk run per build, and a sweep
+// builds per component; the same entry over the same files, alias set and roots
+// cannot produce a different list. The key carries every input the walk reads,
+// including the dedupe set it was handed, and the entry is served again only
+// while every file it read has the mtime and size it read.
+const externalDepsWalks = new Map<string, ExternalDepsWalkRecord>();
+
+function sourceSignature(file: string): string | undefined {
+  try {
+    const stat = fs.statSync(file);
+    return `${stat.mtimeMs}:${stat.size}`;
+  } catch {
+    return undefined;
+  }
+}
+
+function externalDepsKey(
+  componentPath: string,
+  projectRoot: string,
+  workspaceRoot: string,
+  aliases: ExternalDepsAliases,
+  reported: Set<string> | undefined,
+): string {
+  return JSON.stringify([
+    path.resolve(componentPath),
+    path.resolve(projectRoot),
+    path.resolve(workspaceRoot),
+    aliases.map((alias) => [
+      alias.find.source,
+      alias.find.flags,
+      alias.replacement,
+      alias.isShim ?? false,
+      alias.fromWorkspaceRoot ?? null,
+    ]),
+    [...(reported ?? [])].sort(),
+  ]);
+}
+
 export function scanExternalDeps(
+  componentPath: string,
+  projectRoot: string,
+  aliases: ExternalDepsAliases,
+  specifiersOut?: Set<string>,
+  warningsOut?: string[],
+  workspaceRoot: string = findWorkspaceRoot(projectRoot),
+  extraAliasesOut?: Array<{ find: RegExp; replacement: string }>,
+  unresolvedOut?: Array<{ specifier: string; importer: string }>,
+  reportedUnresolvedOut?: Set<string>,
+): string[] {
+  const key = externalDepsKey(
+    componentPath,
+    projectRoot,
+    workspaceRoot,
+    aliases,
+    reportedUnresolvedOut,
+  );
+  const cached = externalDepsWalks.get(key);
+  if (cached && cached.files.every(([file, signature]) => sourceSignature(file) === signature)) {
+    for (const specifier of cached.specifiers) specifiersOut?.add(specifier);
+    for (const warning of cached.warnings) warningsOut?.push(warning);
+    for (const alias of cached.extraAliases) extraAliasesOut?.push(alias);
+    for (const entry of cached.unresolved) unresolvedOut?.push({ ...entry });
+    for (const specifier of cached.reported) reportedUnresolvedOut?.add(specifier);
+    return [...cached.packages];
+  }
+
+  // The walk writes into the caller's own channels, unchanged: buildAndServe
+  // passes one array as both `aliases` and `extraAliasesOut`, so a rescue alias
+  // pushed mid-walk resolves the imports below it. What each channel gained is
+  // read off afterwards as the delta, never by substituting a collector.
+  const specifiers = specifiersOut ?? new Set<string>();
+  const warnings = warningsOut ?? [];
+  const extraAliases = extraAliasesOut ?? [];
+  const unresolved = unresolvedOut ?? [];
+  const reported = reportedUnresolvedOut ?? new Set<string>();
+  const specifiersBefore = new Set(specifiers);
+  const reportedBefore = new Set(reported);
+  const warningsBefore = warnings.length;
+  const extraAliasesBefore = extraAliases.length;
+  const unresolvedBefore = unresolved.length;
+  const files = new Map<string, string | undefined>();
+
+  const packages = walkExternalDeps(
+    componentPath,
+    projectRoot,
+    aliases,
+    specifiers,
+    warnings,
+    workspaceRoot,
+    extraAliases,
+    unresolved,
+    reported,
+    files,
+  );
+
+  externalDepsWalks.set(key, {
+    packages: [...packages],
+    specifiers: [...specifiers].filter((specifier) => !specifiersBefore.has(specifier)),
+    warnings: warnings.slice(warningsBefore),
+    extraAliases: extraAliases.slice(extraAliasesBefore),
+    unresolved: unresolved.slice(unresolvedBefore).map((entry) => ({ ...entry })),
+    reported: [...reported].filter((specifier) => !reportedBefore.has(specifier)),
+    files: [...files],
+  });
+  return packages;
+}
+
+function walkExternalDeps(
   componentPath: string,
   projectRoot: string,
   aliases: Array<{
@@ -5552,6 +5678,9 @@ export function scanExternalDeps(
   // (component and wrapper) shares the dedupe set, so a specifier unresolved in
   // both walks is still reported once.
   reportedUnresolvedOut?: Set<string>,
+  // M116 (A2): every file this walk read, with the mtime and size it had, for
+  // the memo that decides whether the result still stands.
+  filesReadOut?: Map<string, string | undefined>,
 ): string[] {
   const externalPkgs = new Set<string>();
   const visited = new Set<string>();
@@ -5583,6 +5712,11 @@ export function scanExternalDeps(
     const normalizedFile = path.resolve(file);
     if (visited.has(normalizedFile)) continue;
     visited.add(normalizedFile);
+
+    // M116 A2: what the memo above this function has to re-check before it
+    // serves this walk again. A file the walk could not read is recorded too,
+    // so one that appears later invalidates the entry.
+    filesReadOut?.set(normalizedFile, sourceSignature(normalizedFile));
 
     let content: string;
     try {

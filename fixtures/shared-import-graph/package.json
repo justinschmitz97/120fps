@@ -1,0 +1,5 @@
+{
+  "name": "shared-import-graph-fixture",
+  "private": true,
+  "type": "module"
+}
