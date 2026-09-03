@@ -42,8 +42,18 @@ function fakePage(): FakePage {
   return {
     page,
     throwError: (message) => emit("pageerror", { message }),
-    consoleError: (text) => emit("console", { type: () => "error", text: () => text }),
-    consoleLog: (text) => emit("console", { type: () => "log", text: () => text }),
+    consoleError: (text) =>
+      emit("console", {
+        type: () => "error",
+        text: () => text,
+        args: () => [{ toString: () => text }],
+      }),
+    consoleLog: (text) =>
+      emit("console", {
+        type: () => "log",
+        text: () => text,
+        args: () => [{ toString: () => text }],
+      }),
   };
 }
 

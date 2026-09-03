@@ -1,0 +1,8 @@
+{
+  "name": "griffel-project",
+  "private": true,
+  "dependencies": {
+    "@griffel/react": "^1.5.22",
+    "react": "^19.0.0"
+  }
+}

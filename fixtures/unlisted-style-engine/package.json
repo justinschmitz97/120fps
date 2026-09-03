@@ -1,0 +1,8 @@
+{
+  "name": "unlisted-style-engine",
+  "private": true,
+  "dependencies": {
+    "@acme/styling": "^1.0.0",
+    "react": "^19.0.0"
+  }
+}

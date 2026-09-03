@@ -18,7 +18,9 @@ function makeFakePage(): { page: Page; emitter: EventEmitter } {
 }
 
 function makeConsoleMessage(type: string, text: string) {
-  return { type: () => type, text: () => text };
+  // M114 A6: a real ConsoleMessage always exposes its arguments; a message
+  // logged without a format string has the rendered text as its only one.
+  return { type: () => type, text: () => text, args: () => [{ toString: () => text }] };
 }
 
 function makeTimeoutError(message = "Timeout 30000ms exceeded."): Error {

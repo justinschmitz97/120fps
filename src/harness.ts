@@ -1021,28 +1021,52 @@ const NEXT_ENTRY_STEMS = ["app/layout", "src/app/layout", "pages/_app", "src/pag
 const ENTRY_EXTENSIONS = [".tsx", ".jsx", ".ts", ".js"];
 const MODULE_SCRIPT_TAG = /<script\b[^>]*>/gi;
 
-// The module the project's own toolchain starts from: what index.html loads, or
-// the module Next.js renders every route through.
-export function findProjectEntry(projectRoot: string): string | undefined {
-  const html = path.join(projectRoot, "index.html");
-  let markup: string | undefined;
+// The module one html file loads. `rootDir` is the directory a root-absolute
+// `src="/x.js"` is resolved against — Vite's own `root`, which is the package
+// root only when the config declares no other one (M114 A3).
+function entryFromHtml(html: string, rootDir: string): string | undefined {
+  let markup: string;
   try {
     markup = fs.readFileSync(html, "utf-8");
   } catch {
-    markup = undefined;
+    return undefined;
   }
-  if (markup) {
-    MODULE_SCRIPT_TAG.lastIndex = 0;
-    for (const tag of markup.match(MODULE_SCRIPT_TAG) ?? []) {
-      if (!/\btype\s*=\s*["']module["']/i.test(tag)) continue;
-      const src = /\bsrc\s*=\s*["']([^"']+)["']/i.exec(tag)?.[1];
-      if (!src || /^[a-z][a-z0-9+.-]*:/i.test(src)) continue;
-      const resolved = src.startsWith("/")
-        ? path.join(projectRoot, src)
-        : path.resolve(path.dirname(html), src);
-      if (isFile(resolved)) return resolved;
-    }
+  MODULE_SCRIPT_TAG.lastIndex = 0;
+  for (const tag of markup.match(MODULE_SCRIPT_TAG) ?? []) {
+    if (!/\btype\s*=\s*["']module["']/i.test(tag)) continue;
+    const src = /\bsrc\s*=\s*["']([^"']+)["']/i.exec(tag)?.[1];
+    if (!src || /^[a-z][a-z0-9+.-]*:/i.test(src)) continue;
+    const resolved = src.startsWith("/")
+      ? path.join(rootDir, src)
+      : path.resolve(path.dirname(html), src);
+    if (isFile(resolved)) return resolved;
   }
+  return undefined;
+}
+
+// The module the project's own toolchain starts from: what index.html loads, or
+// the module Next.js renders every route through.
+// M114 A3, A5 (vuetify-F1): the package root's own index.html still decides
+// first; a `root` the vite config declares and a foldable
+// `build.rollupOptions.input` are two more places one can be, and vuetify has
+// its only entry under the first of them.
+export function findProjectEntry(
+  projectRoot: string,
+  opts?: { configRoot?: string; rollupInputs?: string[] },
+): string | undefined {
+  const fromPackageRoot = entryFromHtml(path.join(projectRoot, "index.html"), projectRoot);
+  if (fromPackageRoot) return fromPackageRoot;
+
+  const configRoot = opts?.configRoot;
+  if (configRoot && path.resolve(configRoot) !== path.resolve(projectRoot)) {
+    const fromConfigRoot = entryFromHtml(path.join(configRoot, "index.html"), configRoot);
+    if (fromConfigRoot) return fromConfigRoot;
+  }
+  for (const input of opts?.rollupInputs ?? []) {
+    const fromInput = entryFromHtml(input, configRoot ?? projectRoot);
+    if (fromInput) return fromInput;
+  }
+
   for (const stem of NEXT_ENTRY_STEMS) {
     for (const extension of ENTRY_EXTENSIONS) {
       const candidate = path.join(projectRoot, stem + extension);
@@ -1236,6 +1260,12 @@ export interface CssDiscovery {
   // present when source === "runtime", and on the "none" of a declared-but-
   // unbuilt stylesheet whose package also styles at runtime (M112 review).
   runtimeEngines?: string[];
+  // M114 A1, A2 / I5 (fluentui-F3): whether the engines above are ones
+  // RUNTIME_STYLE_ENGINES names. `false` means the measured file imported a
+  // `makeStyles`/`createUseStyles`/`styled` binding from a package the list
+  // does not carry — an observation about one file, not a fact about the
+  // package's dependencies. Present whenever `runtimeEngines` is.
+  runtimeEnginesRecognised?: boolean;
   // M112 A1, A2 / I5 (radix-themes-F2): the measured package's own declarations
   // whose target is not on disk, as projectRoot-relative posix paths beside the
   // manifest field that named them. Present only when `source` is "none"
@@ -1397,7 +1427,10 @@ function brokenNestedImport(
 export function discoverGlobalCss(
   projectRoot: string,
   warningsOut?: string[],
-  opts?: { extraEntryFiles?: string[] },
+  // M114 A2 (fluentui-F3 review): the file the run measures, read only for the
+  // styling binding it imports. Absent means the unrecognised-engine branch is
+  // never taken, so the line stays "none found".
+  opts?: { extraEntryFiles?: string[]; measuredFile?: string },
 ): CssDiscovery {
   const workspaceRoot = findWorkspaceRoot(projectRoot);
   const aliases = loadTsconfigAliases(projectRoot);
@@ -1421,7 +1454,15 @@ export function discoverGlobalCss(
     return false;
   };
 
-  const entry = findProjectEntry(projectRoot);
+  // M114 A3, A5 (vuetify-F1): the entry chain is what the project's own config
+  // says it is. A `root` the config declares moves index.html out of the
+  // package root, and a foldable `build.rollupOptions.input` names an html
+  // file that is nowhere near either.
+  const viteConfig = readViteConfigData(projectRoot, workspaceRoot);
+  const entry = findProjectEntry(projectRoot, {
+    ...(viteConfig.root !== undefined ? { configRoot: viteConfig.root } : {}),
+    ...(viteConfig.rollupInputs !== undefined ? { rollupInputs: viteConfig.rollupInputs } : {}),
+  });
   const entryFiles: string[] = [];
   for (const file of [...(entry ? [entry] : []), ...(opts?.extraEntryFiles ?? [])]) {
     const resolved = path.resolve(file);
@@ -1534,7 +1575,24 @@ export function discoverGlobalCss(
   }
 
   const runtimeEngines = detectRuntimeStyleEngines(projectRoot, workspaceRoot);
-  if (runtimeEngines.length > 0) return { files: [], source: "runtime", runtimeEngines };
+  if (runtimeEngines.length > 0) {
+    return { files: [], source: "runtime", runtimeEngines, runtimeEnginesRecognised: true };
+  }
+
+  // M114 A2: no declared engine and no stylesheet anywhere. What the measured
+  // file imports is the last read left, and it decides between "none found"
+  // and an engine this recogniser cannot name.
+  const unlisted = opts?.measuredFile
+    ? unrecognisedRuntimeStyleEngine(opts.measuredFile)
+    : undefined;
+  if (unlisted !== undefined) {
+    return {
+      files: [],
+      source: "runtime",
+      runtimeEngines: [unlisted],
+      runtimeEnginesRecognised: false,
+    };
+  }
 
   return { files: [], source: "none" };
 }
@@ -1543,14 +1601,58 @@ export function discoverGlobalCss(
 // ever going to exist. Checked only once the fallback layer's ranked walk has
 // no survivor — never before layers 1-3, and never as a reason to skip a real
 // find.
+// M114 A1 (fluentui-F3): the list is what the recogniser can name, not what
+// exists. Griffel styles every Fluent v9 component and was absent, so a
+// package whose only styling is `makeStyles` read as "no stylesheet found".
 export const RUNTIME_STYLE_ENGINES = [
   "@ant-design/cssinjs",
+  "antd-style",
   "@emotion/react",
   "@emotion/styled",
   "@emotion/css",
+  "@griffel/react",
+  "@griffel/core",
+  "css-render",
   "styled-components",
   "primevue",
 ];
+
+// M114 A2: the bindings a runtime styling engine exports. An import of one of
+// them from a package the list does not name is an observation about the
+// measured file, not a fact about the package's dependencies, and it is
+// disclosed in weaker wording (report.ts, formatStylesheetsLine).
+const RUNTIME_STYLE_BINDINGS = new Set(["makeStyles", "createUseStyles", "styled"]);
+
+// The package a `makeStyles`/`createUseStyles`/`styled` binding was imported
+// from in the measured file, when that package is not one the list above
+// carries. Bare specifiers only: a relative import is the project's own code,
+// not an engine.
+export function unrecognisedRuntimeStyleEngine(measuredFile: string): string | undefined {
+  let sourceText: string;
+  try {
+    sourceText = fs.readFileSync(measuredFile, "utf-8");
+  } catch {
+    return undefined;
+  }
+  const kind = /\.[jt]sx$/i.test(measuredFile) ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
+  const source = ts.createSourceFile(measuredFile, sourceText, ts.ScriptTarget.Latest, false, kind);
+  for (const statement of source.statements) {
+    if (!ts.isImportDeclaration(statement) || !statement.importClause) continue;
+    if (!ts.isStringLiteral(statement.moduleSpecifier)) continue;
+    const specifier = statement.moduleSpecifier.text;
+    if (specifier.startsWith(".") || specifier.startsWith("/")) continue;
+    if (RUNTIME_STYLE_ENGINES.includes(specifier)) continue;
+    const clause = statement.importClause;
+    const named = clause.namedBindings;
+    const imported: string[] = [];
+    if (clause.name) imported.push(clause.name.text);
+    if (named && ts.isNamedImports(named)) {
+      for (const element of named.elements) imported.push((element.propertyName ?? element.name).text);
+    }
+    if (imported.some((name) => RUNTIME_STYLE_BINDINGS.has(name))) return specifier;
+  }
+  return undefined;
+}
 
 export function detectRuntimeStyleEngines(
   projectRoot: string,
@@ -1995,6 +2097,7 @@ const VITE_CONFIG_FILES = [
 // Ordered so the warning reads the same however the config file was written.
 const IGNORED_KEY_ORDER = [
   "a computed config object",
+  "root",
   "publicDir",
   "resolve.alias",
   "css.preprocessorOptions",
@@ -2003,6 +2106,13 @@ const IGNORED_KEY_ORDER = [
 
 export interface ViteConfigData {
   configFile?: string;
+  // M114 A3 (vuetify-F1): the directory the config makes Vite's root, when a
+  // text read can fold it. Absent when the config declares none or computes
+  // one, and then "root" is among `ignoredKeys`.
+  root?: string;
+  // M114 A5: the html files `build.rollupOptions.input` names, folded and
+  // confirmed on disk, in the config's own order.
+  rollupInputs?: string[];
   publicDir?: string;
   aliases: Array<{ find: RegExp; replacement: string }>;
   ignoredKeys: string[];
@@ -2244,6 +2354,45 @@ function resolveCallExpressionPath(node: ts.Expression, configDir: string): stri
   return path.resolve(configDir, ...literalArgs);
 }
 
+// M114 A5: `build.rollupOptions.input`, in the four shapes a config writes it
+// — one path, an array of paths, an object map of them, each a string literal
+// or a `resolve(...)`/`join(...)` call. Only html files that exist survive: an
+// entry the run cannot open is not an entry. Relative paths fold against the
+// config's own directory, the form every corpus config uses; a path relative
+// to a declared `root` instead simply does not resolve and is dropped.
+function foldRollupInputs(build: ts.ObjectLiteralExpression, configDir: string): string[] {
+  const rollupOptions = build.properties.find(
+    (property) => literalPropertyName(property) === "rollupOptions",
+  );
+  if (!rollupOptions || !ts.isPropertyAssignment(rollupOptions)) return [];
+  if (!ts.isObjectLiteralExpression(rollupOptions.initializer)) return [];
+  const input = rollupOptions.initializer.properties.find(
+    (property) => literalPropertyName(property) === "input",
+  );
+  if (!input || !ts.isPropertyAssignment(input)) return [];
+
+  const expressions: ts.Expression[] = [];
+  const value = input.initializer;
+  if (ts.isArrayLiteralExpression(value)) expressions.push(...value.elements);
+  else if (ts.isObjectLiteralExpression(value)) {
+    for (const entry of value.properties) {
+      if (ts.isPropertyAssignment(entry)) expressions.push(entry.initializer);
+    }
+  } else expressions.push(value);
+
+  const files: string[] = [];
+  for (const expression of expressions) {
+    const literal = stringLiteralValue(expression);
+    const resolved =
+      literal === undefined
+        ? resolveCallExpressionPath(expression, configDir)
+        : path.resolve(configDir, literal);
+    if (!resolved || !/\.html?$/i.test(resolved) || !isFile(resolved)) continue;
+    if (!files.includes(resolved)) files.push(resolved);
+  }
+  return files;
+}
+
 // The exported config object, through the shapes a config file is written in.
 // Nothing is called and nothing is imported: this is the text of a file the
 // harness must never execute.
@@ -2316,6 +2465,9 @@ function findViteConfigFile(dir: string): string | undefined {
 }
 
 interface ParsedViteConfig {
+  // M114 A3, A5
+  root?: string;
+  rollupInputs?: string[];
   publicDir?: string;
   aliasEntries: Array<{ find: string; replacement: string }>;
   conditions: string[];
@@ -2351,12 +2503,35 @@ function parseViteConfigFile(configFile: string): ParsedViteConfig | undefined {
   const aliasEntries: Array<{ find: string; replacement: string }> = [];
   let conditions: string[] = [];
   let publicDir: string | undefined;
+  let root: string | undefined;
+  let rollupInputs: string[] | undefined;
   const preprocessorOptions: PreprocessorOptions = {};
   const unfoldable: string[] = [];
 
   for (const property of config.properties) {
     if (!ts.isPropertyAssignment(property)) continue;
     const name = literalPropertyName(property);
+
+    // M114 A3 (vuetify-F1): vuetify's own `root: resolve('dev')` decides where
+    // its index.html is, and the loop had no branch for it, so the run
+    // asserted the package has no application entry.
+    if (name === "root") {
+      const literal = stringLiteralValue(property.initializer);
+      const resolved =
+        literal === undefined
+          ? resolveCallExpressionPath(property.initializer, configDir)
+          : path.resolve(configDir, literal);
+      if (resolved && isDirectory(resolved)) root = resolved;
+      else ignored.add("root");
+      continue;
+    }
+
+    // M114 A5: the html file the project builds from, when the path folds.
+    if (name === "build" && ts.isObjectLiteralExpression(property.initializer)) {
+      const inputs = foldRollupInputs(property.initializer, configDir);
+      if (inputs.length > 0) rollupInputs = inputs;
+      continue;
+    }
 
     if (name === "publicDir") {
       const literal = stringLiteralValue(property.initializer);
@@ -2499,6 +2674,8 @@ function parseViteConfigFile(configFile: string): ParsedViteConfig | undefined {
   }
   return {
     publicDir,
+    ...(root !== undefined ? { root } : {}),
+    ...(rollupInputs !== undefined ? { rollupInputs } : {}),
     aliasEntries,
     conditions,
     ignored,
@@ -2533,6 +2710,10 @@ export function readViteConfigData(
     parsed = parseViteConfigFile(configFile);
     if (parsed) {
       if (parsed.publicDir) data.publicDir = parsed.publicDir;
+      // M114 A3, A5: member-only, like publicDir — a workspace root's entry
+      // is not this package's entry.
+      if (parsed.root) data.root = parsed.root;
+      if (parsed.rollupInputs) data.rollupInputs = parsed.rollupInputs;
       data.aliases = parsed.aliasEntries.map(toAliasRegex);
       data.conditions = parsed.conditions;
       data.ignoredKeys = IGNORED_KEY_ORDER.filter((key) => parsed!.ignored.has(key));

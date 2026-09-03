@@ -38,7 +38,12 @@ function fakePage() {
   return {
     page,
     throwError: (message: string) => emit("pageerror", { message }),
-    consoleError: (text: string) => emit("console", { type: () => "error", text: () => text }),
+    consoleError: (text: string) =>
+      emit("console", {
+        type: () => "error",
+        text: () => text,
+        args: () => [{ toString: () => text }],
+      }),
   };
 }
 

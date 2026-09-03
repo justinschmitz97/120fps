@@ -31,11 +31,17 @@ function write(relative: string, body: string): string {
 
 describe("RUNTIME_STYLE_ENGINES", () => {
   it("lists the engines it recognizes", () => {
+    // M114 A1 (fluentui-F3): Griffel, antd-style and css-render joined the
+    // list; a Fluent v9 package styles through the first of them alone.
     expect(RUNTIME_STYLE_ENGINES).toEqual([
       "@ant-design/cssinjs",
+      "antd-style",
       "@emotion/react",
       "@emotion/styled",
       "@emotion/css",
+      "@griffel/react",
+      "@griffel/core",
+      "css-render",
       "styled-components",
       "primevue",
     ]);
@@ -72,6 +78,7 @@ describe("runtime CSS-in-JS as a discovery outcome", () => {
       files: [],
       source: "runtime",
       runtimeEngines: ["@ant-design/cssinjs"],
+      runtimeEnginesRecognised: true,
     });
     // The disqualified reset.css is still named, even though the outcome
     // resolved to runtime rather than none.
@@ -94,6 +101,7 @@ describe("runtime CSS-in-JS as a discovery outcome", () => {
       files: [],
       source: "runtime",
       runtimeEngines: ["@emotion/react", "@emotion/styled"],
+      runtimeEnginesRecognised: true,
     });
   });
 

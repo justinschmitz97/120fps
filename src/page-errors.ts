@@ -109,6 +109,54 @@ export function isHarnessInternalNoise(url: string, harnessDirName: string): boo
   return !match[1].includes(".");
 }
 
+// M114 A6 (supabase-F2): Playwright renders a console call as the format
+// string followed by every argument's preview, joined by a space, and
+// substitutes nothing — so React's `Warning: %s is invalid` reached the report
+// with the `%s` intact and the value stranded at the end of the line. The same
+// previews arrive through `msg.args()`, which is what the browser's own
+// console would have formatted with.
+//
+// `text` is the fallback for a message that carries no arguments at all;
+// `args[0]` is the format string and the rest fill its placeholders, in order.
+// A placeholder with no argument left stays literal, `%%` collapses to one
+// percent sign and consumes nothing, `%c` consumes its CSS argument and prints
+// nothing, and arguments the format never used are appended, exactly as a
+// browser console renders them.
+export function substituteConsoleFormat(text: string, args: string[]): string {
+  const format = args[0];
+  if (format === undefined) return text;
+  const rest = args.slice(1);
+  let next = 0;
+  let out = "";
+  for (let i = 0; i < format.length; i++) {
+    if (format[i] !== "%" || i + 1 >= format.length) {
+      out += format[i];
+      continue;
+    }
+    const directive = format[i + 1]!;
+    if (directive === "%") {
+      out += "%";
+      i++;
+      continue;
+    }
+    if (!"sdifoOc".includes(directive)) {
+      out += format[i];
+      continue;
+    }
+    if (next >= rest.length) {
+      out += format[i];
+      continue;
+    }
+    const argument = rest[next]!;
+    next++;
+    i++;
+    if (directive === "c") continue;
+    out += argument;
+  }
+  const surplus = rest.slice(next);
+  return surplus.length > 0 ? [out, ...surplus].join(" ") : out;
+}
+
 export function attachPageErrorCapture(page: Page, harnessDirName?: string): PageErrorCapture {
   // Two buckets over one event stream. The session bucket feeds
   // `enrichTimeoutError` and spans the whole run; the segment bucket is reset
@@ -139,8 +187,12 @@ export function attachPageErrorCapture(page: Page, harnessDirName?: string): Pag
   });
   page.on("console", (msg) => {
     if (msg.type() !== "error") return;
-    session.record(msg.text());
-    segment.record(msg.text());
+    const text = substituteConsoleFormat(
+      msg.text(),
+      msg.args().map((arg) => String(arg)),
+    );
+    session.record(text);
+    segment.record(text);
   });
   // A CSS import that 404s, or a preprocessor that answers 500, kills module
   // evaluation with no exception of its own: the readiness gate just never

@@ -217,6 +217,78 @@ corpus repo still reaches a report: a bounded shadcn-admin button run.
 - supabase-F2: `node C:/Projekte/120fps-fieldtest/tools/run120.mjs --cwd /e/repositories-run5/supabase/apps/studio --out C:/Projekte/120fps-fieldtest/logs/supabase --label real-copybutton --timeout 1500 -- components/ui/CopyButton.tsx --samples 5 --max-combos 4 --explore-budg` `[tail: --explore-budget 60 --no-deltas]`: the captured page errors carry substituted text and no bare `%s`.
 - vuetify-F1: `node C:/Projekte/120fps-fieldtest/tools/run120.mjs --cwd /e/repositories-run5/vuetify/packages/vuetify --out C:/Projekte/120fps-fieldtest/logs/vuetify --label vbtn-auto --timeout 1500 -- src/components/VBtn/VBtn.tsx --framework auto --explain-props` prints the fallback warning without the `this package has no application entry` clause (the entry resolves to `dev/index.html` under the config's `root`), keeps `src/components/VField/VField.sass` as the disclosed largest-fallback pick, and its vite-config line still reads `resolve.alias, plugins` with no `root`, because `resolve('dev')` folds.
 
+### Lane A evidence
+
+Run 2026-09-03 in `C:/Projekte/120fps-m107` on `feat/m107-run5-remediation`, scratch dist
+`C:/Projekte/120fps-fieldtest/scratch/A-M114/dist/cli.js`.
+
+1. Tests. `node node_modules/vitest/vitest.mjs run test/unit/runtime-style-engine-disclosure.test.ts
+   test/unit/vite-root-entry-discovery.test.ts test/unit/console-format-substitution.test.ts
+   --maxWorkers=2`: `Test Files  3 passed (3)` / `Tests  28 passed (28)`.
+   The 43 test files that exercise `discoverGlobalCss`, `findProjectEntry`, `readViteConfigData`,
+   `CSS_FALLBACK_WARNING`, `attachPageErrorCapture` or the `Stylesheets:` line:
+   `Test Files  43 passed (43)` / `Tests  706 passed (706)`, after four assertions this milestone
+   supersedes were rewritten: `runtime-style-engine-detection.test.ts` (the closed engine list, A1,
+   and the two `discoverGlobalCss` runtime results that now carry `runtimeEnginesRecognised`, I5)
+   and `vite-config-workspace-root.test.ts` (`root: '.'` is read now, A3). Three console-message
+   test doubles (`page-errors.test.ts`, `render-health.test.ts`, `render-health-edge-cases.test.ts`)
+   gained the `args()` a real `ConsoleMessage` always has, which A6 reads.
+   The whole `test/unit` suite, run after them: `Test Files  318 passed (318)` /
+   `Tests  4696 passed | 1 skipped (4697)`, so the map's four baseline-failure files are green too
+   (lane B closed them under this milestone).
+2. `node node_modules/typescript/bin/tsc --noEmit`: clean, no output.
+3. Corpus, each through `node C:/Projekte/120fps-fieldtest/tools/run120.mjs ... --cli
+   C:/Projekte/120fps-fieldtest/scratch/A-M114/dist/cli.js`.
+
+- fluentui-F3 (A1), label `M114-fluentui-F3-after`, closed.
+  Before: `  Stylesheets: none found (checked the project entry, conventional filenames, and the
+  largest stylesheet under the project)`.
+  After: `  Stylesheets: none — styling is generated at runtime by @griffel/react, @griffel/core; no
+  stylesheet was needed`. The package declares both Griffel entry points, so both are named.
+- vuetify-F1 (A3, A4), label `M114-vuetify-after`, closed.
+  Before: `no entry stylesheet import and no conventional global stylesheet were found, so
+  src/components/VField/VField.sass was injected because it is the largest stylesheet found under
+  this project; this package has no application entry (index.html or Next.js app/pages stem) of its
+  own, so no import chain corroborates the pick -- it is ranked by size alone; pass --css to name
+  the right one`.
+  After: the run no longer reaches that warning at all — M112's declared-but-unbuilt branch, landed
+  before this one, returns first with `Stylesheets: none injected — package.json "exports[./styles]"
+  declares lib/styles/main.css, which is not built yet`. The false clause is gone twice over: read
+  through the scratch dist, `readViteConfigData` returns
+  `root= E:\repositories-run5\vuetify\packages\vuetify\dev` and
+  `ignoredKeys= resolve.alias, plugins` (no `root`, because `resolve('dev')` folds, as the row
+  predicted), and `findProjectEntry` returns
+  `E:\repositories-run5\vuetify\packages\vuetify\dev\index.js` — the module `dev/index.html` loads
+  through a root-absolute `/index.js`, so `noEntryInPackage` can never be true here again.
+- supabase-F2 (A6), label `M114-supabase-after`, closed.
+  Before: `- React does not recognize the \`%s\` prop on a DOM element. ... remove it from the DOM
+  element. defaultVariants defaultvariants` and `- Invalid prop \`%s\` supplied to
+  \`React.Fragment\`. React.Fragment can only have \`key\` and \`children\` props. data-size (×5)`.
+  After: `- React does not recognize the \`defaultVariants\` prop on a DOM element. If you
+  intentionally want it to appear in the DOM as a custom attribute, spell it as lowercase
+  \`defaultvariants\` instead. ...` and `- Invalid prop \`data-size\` supplied to
+  \`React.Fragment\`. React.Fragment can only have \`key\` and \`children\` props. (×5)`.
+  `M114-supabase-after.json` contains zero occurrences of `%s`. `Result: PASS`.
+- Unaffected repo, label `M114-A-shadcn-admin-after`: `src/components/ui/button.tsx
+  --explain-props` still reaches `Component: Button` / `Props (32):`.
+- A5 (`build.rollupOptions.input`) has no corpus row of its own: no run-5 repo declares one. It is
+  unit-verified on `fixtures/vite-rollup-input/`, where the folded html input decides the
+  `entry-chain` layer instead of the size-ranked fallback.
+- Lane B's and lane C's repros were not re-run by lane A: nothing in `src/harness.ts` or
+  `src/page-errors.ts` decides them.
+
+Open, blocked on I5's lane C half. A2's unrecognised-engine outcome is produced
+(`discoverGlobalCss` returns `source: "runtime"`, `runtimeEngines: ["@acme/styling"]`,
+`runtimeEnginesRecognised: false` for a measured file importing `makeStyles` from an unlisted
+package) and rendered (`formatStylesheetsLine` already carries C4's branch), but the two hops
+between them live in `src/analyze.ts`, lane C's file, and were not landed: `resolveCssFiles` neither
+forwards a `measuredFile` into `discoverGlobalCss` nor copies `runtimeEnginesRecognised` onto the
+`CssReport` it builds (`:4674-4685`, `:2477`). Until lane C adds both, A2 is unit-verified only and
+a real run never takes the branch; A1 is unaffected, because an absent
+`runtimeEnginesRecognised` reads as recognised by C4's own rule. The quoted
+`RUNTIME_STYLE_ENGINES` copy in `m82-stylesheet-selection-disclosure.md:101-108` is coordinator-owned
+and still lists the six pre-M114 engines.
+
 ### Lane B evidence
 
 Run 2026-09-02 in `C:/Projekte/120fps-m107` on `feat/m107-run5-remediation`, scratch dist
