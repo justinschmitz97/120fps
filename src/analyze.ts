@@ -2624,7 +2624,18 @@ export async function explainProps(
   // via --no-preflight), then the always-on react-dom gate, at zero build
   // cost (no harness dir, no dev server), matching this function's own
   // "measures nothing" contract.
-  const preflight = runPreflight({ projectRoot, entries: [resolvedPath], componentName });
+  // M110 A5 end-game (directus-NEW1): the real run walks a `.vue` graph with
+  // the project's own SFC parser (see the `vueCompiler` argument at the run
+  // path's own runPreflight call); the dry run walked it without one and so
+  // stopped at the first SFC import. A refusal five files deeper was therefore
+  // invisible here and fatal there. Same compiler, same edges, same decision.
+  const vueCompiler = framework === "vue" ? await loadVueCompiler(projectRoot) : undefined;
+  const preflight = runPreflight({
+    projectRoot,
+    entries: [resolvedPath],
+    componentName,
+    ...(vueCompiler ? { vueCompiler } : {}),
+  });
   // M91 (commerce-F3): folded in before the hard/soft handling below runs,
   // so a one-hop-composed async server component gates identically here and
   // in the full run.

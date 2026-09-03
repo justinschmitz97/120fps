@@ -16,7 +16,7 @@ import {
 // harness.ts imports this module in turn; the call sits inside a function body,
 // so the binding is resolved when the classifier runs, never while either
 // module is still evaluating.
-import { detectProjectTransforms } from "./harness.js";
+import { detectProjectTransforms, SUPPORTED_TRANSFORM_PLUGINS } from "./harness.js";
 
 // The marker package a server module imports to make the boundary explicit.
 // M72: "next/server-only" was never a real module (Next.js re-exports the
@@ -46,7 +46,13 @@ export type PreflightKind =
   // M106 A2 (excalidraw-F1): the import graph returns to the measured module.
   // Soft: the cycle is the application's own and usually mounts; it only
   // fails when the entry enters it at a point the application never does.
-  | "import-cycle";
+  | "import-cycle"
+  // M110 A5 end-game (directus-NEW1): an import whose file type Vite parses as
+  // JavaScript unless a plugin claims it, and that no transform 120fps loads
+  // claims. Hard: the dev server answers that request with a 500 and the run
+  // dies inside Vite's import analysis, so refusing before the browser starts
+  // is the only outcome that names a cause.
+  | "unloadable-file-type";
 
 // The harness never loads the project's vite.config (M30): its plugins target
 // its own Vite major and its server options are not measurement-safe. That is
@@ -210,6 +216,12 @@ const DATA_LOADER_CANDIDATES: Record<string, string[]> = {
   markdown: ["unplugin-vue-markdown", "vite-plugin-md", "vite-plugin-markdown"],
   graphql: ["@rollup/plugin-graphql", "vite-plugin-graphql-loader", "@graphql-tools/vite"],
 };
+
+// The recognizer codes whose files Vite hands to its JavaScript parser: an
+// import of one of them ends the run with `Failed to parse source for import
+// analysis` unless a plugin claims it first. Every entry has a loader table
+// above, and none of them is a transform 120fps can load.
+export const UNLOADABLE_FILE_TYPE_CODES = new Set(Object.keys(DATA_LOADER_CANDIDATES));
 
 function macroCompilerCandidates(specifier: string): string[] {
   const candidates = ["vite-plugin-babel-macros", "babel-plugin-macros"];
@@ -874,6 +886,19 @@ export function runPreflight(options: PreflightOptions): PreflightResult {
     hard.push({ kind: "async-component", chain: [relative(projectRoot, path.resolve(entries[0]))] });
   }
 
+  // M110 A5 end-game (directus-NEW1): last, so every refusal that already
+  // existed stays the one the message names. A data-file import is only a
+  // refusal when nothing 120fps loads claims that extension; the hit stays in
+  // `transforms` as well, so --no-preflight still prints the plugin the
+  // project declares for it.
+  const loadableCodes = new Set(SUPPORTED_TRANSFORM_PLUGINS.map((plugin) => plugin.code));
+  for (const hit of transforms) {
+    if (!hit.transformCode) continue;
+    if (!UNLOADABLE_FILE_TYPE_CODES.has(hit.transformCode)) continue;
+    if (loadableCodes.has(hit.transformCode)) continue;
+    hard.push({ ...hit, kind: "unloadable-file-type" });
+  }
+
   return { hard, soft, transforms, providers };
 }
 
@@ -894,6 +919,7 @@ const HARD_CAUSE: Record<HardKind, string> = {
   "not-installed":
     "is measured in a project with no installed dependencies (no node_modules under it or its " +
     "workspace root)",
+  "unloadable-file-type": "imports a file type Vite parses as JavaScript unless a plugin claims it",
 };
 
 // M72: the server-boundary remedy ("extract the client part") only makes
@@ -924,6 +950,13 @@ export const HARD_REMEDY: Record<HardKind, string> = {
   "not-installed":
     "Run your package manager's install (npm install, yarn install, or pnpm install), then " +
     "measure again.",
+  // M110 A5 end-game: the run cannot be rescued by installing anything -- the
+  // plugin exists and 120fps still will not load it -- so the remedy is to
+  // measure a graph that does not reach the import.
+  "unloadable-file-type":
+    "Measure a component whose graph does not reach that import, or give this one a fixture " +
+    "(120fps.fixture.tsx) or a wrapper (--wrap, 120fps.setup.tsx) that supplies the data instead " +
+    "of importing the file. Pass --no-preflight to attempt the run anyway.",
 };
 
 // M105 (solid-ui-F1): the escape hatch every hard remedy offers is useless
@@ -965,6 +998,25 @@ export function preflightFailureMessage(hits: PreflightHit[]): string {
   const hit = hits[0];
   const where = hit.chain[hit.chain.length - 1];
   const kind = hit.kind as HardKind;
+  // M94: a Vite failure is re-presented as a 120fps error naming target,
+  // importer and remedy. This one is refused before Vite ever sees the file, so
+  // the importer, the import and the plugin the project declares for it are all
+  // still in hand.
+  if (kind === "unloadable-file-type") {
+    const supported = SUPPORTED_TRANSFORM_PLUGINS.map((plugin) => plugin.code).join(", ");
+    return [
+      `Cannot measure this component in a browser: ${where} imports ${hit.specifier}, a file ` +
+        "type Vite parses as JavaScript unless a plugin claims it.",
+      "",
+      `  ${chainText(hit)}`,
+      "",
+      `This project compiles that with ${hit.transformOwner}. 120fps loads only its supported ` +
+        `transforms (${supported}) and never reads your vite.config, so nothing here can load ` +
+        "that import: the dev server would answer it with a 500 and the run would end inside " +
+        "Vite's import analysis.",
+      hardRemedyFor(kind),
+    ].join("\n");
+  }
   return [
     `Cannot measure this component in a browser: ${where} ${HARD_CAUSE[kind]}.`,
     "",
@@ -1111,6 +1163,7 @@ const BYPASS_KIND_LABEL: Record<HardKind, string> = {
   "unsupported-framework": "solid",
   "yarn-pnp": "yarn-pnp",
   "not-installed": "not-installed",
+  "unloadable-file-type": "unloadable-file-type",
 };
 
 export const PREFLIGHT_BYPASSED_WARNING = (hits: PreflightHit[]): string => {

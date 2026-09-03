@@ -12,6 +12,8 @@ tests:
   - test/unit/import-clause-across-lines-is-scanned.test.ts
   - test/unit/data-file-import-names-its-loader-plugin.test.ts
   - test/unit/project-transform-hits-are-classified-once.test.ts
+  # Lane F (end-game fix-up of A5)
+  - test/unit/unloadable-file-type-import-is-refused.test.ts
 ---
 
 # M110: The dry run decides everything the real run decides from disk
@@ -126,6 +128,26 @@ run's transform site: the map and `verify/logto.md` cite `src/analyze.ts:3177-31
   The hit travels in `preflight.transforms`, the one list both modes read, so the dry run and the
   real run print it identically.
 
+### Lane F (end-game fix-up of A5)
+
+A5 named the plugin and let the run continue. The final re-test
+(`C:/Projekte/120fps-fieldtest/retest/directus.md`, log `logs/directus/final-directus-F1.log`) showed
+the run still dying on Vite's own `Failed to parse source for import analysis ... the .yaml file
+format` after a browser had booted, with the dry run predicting a clean run. M94: a Vite failure is
+re-presented as a 120fps error naming target, importer and remedy, never a raw stack.
+
+- **F1** An import whose file type Vite parses as JavaScript unless a plugin claims it (`.yaml`,
+  `.yml`, `.toml`, `.md`, `.graphql`/`.gql`) and that no transform 120fps loads claims is a hard
+  preflight hit, refused before the browser starts, like the other gates that cost a source walk
+  rather than a boot. The refusal names the importing file, the imported file, the chain from the
+  measured component, the loader plugin the project declares for that extension, and states that
+  120fps loads only its supported transforms (svgr, vanilla-extract, vue), so the way out is a
+  fixture or a wrapper that supplies the data instead of importing the file. The hit stays in
+  `preflight.transforms` as well, so `--no-preflight` still prints A5's `[transform:...]` line.
+- **F2** `--explain-props` walks a Vue graph with the project's own SFC parser, the compiler the run
+  path already passes to `runPreflight`, so the dry run reaches the same edges and predicts the same
+  refusal in the same words (M100).
+
 ## MUST NOT
 
 - Start a Vite server, a dev build or a browser from `--explain-props`: composition, transforms and
@@ -136,7 +158,8 @@ run's transform site: the map and `verify/logto.md` cite `src/analyze.ts:3177-31
   from disk and printed, so the footer's three runtime-only classes stay exactly as they are.
 - `continue` past an `optimizeDeps.include` entry that resolves to nothing.
 - Change which mode a real run picks, which export it binds, or which props it measures. M110 changes
-  prediction and disclosure; the only new real-run output is C3's suppression warning.
+  prediction and disclosure; the only new real-run outputs are C3's suppression warning and F1's
+  refusal, which replaces the raw Vite parse error the run died on anyway.
 - Resolve `#`-prefixed specifiers through an `imports` field here: M108 owns that resolver, and A1
   fires only for what is still unresolved after it.
 
@@ -190,6 +213,13 @@ Unit tests, `vitest run <file> --maxWorkers=2`.
   `src/widget.tsx` importing `./messages.yaml`). Asserts `runPreflight` returns one
   `project-transform` hit for the `.yaml` edge whose `transformOwner` is `@rollup/plugin-yaml`, and
   that a project declaring no loader keeps the generic owner wording.
+- **F1, F2** `test/unit/unloadable-file-type-import-is-refused.test.ts`. Fixture:
+  `fixtures/yaml-loader-project/` (existing, A5's). Asserts the `.yaml` edge is a hard
+  `unloadable-file-type` hit; that `preflightFailureMessage` names the importer, the import, the
+  declared `@rollup/plugin-yaml` and the supported-transform list; that the hit stays in
+  `preflight.transforms`; that a `.scss` import is not promoted; that the same import reached
+  through a chain of SFCs names the SFC that imports it; and that `explainProps` rejects with the
+  string the run path's gate throws.
 - **A1, A2** `test/unit/prebundle-entry-that-resolves-to-nothing-warns.test.ts`. New fixture
   `fixtures/unresolvable-include/` (a `package.json` with no `imports` field, `app/widget.tsx`
   importing `#app/root`). Asserts `scanExternalDeps` drops the entry, returns it on
@@ -471,6 +501,118 @@ Lane A notes:
   `app/components/ui/dropdown-menu.tsx`, and the real run then prints `mode: prop matrix`. Not lane
   A's files; filed by lane C under Deferred (the composition rollback after an empty trial mount),
   not as evidence for C1/C2.
+
+### End-game fix-up evidence (lane F)
+
+Worktree `C:\Projekte\120fps-m107` on `feat/m107-run5-remediation` at `3676fc9` plus lane F's own
+edits, 2026-09-03. Scratch dist `C:/Projekte/120fps-fieldtest/scratch/F-M110/dist/cli.js`, via
+`C:/Projekte/120fps-fieldtest/tools/run120.mjs`.
+
+Tests, `node node_modules/vitest/vitest.mjs run test/unit/unloadable-file-type-import-is-refused.test.ts --maxWorkers=2`:
+
+```
+ Test Files  1 passed (1)
+      Tests  11 passed (11)
+```
+
+Every unit test file, same flags (`node node_modules/vitest/vitest.mjs run test/unit --maxWorkers=2`):
+
+```
+ Test Files  326 passed (326)
+      Tests  4793 passed | 1 skipped (4794)
+```
+
+`node node_modules/typescript/bin/tsc --noEmit`: clean (no output).
+
+- **directus-NEW1, the real run** (`--cwd /e/repositories-run5/directus/app`,
+  `src/components/v-button.vue --samples 5 --max-combos 4 --explore-budget 60 --no-deltas`, label
+  `M110-F-directus-after`, exit 2 in 2s). Before (`logs/directus/final-directus-F1.log:3-5`, exit 2
+  in 36s), the browser had already booted:
+
+  ```
+  Error: component harness did not become ready within timeout. Page errors:
+    - [vite] Internal Server Error
+  Failed to parse source for import analysis because the content contains invalid JS syntax. You may need to install appropriate plugins to handle the .yaml file format, or if it's an asset, add "**/*.yaml" to `assetsInclude` in your configuration.
+  ```
+
+  After, verbatim from the log; no browser starts, no raw Vite line, no stack:
+
+  ```
+  Error: Cannot measure this component in a browser: src/lang/set-language.ts imports ./available-languages.yaml, a file type Vite parses as JavaScript unless a plugin claims it.
+    src/components/v-button.vue → src/components/v-icon/v-icon.vue → src/stores/user.ts → src/lang/set-language.ts → ./available-languages.yaml
+  This project compiles that with @rollup/plugin-yaml. 120fps loads only its supported transforms (svgr, vanilla-extract, vue) and never reads your vite.config, so nothing here can load that import: the dev server would answer it with a 500 and the run would end inside Vite's import analysis.
+  Measure a component whose graph does not reach that import, or give this one a fixture (120fps.fixture.tsx) or a wrapper (--wrap, 120fps.setup.tsx) that supplies the data instead of importing the file. Pass --no-preflight to attempt the run anyway.
+  ```
+
+  Closed: yes.
+- **directus-NEW1, the dry run** (same cwd and file, `--explain-props`, label
+  `M110-F-directus-dry-after2`, exit 2 in 2s). Before (`M110-F-directus-dry-after`, exit 0): a full
+  prediction with `[transform:yaml]` warnings and no refusal, because the dry run walked the `.vue`
+  graph with no SFC parser and stopped at the first SFC import (F2). After, byte-identical to the
+  real run's four lines above. Closed: yes.
+- **epic-stack-F2** (`--cwd /e/repositories-run5/epic-stack`, `app/components/ui/dropdown-menu.tsx`,
+  labels `M110-F-epic-stack-dry-after` (`--explain-props`, exit 0) and
+  `M110-F-epic-stack-real-after` (`--samples 5 --max-combos 4 --explore-budget 60 --no-deltas`,
+  exit 0). Unchanged by lane F:
+
+  ```
+  Composition:  would auto-compose from DropdownMenu (15 exports)
+  Matrix mode:  predicate matches, but an auto-composed scene supplies the props, so this run would measure that scene's single combo (auto-composed from DropdownMenu)
+  mode: prop matrix  (0:01)
+  Result: PASS
+  ```
+
+  Closed: yes (no new refusal).
+- **logto-F3** (`--cwd /e/repositories-run5/logto/packages/console`,
+  `src/ds-components/ConfirmModal/index.tsx`, labels `M110-F-logto-dry-after` (`--explain-props`,
+  exit 0) and `M110-F-logto-real-after` (bounded flags, exit 2 in 35s). Both modes still print 13
+  `[transform:css-preprocessor]` lines and neither refuses; the real run's exit 2 is the
+  pre-existing missing `sass-embedded` (`logs/logto/real-confirmmodal.log:5`), not lane F's gate:
+
+  ```
+  === count:
+  13
+  ```
+
+  Closed: yes (unchanged).
+- **supabase-F3** (`--cwd /e/repositories-run5/supabase/packages/ui`,
+  `src/components/shadcn/ui/popover.tsx --explain-props`, label `M110-F-supabase-after`, exit 0):
+
+  ```
+  Composition:  would auto-compose from Popover (5 exports)
+  Matrix mode:  predicate matches, but an auto-composed scene supplies the props, so this run would measure that scene's single combo (auto-composed from Popover)
+  ```
+
+  Closed: yes (unchanged).
+- **calcom-R1** (`--cwd /e/repositories/calcom`,
+  `packages/ui/components/popover/Popover.tsx --matrix --samples 3 --max-combos 4 --explore-budget
+  60 --no-deltas`, label `M110-F-calcom-after`, exit 0):
+
+  ```
+  mode: prop combos  (0:05)
+  Result: PASS
+  ```
+
+  Closed: yes (unchanged).
+- **Unaffected control** (`--cwd /e/repositories-run5/shadcn-admin`,
+  `src/components/ui/button.tsx --explain-props`, label `M110-F-shadcn-admin-after`, exit 0):
+
+  ```
+  Matrix mode:  would not auto-activate
+  ```
+
+  Closed: yes.
+
+Lane F notes:
+
+- The refusal reuses the existing hard-hit path (`preflight.hard`, `preflightFailureMessage`,
+  `PreflightHardRejectionError`), so `--no-preflight` bypasses it and prints
+  `PREFLIGHT_BYPASSED_WARNING` beside A5's `[transform:...]` line, exactly as every other hard kind
+  behaves.
+- The promotion runs last in `runPreflight`, after every hard hit that already existed, so a
+  server-boundary, Solid, PnP or not-installed refusal keeps naming itself.
+- `.mdx` stays out of the gate: `@mdx-js/rollup` has no loader table entry, and no run-5 finding
+  exercises it.
 
 ## Deferred
 
