@@ -1,6 +1,6 @@
 ---
 kind: milestone
-status: draft
+status: approved
 tests:
   # Lane C
   - test/unit/explore-replays-state-invariant-path-once-per-edge.test.ts
@@ -547,3 +547,50 @@ behaviour (above), not by source text alone. A corpus repro stays owed with midd
   `mtimeMs`: staleness risk with no measured benefit over the in-process memo.
 - **Explore's own bounds** (200 nodes, depth 4, 8 combos, per-combo budget,
   `src/explorer.ts:441-449`): unchanged here; changing them changes coverage, not repeated cost.
+
+## Approval
+
+Approved 2026-09-03. Commits: `7593fbf` and `aefed17` (lane C), `3803efd` and `64bd812` (lane A),
+`77abeb8` and `29852bd` (lane F end-game fix-up).
+
+- Lane C (C1-C5): `test/unit/explore-replays-state-invariant-path-once-per-edge.test.ts` — 9 passed;
+  lane regression 86 files / 1479 tests passed; `tsc --noEmit` clean. Corpus: command 1
+  (shadcn-admin toolbar, `M116-shadcn-admin-after`) `Result: FAIL [render error]`, `Total: 18.7s`,
+  no `scroll-sweep` edge, explore unchanged; command 2 (calcom control) `Result: PASS`,
+  `Total: 1m 13s`, 5 warnings; command 3 deferred to lane A's wave; command 4 (`--explain-props`)
+  reaches its dry-run report. E1 A/B, 5 interleaved pairs per fixture: `explore` -8.3 % on
+  `fixtures/large-dom.tsx`, control `fixtures/aria-menu.tsx` +0.1 %, same verdict, same warnings,
+  interaction-row medians inside the noise band.
+- Lane A (A1-A4): `test/unit/import-graph-walk-parses-each-file-once.test.ts` — 8 passed; lane
+  regression 111 files / 1727 passed, 1 skipped; `tsc --noEmit` clean. Corpus: command 1 same
+  verdict and same 10 warnings as its before arm; command 2 (calcom control) holds; command 3
+  (sweep) 7 per-component reports, per-component `phaseTimings.preflight` falls after the first
+  component; command 4 reaches its report. E1 A/B: `preflight` -8.7 % on the 7-component sweep
+  (3 pairs, one pair costs 6 minutes) and -3.7 % on the single component (5 pairs), verdict and
+  warning list identical in all 16 runs.
+- Lane F (F1-F3): `test/unit/a-wedged-page-cannot-consume-the-whole-run.test.ts` and
+  `test/unit/an-aborted-run-still-prints-its-roots-and-total.test.ts` — 2 files / 22 tests passed;
+  40 files / 801 tests and 11 files / 154 tests passed; `tsc --noEmit` clean. Corpus control
+  (`M116-fixup-control`) `exit=0 seconds=2`, same `Props (32)` table and warnings. No corpus run
+  exercises F1 or F3: the watchdog budget has a floor no flag reaches and the bound needs a
+  renderer that wedges on demand, so both are held by unit tests that execute the behaviour.
+
+Re-run at approval, the four files of `tests:`:
+
+```
+ Test Files  4 passed (4)
+      Tests  53 passed (53)
+```
+
+### Deferred / open
+
+- **midday-F1 open**: the pass-level bound (`MAX_CONSECUTIVE_DEGRADED_COMBOS`) does not cure a
+  wedged renderer whose combos partly measure; a wall-clock bound (or per-combo heartbeat) for the
+  delta pass needs its own MUST in a follow-up milestone. A corpus repro of F1/F3 stays owed with it.
+- Lever D — one driven session shared by the delta and scale-curve passes.
+- Marking further patterns state-invariant (`rapid-toggle-11`): the flag also decides `targetHash`,
+  so it changes the state graph.
+- The observer-timing path as the default (`opts.observerTiming`).
+- Cross-process caching of parses or walks, and any cache keyed on a content hash instead of
+  `mtimeMs`.
+- Explore's own bounds (200 nodes, depth 4, 8 combos, per-combo budget).
