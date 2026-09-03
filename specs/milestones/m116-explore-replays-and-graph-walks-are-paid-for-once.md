@@ -116,7 +116,8 @@ differs, the map's number is named and the worktree's number is used.
 ### Both lanes (evidence)
 
 - E1 This spec's Verification section records, before approval, an interleaved same-window A/B for
-  each change — 5 pairs per subject — reporting the median `phaseTimings.explore` (C1) and the median
+  each change — 5 pairs per subject, or 3 where one pair costs minutes of wall clock, with the pair
+  count stated in the record — reporting the median `phaseTimings.explore` (C1) and the median
   `phaseTimings.preflight` (A1-A4) from M115's field, plus the verdict and the warning list of both
   arms. A change whose A/B shows no win, or shows any difference in verdict, warnings or interaction
   rows, is reverted rather than shipped. A change is also reverted when any edge's
@@ -173,7 +174,11 @@ explore wall clock before C1's replay change.
   file that did not exist at the first walk and exists at the second is read, not served as a cached
   miss; a `.vue` entry parses per compiler-supplied and compiler-less walk, each reporting its own
   imports; `scanExternalDeps` called twice with the same aliases returns equal lists and equal
-  `specifiersOut`/`warningsOut` contents, and called with a different alias array re-walks.
+  `specifiersOut`/`warningsOut`/`extraAliasesOut`/`unresolvedExternals` contents, and called with a
+  different alias array re-walks; a walk handed a dedupe set that already names a specifier does not
+  shorten what a later walk with the same key and an empty set is told. `extraAliasesOut` is
+  asserted equal across the two walks, but no fixture here produces a rescue alias (that needs a
+  types-only workspace sibling), so the assertion covers the empty case only.
 
 ### Corpus
 
@@ -308,7 +313,7 @@ test/unit/import-graph-walk-parses-each-file-once.test.ts --maxWorkers=2`:
 
 ```
  Test Files  1 passed (1)
-      Tests  7 passed (7)
+      Tests  8 passed (8)
 ```
 
 Lane regression, the 111 files under `test/unit/` that import `preflight.js` or `harness.js`
@@ -316,7 +321,7 @@ Lane regression, the 111 files under `test/unit/` that import `preflight.js` or 
 
 ```
  Test Files  111 passed (111)
-      Tests  1726 passed | 1 skipped (1727)
+      Tests  1727 passed | 1 skipped (1728)
 ```
 
 `node node_modules/typescript/bin/tsc --noEmit`: clean, no output.
@@ -391,7 +396,12 @@ The memo is keyed on the walk's inputs and on the mtime and size of every file t
 walk with a different alias set, `projectRoot` or `workspaceRoot` re-walks (A2) and an edited or
 newly created file is read again (A3). Resolution probes into `node_modules` are not part of the
 signature: a package installed mid-process would not invalidate an entry, which no run does and no
-corpus repro exercises.
+corpus repro exercises. Neither is a failed resolution: a specifier that resolved to no file leaves
+no entry in the signature, so a source file created mid-process does not invalidate a walk entry
+(no run creates one; `runPreflight` is immune, it redoes resolution per walk). Both memos are
+bounded by the first-party import graph — neither walk parses `node_modules` (`src/preflight.ts:520`,
+`src/preflight.ts:832`) — and both live for the process, so the retained set is the first-party files
+one process walks.
 
 ## Deferred
 

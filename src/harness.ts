@@ -5616,12 +5616,15 @@ export function scanExternalDeps(
   // passes one array as both `aliases` and `extraAliasesOut`, so a rescue alias
   // pushed mid-walk resolves the imports below it. What each channel gained is
   // read off afterwards as the delta, never by substituting a collector.
-  const specifiers = specifiersOut ?? new Set<string>();
+  // `specifiersOut` is the one channel the walk only writes to, so it collects
+  // separately: a delta against the caller's prior contents would depend on a
+  // set the key does not carry, and a later walk handed an empty set would be
+  // served the short list.
+  const collected = new Set<string>();
   const warnings = warningsOut ?? [];
   const extraAliases = extraAliasesOut ?? [];
   const unresolved = unresolvedOut ?? [];
   const reported = reportedUnresolvedOut ?? new Set<string>();
-  const specifiersBefore = new Set(specifiers);
   const reportedBefore = new Set(reported);
   const warningsBefore = warnings.length;
   const extraAliasesBefore = extraAliases.length;
@@ -5632,7 +5635,7 @@ export function scanExternalDeps(
     componentPath,
     projectRoot,
     aliases,
-    specifiers,
+    collected,
     warnings,
     workspaceRoot,
     extraAliases,
@@ -5641,9 +5644,11 @@ export function scanExternalDeps(
     files,
   );
 
+  for (const specifier of collected) specifiersOut?.add(specifier);
+
   externalDepsWalks.set(key, {
     packages: [...packages],
-    specifiers: [...specifiers].filter((specifier) => !specifiersBefore.has(specifier)),
+    specifiers: [...collected],
     warnings: warnings.slice(warningsBefore),
     extraAliases: extraAliases.slice(extraAliasesBefore),
     unresolved: unresolved.slice(unresolvedBefore).map((entry) => ({ ...entry })),

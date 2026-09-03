@@ -165,6 +165,7 @@ describe("the external dependency walk", () => {
     const firstSpecifiers = new Set<string>();
     const firstWarnings: string[] = [];
     const firstUnresolved: Array<{ specifier: string; importer: string }> = [];
+    const firstAliases: Array<{ find: RegExp; replacement: string }> = [];
     const first = scanExternalDeps(
       entry,
       root,
@@ -172,7 +173,7 @@ describe("the external dependency walk", () => {
       firstSpecifiers,
       firstWarnings,
       root,
-      [],
+      firstAliases,
       firstUnresolved,
     );
     expect(reads(spy, entry)).toBe(1);
@@ -180,6 +181,7 @@ describe("the external dependency walk", () => {
     const secondSpecifiers = new Set<string>();
     const secondWarnings: string[] = [];
     const secondUnresolved: Array<{ specifier: string; importer: string }> = [];
+    const secondAliases: Array<{ find: RegExp; replacement: string }> = [];
     const second = scanExternalDeps(
       entry,
       root,
@@ -187,7 +189,7 @@ describe("the external dependency walk", () => {
       secondSpecifiers,
       secondWarnings,
       root,
-      [],
+      secondAliases,
       secondUnresolved,
     );
 
@@ -195,8 +197,27 @@ describe("the external dependency walk", () => {
     expect([...secondSpecifiers]).toEqual([...firstSpecifiers]);
     expect(secondWarnings).toEqual(firstWarnings);
     expect(secondUnresolved).toEqual(firstUnresolved);
+    expect(secondAliases).toEqual(firstAliases);
     expect(reads(spy, entry)).toBe(1);
     expect(reads(spy, path.join(root, "helper.ts"))).toBe(1);
+  });
+
+  it("reports every specifier to a walk whose dedupe set started empty", () => {
+    const root = makeProject("120fps-scan-prefilled-", {
+      "Card.tsx": 'import clsx from "clsx";\nexport const Card = () => clsx("a");\n',
+    });
+    const entry = path.join(root, "Card.tsx");
+
+    // The memo key carries the caller's channels only where the walk reads
+    // them, so a first walk handed a set that already names "clsx" must not
+    // shorten what a later walk with the same key is told.
+    const prefilled = new Set<string>(["clsx"]);
+    scanExternalDeps(entry, root, [], prefilled);
+
+    const fresh = new Set<string>();
+    scanExternalDeps(entry, root, [], fresh);
+
+    expect([...fresh]).toEqual(["clsx"]);
   });
 
   it("walks again for a different alias set", () => {
