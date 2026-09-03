@@ -2,12 +2,12 @@
 
 ## Unreleased
 
-Field-test-4 remediation: run 5's twenty findings against 0.6.0, closed.
+Field-test run 5 remediation: the thirty confirmed findings against 0.6.0, closed.
 
 **Upgrading:** preset lookup now checks `<stem>.120fps.props.tsx` and `<stem>.120fps.props.ts` before the
 existing `<stem>.props.tsx`/`.props.ts` names; both old names keep working. `phaseTimings` is a new field on
 the report and on `--save-baseline` entries; a baseline recorded before this release just reads as "no phase
-timings recorded" — nothing forces a re-record, and `METRICS_REVISION` (`src/budget.ts:489`) is unchanged, so
+timings recorded". Nothing forces a re-record, and `METRICS_REVISION` (`src/budget.ts:489`) is unchanged, so
 no baseline invalidates.
 
 Resolution:
@@ -35,14 +35,16 @@ Resolution:
 
 Diagnoses and remedies:
 
-- A diagnosis names the layer that actually failed instead of a generic Nuxt remedy: the `#build`/`#imports`
-  diagnosis fires only when the specifier starts with one of those and `nuxt` is declared, so a missing Node
+- A diagnosis names the layer that actually failed instead of a generic Nuxt remedy: the `#build`/`#imports`/`#app`
+  diagnosis fires only when the specifier starts with one of those and `nuxt` is declared in the measured
+  package or at the workspace root, so a missing Node
   subpath (epic-stack) or a React 18 project's React Compiler mismatch (primer-react, now targeting the
   installed React major instead of defaulting to 19) get their own message; a Babel-macro import is a preflight
   hit instead of surfacing as "Unable to determine current node version" (documenso), and a virtual-namespace
   import (`~icons/`, `virtual:`) names the plugin package that declares it (hoppscotch) (M108).
-- A remedy never names a file that already exists as real source: radix-themes' own `button.props.tsx` and
-  `badge.props.tsx` are recognized as presets instead of being told to create themselves; a preset candidate
+- A remedy never names a file that already exists as real source: radix-themes' own `button.props.tsx` is
+  disclosed by path ("exists, not a preset: no default-exported object literal") and every remedy points at
+  `button.120fps.props.tsx` instead of asking for a file that is already there; a preset candidate
   with the wrong shape is disclosed by path ("exists, not a preset") instead of silently ignored (epic-stack); a
   preset already applied stops repeating the "add a preset" clause in the same run's output (logto); and
   `--init-fixture` on the path whose own warning recommends it now writes the fixture instead of doing nothing
@@ -57,8 +59,9 @@ Dry run parity:
   it no longer predicts matrix mode for a component the real run auto-composes (supabase, cal.com); it prints
   the same project-transform warnings, the same unresolved `optimizeDeps.include` entries and the same
   multi-line `import { ... } from` specifiers the real run reads from disk, so logto's ConfirmModal and
-  supabase's Popover no longer look clean and then fail a minute later, and epic-stack's `#app` entry is
-  disclosed in both modes; a `.yaml`/`.yml`/`.toml`/`.md` import is a preflight hit naming its loader plugin
+  supabase's Popover no longer look clean and then fail a minute later, and epic-stack's `#app` import no
+  longer produces a dep-optimization failure in the real run that the dry run said nothing about: it resolves
+  through the project's own `imports` map, so neither mode reports it; a `.yaml`/`.yml`/`.toml`/`.md` import is a preflight hit naming its loader plugin
   when the project declares one (directus) (M110).
 
 Disclosures:
@@ -72,8 +75,9 @@ Disclosures:
 - A matrix never crosses a controlled prop with its `default`-prefixed twin (fluentui's Dialog `open` and
   `defaultOpen` no longer set together), a barrel re-export reports the declaring module's props instead of
   zero (gutenberg), a call-wrapped default export (`forwardRef(Button)`) reports the wrapped name instead of a
-  sibling export (logto), the Vue provide/inject hint fires only for a `$`-prefixed proxy frame backed by a
-  recorded `inject(` call (ark, no longer misfiring on a plain SFC render frame), and a captured console message
+  sibling export (logto), the Vue plugin hint fires only for a `$`-prefixed proxy frame, and a read of undefined
+  in an ordinary SFC render frame gets the provide/inject hint only when the same run recorded an `inject(`
+  call in the measured component (ark, which recorded none, now prints no hint at all), and a captured console message
   substitutes `%s`/`%d`/`%o` from its arguments before it is recorded, so React's dev warnings read as text
   instead of a raw template (supabase) (M114).
 
@@ -87,7 +91,7 @@ Runs terminate and clean up:
 
 Where the minutes go:
 
-- Every completed run's report carries `phaseTimings` (`preflight`, `build`, `calibration`, `mount`, `rerender`,
+- A run reported one number, its own wall clock. Every completed run's report now carries `phaseTimings` (`preflight`, `build`, `calibration`, `mount`, `rerender`,
   `explore`, `scale`, `deltas`, `attribution`, `analysis`, `total`, summing exactly to `total`) in the terminal
   `Total:` breakdown, the JSON report and `--report-md`; `--explain-props` prints an estimated real-run
   duration built from the last `--save-baseline` entry's phase timings for that component when its environment
@@ -100,7 +104,7 @@ Faster:
   cached per (absolute path, mtime, size) within one process instead of re-run up to four times per component
   across a directory sweep. What changed is what is paid for once: the paired A/B runs that gated this change
   showed identical verdicts, warnings, interaction rows and preflight hits on both arms, and only the measured
-  `phaseTimings.explore`/`.preflight` numbers moved — no other reported number did.
+  `phaseTimings.explore`/`.preflight` numbers moved. No other reported number changed.
 
 Output:
 
@@ -115,10 +119,10 @@ Output:
 
 Known limits, by decision: the harness never runs a workspace sibling's own build, or any project Vite plugin
 (M107, M108); solution-style tsconfig `references` with build-output redirection are not followed (M109); a
-package's own CSS is discovered only through its entry's side-effect imports, not transitively through the
-modules that entry imports (vuetify's `main.sass`, three hops away, still unfound) (M114); the harness
+package's own CSS is discovered only through its entry's side-effect imports; a stylesheet reached transitively
+through the modules that entry imports is still unfound (vuetify's `main.sass`, three hops away) (M114); the harness
 directory still lives inside the project root, and two concurrent runs still share no removal lock (M113);
-levers B/C's win is paid once per process, not cached to disk, and Lever D (one driven session shared across
+levers B/C's win is paid once per process; a cross-process cache stays deferred, and Lever D (one driven session shared across
 delta and scale-curve passes) stays deferred pending a separate cold-context risk decision (M116); noise-tagged
 FAILs are not downgraded to WARN before a verdict prints, and there is no per-invocation flag to suppress the
 vite-config plugin note (M117).

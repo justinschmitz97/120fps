@@ -106,16 +106,16 @@ npx 120fps ./kbd.tsx#KbdCombo
 
 Unknown names error, listing the file's exports.
 
-`--explain-props` shows what a run *would* measure: resolved component, its `file:line`, every prop with kind, required/default, and value pool, unsynthesizable props, whether curve/matrix would activate: without starting a browser. The `default` column prints only when at least one prop carries one. It also prints a `Composition:` line (`would auto-compose from <Root> (<n> exports)` or `would measure <Name> alone`), a `Matrix mode:` line when applicable, and ends with an estimate: `Estimated real run: ~2m 10s (8 combos x 5 samples; phase timings from 120fps-baseline.json)` — using recorded phase timings from a matching `--save-baseline` entry when one exists, documented defaults otherwise.
+`--explain-props` shows what a run *would* measure: resolved component, its `file:line`, every prop with kind, required/default, and value pool, unsynthesizable props, whether curve/matrix would activate: without starting a browser. The `default` column prints only when at least one prop carries one. It also prints a `Composition:` line (`would auto-compose from <Root> (<n> exports)` or `would measure <Name> alone`), a `Matrix mode:` line when applicable, and ends with an estimate: `Estimated real run: ~2m 10s (8 combos x 5 samples; phase timings from 120fps-baseline.json)`. It uses recorded phase timings from a matching `--save-baseline` entry when one exists, documented defaults otherwise.
 
-Runs print one line per phase (`mount: 8 combos x 10 samples`) and end with `Total: 4m 12s`. `--ci` prints JSON only. A monorepo run prints one `Roots:` line naming the resolved member root and the workspace root — identical from any shell directory the CLI was started from — ahead of the component's table (suppressed under `--ci`).
+Runs print one line per phase (`mount: 8 combos x 10 samples`) and end with `Total: 4m 12s`. `--ci` prints JSON only. A monorepo run prints one `Roots:` line ahead of the component's table, naming the resolved member root and the workspace root; the line reads the same from any shell directory the CLI was started from (suppressed under `--ci`).
 
 ## Report output
 
 - `fail`: a median broke its budget (mount, rerender, or per-step interaction). Any failing combo fails the run.
 - `warn`: nothing broke a budget, but don't trust the numbers at face value: unstable timing, large cost vs calibration, or an optimization finding. Never affects the exit code.
 - `unstable`: CV > 15% *and* spread > 0.5 ms. Reported, skipped for baseline comparison, downgrades to warn. Machine evidence, not component evidence; raise `--samples`.
-- `warnings`: everything the run did or didn't measure (capped combos, noisy machine, unsettled fonts). In the terminal, JSON, markdown, and JUnit output. A warning repeated for the same component prints once with a `(×N)` suffix; the JSON `warnings` array holds one entry per distinct text, in first-occurrence order.
+- `warnings`: everything the run did or didn't measure (capped combos, noisy machine, unsettled fonts). In the terminal, JSON, and markdown output. A warning repeated for the same component prints once with a `(×N)` suffix; the JSON `warnings` array holds one entry per distinct text, in first-occurrence order.
 - A noisy or hostile machine gets one terminal line naming only the signals that crossed threshold and the flag that helps: `machine: hostile (probe CV 53%, 100% of metrics unstable); raise --samples to measure through it.` The JSON keeps the full detail (`noise.level`, all four `noise.signals`, the full warning text); verdicts and budget lines read the same either way.
 - Combos that crashed while rendering are `FAIL [render error]` with the page errors printed: see [render errors](#render-errors).
 - `DEBUG=1` prints full stack traces.
@@ -251,11 +251,11 @@ app/globals.css   app/global.css   src/app/globals.css   src/app/global.css
 src/styles/globals.css   styles/globals.css   src/index.css   src/global.css
 ```
 
-- Your `postcss.config.*` runs as-is; Tailwind 4 works with no extra config. Tailwind 3 reads `tailwind.config.{js,cjs,mjs,ts}` from the member's own root first, then each ancestor up to the workspace root — whatever directory the CLI was started from, so the `Stylesheets:` line and warnings read the same from any shell directory.
+- Your `postcss.config.*` runs as-is; Tailwind 4 works with no extra config. Tailwind 3 reads `tailwind.config.{js,cjs,mjs,ts}` from the member's own root first, then each ancestor up to the workspace root, whatever directory the CLI was started from, so the `Stylesheets:` line and warnings read the same from any shell directory.
 - Split or unusual paths: `--css ./reset.css,./tokens.css` (cascade order). `--no-css` disables.
 - Fonts settle before the first sample (`document.fonts.ready`, 5s bound); injected files are named in `css.files` and the baseline fingerprint.
 - A package that generates its styling at runtime (Griffel, Emotion, `styled-components`, `@ant-design/cssinjs`, `antd-style`, `css-render`, PrimeVue) prints `Stylesheets: none — styling is generated at runtime by <engine>; no stylesheet was needed` instead of a fallback warning. A `makeStyles`/`createUseStyles`/`styled` import from an unrecognised package gets its own line naming the package and points at `--css`.
-- A package whose `package.json` declares a stylesheet (`style`, `exports["./styles"]`, `exports["./style.css"]`) that isn't built yet is reported declared, not built: the field, the missing path and the package's build command, instead of falling back to size-ranked guessing. The report's `css.declaredMissing` carries the missing paths.
+- A package whose `package.json` declares a stylesheet (`style`, `exports["./styles"]`, `exports["./style.css"]`) that isn't built yet is reported as declared but unbuilt: the field, the missing path and the package's build command, instead of falling back to size-ranked guessing. The report's `css.declaredMissing` carries the missing paths.
 
 ## React Compiler
 
@@ -281,7 +281,7 @@ npx 120fps "src/components/**/*.vue" --budget
 - `rerender()` awaits `nextTick()`: the traced window contains Vue's actual DOM patch.
 - `120fps.setup.vue` wraps via its default slot; `.fixture.vue` for compounds.
 - No `--isolate strictmode` (React-only concept), no Vue optimization pass yet. Framework is part of the baseline fingerprint.
-- A read-of-undefined abort inside an ordinary SFC render frame gets a provide/inject hint pointing at `120fps.setup.vue` only when the component's own `<script setup>` block calls `inject(`; otherwise the abort prints unhinted rather than guessing.
+- A read-of-undefined abort inside an ordinary SFC render frame gets a provide/inject hint pointing at `120fps.setup.vue` only when the component's own `<script setup>` block calls `inject(`; otherwise the abort prints no hint.
 
 ## Tier Budgets
 
@@ -300,7 +300,7 @@ Auto-classified from DOM complexity; portals/animation raise the floor to T3.
 - Unloadable transforms are named with a stable code (`[transform:svgr]`) instead of failing deep inside Vite.
 - `--no-transforms` measures without them. Active transforms are recorded in the report and fingerprint.
 - The config's other declared plugins get one note per run naming what was dropped, in the config's own order: `vite.config.ts declares plugins the harness cannot honor: tanstackRouter, react — the project's Vite config is never executed.` A plugin whose transform the harness does apply (svgr, `@vitejs/plugin-vue`, vanilla-extract) is left out of the list, and the note is omitted entirely when nothing remains.
-- An import of a file type Vite can't load without a plugin (`.yaml`, `.yml`, `.toml`, `.md`, beside `.graphql`/`.gql`) is flagged rather than crashing the build; the message names the loader plugin your project declares for that extension when it declares one, generic wording otherwise.
+- An import of a file type Vite can't load without a plugin (`.yaml`, `.yml`, `.toml`, `.md`, beside `.graphql`/`.gql`) is flagged before the build fails; the message names the loader plugin your project declares for that extension when it declares one, generic wording otherwise.
 - A `#`-prefixed specifier resolves through the nearest `package.json` `imports` field with Vite's own conditions; one that resolves to a file in your repo is measured as part of the graph, never flagged as missing. Nuxt's `#build`/`#imports`/`#app` diagnosis fires only when `nuxt` is actually declared in the project; otherwise the message names the missing specifier and the map that should declare it.
 - An unbuilt workspace sibling is aliased to its own source entry (`source`, `exports`' `development`/`source`/`import` conditions, `module`/`main`, `types`, or `<pkg>/src`, in that order) instead of failing with a "needs a build step" diagnosis; the warning names the manifest field it followed and the path it resolved to. A sibling that declares no runtime entry at all is disclosed as types-only, with no `dist/` claim.
 
