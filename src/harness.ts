@@ -1233,7 +1233,8 @@ export interface CssDiscovery {
   // present only when source === "fallback"
   onlyCandidate?: boolean;
   noEntryInPackage?: boolean;
-  // present only when source === "runtime"
+  // present when source === "runtime", and on the "none" of a declared-but-
+  // unbuilt stylesheet whose package also styles at runtime (M112 review).
   runtimeEngines?: string[];
   // M112 A1, A2 / I5 (radix-themes-F2): the measured package's own declarations
   // whose target is not on disk, as projectRoot-relative posix paths beside the
@@ -1297,6 +1298,10 @@ export function packageStylesheetCandidates(projectRoot: string): PackageStylesh
 export function CSS_DECLARED_UNBUILT_WARNING(
   declarations: Array<{ field: string; path: string }>,
   buildCommand?: string,
+  // M112 review: a package that declares an unbuilt stylesheet and also styles
+  // at runtime is not measured unstyled — M82's outcome stands, so the clause
+  // asserting it names the engines that do the styling instead.
+  runtimeEngines: string[] = [],
 ): string {
   const named = declarations
     .map((d) => `"${d.field}" declares ${d.path}`)
@@ -1305,7 +1310,10 @@ export function CSS_DECLARED_UNBUILT_WARNING(
   return (
     `this package's package.json ${named}, which ${one ? "is" : "are"} not on disk yet — ` +
     `most likely because a build this harness never runs produces ${one ? "it" : "them"}. ` +
-    "No stylesheet was injected and the component is measured unstyled; " +
+    (runtimeEngines.length > 0
+      ? `No stylesheet was injected; styling is generated at runtime by ${runtimeEngines.join(", ")}, ` +
+        "so a built stylesheet may add nothing. "
+      : "No stylesheet was injected and the component is measured unstyled; ") +
     (buildCommand ? `run \`${buildCommand}\` in this package` : "build this package") +
     ", then re-run, or pass --css to name a stylesheet that exists."
   );
@@ -1480,8 +1488,19 @@ export function discoverGlobalCss(
       path: relativeToRoot(target.declared, projectRoot),
       ...(buildCommand !== undefined ? { buildCommand } : {}),
     }));
-    warningsOut?.push(CSS_DECLARED_UNBUILT_WARNING(declaredMissing, buildCommand));
-    return { files: [], source: "none", declaredMissing };
+    // The runtime layer (M82) sits below the ranked walk this return skips, so
+    // it is asked here: an unbuilt declaration plus emotion or styled-components
+    // is a package whose styling never needed a static stylesheet.
+    const declaredRuntimeEngines = detectRuntimeStyleEngines(projectRoot, workspaceRoot);
+    warningsOut?.push(
+      CSS_DECLARED_UNBUILT_WARNING(declaredMissing, buildCommand, declaredRuntimeEngines),
+    );
+    return {
+      files: [],
+      source: "none",
+      declaredMissing,
+      ...(declaredRuntimeEngines.length > 0 ? { runtimeEngines: declaredRuntimeEngines } : {}),
+    };
   }
 
   const ranked = rankedStylesheets(projectRoot);

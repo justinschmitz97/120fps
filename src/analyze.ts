@@ -4659,6 +4659,7 @@ export function resolveCssFiles(
   onlyCandidate?: boolean;
   noEntryInPackage?: boolean;
   runtimeEngines?: string[];
+  declaredMissing?: Array<{ field: string; path: string; buildCommand?: string }>;
 } {
   if (options.noCss) return { files: [], autoDetected: false, layer: "disabled" };
 
@@ -4709,6 +4710,7 @@ export function resolveCssFiles(
       ? { noEntryInPackage: discovered.noEntryInPackage }
       : {}),
     ...(discovered.runtimeEngines !== undefined ? { runtimeEngines: discovered.runtimeEngines } : {}),
+    ...(discovered.declaredMissing !== undefined ? { declaredMissing: discovered.declaredMissing } : {}),
   };
 }
 

@@ -106,7 +106,8 @@ Lines re-checked against this worktree's `src`; where the cluster brief differs,
 - A1 A package stylesheet declared in the measured package's `package.json` (`style`, `exports["./styles"]`,
   `exports["./style.css"]`, `exports[*].style`) whose target does not exist is reported as declared-but-unbuilt,
   naming the declaring field, the missing path and the package's own build command (`packageManagerRunCommand`,
-  `src/harness.ts:3083`; M95 rule).
+  `src/harness.ts:3083`; M95 rule), on any run where no stylesheet was injected; a run that injected
+  an entry-chain or conventional-name stylesheet keeps its current text.
 - A2 With such a target present, the size-ranked fallback is not used for that package: the run reports
   `css.layer: "none"` with a non-empty `css.declaredMissing`, and `CSS_FALLBACK_WARNING`'s "no entry stylesheet
   import and no conventional global stylesheet were found" sentence does not print for that run.
@@ -135,9 +136,10 @@ Lines re-checked against this worktree's `src`; where the cluster brief differs,
   `detectPropPresets`. Needed by B1, B2, C1, C2.
 - I5, producer lane A, consumer lane C. `packageStylesheetCandidates` returns `Array<{ file: string } | {
   declared: string }>` (the `StylesheetImportTarget` shape at `src/harness.ts:735`), the `discoverGlobalCss`
-  result gains `declaredMissing: string[]`, `CssReport` (`src/report.ts:429-477`) gains `declaredMissing?:
-  string[]`, and `formatStylesheetsLine` (`src/report.ts:681-699`) renders the declared-but-unbuilt outcome in
-  its own wording. Needed by A1, A2, C4. M114 adds `runtimeEngines` and `runtimeEnginesRecognised` to the same
+  result gains `declaredMissing: Array<{ field: string; path: string; buildCommand?: string }>`, `CssReport`
+  (`src/report.ts:429-477`) gains `declaredMissing?: string[]` beside `declaredMissingFields?: Array<{ field:
+  string; path: string; buildCommand?: string }>`, and `formatStylesheetsLine` (`src/report.ts:681-699`)
+  renders the declared-but-unbuilt outcome in its own wording. Needed by A1, A2, C4. M114 adds `runtimeEngines` and `runtimeEnginesRecognised` to the same
   record afterwards.
 
 Conflicts in `M107-M117-MAP.md`: C5 — M112's warning records land before M114's re-export outcome; C6 — M112's
@@ -314,9 +316,8 @@ Open against I5 (producer lane A, `src/harness.ts`). The `discoverGlobalCss` res
 every run today; radix-themes-F2's `Stylesheets:` line is still `src/styles/tokens/color.css
 (largest-stylesheet fallback, low confidence - verify with --css)`. C4's consumer half is in place
 and unit-tested: `CssReport.declaredMissing`, the `none` branch of `formatStylesheetsLine`, and the
-projectRoot-relative posix normalisation in `buildCssReport`. The declaring field name and the
-package's build command are not on I5's record (`declaredMissing: string[]`), so the `Stylesheets:`
-line names the missing paths and A1's own warning carries the field and the command.
+projectRoot-relative posix normalisation in `buildCssReport`. The `Stylesheets:` line names the missing paths;
+A1's own warning carries the field and the command.
 
 ### Lane A evidence
 
@@ -341,23 +342,51 @@ A-M112`, tree at `88a1d61` plus this lane's uncommitted work):
   `⚠ this package's package.json "style" declares styles.css, which is not on disk yet — most likely because a build this harness never runs produces it. No stylesheet was injected and the component is measured unstyled; run `pnpm run build` in this package, then re-run, or pass --css to name a stylesheet that exists.`
   The fallback sheet is gone (`css layer=none`, `files=0`, no `CSS_FALLBACK_WARNING`), `exit=0` and the
   verdicts are unchanged. Closed for A1 and for A2's fallback half.
-  Not closed: line 18 still reads
+  Not closed at that commit: line 17 read
   `Stylesheets: none found (checked the project entry, conventional filenames, and the largest stylesheet under the project)`
-  — see "Open against I5" below.
+  — closed by the review fix-ups below.
 - Control shadcn-admin (`-- src/components/ui/button.tsx --explain-props`, label
   `M112-A-shadcn-admin-after`): `exit=0`, same report, and the stylesheet line is unchanged:
   `Stylesheets: src/styles/index.css (found in the project entry's own imports)`.
 
-Open against I5 (consumer lane C, `src/analyze.ts`). `discoverGlobalCss` now returns
-`declaredMissing: Array<{ field, path, buildCommand? }>` and `buildCssReport` already reads that
-member structurally, but `resolveCssFiles` (`src/analyze.ts`, the return object at the end of the
-function) sits between them and does not forward it, so `css.declaredMissing` is absent from every
-report and `formatStylesheetsLine`'s `none` branch keeps printing "none found". Closing A2's report
-half needs one lane C change: `declaredMissing?: Array<{ field: string; path: string; buildCommand?:
-string }>` on `resolveCssFiles`'s inline return type plus
-`...(discovered.declaredMissing !== undefined ? { declaredMissing: discovered.declaredMissing } : {})`
-in its return object. The producer supplies the rich record form (field, path and build command),
-which `buildCssReport` maps to `css.declaredMissing` and `css.declaredMissingFields`.
+#### Lane A review fix-ups
+
+Reviewer findings: A2's report half was unmet end to end (`discoverGlobalCss` returned
+`declaredMissing` and `resolveCssFiles` dropped it); no test crossed
+`resolveCssFiles`/`discoverGlobalCss` for that record; the new early return sat ahead of the runtime
+CSS-in-JS layer, so a declared-missing sheet hid a runtime engine; I5's landed shape (the rich
+record plus `CssReport.declaredMissingFields`) deviated from the map text; A1's wording was
+unconditional while the code fires only where no stylesheet was injected.
+
+Changed: `src/harness.ts` asks `detectRuntimeStyleEngines` at the declared-but-unbuilt return and
+carries `runtimeEngines` on it, and `CSS_DECLARED_UNBUILT_WARNING` names those engines in place of
+the measured-unstyled clause when they are present; `src/analyze.ts` forwards `declaredMissing`
+through `resolveCssFiles` (I5's two-line plumbing); the map's I5 entry, I5 above and A1's wording
+describe the landed shape.
+
+Tests: `node node_modules/vitest/vitest.mjs run test/unit/declared-stylesheet-absent-is-named.test.ts
+test/unit/package-declared-stylesheets.test.ts --maxWorkers=2` -> `Test Files  2 passed (2)`,
+`Tests  40 passed (40)`. With the `src/analyze.ts` forward removed, the new seam test fails with
+`AssertionError: expected undefined to deeply equal [ { field: 'style', …(2) } ]`. The 40
+`test/unit/*.test.ts` files naming `harness` (the 15 CSS-related ones first):
+`Test Files  40 passed (40)`, `Tests  758 passed (758)`; `bundler-error-presentation.test.ts`, a
+"Baseline failures" file, is among them and green.
+
+`node node_modules/typescript/bin/tsc --noEmit`: clean.
+
+Corpus, scratch dist `C:/Projekte/120fps-fieldtest/scratch/A-M112/dist/cli.js` (`build-scratch.sh
+A-M112`, tree at `9fa3b7e` plus the lanes' uncommitted work):
+
+- radix-themes-F2 / A2's report half (`--cwd .../packages/radix-ui-themes --
+  src/components/button.tsx --samples 5 --max-combos 4 --explore-budget 60 --no-deltas`, label
+  `M112-radix-themes-after`). Before (`logs/radix-themes/real-button.log:17`):
+  `Stylesheets: src/styles/tokens/color.css (largest-stylesheet fallback, low confidence — verify with --css)`
+  After (`logs/radix-themes/M112-radix-themes-after.log:17`):
+  `Stylesheets: none injected — package.json "style" declares styles.css, which is not built yet; run `pnpm run build` in that package, then re-run`
+  Digest `css layer=none files=0`, `exit=0`, `Result: PASS`, verdicts unchanged. Closed.
+- Control shadcn-admin (`-- src/components/ui/button.tsx --explain-props`, label
+  `M112-A-shadcn-admin-fixup-after`): `exit=0`, same report, stylesheet line unchanged:
+  `Stylesheets: src/styles/index.css (found in the project entry's own imports)`.
 
 ## Deferred
 

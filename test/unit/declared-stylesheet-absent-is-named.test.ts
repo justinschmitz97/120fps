@@ -7,6 +7,8 @@ import {
   discoverGlobalCss,
   packageStylesheetCandidates,
 } from "../../src/harness.js";
+import { buildCssReport, resolveCssFiles } from "../../src/analyze.js";
+import { formatStylesheetsLine } from "../../src/report.js";
 
 const FIXTURES = path.resolve(__dirname, "../../fixtures");
 const DECLARED_ABSENT = path.join(FIXTURES, "declared-absent-style");
@@ -149,5 +151,55 @@ describe("the declared-but-unbuilt stylesheet warning", () => {
         "and the component is measured unstyled; build this package, then re-run, or pass --css to " +
         "name a stylesheet that exists.",
     );
+  });
+});
+
+// M112 review: the producer half was covered end to end and the report half
+// was covered on a cast literal, so the forward through `resolveCssFiles` was
+// the one seam nothing crossed.
+describe("the declaration reaching the report", () => {
+  it("carries the declared-but-unbuilt target from discovery into the Stylesheets line", () => {
+    const resolved = resolveCssFiles({}, DECLARED_ABSENT, []);
+    expect(resolved.declaredMissing).toEqual([
+      { field: "style", path: "styles.css", buildCommand: expect.stringContaining("run build") },
+    ]);
+    const report = buildCssReport(resolved, DECLARED_ABSENT);
+    expect(report.declaredMissing).toEqual(["styles.css"]);
+    expect(formatStylesheetsLine(report)).toContain("styles.css");
+    expect(formatStylesheetsLine(report)).not.toContain("none found");
+  });
+});
+
+// M112 review: the early return sits above the runtime layer, so a package
+// that declares an unbuilt stylesheet and styles at runtime used to lose M82's
+// outcome and be told it was measured unstyled.
+describe("a declared-but-unbuilt stylesheet in a package that styles at runtime", () => {
+  it("keeps the runtime engines and drops the measured-unstyled claim", () => {
+    write(
+      "package.json",
+      JSON.stringify({
+        name: "runtime-and-declared",
+        style: "./dist/theme.css",
+        dependencies: { "@emotion/react": "^11.0.0" },
+      }),
+    );
+    write("src/big.css", ".a{color:red}");
+    const warnings: string[] = [];
+    const discovery = discoverGlobalCss(tmpDir, warnings);
+    expect(discovery.source).toBe("none");
+    expect(discovery.files).toEqual([]);
+    expect(discovery.declaredMissing).toEqual([{ field: "style", path: "dist/theme.css" }]);
+    expect(discovery.runtimeEngines).toEqual(["@emotion/react"]);
+    const declared = warnings.find((w) => w.includes("dist/theme.css"));
+    expect(declared).toContain("styling is generated at runtime by @emotion/react");
+    expect(declared).not.toContain("measured unstyled");
+  });
+
+  it("still claims the unstyled measurement when no runtime engine is present", () => {
+    write("package.json", JSON.stringify({ name: "declared-only", style: "./dist/theme.css" }));
+    const warnings: string[] = [];
+    const discovery = discoverGlobalCss(tmpDir, warnings);
+    expect(discovery.runtimeEngines).toBeUndefined();
+    expect(warnings.some((w) => w.includes("measured unstyled"))).toBe(true);
   });
 });
