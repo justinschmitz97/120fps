@@ -1,6 +1,6 @@
 ---
 kind: milestone
-status: draft
+status: approved
 tests:
   - test/unit/vue-setup-inject-evidence.test.ts
   - test/unit/runtime-style-engine-disclosure.test.ts
@@ -414,3 +414,50 @@ Run 2026-09-03 in `C:/Projekte/120fps-m107` on `feat/m107-run5-remediation`, scr
 - `UNSUPPORTED_STYLE_ENGINES` (`harness.ts:1417`), which no run-5 finding named; the
   `#PopoverContent` export-suffix retest, which `src/cli.ts:343` already supports; Vue Options-API
   global detection beyond the `$` frame rule; macro support of any kind.
+
+## Approval
+
+Approved 2026-09-03. Commits: `b5d7070` + `b28c9cd` (lane B), `bdac910` + `88a1d61` (lane C),
+`096786b` + `755d26d` (lane A), all on `feat/m107-run5-remediation`.
+
+All fourteen MUST items (A1-A6, B1-B6, C1-C4) carry an assertion in the ten test files the
+frontmatter names; re-run together at approval:
+`Test Files  10 passed (10)` / `Tests  76 passed (76)`.
+
+- Lane A (A1-A6): `Test Files  3 passed (3)` / `Tests  28 passed (28)`, the 43 files touching
+  `discoverGlobalCss`/`findProjectEntry`/`CSS_FALLBACK_WARNING`/the `Stylesheets:` line
+  `706 passed (706)`, `tsc --noEmit` clean. Corpus: fluentui-F3 closed (the Griffel runtime line),
+  supabase-F2 closed (substituted text, zero `%s` in the JSON, `Result: PASS`), vuetify-F1 closed by
+  M112's declared-but-unbuilt branch with the root and entry reads probed through the scratch dist,
+  shadcn-admin unaffected. A5 has no corpus row and the spec states why (no run-5 repo declares
+  `build.rollupOptions.input`); it is unit-verified on `fixtures/vite-rollup-input/`.
+- Lane B (B1-B6): `Test Files  4 passed (4)` / `Tests  16 passed (16)`, the 71 files importing
+  `prop-gen.ts`/`prop-gen-values.ts`/`vue-sfc.ts` `967 passed (967)`, `tsc --noEmit` clean. Corpus:
+  logto-F1, gutenberg-F2, react-spectrum-F3, fluentui-F1 (`Result: PASS`, no cell carrying `open`
+  with `defaultOpen`) all closed, shadcn-admin unaffected.
+- Lane C (C1-C4): `Test Files  3 passed (3)` / `Tests  19 passed (19)`, the 42 files importing
+  `src/hints.js` or exercising the zero-props, `--explain-props` and `Stylesheets:` surfaces
+  `677 passed (677)`, the whole `test/unit` suite `4609 passed | 1 skipped`, `tsc --noEmit` clean.
+  Corpus: gutenberg-F2, react-spectrum-F3, vitesse-F1, ark-F2 all closed, shadcn-admin unaffected.
+
+Correction to the lane A evidence, verified at approval: its "Open, blocked on I5's lane C half"
+paragraph is superseded. `755d26d` landed both hops — `resolveCssFiles` forwards `measuredFile`
+into `discoverGlobalCss` (`src/analyze.ts:4788-4791`, callers `:2582`, `:3700`) and copies
+`runtimeEnginesRecognised` onto the `CssReport` (`:4818-4820`, `:2499`) — so A2 reaches a real run,
+and the `RUNTIME_STYLE_ENGINES` copy in `m82-stylesheet-selection-disclosure.md:103-111` now lists
+the M114 set.
+
+### Deferred / open
+
+- A transitive stylesheet walk through the entry's JS imports (M71 scopes discovery to the entry's
+  own side-effect imports; vuetify's `src/styles/main.sass` is three hops away).
+- `css.preprocessorOptions.additionalData` as a stylesheet source: M106 A3 already folds and
+  replays it.
+- fluentui-F1's FAIL verdict and the tier budget: a sub-2 ms mount-budget miss, M117 owns the noise.
+- `UNSUPPORTED_STYLE_ENGINES` (`harness.ts:1417`); the `#PopoverContent` export-suffix retest; Vue
+  Options-API global detection beyond the `$` frame rule; macro support of any kind.
+- Lane B's rendering gap for lane C, still open: an axis held at its absent member prints
+  `Held at one value (not crossed at this cell cap): unmountOnClose=undefined`, because
+  `appendAxisCoverage` (`src/report.ts:2056`) prints `absent` only when `measuredValues === 0`.
+  B2's `Held absent (no value in any cell):` disclosure is unaffected.
+- Plugin names in C3's hint arrive with M117 A3/C4.
