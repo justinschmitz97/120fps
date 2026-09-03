@@ -2510,6 +2510,11 @@ export async function explainProps(
     // forwards one shape to both entry points.
     skipAutoCompose?: boolean;
     noTransforms?: boolean;
+    // M110 I2 (review): the static pre-build both modes read resolves the
+    // external-dependency scan against the shim aliases, which `--no-shims`
+    // removes. Without this flag a `--no-shims` real run could report a
+    // different unresolved set than the dry run predicted from the same files.
+    noShims?: boolean;
     // I12 (M115 C6): the two flags that decide how many combos and samples the
     // real run would measure. Same names and types as `AnalyzeOptions`, so the
     // CLI forwards one shape to both entry points.
@@ -2575,6 +2580,7 @@ export async function explainProps(
     ...collectStaticPreBuildWarnings(projectRoot, {
       componentPath: resolvedPath,
       ...(wrapPath ? { wrapPath } : {}),
+      ...(options.noShims ? { noShims: true } : {}),
     }).warnings,
   );
 

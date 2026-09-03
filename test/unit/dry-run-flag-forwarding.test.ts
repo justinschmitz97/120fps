@@ -51,11 +51,29 @@ describe("mode flags a dry run needs to predict the same mode", () => {
     expect(fixture.fixturePath).toBe("a.fixture.tsx");
   });
 
+  // M110 C1, C4, I2 (review): these three used to stop at the call site too,
+  // so `--explain-props --no-auto-compose` predicted an auto-composed scene the
+  // real run does not build, `--explain-props --no-transforms` printed the
+  // `[transform:` lines the real run suppresses, and `--no-shims` changed the
+  // external-dependency scan on one path only.
+  it("carries --no-auto-compose, --no-transforms and --no-shims", () => {
+    const options = explainPropsOptions(
+      parseArgs(["a.tsx", "--explain-props", "--no-auto-compose", "--no-transforms", "--no-shims"]),
+      "a.tsx",
+    );
+    expect(options.skipAutoCompose).toBe(true);
+    expect(options.noTransforms).toBe(true);
+    expect(options.noShims).toBe(true);
+  });
+
   it("omits every mode flag that was not passed", () => {
     const options = explainPropsOptions(parseArgs(["a.tsx", "--explain-props"]), "a.tsx");
     expect(options).not.toHaveProperty("curveMode");
     expect(options).not.toHaveProperty("matrixMode");
     expect(options).not.toHaveProperty("isolation");
     expect(options).not.toHaveProperty("fixturePath");
+    expect(options).not.toHaveProperty("skipAutoCompose");
+    expect(options).not.toHaveProperty("noTransforms");
+    expect(options).not.toHaveProperty("noShims");
   });
 });

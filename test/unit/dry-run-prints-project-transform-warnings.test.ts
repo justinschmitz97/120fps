@@ -125,13 +125,9 @@ describe("the run path's own transform warnings", () => {
   });
 
   // I3: one exported classifier, no second copy anywhere. A duplicate is how
-  // the two modes drifted apart in the first place.
-  it("reads the classifier `src/preflight.ts` exports, in both modes", () => {
+  // the two modes drifted apart in the first place. Which hits each mode
+  // prints is pinned by the observable parity tests above, not here.
+  it("declares no second classifier of its own", () => {
     expect(analyzeSrc).not.toContain("function classifiedProjectTransformHits");
-    const dryRunBlock = analyzeSrc.slice(
-      analyzeSrc.indexOf("for (const hit of preflight.soft) warnings.push(NODE_BUILTIN_WARNING(hit));"),
-      analyzeSrc.indexOf("if (preflight.hard.length > 0) {"),
-    );
-    expect(dryRunBlock).toContain("classifyProjectTransformHits(");
   });
 });

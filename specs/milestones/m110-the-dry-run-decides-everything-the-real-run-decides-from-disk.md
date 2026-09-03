@@ -297,10 +297,10 @@ Lane C open against lane A:
   classifier lived as `classifiedProjectTransformHits` in `src/analyze.ts`, called by the dry run and
   by the real-run site, so the two modes shared one filter. Closed by the follow-up below: the
   duplicate is deleted and both sites call lane A's export.
-- `src/cli.ts`'s `explainPropsOptions` does not forward `skipAutoCompose` or `noTransforms`, so
-  `--no-auto-compose --explain-props` and `--no-transforms --explain-props` still reach `explainProps`
-  without those flags. `explainProps` accepts both (lane C's half of C1 and C4); the forwarding is
-  lane A's line in `src/cli.ts`.
+- `src/cli.ts`'s `explainPropsOptions` did not forward `skipAutoCompose` or `noTransforms`, so
+  `--no-auto-compose --explain-props` and `--no-transforms --explain-props` reached `explainProps`
+  without those flags. Closed by the lane C review fix-up below, which adds both lines (and `noShims`)
+  to `explainPropsOptions`.
 
 #### Lane C follow-up (2026-09-03, after lane A landed `ffba273`/`ec6ec61`)
 
@@ -376,8 +376,12 @@ Corpus, scratch dist `C:/Projekte/120fps-fieldtest/scratch/C-M110/dist/cli.js`, 
 
   Closed: yes.
 
-Still open for lane A: `src/cli.ts`'s `explainPropsOptions` forwarding of `skipAutoCompose` and
-`noTransforms` (unchanged from the note above).
+`src/cli.ts`'s `explainPropsOptions` now forwards `skipAutoCompose`, `noTransforms` and `noShims`
+(lane C review fix-up): the flags C1 and C4 word reached `explainProps` only when a test called it
+directly, so through the CLI `--explain-props --no-auto-compose` still predicted an auto-composed
+scene and `--explain-props --no-transforms` still printed every `[transform:` line. `noShims` joins
+them because it changes the alias set the shared static pre-build resolves against, which bounds I2's
+unresolved-externals parity. Covered by `test/unit/dry-run-flag-forwarding.test.ts`.
 
 ### Lane A evidence (2026-09-03, worktree `C:\Projekte\120fps-m107` on `feat/m107-run5-remediation`)
 
@@ -465,7 +469,8 @@ Lane A notes:
 - Observed while running the epic-stack pair, for lane C: the dry run predicts
   `Matrix mode:  predicate matches, but an auto-composed scene supplies the props ...` for
   `app/components/ui/dropdown-menu.tsx`, and the real run then prints `mode: prop matrix`. Not lane
-  A's files; recorded here as evidence for C1/C2.
+  A's files; filed by lane C under Deferred (the composition rollback after an empty trial mount),
+  not as evidence for C1/C2.
 
 ## Deferred
 
@@ -485,5 +490,9 @@ Lane A notes:
   (`verify/logto.md:49-67`); only the transform-warning half of logto-F3 is in scope.
 - The real run's composition rollback after an empty composed mount (`src/analyze.ts:3542`) stays a
   runtime outcome. The dry run predicts the dispatcher's pre-mount choice; a scene that mounts empty
-  is the class `DRY_RUN_RUNTIME_ONLY_NOTE` already covers.
+  is the class `DRY_RUN_RUNTIME_ONLY_NOTE` already covers. Named case, from the run-5 corpus: a
+  composed scene the trial mount finds empty rolls back to matrix; the dry run cannot see the mount.
+  Evidence: epic-stack `app/components/ui/dropdown-menu.tsx`, where the dry run prints
+  `Matrix mode:  predicate matches, but an auto-composed scene supplies the props ...` and the real
+  run then prints `mode: prop matrix`. That pair is a deferred divergence, not evidence for C1/C2.
 - Wall-clock estimates in the dry run (M115) and once-per-run warning dedup (M117).

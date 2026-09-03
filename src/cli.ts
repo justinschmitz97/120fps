@@ -1291,6 +1291,9 @@ export function explainPropsOptions(
   matrixMode?: ReturnType<typeof resolveMatrixOption>;
   isolation?: ReturnType<typeof resolveIsolationOption>;
   fixturePath?: string;
+  skipAutoCompose?: boolean;
+  noTransforms?: boolean;
+  noShims?: boolean;
 } {
   // C-5: the four flags below decide which mode the real run takes, and the
   // dry run's whole job is to predict that mode. They are resolved with the
@@ -1307,6 +1310,17 @@ export function explainPropsOptions(
     ...(matrixMode !== undefined ? { matrixMode } : {}),
     ...(isolation !== undefined ? { isolation } : {}),
     ...(args.fixturePath ? { fixturePath: args.fixturePath } : {}),
+    // M110 C1, C4 (review): the dry run read both of these all along; the call
+    // site dropped them, so `--explain-props --no-auto-compose` predicted an
+    // auto-composed scene the real run does not build and
+    // `--explain-props --no-transforms` printed the transform lines the real
+    // run suppresses. Same two lines the real run forwards below.
+    ...(args.noAutoCompose ? { skipAutoCompose: true } : {}),
+    ...(args.noTransforms ? { noTransforms: true } : {}),
+    // M110 I2 (review): `noShims` changes the alias set the external-dependency
+    // scan resolves against, so the shared static pre-build only reports the
+    // same unresolved externals in both modes when the dry run gets it too.
+    ...(args.noShims ? { noShims: true } : {}),
   };
 }
 
