@@ -398,6 +398,64 @@ and unit-tested: `CssReport.declaredMissing`, the `none` branch of `formatStyles
 projectRoot-relative posix normalisation in `buildCssReport`. The `Stylesheets:` line names the missing paths;
 A1's own warning carries the field and the command.
 
+#### Lane C follow-up: the declared-missing line and the cap remedy after a preset
+
+Both halves the lane left open are closed by their producers landing, and both seams now carry a
+test of their own. I5: lane A's `M112 (lane A): review fix-ups` (`a56003f`) forwards
+`declaredMissing` through `resolveCssFiles`, so `buildCssReport` reads a real record and the
+`Stylesheets:` line names the declaration instead of "none found". I7: lane B's `M112 (lane B): cap
+warning goes through the record sink` (`c8f39a9`) routes `warnPropCap` through the sink, so the cap
+remedy reaches `PropsExtraction.warnings` and `remediesAfterPreset` re-renders it after the preset
+is applied.
+
+Tests added here: `test/unit/stylesheet-disclosure-completeness.test.ts` gains "a
+declared-but-unbuilt stylesheet from discovery to the printed line" (three cases, the fixture
+`fixtures/declared-absent-style/` through `resolveCssFiles` then `buildCssReport` then
+`formatStylesheetsLine`, no cast literal anywhere on the path);
+`test/unit/remedy-follows-the-applied-preset.test.ts` gains "the capped-extraction remedy in a run
+that applied a preset" (three cases over `fixtures/preset-collision/wide.tsx` and the new control
+`fixtures/preset-collision/wide-uncovered.tsx`, a capped component with no preset-named sibling).
+Both seams fail when removed: with the `declaredMissing` forward deleted from `resolveCssFiles` and
+the `remedyNamesLoadedPreset` map deleted from `remediesAfterPreset`,
+`Tests  4 failed | 30 passed (34)`, the first being `AssertionError: expected 'Warning: 43 props
+were extracted from...' to contain 'The applied preset fixtures/preset-co...'`.
+
+Tests: `node node_modules/vitest/vitest.mjs run test/unit/remedy-follows-the-applied-preset.test.ts
+test/unit/stylesheet-disclosure-completeness.test.ts
+test/unit/init-fixture-scaffolds-or-explains.test.ts --maxWorkers=2` -> `Test Files  3 passed (3)`,
+`Tests  43 passed (43)`. Whole `test/unit`
+(`--maxWorkers=2`): `Test Files  4 failed | 314 passed (318)`, `Tests  18 failed | 4678 passed |
+1 skipped (4697)`. The four are lanes A and B's in-flight work in the same worktree
+(`console-format-substitution.test.ts`, `runtime-style-engine-detection.test.ts`,
+`vite-config-workspace-root.test.ts`, `vite-root-entry-discovery.test.ts`, all against uncommitted
+`src/harness.ts` and `src/page-errors.ts`); this lane changed no source file, so none of them can
+follow from it. The four "Baseline failures" files are green.
+
+`node node_modules/typescript/bin/tsc --noEmit`: clean.
+
+Corpus, scratch dist `C:/Projekte/120fps-fieldtest/scratch/C-M112/dist/cli.js` (`build-scratch.sh
+C-M112`, tree at `bdd8261` plus the lanes' uncommitted work):
+
+- radix-themes-F2 / C4 (`--cwd .../packages/radix-ui-themes -- src/components/button.tsx --samples 5
+  --max-combos 4 --explore-budget 60 --no-deltas`, label `M112-radix-themes-after`). Before
+  (`logs/radix-themes/real-button.log:17`):
+  `Stylesheets: src/styles/tokens/color.css (largest-stylesheet fallback, low confidence — verify with --css)`
+  After (`logs/radix-themes/M112-radix-themes-after.log`):
+  `Stylesheets: none injected — package.json "style" declares styles.css, which is not built yet; run `pnpm run build` in that package, then re-run`
+  Digest `css layer=none files=0`, `exit=0`, `Result: PASS`, verdicts unchanged. Closed.
+- logto-F4 / C1 (`src/ds-components/Button/index.props.tsx` recreated with a default-exported
+  `title`/`type` object, then `--cwd .../packages/console -- src/ds-components/Button/index.tsx
+  --explain-props`, label `M112-logto-after`; the file was removed again afterwards). Before
+  (`logs/logto/explain-button-preset.log:6`): `Add index.props.tsx to choose the props that matter.`
+  beside `presets:  src/ds-components/Button/index.props.tsx`. After
+  (`logs/logto/M112-logto-after.log:67`):
+  `  Warning: 319 props were extracted from E:\repositories-run5\logto\packages\console\src\ds-components\Button\index.tsx; measuring the first 32. The applied preset src/ds-components/Button/index.props.tsx is already loaded; extend it to choose the props that matter.`
+  beside `  presets:  src/ds-components/Button/index.props.tsx` (`:6`). `exit=0`. Closed.
+- Control shadcn-admin (`-- src/components/ui/button.tsx --explain-props`, label
+  `M112-C-shadcn-admin-after`): `exit=0`, same report, and both lines are unchanged character for
+  character: `Stylesheets: src/styles/index.css (found in the project entry's own imports)` and
+  `Warning: 240 props were extracted from E:\repositories-run5\shadcn-admin\src\components\ui\button.tsx; measuring the first 32. Add button.props.tsx to choose the props that matter.`
+
 ### Lane A evidence
 
 Tests: `node node_modules/vitest/vitest.mjs run test/unit/declared-stylesheet-absent-is-named.test.ts

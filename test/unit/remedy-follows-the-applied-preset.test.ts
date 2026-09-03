@@ -108,3 +108,32 @@ describe("the real run's own remedy filter", () => {
     expect(remedyNamesLoadedPreset(other, "fixtures/wide.120fps.props.tsx")).toBe(other);
   });
 });
+
+// logto-F4: the capped-extraction remedy is rendered from the extraction
+// record after the preset has been applied, so a run that loaded a preset
+// never asks for the file it just read.
+describe("the capped-extraction remedy in a run that applied a preset", () => {
+  it("names the preset the run already loaded", async () => {
+    const explained = await explainProps(fixture("wide.tsx"), {});
+    const cap = explained.warnings.find((w) => w.includes("measuring the first"));
+    expect(cap).toBeDefined();
+    expect(cap).toContain(
+      `The applied preset ${relative("wide.120fps.props.tsx")} is already loaded; ` +
+        "extend it to choose the props that matter.",
+    );
+  });
+
+  it("asks for no preset file next to a component that has one", async () => {
+    const explained = await explainProps(fixture("wide.tsx"), {});
+    expect(explained.warnings.some((w) => w.includes("Add wide"))).toBe(false);
+  });
+
+  it("keeps the original wording for a capped component with no preset on disk", async () => {
+    const explained = await explainProps(fixture("wide-uncovered.tsx"), {});
+    expect(
+      explained.warnings.some((w) =>
+        w.includes("Add wide-uncovered.props.tsx to choose the props that matter."),
+      ),
+    ).toBe(true);
+  });
+});

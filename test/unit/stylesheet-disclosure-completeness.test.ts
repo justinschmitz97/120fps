@@ -1,7 +1,11 @@
 import { describe, it, expect } from "vitest";
 import path from "node:path";
 import { discoverGlobalCss } from "../../src/harness.js";
-import { STYLESHEET_MATCHED_NOTHING_WARNING, buildCssReport } from "../../src/analyze.js";
+import {
+  STYLESHEET_MATCHED_NOTHING_WARNING,
+  buildCssReport,
+  resolveCssFiles,
+} from "../../src/analyze.js";
 import { formatStylesheetsLine, type CssReport } from "../../src/report.js";
 
 // shadcn-ui-F3: a stylesheet dropped because it could not be read left
@@ -212,5 +216,46 @@ describe("a stylesheet the package declared but never built", () => {
       process.cwd(),
     );
     expect(report.declaredMissing).toEqual(["styles.css"]);
+  });
+});
+
+// radix-themes-F2 / C4: the whole path, producer to printed line. Lane A's
+// discovery records the declaration; the report carries it; the line names the
+// field, the missing file and the script that builds it. A cast literal cannot
+// catch a break anywhere along that path.
+describe("a declared-but-unbuilt stylesheet from discovery to the printed line", () => {
+  const DECLARED_ABSENT = path.resolve("fixtures/declared-absent-style");
+
+  it("names the declaring field, the missing path and the producing script", () => {
+    const report = buildCssReport(
+      resolveCssFiles({}, DECLARED_ABSENT, []),
+      DECLARED_ABSENT,
+    );
+    // The package manager is read from the checkout, so the command is the
+    // only part of the sentence that is not fixed.
+    expect(formatStylesheetsLine(report)).toMatch(
+      /^Stylesheets: none injected — package\.json "style" declares styles\.css, which is not built yet; run `[^`]+ build` in that package, then re-run$/,
+    );
+  });
+
+  it("carries the declaring fields into the report's css object", () => {
+    const report = buildCssReport(
+      resolveCssFiles({}, DECLARED_ABSENT, []),
+      DECLARED_ABSENT,
+    );
+    expect(report.layer).toBe("none");
+    expect(report.files).toEqual([]);
+    expect(report.declaredMissing).toEqual(["styles.css"]);
+    expect(report.declaredMissingFields).toEqual([
+      { field: "style", path: "styles.css", buildCommand: expect.stringMatching(/ build$/) },
+    ]);
+  });
+
+  it("keeps the size-ranked sheet out of the injected set", () => {
+    const report = buildCssReport(
+      resolveCssFiles({}, DECLARED_ABSENT, []),
+      DECLARED_ABSENT,
+    );
+    expect(report.files.some((f) => f.includes("tokens.css"))).toBe(false);
   });
 });
