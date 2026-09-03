@@ -1,6 +1,6 @@
 ---
 kind: milestone
-status: draft
+status: approved
 tests:
   # Lane C
   - test/unit/dry-run-predicts-the-composed-scene.test.ts
@@ -638,3 +638,48 @@ Lane F notes:
   `Matrix mode:  predicate matches, but an auto-composed scene supplies the props ...` and the real
   run then prints `mode: prop matrix`. That pair is a deferred divergence, not evidence for C1/C2.
 - Wall-clock estimates in the dry run (M115) and once-per-run warning dedup (M117).
+
+## Approval
+
+Approved 2026-09-03. Landed in commits `0b6509d`, `93666c6` (lane C), `ffba273`, `ec6ec61`
+(lane A), `27c0015`, `87d6113` (lane C re-point onto I2/I3), `af91d32`, `7951ba4` (lane F).
+
+Approver re-ran the nine spec test files once,
+`node node_modules/vitest/vitest.mjs run <files> --maxWorkers=2`:
+
+```
+ Test Files  9 passed (9)
+      Tests  73 passed (73)
+```
+
+- **Lane C (C1-C4).** Tests green (`dry-run-predicts-the-composed-scene`,
+  `requested-matrix-names-what-took-precedence`, `dry-run-prints-project-transform-warnings`,
+  `dry-run-names-the-unresolved-prebundle-entry`), `tsc --noEmit` clean. Corpus: supabase-F3 prints
+  the `Composition:` line and the composed-scene matrix line, calcom-R1 prints the suppression
+  warning before `mode: prop combos` at exit 0, logto-F3's dry run prints the 13
+  `[transform:css-preprocessor]` lines the real run prints, shadcn-admin control unchanged.
+- **Lane A (A1-A5).** Tests green (`prebundle-entry-that-resolves-to-nothing-warns`,
+  `import-clause-across-lines-is-scanned`, `data-file-import-names-its-loader-plugin`,
+  `project-transform-hits-are-classified-once`), `tsc --noEmit` clean. Corpus: epic-stack-F2 reaches
+  `Result: PASS` with no unresolved-include line in either mode (M108 resolves `#app/*`; A1's own
+  text is pinned by `fixtures/unresolvable-include/`), gutenberg's multi-line clause run reaches a
+  curve pass, directus prints the named `[transform:yaml]` hit, shadcn-admin control unchanged.
+- **Lane F (F1, F2).** Tests green (`unloadable-file-type-import-is-refused`), `tsc --noEmit` clean.
+  Corpus: directus refuses in 2s with the named message and no browser boot, the dry run's refusal
+  byte-identical to the real run's; epic-stack, logto, supabase, calcom and the control unchanged.
+
+Interfaces verified landed: `classifyProjectTransformHits` at `src/preflight.ts:1119` (no second
+classifier left in `src/analyze.ts`), `StaticPreBuild.unresolvedExternals` at `src/harness.ts:792`.
+
+### Deferred / open
+
+- Resolving `#app`, `#imports` and `#build` through the importer's `imports` field: M108.
+- Widening the workspace-sibling rescue in the same `externalPkgs` loop: M107.
+- An explicit `--curve` the dispatcher cannot honour: no run-5 finding exercises it.
+- Alias-decision parity: already held before M110, nothing added.
+- The preset-aware remedy rewrite inside `explainProps`: M112.
+- `.module.scss` counting as a stylesheet (logto-F2): ruled by-design by the verifier.
+- The real run's composition rollback after an empty composed mount stays a runtime outcome
+  (`DRY_RUN_RUNTIME_ONLY_NOTE`); epic-stack `dropdown-menu.tsx` is the named divergent pair.
+- Wall-clock estimates in the dry run (M115) and once-per-run warning dedup (M117).
+- directus still exits 2 on the YAML import; M110 named the cause, it did not make the run mount.
