@@ -15,7 +15,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-// M81 section 2 (the SEPARATE fix from cap ordering, per M76-M83-MAP's
+// M81 section 2 (the SEPARATE fix from cap ordering, per the archived M76-M83 map's
 // correction to ant-design-F3): `isNoiseProp`'s `isAmbientNoiseDeclaration`
 // branch fully deletes any prop whose every declaration lives in
 // `@types/react`, regardless of member name — `onClick` and `children` as

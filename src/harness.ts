@@ -2881,8 +2881,8 @@ export function BUNDLER_STYLESHEET_MISSING_ERROR(target: string): string {
 // M89 defect 3 (shadcn-ui, live proof): lets a caller detect this exact
 // shape *before* presentBundlerFailure ever converts it into a fatal error,
 // so a stylesheet that cannot be resolved/read can be dropped and the run
-// continued unstyled instead -- the governing policy (specs/milestones/
-// m95-*.md): skip unresolvable build artifacts and measure anyway wherever
+// continued unstyled instead -- the governing policy (M95 in
+// specs/overview/02-milestones.md): skip unresolvable build artifacts and measure anyway wherever
 // possible. Deliberately scoped to ENOENT alone: a stylesheet that resolves
 // and then fails to *compile* (a real syntax/PostCSS/sass error in a file
 // that genuinely exists, e.g. twenty's sass "Undefined mixin") does not

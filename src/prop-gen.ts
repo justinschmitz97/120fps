@@ -1818,8 +1818,8 @@ function presetPropNames(fileName: string): Set<string> {
 // Tier 1 was shape only, so an inherited `translate?: "yes" | "no"` and an
 // inherited `hidden?: boolean` outranked every prop the component itself
 // declares whose type resolves to something less tidy -- chakra's Badge
-// measured 32 props of which none were Badge's. See the rank table in
-// specs/milestones/m103-the-measured-props-are-the-components-own.md.
+// measured 32 props of which none were Badge's. See M103 in
+// specs/overview/02-milestones.md.
 type PropRank = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
 
 // M103: how many members the interface or type literal that declares a prop

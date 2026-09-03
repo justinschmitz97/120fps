@@ -73,8 +73,8 @@ describe("file support", () => {
   });
 
   it("still rejects unmeasurable extensions", () => {
-    // M77 widens the accepted extensions to include `.ts` (specs/milestones/
-    // m77-type-space-runtime-space.md, "Changed contracts": ".js/.ts file is
+    // M77 widens the accepted extensions to include `.ts` (M77 in
+    // specs/overview/02-milestones.md, "Changed contracts": ".js/.ts file is
     // now a legal argument... it never was before"), gated by hasComponentShape
     // rather than accepted on extension alone; `.d.ts` and a non-source
     // double extension stay rejected, unaffected by that widening.
@@ -367,7 +367,7 @@ describe("extractProps discloses the excluded Options-API form via onWarning", (
   });
 });
 
-// M80 scope 2 (M76-M83-MAP.md "two separate reasons" section, and the OPEN
+// M80 scope 2 (the archived M76-M83 map's "two separate reasons" section, and the OPEN
 // WORK item this lane closes): extractSchemas (src/analyze.ts) is a private
 // closure with no exported seam, and no test/unit file in this repo calls
 // the full analyze() pipeline directly (that convention lives in test/e2e,

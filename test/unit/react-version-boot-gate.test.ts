@@ -68,7 +68,7 @@ describe("react-dom/client availability gate", () => {
   // M78: this used to assert /React 18\+ required/ against a tmpDir with
   // zero node_modules — the excalidraw shape, and exactly the bug. The old
   // catch treated every resolution failure as "version too old"; the real
-  // cause here is that nothing is installed at all. See M76-M83-MAP.md's
+  // cause here is that nothing is installed at all. See the archived M76-M83 map's
   // "LOCKED IN BY AN EXISTING TEST" note: an implementer who sees this test
   // fail and "fixes" the code to satisfy the old assertion restores the bug.
   it("still refuses when no react-dom is installed at all, naming the missing install (not a version claim)", () => {

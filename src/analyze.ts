@@ -3454,7 +3454,7 @@ export async function analyze(
       // tailwind.css, gitignored/build-only) -- entryStylesheetImports'
       // own resolution never sees that nested reference, only Vite's real
       // PostCSS pipeline does, at this first real request. Governing
-      // policy (specs/milestones/m95-*.md): skip unresolvable build
+      // policy (M95 in specs/overview/02-milestones.md): skip unresolvable build
       // artifacts and measure anyway wherever possible -- the component
       // still renders, just unstyled. Scoped to ENOENT alone
       // (stylesheetReadFailureTarget), so a stylesheet that resolves and

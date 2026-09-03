@@ -284,7 +284,7 @@ describe("M79 behavior 2: resolveFatalProcessError", () => {
 
 // M79 taxonomy-F1: readEnvDefines reads only .env/.env.local and defines
 // process.env as {} — neither --help nor README mentioned this at all
-// (both grepped, zero hits, confirmed in specs/milestones/M76-M83-MAP.md).
+// (both grepped, zero hits; see M79 in specs/overview/02-milestones.md).
 describe("M79 taxonomy-F1: --help documents the .env contract", () => {
   it("names .env / .env.local as the only source", () => {
     expect(helpText()).toContain(".env");
