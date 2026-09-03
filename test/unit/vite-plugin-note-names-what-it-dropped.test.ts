@@ -44,6 +44,22 @@ describe("the plugin names a vite.config declares", () => {
     expect(readViteConfigData(tmpDir).pluginNames).toEqual(["dts", "react"]);
   });
 
+  // M117 review: getText() returns the raw source slice, so a callee broken
+  // across lines put a newline inside a note that must stay one line.
+  it("keeps a callee written across lines on one line", () => {
+    writeConfig(
+      [
+        "export default {",
+        "  plugins: [",
+        "    plugin",
+        "      .default(),",
+        "  ],",
+        "};",
+      ].join("\n"),
+    );
+    expect(readViteConfigData(tmpDir).pluginNames).toEqual(["plugin.default"]);
+  });
+
   it("names an inline object plugin by its name property", () => {
     const data = readViteConfigData(path.resolve("fixtures/vite-config-project"));
     expect(data.pluginNames).toEqual(["hostile-transform"]);

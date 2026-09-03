@@ -125,6 +125,15 @@ Every line number below was checked against `C:\Projekte\120fps-m107\src` (`feat
   detected for that run (the codes `Report.projectTransforms` also carries, `src/report.ts:525`,
   `src/analyze.ts:3256-3257`), so the dry run reaches the same answer without a Report. The note's text stays in lane
   A's constants, as M108 requires.
+- I10 blocking hand-off, landed with A3: A3's wording breaks `VITE_CONFIG_IGNORED_SHAPE` (`src/analyze.ts:4477`), whose
+  regex still requires the pre-A3 `, which the harness read but cannot honor: ` clause. Until C3 reads
+  `ViteConfigData.pluginNames`, `viteConfigIgnoredKeys` returns undefined for every real run whose vite.config declares
+  a non-empty `plugins` array literal, so M114 C3's `vitePluginsNotExecuted` mount-abort hint does not fire on a real
+  run. No test is red: `test/unit/mount-abort-hints-name-read-evidence.test.ts:104` builds the warning with the legacy
+  two-argument form, a shape no run now produces. The code fix is lane C's. Interim shape if C3 keeps scraping
+  warnings: `/^(\S+) declares (.+?) the harness cannot honor: /`; when C3 lands, that test's call becomes
+  `VITE_CONFIG_IGNORED_WARNING("vite.config.ts", ["plugins", "resolve.alias"], ["react"])` so it asserts against the
+  wording a run prints.
 - Nothing else. C5 consumes `NoiseReport.signals` (`src/report.ts:522`) and the four thresholds exported from
   `src/noise.ts:24-30`; nothing in `src/noise.ts` (lane B) changes. A1 reads the repository inside `src/cli.ts`.
 
@@ -218,6 +227,11 @@ Lane A only (A1, A2, A3 and I10's producer); C1-C7 are lane C's and land after t
   `Test Files  20 passed (20)`, `Tests  200 passed (200)` -- `test/unit/bundler-error-presentation.test.ts` included,
   green since M108's fix-up.
 - `node node_modules/typescript/bin/tsc --noEmit`: clean, no output.
+- A1's positive half (a report written inside the repository prints the tip) is covered by unit assertions on
+  `gitignoreTipPatterns` and `formatGitignoreTip`
+  (`test/unit/gitignore-tip-follows-the-written-path.test.ts`, `test/unit/gitignore-advisory.test.ts`), not
+  end-to-end: the corpus wrapper writes every report outside the repository under test, so corpus run 2 below shows
+  only the no-tip case.
 - Corpus, scratch dist `C:/Projekte/120fps-fieldtest/scratch/A-M117/dist/cli.js`, one run at a time, `--timeout 1500`.
 
 1. shadcn-admin `src/components/ui/dialog.tsx --samples 5 --max-combos 4 --explore-budget 60 --no-deltas`

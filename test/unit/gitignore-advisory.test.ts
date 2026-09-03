@@ -6,7 +6,7 @@ import {
   findGitRoot,
   gitignoreCoversFile,
   needsGitignoreAdvisory,
-  GITIGNORE_ADVISORY_HINT,
+  formatGitignoreTip,
   GITIGNORE_SUGGESTED_PATTERNS,
 } from "../../src/cli.js";
 
@@ -144,16 +144,20 @@ describe("needsGitignoreAdvisory", () => {
   });
 });
 
-describe("GITIGNORE_ADVISORY_HINT", () => {
+// M117 review: the assertions read the text a run that triggered every pattern
+// prints, not a constant no caller reaches.
+describe("the tip a run that triggered every pattern prints", () => {
   it("names every suggested pattern", () => {
+    const tip = formatGitignoreTip(GITIGNORE_SUGGESTED_PATTERNS);
     for (const pattern of GITIGNORE_SUGGESTED_PATTERNS) {
-      expect(GITIGNORE_ADVISORY_HINT).toContain(pattern);
+      expect(tip).toContain(pattern);
     }
   });
 
   it("names the report, baseline, and harness-dir patterns", () => {
-    expect(GITIGNORE_ADVISORY_HINT).toContain("120fps-report*.json");
-    expect(GITIGNORE_ADVISORY_HINT).toContain("120fps-baseline.json");
-    expect(GITIGNORE_ADVISORY_HINT).toContain(".120fps-harness-*");
+    const tip = formatGitignoreTip(GITIGNORE_SUGGESTED_PATTERNS);
+    expect(tip).toContain("120fps-report*.json");
+    expect(tip).toContain("120fps-baseline.json");
+    expect(tip).toContain(".120fps-harness-*");
   });
 });

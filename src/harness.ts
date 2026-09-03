@@ -2293,7 +2293,7 @@ function declaredPluginName(element: ts.Expression, index: number): string {
   if (ts.isCallExpression(element)) {
     const callee = element.expression;
     return ts.isIdentifier(callee) || ts.isPropertyAccessExpression(callee)
-      ? callee.getText()
+      ? callee.getText().replace(/\s+/g, "")
       : positional;
   }
   if (ts.isObjectLiteralExpression(element)) {

@@ -1201,8 +1201,6 @@ export function formatGitignoreTip(patterns: string[]): string {
   );
 }
 
-export const GITIGNORE_ADVISORY_HINT = formatGitignoreTip(GITIGNORE_SUGGESTED_PATTERNS);
-
 // Nearest ancestor of startDir containing a .git entry (directory or, for a
 // worktree, file); undefined outside any repo. Independent of
 // project-model.ts's findWorkspaceRoot, which walks looking for install
