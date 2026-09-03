@@ -8,6 +8,7 @@ tests:
   - test/unit/noise-warning-is-one-terminal-line.test.ts
   # Lane A
   - test/unit/gitignore-tip-follows-the-written-path.test.ts
+  # Lane A landed vite-plugin-note-names-what-it-dropped.test.ts with A3's half; lane C extends it.
 ---
 
 # M117: Output that respects the reader
@@ -205,6 +206,44 @@ node C:/Projekte/120fps-fieldtest/tools/run120.mjs --cwd /e/repositories-run5/mi
 ```
 
 After: `Result: PASS`, as at `real-button-v2.log:98`.
+
+### Lane A evidence
+
+Lane A only (A1, A2, A3 and I10's producer); C1-C7 are lane C's and land after this.
+
+- Tests: `node node_modules/vitest/vitest.mjs run test/unit/gitignore-tip-follows-the-written-path.test.ts
+  test/unit/vite-plugin-note-names-what-it-dropped.test.ts --maxWorkers=2` -> `Test Files  2 passed (2)`,
+  `Tests  20 passed (20)`. The 20 files that read the changed regions
+  (`grep -ln "VITE_CONFIG\|readViteConfigData\|ignoredKeys\|GITIGNORE\|gitignore\|collectStaticPreBuildWarnings\|viteConfig" test/unit/*.test.ts`):
+  `Test Files  20 passed (20)`, `Tests  200 passed (200)` -- `test/unit/bundler-error-presentation.test.ts` included,
+  green since M108's fix-up.
+- `node node_modules/typescript/bin/tsc --noEmit`: clean, no output.
+- Corpus, scratch dist `C:/Projekte/120fps-fieldtest/scratch/A-M117/dist/cli.js`, one run at a time, `--timeout 1500`.
+
+1. shadcn-admin `src/components/ui/dialog.tsx --samples 5 --max-combos 4 --explore-budget 60 --no-deltas`
+   (label `M117-shadcn-admin-after`). Before (`logs/shadcn-admin/dialog-real2.log:52`, `:55`):
+   `grep -c "cannot honor"` = 2, each reading
+   `vite.config.ts declares plugins, which the harness read but cannot honor: the project's Vite config is never executed`.
+   After: `grep -c "cannot honor"` = 1, line 36 reading
+   `vite.config.ts declares plugins the harness cannot honor: tanstackRouter, react, tailwindcss — the project's Vite config is never executed`.
+   `Result: FAIL` keeps its wording (line 34). A3 closed. C1 not decided by this
+   run: it rolled back no composition, so the harness rebuilt once and the duplicate site never fired; the dedup
+   collector is lane C's.
+2. shadcn-admin `src/components/data-table/toolbar.tsx --samples 5 --max-combos 4 --explore-budget 60 --no-deltas`
+   (label `M117-shadcn-admin-tip-after`). Before (`logs/shadcn-admin/toolbar-remedy.log:57`):
+   `Tip: 120fps writes report/baseline files into this repo. Consider adding to .gitignore: 120fps-report*.json, 120fps-baseline.json, .120fps-harness-*`.
+   After: `grep -c "^Tip:"` = 0 -- the wrapper writes the report to
+   `C:/Projekte/120fps-fieldtest/logs/shadcn-admin/M117-shadcn-admin-tip-after.json`, outside the repository.
+   `Result: FAIL [render error]` at line 30 unchanged. A1, A2 closed.
+3. ark `src/components/accordion/accordion-root.tsx` (labels `M117-ark-after`, `M117-ark-explain-after`). Before
+   (`logs/ark/react-accordion-nomatrix.log:101`):
+   `vite.config.mts declares plugins, which the harness read but cannot honor: the project's Vite config is never executed`.
+   After, real run line 118 and `--explain-props` line 49, once each:
+   `vite.config.mts declares plugins the harness cannot honor: dts, react — the project's Vite config is never executed`
+   (`vite.config.mts:16-35`, `dts()` then `react()`). `Result: PASS` at line 114. A3 closed for both channels.
+4. midday `packages/ui/src/components/button.tsx` (label `M117-midday-after`): `Result: PASS` at line 98, as at
+   `logs/midday/real-button-v2.log:98`. shadcn-admin `src/components/ui/button.tsx --explain-props` (label
+   `M117-shadcn-button-explain-after`) still reaches `Dry run: nothing was measured, no report was written.`
 
 ## Deferred
 

@@ -1190,9 +1190,18 @@ export const GITIGNORE_SUGGESTED_PATTERNS = [
   ".120fps-harness-*",
 ];
 
-export const GITIGNORE_ADVISORY_HINT =
-  "Tip: 120fps writes report/baseline files into this repo. Consider adding to .gitignore: " +
-  GITIGNORE_SUGGESTED_PATTERNS.join(", ");
+// M117 A2: the tip names the patterns the paths that fired it need, so a run
+// that only wrote a report does not ask for the baseline and harness patterns
+// it never produced. No patterns, no tip.
+export function formatGitignoreTip(patterns: string[]): string {
+  if (patterns.length === 0) return "";
+  return (
+    "Tip: 120fps writes report/baseline files into this repo. Consider adding to .gitignore: " +
+    patterns.join(", ")
+  );
+}
+
+export const GITIGNORE_ADVISORY_HINT = formatGitignoreTip(GITIGNORE_SUGGESTED_PATTERNS);
 
 // Nearest ancestor of startDir containing a .git entry (directory or, for a
 // worktree, file); undefined outside any repo. Independent of
@@ -1243,6 +1252,48 @@ export function needsGitignoreAdvisory(gitRoot: string, writtenFilenames: string
   const gitignorePath = path.join(gitRoot, ".gitignore");
   const content = fs.existsSync(gitignorePath) ? fs.readFileSync(gitignorePath, "utf-8") : "";
   return writtenFilenames.some((name) => !gitignoreCoversFile(content, name));
+}
+
+// The suggested pattern one written path asks for, or nothing for a path this
+// tool did not produce.
+function suggestedPatternFor(writtenPath: string): string | undefined {
+  const name = path.basename(writtenPath);
+  if (name.startsWith(".120fps-harness-")) return ".120fps-harness-*";
+  if (name === "120fps-baseline.json") return "120fps-baseline.json";
+  if (/^120fps-report.*\.json$/.test(name)) return "120fps-report*.json";
+  return undefined;
+}
+
+// M117 A1 (shadcn-admin/dialog-real2.log:67): the gate mapped every written
+// report through path.basename, so a report written to a directory outside the
+// repository still counted as written into it. The resolved path decides now: a
+// file this run wrote outside the repository is not that repository's hygiene
+// problem, whatever it is called.
+export function gitignoreTipPatterns(gitRoot: string, writtenPaths: string[]): string[] {
+  const asked = new Set<string>();
+  for (const written of writtenPaths) {
+    const pattern = suggestedPatternFor(written);
+    if (!pattern || asked.has(pattern)) continue;
+    const relative = path.relative(gitRoot, path.resolve(written));
+    if (relative === "" || relative.startsWith("..") || path.isAbsolute(relative)) continue;
+    if (!needsGitignoreAdvisory(gitRoot, [path.basename(written)])) continue;
+    asked.add(pattern);
+  }
+  return GITIGNORE_SUGGESTED_PATTERNS.filter((pattern) => asked.has(pattern));
+}
+
+// M117 A1: a harness directory this run left behind is about to be tracked; one
+// it cleaned up (M113) is not, and asks for no pattern.
+export function harnessLeftoverDirs(dir: string): string[] {
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  return entries
+    .filter((entry) => entry.isDirectory() && entry.name.startsWith(".120fps-harness-"))
+    .map((entry) => path.join(dir, entry.name));
 }
 
 // M72: engines: >=22 in package.json (see package.json) is declarative only
@@ -1443,6 +1494,9 @@ async function main(): Promise<void> {
   let anyFail = false;
   // M50: collected across the sweep so both formats describe the whole run.
   const ciReports: import("./report.js").Report[] = [];
+  // M117 A1: where this sweep's baselines and harness directories can be, one
+  // entry per distinct project the components belong to.
+  const projectRoots = new Set<string>();
 
   // M37: browsers are project-agnostic: one pool serves every component of
   // the sweep (two Chromium processes total instead of ~5 launches each).
@@ -1469,7 +1523,9 @@ async function main(): Promise<void> {
     // M92: set before the harness build a fire-and-forget dep-optimizer
     // rejection (surface 3) could still fail on, cleared once this component
     // is done -- see resolveFatalProcessError's own comment.
-    setCurrentRunProjectRoot(resolveProjectPaths(path.resolve(componentPath)).projectRoot);
+    const componentProjectRoot = resolveProjectPaths(path.resolve(componentPath)).projectRoot;
+    projectRoots.add(componentProjectRoot);
+    setCurrentRunProjectRoot(componentProjectRoot);
     // Item A: same lifecycle as the project root above -- reset before this
     // component's own run() populates it via AnalyzeOptions.onWarning, so a
     // surface-3 rejection on component 2 of a multi-component sweep never
@@ -1539,11 +1595,14 @@ async function main(): Promise<void> {
   if (!args.ci) {
     const gitRoot = findGitRoot(process.cwd());
     if (gitRoot) {
-      const writtenFilenames = reportPaths.map((p) => path.basename(p));
-      if (args.saveBaseline) writtenFilenames.push("120fps-baseline.json");
-      if (needsGitignoreAdvisory(gitRoot, writtenFilenames)) {
-        process.stdout.write(GITIGNORE_ADVISORY_HINT + "\n");
+      const writtenPaths = reportPaths.map((reportPath) => path.resolve(reportPath));
+      for (const projectRoot of projectRoots) {
+        if (args.saveBaseline) writtenPaths.push(path.join(projectRoot, "120fps-baseline.json"));
+        writtenPaths.push(...harnessLeftoverDirs(projectRoot));
       }
+      writtenPaths.push(...harnessLeftoverDirs(gitRoot));
+      const tip = formatGitignoreTip(gitignoreTipPatterns(gitRoot, writtenPaths));
+      if (tip) process.stdout.write(tip + "\n");
     }
   }
 

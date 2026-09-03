@@ -2006,6 +2006,9 @@ export interface ViteConfigData {
   publicDir?: string;
   aliases: Array<{ find: RegExp; replacement: string }>;
   ignoredKeys: string[];
+  // M117 A3 (I10): the plugins the config declares, in the config's own order,
+  // named as the config writes them. Absent when it declares none.
+  pluginNames?: string[];
   // M76: resolve.conditions read from the member layer, or the workspace
   // root's when the member declares none.
   conditions: string[];
@@ -2044,10 +2047,33 @@ export function VITE_CONFIG_PREPROCESSOR_OPTION_WARNING(
   );
 }
 
-export function VITE_CONFIG_IGNORED_WARNING(configFile: string, keys: string[]): string {
+// M117 A3: a note that named the key `plugins` and none of the plugins left a
+// reader unable to tell whether the harness dropped anything that mattered.
+// With the names in hand the note states what it dropped; without them (a
+// `plugins` value that is not an array literal) the key-only wording stands.
+function VITE_CONFIG_DROPPED_PLUGINS_CLAUSE(
+  configFile: string,
+  keys: string[],
+  pluginNames: string[],
+): string {
+  const others = keys.filter((key) => key !== "plugins");
+  const declared = others.length > 0 ? `${others.join(", ")} and plugins` : "plugins";
+  return (
+    `${configFile} declares ${declared} the harness cannot honor: ${pluginNames.join(", ")} — ` +
+    "the project's Vite config is never executed"
+  );
+}
+
+export function VITE_CONFIG_IGNORED_WARNING(
+  configFile: string,
+  keys: string[],
+  pluginNames?: string[],
+): string {
   const base =
-    `${configFile} declares ${keys.join(", ")}, which the harness read but cannot honor: the project's ` +
-    "Vite config is never executed";
+    pluginNames && pluginNames.length > 0 && keys.includes("plugins")
+      ? VITE_CONFIG_DROPPED_PLUGINS_CLAUSE(configFile, keys, pluginNames)
+      : `${configFile} declares ${keys.join(", ")}, which the harness read but cannot honor: the project's ` +
+        "Vite config is never executed";
   return keys.includes("css.preprocessorOptions")
     ? `${base}; preprocessor globals (additionalData) are not replicated, so Sass or Less variables ` +
         "injected there are missing"
@@ -2259,6 +2285,28 @@ function findViteConfigObject(source: ts.SourceFile): ts.ObjectLiteralExpression
   return undefined;
 }
 
+// M117 A3: a call expression by its callee, an object literal by its `name`,
+// anything else by where it sits in the array. Text only: M71's invariant is
+// that a project's vite.config is read and never executed.
+function declaredPluginName(element: ts.Expression, index: number): string {
+  const positional = `unnamed plugin #${index + 1}`;
+  if (ts.isCallExpression(element)) {
+    const callee = element.expression;
+    return ts.isIdentifier(callee) || ts.isPropertyAccessExpression(callee)
+      ? callee.getText()
+      : positional;
+  }
+  if (ts.isObjectLiteralExpression(element)) {
+    for (const property of element.properties) {
+      if (!ts.isPropertyAssignment(property)) continue;
+      if (literalPropertyName(property) !== "name") continue;
+      const value = stringLiteralValue(property.initializer);
+      if (value !== undefined) return value;
+    }
+  }
+  return positional;
+}
+
 function findViteConfigFile(dir: string): string | undefined {
   for (const name of VITE_CONFIG_FILES) {
     const candidate = path.join(dir, name);
@@ -2272,6 +2320,8 @@ interface ParsedViteConfig {
   aliasEntries: Array<{ find: string; replacement: string }>;
   conditions: string[];
   ignored: Set<string>;
+  // M117 A3
+  pluginNames?: string[];
   // M106 A3 (twenty-F2)
   preprocessorOptions?: PreprocessorOptions;
   unfoldablePreprocessor?: string[];
@@ -2289,6 +2339,7 @@ function parseViteConfigFile(configFile: string): ParsedViteConfig | undefined {
   }
 
   const ignored = new Set<string>();
+  let pluginNames: string[] | undefined;
   const source = ts.createSourceFile(configFile, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   const config = findViteConfigObject(source);
   if (!config) {
@@ -2430,10 +2481,13 @@ function parseViteConfigFile(configFile: string): ParsedViteConfig | undefined {
     }
 
     if (name === "plugins") {
-      const empty =
-        ts.isArrayLiteralExpression(property.initializer) &&
-        property.initializer.elements.length === 0;
-      if (!empty) ignored.add("plugins");
+      const elements = ts.isArrayLiteralExpression(property.initializer)
+        ? property.initializer.elements
+        : undefined;
+      if (elements && elements.length === 0) continue;
+      ignored.add("plugins");
+      // M117 A3: what the note names, in the order the config declares them.
+      if (elements) pluginNames = elements.map(declaredPluginName);
     }
   }
 
@@ -2448,6 +2502,7 @@ function parseViteConfigFile(configFile: string): ParsedViteConfig | undefined {
     aliasEntries,
     conditions,
     ignored,
+    ...(pluginNames ? { pluginNames } : {}),
     ...(Object.keys(preprocessorOptions).length > 0 ? { preprocessorOptions } : {}),
     ...(unfoldable.length > 0 ? { unfoldablePreprocessor: unfoldable } : {}),
   };
@@ -2481,6 +2536,7 @@ export function readViteConfigData(
       data.aliases = parsed.aliasEntries.map(toAliasRegex);
       data.conditions = parsed.conditions;
       data.ignoredKeys = IGNORED_KEY_ORDER.filter((key) => parsed!.ignored.has(key));
+      if (parsed.pluginNames) data.pluginNames = parsed.pluginNames;
       // M106 A3: the foldable half travels to the server; the rest is named.
       if (parsed.preprocessorOptions) data.preprocessorOptions = parsed.preprocessorOptions;
       if (parsed.unfoldablePreprocessor) {
@@ -4012,7 +4068,11 @@ export function collectStaticPreBuildWarnings(
   const viteConfig = readViteConfigData(projectRoot, workspaceRoot);
   if (viteConfig.configFile && viteConfig.ignoredKeys.length > 0) {
     warnings.push(
-      VITE_CONFIG_IGNORED_WARNING(path.basename(viteConfig.configFile), viteConfig.ignoredKeys),
+      VITE_CONFIG_IGNORED_WARNING(
+        path.basename(viteConfig.configFile),
+        viteConfig.ignoredKeys,
+        viteConfig.pluginNames,
+      ),
     );
   }
   warnings.push(...viteConfig.warnings);
