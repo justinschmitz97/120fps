@@ -80,6 +80,8 @@ describe("readViteConfigData: workspace-root fallback (M76)", () => {
     write("vite.config.ts", "export default { root: '.' };");
     expect(readViteConfigData(tmpDir)).toEqual({
       configFile: path.join(tmpDir, "vite.config.ts"),
+      // M114 A3: a foldable `root` is read now, and stays member-only.
+      root: tmpDir,
       aliases: [],
       ignoredKeys: [],
       conditions: [],

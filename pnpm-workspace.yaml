@@ -1,5 +1,6 @@
 packages:
   - "fixtures/compiler-project"
   - "fixtures/compiler-tailwind"
+  - "fixtures/vue-dual-block"
   - "fixtures/vue-project"
   - "fixtures/vue-wrap-project"

@@ -1,5 +1,132 @@
 # Changelog
 
+## Unreleased
+
+Field-test run 5 remediation: the thirty confirmed findings against 0.6.0, closed.
+
+**Upgrading:** preset lookup now checks `<stem>.120fps.props.tsx` and `<stem>.120fps.props.ts` before the
+existing `<stem>.props.tsx`/`.props.ts` names; both old names keep working. `phaseTimings` is a new field on
+the report and on `--save-baseline` entries; a baseline recorded before this release just reads as "no phase
+timings recorded". Nothing forces a re-record, and `METRICS_REVISION` (`src/budget.ts:489`) is unchanged, so
+no baseline invalidates.
+
+Resolution:
+
+- An unbuilt workspace sibling with no `<pkg>/src` (`@directus/utils`, its source at `shared/index.ts`) or with
+  no runtime entry at all (`@react-types/shared`, `types` only) is aliased to the source its own `package.json`
+  points at, tried in order (`source`, `exports` conditions, `module`/`main`, `types`, `<pkg>/src`), and the
+  printed warning names the field it followed instead of asserting a `dist/` that was never declared; a sibling
+  reached only through another sibling's alias is rescued in the same pass (directus, gutenberg: exit 2 -> a
+  verdict; react-spectrum: no more false "unbuilt dist/" claim) (M107).
+- A `#`-prefixed specifier resolves through the importer's own `package.json` `imports` field before any
+  bundler-failure message is chosen, so a Node subpath-imports convention is measured as a local import instead
+  of collapsed to a bare package name and matched against the Nuxt `#build` diagnosis (epic-stack's `#app/*`)
+  (M108).
+- The tsconfig reader follows a references-only root (create-vite's own template) to the referenced config that
+  covers the file, compiles `.ts`/`.tsx`/`.js`/`.jsx` with the automatic JSX runtime whatever the config's `jsx`
+  value is, skips a `paths` key whose non-wildcard prefix is empty (`"/*"`) instead of building an alias that
+  captures `/@vite/client`, and forwards `customConditions` to the dev server: ark's accordion no longer throws
+  `React is not defined`, coordinator's references-only root resolves its aliases, react-spectrum's `/*` entry
+  no longer 404s the harness's own client and its `source`-conditioned subpaths resolve (M109).
+- Two runs of one component that differ only in the shell directory produce the same stylesheet decision, the
+  same warnings and the same verdict: a member's Tailwind 3 config resolves nearest-member-first instead of from
+  `process.cwd()` (midday: exit 2 from the repository root -> a report), and every run names the member root and
+  workspace root it resolved (M111).
+
+Diagnoses and remedies:
+
+- A diagnosis names the layer that actually failed instead of a generic Nuxt remedy: the `#build`/`#imports`/`#app`
+  diagnosis fires only when the specifier starts with one of those and `nuxt` is declared in the measured
+  package or at the workspace root, so a missing Node
+  subpath (epic-stack) or a React 18 project's React Compiler mismatch (primer-react, now targeting the
+  installed React major instead of defaulting to 19) get their own message; a Babel-macro import is a preflight
+  hit instead of surfacing as "Unable to determine current node version" (documenso), and a virtual-namespace
+  import (`~icons/`, `virtual:`) names the plugin package that declares it (hoppscotch) (M108).
+- A remedy never names a file that already exists as real source: radix-themes' own `button.props.tsx` is
+  disclosed by path ("exists, not a preset: no default-exported object literal") and every remedy points at
+  `button.120fps.props.tsx` instead of asking for a file that is already there; a preset candidate
+  with the wrong shape is disclosed by path ("exists, not a preset") instead of silently ignored (epic-stack); a
+  preset already applied stops repeating the "add a preset" clause in the same run's output (logto); and
+  `--init-fixture` on the path whose own warning recommends it now writes the fixture instead of doing nothing
+  (radix-themes) (M112).
+- An explicit `--matrix` the dispatcher overrides in favor of an auto-composed scene now prints one warning
+  naming what took precedence, in both the dry run and the real run, instead of silently measuring one combo
+  (cal.com) (M110).
+
+Dry run parity:
+
+- `--explain-props` decides auto-composition from the same filesystem inputs the real run's dispatcher uses, so
+  it no longer predicts matrix mode for a component the real run auto-composes (supabase, cal.com); it prints
+  the same project-transform warnings, the same unresolved `optimizeDeps.include` entries and the same
+  multi-line `import { ... } from` specifiers the real run reads from disk, so logto's ConfirmModal and
+  supabase's Popover no longer look clean and then fail a minute later, and epic-stack's `#app` import no
+  longer produces a dep-optimization failure in the real run that the dry run said nothing about: it resolves
+  through the project's own `imports` map, so neither mode reports it; a `.yaml`/`.yml`/`.toml`/`.md` import is a preflight hit naming its loader plugin
+  when the project declares one (directus) (M110).
+
+Disclosures:
+
+- A Griffel-styled component reports `styling is generated at runtime by @griffel/react` instead of "no
+  stylesheet found" (fluentui), and an unrecognized `makeStyles`/`styled` import gets its own "unrecognised
+  engine" line instead of reading like a plain miss; a package stylesheet declared in `package.json` whose
+  target does not exist is reported as declared-but-unbuilt, naming the field, the missing path and the
+  package's own build command, instead of falling through to "none found" and a size-ranked fallback file
+  (radix-themes) (M112, M114).
+- A matrix never crosses a controlled prop with its `default`-prefixed twin (fluentui's Dialog `open` and
+  `defaultOpen` no longer set together), a barrel re-export reports the declaring module's props instead of
+  zero (gutenberg), a call-wrapped default export (`forwardRef(Button)`) reports the wrapped name instead of a
+  sibling export (logto), the Vue plugin hint fires only for a `$`-prefixed proxy frame, and a read of undefined
+  in an ordinary SFC render frame gets the provide/inject hint only when the same run recorded an `inject(`
+  call in the measured component (ark, which recorded none, now prints no hint at all), and a captured console message
+  substitutes `%s`/`%d`/`%o` from its arguments before it is recorded, so React's dev warnings read as text
+  instead of a raw template (supabase) (M114).
+
+Runs terminate and clean up:
+
+- `SIGINT`/`SIGTERM`/`SIGHUP` leave no `.120fps-harness-*` directory behind on Windows, even with Chromium and
+  the dev server still holding handles at the moment of the signal: the pre-close removal retries a busy handle
+  for up to 1 s instead of failing once and swallowing the error (base-ui, intermittent on 1 of 2 attempts
+  before this milestone); a directory that survives every retry is named on stderr instead of disappearing
+  silently, and the next run's stale-directory sweep reports what it removed instead of nothing (M113).
+
+Where the minutes go:
+
+- A run reported one number, its own wall clock. Every completed run's report now carries `phaseTimings` (`preflight`, `build`, `calibration`, `mount`, `rerender`,
+  `explore`, `scale`, `deltas`, `attribution`, `analysis`, `total`, summing exactly to `total`) in the terminal
+  `Total:` breakdown, the JSON report and `--report-md`; `--explain-props` prints an estimated real-run
+  duration built from the last `--save-baseline` entry's phase timings for that component when its environment
+  fingerprint still matches, or says it is using documented defaults when none does (M115).
+
+Faster:
+
+- Explore replays a state-invariant stress pattern's path from the root once per edge instead of once per
+  sample (today only `scroll-sweep`); `runPreflight`'s import-graph parse and `scanExternalDeps`'s walk are
+  cached per (absolute path, mtime, size) within one process instead of re-run up to four times per component
+  across a directory sweep. What changed is what is paid for once: the paired A/B runs that gated this change
+  showed identical verdicts, warnings, interaction rows and preflight hits on both arms, and only the measured
+  `phaseTimings.explore`/`.preflight` numbers moved. No other reported number changed.
+
+Output:
+
+- A static-prebuild warning a harness rebuild re-emits (a dropped stylesheet, a rolled-back composition) prints
+  once with a `(×N)` suffix instead of appearing twice in the same run's warning list; the vite-config note
+  names the plugins the harness actually dropped (`tanstackRouter, react, tailwindcss`) instead of the bare key
+  `plugins`, and omits a plugin whose transform the run already applied; the noise line names only the signals
+  that crossed their threshold and the one flag that helps, instead of four sentences naming no flag; the
+  `.gitignore` tip fires only for a path actually inside the repository the run started from (was: any report
+  path, by basename alone); `--report-md` now carries each component's deduped warnings in a fold, as the
+  README already promised (M117).
+
+Known limits, by decision: the harness never runs a workspace sibling's own build, or any project Vite plugin
+(M107, M108); solution-style tsconfig `references` with build-output redirection are not followed (M109); a
+package's own CSS is discovered only through its entry's side-effect imports; a stylesheet reached transitively
+through the modules that entry imports is still unfound (vuetify's `main.sass`, three hops away) (M114); the harness
+directory still lives inside the project root, and two concurrent runs still share no removal lock (M113);
+levers B/C's win is paid once per process; a cross-process cache stays deferred, and Lever D (one driven session shared across
+delta and scale-curve passes) stays deferred pending a separate cold-context risk decision (M116); noise-tagged
+FAILs are not downgraded to WARN before a verdict prints, and there is no per-invocation flag to suppress the
+vite-config plugin note (M117).
+
 ## 0.6.0
 
 Field-test release: 0.5.0 was run, unmodified and zero-config, against twenty real repositories chosen to stress it.

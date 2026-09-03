@@ -11,8 +11,13 @@ import {
   type SfcScript,
   type VueSfcCompiler,
 } from "./vue-sfc.js";
-import { detectPropPresets, loadPropPresets, literalValue } from "./prop-presets.js";
-import { findCompilerConfig, findProjectRoot, findWorkspaceRoot } from "./project-model.js";
+import {
+  describePresetSibling,
+  detectPropPresets,
+  loadPropPresets,
+  literalValue,
+} from "./prop-presets.js";
+import { findProjectRoot, findWorkspaceRoot, resolveGoverningTsconfig } from "./project-model.js";
 
 // M36: a fresh ts.Program per extraction re-parses lib.d.ts and the project's
 // node_modules type graph every time. Between calls only the component file
@@ -193,6 +198,18 @@ export interface ExtractPropsOptions {
   onWarning?: (message: string) => void;
 }
 
+// M112 I7: the extraction warnings a preset loaded afterwards can change,
+// carried as data beside their printed text so a caller can re-render them
+// against the applied schema instead of parsing a line.
+export interface PropWarningRecord {
+  kind: "prop-cap" | "collapsed-union" | "degenerate";
+  // The component file's basename without its extension.
+  stem: string;
+  text: string;
+}
+
+type WarningRecorder = (record: PropWarningRecord) => void;
+
 export interface PropsExtraction {
   schemas: PropSchema[];
   // The declaration the schema was bound to, and where it sits. Absent for a
@@ -201,7 +218,15 @@ export interface PropsExtraction {
   targetName?: string;
   targetLine?: number;
   computedAnnotation?: string;
+  // M114 B4 (gutenberg-F2): the module the binding was read from, when the
+  // measured file only re-exports the component another module declares.
+  // Absent when the component is declared in the measured file itself.
+  targetFile?: string;
+  // M114 B5 / I7 (react-spectrum-F3): the barrel and the specifier that did not
+  // resolve, in place of a props table nothing could have filled.
+  unresolvedReExport?: { barrel: string; specifier: string };
   warnings: string[];
+  warningRecords: PropWarningRecord[];
 }
 
 const ITEMS_PATTERN = /items|options|data|children|entries|records|elements|list/i;
@@ -261,14 +286,25 @@ export async function extractPropsDetailed(
   const absolutePath = path.resolve(filePath);
   const warnings: string[] = [];
   const sink = (message: string): void => {
-    warnings.push(message.trimEnd());
-    options?.onWarning?.(message);
+    const line = message.trimEnd();
+    warnings.push(line);
+    // The trailing newline belongs to the stderr write inside `warnOnce`. A
+    // sink consumer renders the text as a list entry; a newline there prints a
+    // stray blank line in the report and rides along in the report JSON.
+    options?.onWarning?.(line);
   };
   const collecting = options?.onWarning !== undefined;
+  // M112 B3: records are collected whether or not a sink is printing, because
+  // `warnOnce` prints a given warning once per process and the second caller
+  // still has to be able to re-render it.
+  const warningRecords: PropWarningRecord[] = [];
+  const record: WarningRecorder = (entry) => {
+    warningRecords.push(entry);
+  };
 
   if (isVueFile(absolutePath)) {
-    const schemas = await extractVueProps(absolutePath, collecting ? sink : undefined);
-    return { schemas, warnings };
+    const schemas = await extractVueProps(absolutePath, collecting ? sink : undefined, record);
+    return { schemas, warnings, warningRecords };
   }
 
   const compilerOptions = createCompilerOptions(absolutePath);
@@ -318,7 +354,14 @@ export async function extractPropsDetailed(
       warnUnboundTarget(absolutePath, binding.targetName, collecting ? sink : undefined);
     }
     schemas = binding.type
-      ? typeToSchema(binding.type, checker, absolutePath, collecting ? sink : undefined, binding.fn)
+      ? typeToSchema(
+          binding.type,
+          checker,
+          absolutePath,
+          collecting ? sink : undefined,
+          binding.fn,
+          record,
+        )
       : [];
     // M103 (I8): the component's own declared defaults, destructuring first —
     // it is the form a reader of the source sees.
@@ -353,7 +396,7 @@ export async function extractPropsDetailed(
     );
   }
   if (!recursed) {
-    warnDegenerateProps(absolutePath, schemas, collecting ? sink : undefined);
+    warnDegenerateProps(absolutePath, schemas, collecting ? sink : undefined, record);
   }
   // M97 / ADR 0004: an empty JS schema now names its own cause instead of
   // reaching analyze.ts's generic "extraction may have failed" hedge.
@@ -376,10 +419,15 @@ export async function extractPropsDetailed(
     schemas,
     ...(binding.targetName !== undefined ? { targetName: binding.targetName } : {}),
     ...(binding.targetLine !== undefined ? { targetLine: binding.targetLine } : {}),
+    ...(binding.targetFile !== undefined ? { targetFile: binding.targetFile } : {}),
+    ...(binding.unresolvedReExport !== undefined
+      ? { unresolvedReExport: binding.unresolvedReExport }
+      : {}),
     ...(binding.computedAnnotation !== undefined
       ? { computedAnnotation: binding.computedAnnotation }
       : {}),
     warnings,
+    warningRecords,
   };
 }
 
@@ -649,6 +697,7 @@ export function isUntypedJsComponentWarning(message: string): boolean {
 async function extractVueProps(
   absolutePath: string,
   sink?: (message: string) => void,
+  record?: WarningRecorder,
 ): Promise<PropSchema[]> {
   const compiler = await loadVueCompiler(path.dirname(absolutePath));
   if (!compiler) return [];
@@ -702,10 +751,10 @@ async function extractVueProps(
   // disclosures land in the same warnings list every other extraction
   // warning does (element-plus-F3).
   const schemas = applyWithDefaults(
-    typeToSchema(propsType, checker, absolutePath, sink),
+    typeToSchema(propsType, checker, absolutePath, sink, undefined, record),
     call.defaults,
   );
-  warnDegenerateProps(absolutePath, schemas, sink);
+  warnDegenerateProps(absolutePath, schemas, sink, record);
   return schemas;
 }
 
@@ -1329,18 +1378,36 @@ function warnUnboundTarget(
 }
 
 // The M44 escape hatch, named for the file at hand so the message is a command.
+// M112 B2: the older name belongs to whatever already sits on disk under it, so
+// a remedy that would otherwise name a file the reader cannot create names the
+// preferred `<stem>.120fps.props.tsx` instead.
 function presetFileName(fileName: string): string {
-  const base = path.basename(fileName);
-  const ext = path.extname(base);
-  return `${ext ? base.slice(0, -ext.length) : base}.props.tsx`;
+  const sibling = describePresetSibling(fileName);
+  if (sibling?.shape === "preset") return path.basename(sibling.path);
+  const stem = componentStem(fileName);
+  return sibling ? `${stem}.120fps.props.tsx` : `${stem}.props.tsx`;
 }
 
-function warnPropCap(fileName: string, total: number): void {
-  warnOnce(
-    `${path.resolve(fileName)}::cap`,
+function componentStem(fileName: string): string {
+  const base = path.basename(fileName);
+  const ext = path.extname(base);
+  return ext ? base.slice(0, -ext.length) : base;
+}
+
+// M112 B3 (logto-F4): the sink carries this warning the way it already carries
+// the collapsed-union and degenerate ones, so a caller that applies a preset
+// afterwards can withhold the line and re-render it from the record.
+function warnPropCap(
+  fileName: string,
+  total: number,
+  sink?: (message: string) => void,
+  record?: WarningRecorder,
+): void {
+  const text =
     `Warning: ${total} props were extracted from ${fileName}; measuring the first ${MAX_PROPS}. ` +
-      `Add ${presetFileName(fileName)} to choose the props that matter.\n`,
-  );
+    `Add ${presetFileName(fileName)} to choose the props that matter.\n`;
+  record?.({ kind: "prop-cap", stem: componentStem(fileName), text: text.trimEnd() });
+  emit(`${path.resolve(fileName)}::cap`, text, sink);
 }
 
 // M84: a union with more than one non-undefined member collapses to one
@@ -1353,14 +1420,14 @@ function warnCollapsedUnion(
   branches: string[],
   chosenKind: string,
   sink?: (message: string) => void,
+  record?: WarningRecorder,
 ): void {
-  emit(
-    `${path.resolve(fileName)}::union::${propName}`,
+  const text =
     `Warning: prop "${propName}" in ${fileName} is a union of ${branches.length} different shapes ` +
-      `(${branches.join(" | ")}); measured as ${chosenKind}. Add ${presetFileName(fileName)} to choose ` +
-      `a different branch.\n`,
-    sink,
-  );
+    `(${branches.join(" | ")}); measured as ${chosenKind}. Add ${presetFileName(fileName)} to choose ` +
+    `a different branch.\n`;
+  record?.({ kind: "collapsed-union", stem: componentStem(fileName), text: text.trimEnd() });
+  emit(`${path.resolve(fileName)}::union::${propName}`, text, sink);
 }
 
 // M60: the props the component is measured with are not the props it declares.
@@ -1370,6 +1437,7 @@ function warnDegenerateProps(
   fileName: string,
   schemas: PropSchema[],
   sink?: (message: string) => void,
+  record?: WarningRecorder,
 ): void {
   const degenerate = schemas.filter((s) => s.degenerate);
   if (degenerate.length === 0) return;
@@ -1377,10 +1445,13 @@ function warnDegenerateProps(
   // has is not told again.
   if (detectPropPresets(fileName)) return;
   const named = degenerate.map((s) => `${s.name} (${s.degenerate})`).join(", ");
+  const text =
+    `Warning: no representative value could be synthesized for ${named} in ${fileName}. ` +
+    `Add ${presetFileName(fileName)} next to it to supply real values.\n`;
+  record?.({ kind: "degenerate", stem: componentStem(fileName), text: text.trimEnd() });
   emit(
     `${path.resolve(fileName)}::degenerate::${degenerate.map((s) => s.name).join(",")}`,
-    `Warning: no representative value could be synthesized for ${named} in ${fileName}. ` +
-      `Add ${presetFileName(fileName)} next to it to supply real values.\n`,
+    text,
     sink,
   );
 }
@@ -1517,6 +1588,13 @@ interface PropsBinding {
   // same file did bind. Reported only once the declaration fallback has also
   // come up empty.
   unboundTargetHijacked?: boolean;
+  // M114 B4 (gutenberg-F2): the module the binding was read from, when the
+  // measured file only re-exports the component another module declares.
+  targetFile?: string;
+  // M114 B5 / I7 (react-spectrum-F3): the barrel and the specifier that did not
+  // resolve. A cause the filesystem decides, so no props table is a fact about
+  // this file rather than a failed extraction.
+  unresolvedReExport?: { barrel: string; specifier: string };
 }
 
 // A type reference with arguments (`ComponentProps<typeof X>`,
@@ -1565,11 +1643,168 @@ function firstParameterTypeNode(
   return extractFunctionFromInitializer(expression)?.parameters[0]?.type;
 }
 
+// M114 B4/B5 (gutenberg-F2, react-spectrum-F3): the module a barrel's exported
+// binding is declared in. `export { X } from "./component"` and
+// `import { X } from "./component"; export { X };` both reach it through the
+// checker's alias, so one lookup serves both spellings. An alias whose target
+// has no declaration is a specifier that did not resolve, which is a fact about
+// the filesystem, not a failed extraction.
+type ReExportTarget =
+  | { file: ts.SourceFile; name: string | undefined }
+  | { unresolved: { barrel: string; specifier: string } };
+
+function moduleSpecifierFor(sourceFile: ts.SourceFile, name: string): string | undefined {
+  // M114 (review B-minor): a bare `export * from` specifier stands in for a
+  // name it never matched. It is the only candidate when the file has exactly
+  // one star; with two, naming either as the cause would be a guess.
+  let starSpecifier: string | undefined;
+  let starCount = 0;
+  for (const statement of sourceFile.statements) {
+    if (
+      ts.isExportDeclaration(statement) &&
+      statement.moduleSpecifier &&
+      ts.isStringLiteral(statement.moduleSpecifier)
+    ) {
+      const clause = statement.exportClause;
+      if (!clause) {
+        starSpecifier ??= statement.moduleSpecifier.text;
+        starCount += 1;
+        continue;
+      }
+      if (!ts.isNamedExports(clause)) continue;
+      for (const spec of clause.elements) {
+        if (spec.name.text === name) return statement.moduleSpecifier.text;
+      }
+      continue;
+    }
+    if (
+      ts.isImportDeclaration(statement) &&
+      ts.isStringLiteral(statement.moduleSpecifier) &&
+      statement.importClause
+    ) {
+      const named = statement.importClause.namedBindings;
+      if (named && ts.isNamedImports(named)) {
+        for (const spec of named.elements) {
+          if (spec.name.text === name) return statement.moduleSpecifier.text;
+        }
+      }
+      if (statement.importClause.name?.text === name) return statement.moduleSpecifier.text;
+    }
+  }
+  return starCount === 1 ? starSpecifier : undefined;
+}
+
+function aliasTargetOf(
+  symbol: ts.Symbol,
+  checker: ts.TypeChecker,
+  sink?: (message: string) => void,
+): ts.Symbol | undefined {
+  if (!(symbol.flags & ts.SymbolFlags.Alias)) return symbol;
+  try {
+    return checker.getAliasedSymbol(symbol);
+  } catch (error) {
+    // M114 (review B-minor): the checker throwing is a different cause from a
+    // specifier the filesystem never resolved, so the run says which one it hit.
+    const reason = error instanceof Error ? error.message : String(error);
+    sink?.(`re-export of ${symbol.getName()}: the type checker could not follow the alias (${reason})`);
+    return undefined;
+  }
+}
+
+const COMPONENT_DECLARATION_NAME = /^[A-Z]/;
+
+function isValueDeclaration(declaration: ts.Declaration): boolean {
+  return (
+    ts.isFunctionDeclaration(declaration) ||
+    ts.isClassDeclaration(declaration) ||
+    ts.isVariableDeclaration(declaration) ||
+    ts.isExportAssignment(declaration)
+  );
+}
+
+// M114 B4/B5: `export { default } from "./component"` and `export * from
+// "./component"` name no PascalCase binding in the barrel's own text, so
+// `scanExports` yields nothing and the walk stopped at a barrel the filesystem
+// resolves fine. The module's export symbols carry both spellings.
+function fallbackExportSymbol(
+  moduleExports: ts.Symbol[],
+  checker: ts.TypeChecker,
+  sink?: (message: string) => void,
+): ts.Symbol | undefined {
+  const byDefault = moduleExports.find((symbol) => symbol.name === "default");
+  if (byDefault) return aliasTargetOf(byDefault, checker, sink);
+  for (const symbol of moduleExports) {
+    if (!COMPONENT_DECLARATION_NAME.test(symbol.name)) continue;
+    const aliased = aliasTargetOf(symbol, checker, sink);
+    const declaration = aliased?.getDeclarations()?.[0];
+    if (declaration && isValueDeclaration(declaration)) return aliased;
+  }
+  return undefined;
+}
+
+// The name the declaring module knows the component by. `default` is a slot,
+// not an identifier, so the declaring file selects its own export instead.
+function declaredNameOf(aliased: ts.Symbol, declaration: ts.Declaration): string | undefined {
+  const declared = (declaration as ts.Declaration & { name?: ts.Node }).name;
+  if (declared && ts.isIdentifier(declared)) return declared.text;
+  const name = aliased.getName();
+  return name === "default" ? undefined : name;
+}
+
+function declaredElsewhere(
+  aliased: ts.Symbol | undefined,
+  sourceFile: ts.SourceFile,
+): ReExportTarget | undefined {
+  const declaration = aliased?.getDeclarations()?.[0];
+  const declaringFile = declaration?.getSourceFile();
+  if (!aliased || !declaration || !declaringFile) return undefined;
+  if (declaringFile.fileName === sourceFile.fileName) return undefined;
+  return { file: declaringFile, name: declaredNameOf(aliased, declaration) };
+}
+
+function followReExportedComponent(
+  sourceFile: ts.SourceFile,
+  checker: ts.TypeChecker,
+  explicitTarget?: string,
+  sink?: (message: string) => void,
+): ReExportTarget | undefined {
+  const moduleSymbol = checker.getSymbolAtLocation(sourceFile);
+  const moduleExports = moduleSymbol ? checker.getExportsOfModule(moduleSymbol) : [];
+  const name =
+    explicitTarget ??
+    selectMeasuredExport(
+      scanExports(sourceFile.getFullText(), sourceFile.fileName),
+      sourceFile.fileName,
+    );
+
+  if (name) {
+    const exported = moduleExports.find((symbol) => symbol.name === name);
+    const followed = exported
+      ? declaredElsewhere(aliasTargetOf(exported, checker, sink), sourceFile)
+      : undefined;
+    if (followed) return followed;
+    const specifier = moduleSpecifierFor(sourceFile, name);
+    if (specifier === undefined) return undefined;
+    return { unresolved: { barrel: path.normalize(sourceFile.fileName), specifier } };
+  }
+
+  const followed = declaredElsewhere(fallbackExportSymbol(moduleExports, checker, sink), sourceFile);
+  if (followed) return followed;
+  const specifier = moduleSpecifierFor(sourceFile, "default");
+  if (specifier === undefined) return undefined;
+  return { unresolved: { barrel: path.normalize(sourceFile.fileName), specifier } };
+}
+
+// A barrel of barrels still resolves in a bounded number of hops; the bound
+// stops a cycle of two files re-exporting each other.
+const RE_EXPORT_HOPS = 4;
+
 function findComponentPropsType(
   sourceFile: ts.SourceFile,
   checker: ts.TypeChecker,
   explicitTarget?: string,
   sink?: (message: string) => void,
+  hops = 0,
 ): PropsBinding {
   const candidates = collectComponentCandidates(sourceFile);
   const target = selectTargetCandidate(
@@ -1578,7 +1813,16 @@ function findComponentPropsType(
     sourceFile.getFullText(),
     explicitTarget,
   );
-  if (!target) return {};
+  if (!target) {
+    if (hops >= RE_EXPORT_HOPS) return {};
+    const followed = followReExportedComponent(sourceFile, checker, explicitTarget, sink);
+    if (followed === undefined) return {};
+    if ("unresolved" in followed) return { unresolvedReExport: followed.unresolved };
+    const binding = findComponentPropsType(followed.file, checker, followed.name, sink, hops + 1);
+    return binding.targetName === undefined
+      ? binding
+      : { ...binding, targetFile: binding.targetFile ?? path.normalize(followed.file.fileName) };
+  }
 
   const byName = new Map<string, ComponentCandidate>();
   for (const candidate of candidates) {
@@ -1938,6 +2182,7 @@ function typeToSchema(
   fileName?: string,
   sink?: (message: string) => void,
   fn?: ts.SignatureDeclaration,
+  record?: WarningRecorder,
 ): PropSchema[] {
   const kept = type.getProperties().filter((prop) => !isNoiseName(prop.getName()));
 
@@ -1974,7 +2219,7 @@ function typeToSchema(
 
   const totalKept = requiredProps.length + orderedOptional.length;
   if (totalKept > MAX_PROPS && fileName) {
-    warnPropCap(fileName, totalKept);
+    warnPropCap(fileName, totalKept, sink, record);
   }
 
   const optionalBudget = Math.max(0, MAX_PROPS - requiredProps.length);
@@ -1998,7 +2243,7 @@ function typeToSchema(
       // extraction warning uses.
       const branches = collapsedUnionBranches(propType, checker);
       if (branches && fileName) {
-        warnCollapsedUnion(fileName, prop.getName(), branches, schema.kind, sink);
+        warnCollapsedUnion(fileName, prop.getName(), branches, schema.kind, sink, record);
       }
       // M103 (dub-F2): a required prop the synthesizer could only fill with a
       // stand-in object. `warnDegenerateProps` already covers the case where it
@@ -2806,9 +3051,13 @@ export function scanExports(sourceText: string, fileName: string): ExportInfo[] 
   ts.forEachChild(sourceFile, (node) => {
     // export default <Identifier>;
     if (ts.isExportAssignment(node)) {
-      if (!node.isExportEquals && ts.isIdentifier(node.expression)) {
-        add(node.expression.text, true);
-      }
+      // M114 B1 / I9 (logto-F1): `export default forwardRef(Button)` and
+      // `memo(forwardRef(Button))` name `Button` as the default. Recording only
+      // a bare identifier dropped the default entirely, so `selectMeasuredExport`
+      // fell through to the first non-Provider export and the header named a
+      // sibling while the props table described the wrapped component.
+      const identifier = !node.isExportEquals ? identifierBehind(node.expression) : undefined;
+      if (identifier) add(identifier.text, true);
       return;
     }
 
@@ -2949,16 +3198,60 @@ export function projectCompilerOptions(absolutePath: string): ts.CompilerOptions
   return createCompilerOptions(path.resolve(absolutePath));
 }
 
+// The reader keeps quiet about a config it could not read, so the caller that
+// asked prints the message once. Its sentence names the path this function
+// already has, so the path is not repeated inside the detail.
+function readFailureDetail(warnings: string[], configPath: string): string {
+  const marker = `could not parse tsconfig at ${configPath}: `;
+  const failure = warnings.find((warning) => warning.startsWith(marker));
+  return failure ? failure.slice(marker.length) : (warnings[0] ?? "the config could not be read");
+}
+
+// The reader surfaces only the diagnostics the run discloses (a broken extends
+// chain). An option declared with the wrong value type has warned here once per
+// config since M24 and still does, read from the governing config's own
+// compilerOptions without globbing the project's files a second time.
+function declaredOptionDiagnostic(configPath: string): string | undefined {
+  const configFile = ts.readConfigFile(configPath, ts.sys.readFile);
+  const raw = configFile.config as { compilerOptions?: unknown } | undefined;
+  const declared = raw?.compilerOptions;
+  if (configFile.error || declared === null || typeof declared !== "object") return undefined;
+  const converted = ts.convertCompilerOptionsFromJson(
+    declared,
+    path.dirname(configPath),
+    configPath,
+  );
+  if (converted.errors.length > 0) {
+    return ts.flattenDiagnosticMessageText(converted.errors[0].messageText, " ");
+  }
+  // A malformed include/files key, or an invalid option inside an extends base,
+  // never reaches convertCompilerOptionsFromJson. Parsing without globbing
+  // surfaces it; 18003 only says the fixture has no input files.
+  const parsed = ts.parseJsonConfigFileContent(
+    configFile.config,
+    { ...ts.sys, readDirectory: () => [] },
+    path.dirname(configPath),
+    undefined,
+    configPath,
+  );
+  const other = parsed.errors.find((diagnostic) => diagnostic.code !== 18003);
+  return other ? ts.flattenDiagnosticMessageText(other.messageText, " ") : undefined;
+}
+
 function createCompilerOptions(absolutePath: string): ts.CompilerOptions {
   // M69: the same search the harness builds aliases from, so one config
   // governs both. The bound is the workspace root; a tree with no package.json
   // anywhere has no project model, and the walk keeps its old reach.
+  // M109 (I1): through the shared reader, so a references-only root hands
+  // extraction the referenced config that covers this file, which is the
+  // config the harness aliases and the dev server resolve from.
   const startDir = path.dirname(absolutePath);
   const memberRoot = findProjectRoot(startDir);
-  const tsconfigPath = findCompilerConfig(
-    startDir,
+  const governing = resolveGoverningTsconfig(
+    absolutePath,
     memberRoot === undefined ? undefined : findWorkspaceRoot(memberRoot),
   );
+  const tsconfigPath = governing.configPath;
 
   let compilerOptions: ts.CompilerOptions = {
     target: ts.ScriptTarget.ES2022,
@@ -2972,36 +3265,28 @@ function createCompilerOptions(absolutePath: string): ts.CompilerOptions {
     allowJs: true,
   };
 
-  if (tsconfigPath) {
-    const configFile = ts.readConfigFile(tsconfigPath, ts.sys.readFile);
-    if (configFile.error) {
-      warnTsconfigOnce(
-        tsconfigPath,
-        ts.flattenDiagnosticMessageText(configFile.error.messageText, " "),
-      );
-    } else {
-      const parsed = ts.parseJsonConfigFileContent(
-        configFile.config,
-        ts.sys,
-        path.dirname(tsconfigPath),
-      );
-      if (parsed.errors.length > 0) {
-        warnTsconfigOnce(
-          tsconfigPath,
-          ts.flattenDiagnosticMessageText(parsed.errors[0].messageText, " "),
-        );
-      }
-      // Override resolution to Bundler: user components use extensionless imports
-      compilerOptions = {
-        ...parsed.options,
-        skipLibCheck: true,
-        moduleResolution: ts.ModuleResolutionKind.Bundler,
-        module: ts.ModuleKind.ESNext,
-        // The measured file is named by the user: a project that excludes
-        // JavaScript from type checking still gets its .jsx component read.
-        allowJs: true,
-      };
+  if (governing.nearestConfigPath && !tsconfigPath) {
+    // B2: a config that could not be read keeps its one warning, and
+    // extraction continues on the defaults above.
+    warnTsconfigOnce(
+      governing.nearestConfigPath,
+      readFailureDetail(governing.warnings, governing.nearestConfigPath),
+    );
+  } else if (tsconfigPath) {
+    if (!warnedTsconfigPaths.has(tsconfigPath)) {
+      const optionDetail = declaredOptionDiagnostic(tsconfigPath);
+      if (optionDetail) warnTsconfigOnce(tsconfigPath, optionDetail);
     }
+    // Override resolution to Bundler: user components use extensionless imports
+    compilerOptions = {
+      ...governing.options,
+      skipLibCheck: true,
+      moduleResolution: ts.ModuleResolutionKind.Bundler,
+      module: ts.ModuleKind.ESNext,
+      // The measured file is named by the user: a project that excludes
+      // JavaScript from type checking still gets its .jsx component read.
+      allowJs: true,
+    };
   }
 
   return compilerOptions;

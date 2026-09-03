@@ -2,7 +2,7 @@ import ts from "typescript";
 import os from "node:os";
 import fs from "node:fs";
 import path from "node:path";
-import { buildAndServe, collectStaticPreBuildWarnings, detectComponentExport, detectProjectTransforms, discoverGlobalCss, detectScaleExport, detectWrapper, findProjectRoot, resolveReactCompilerState, assertReactDomClient, assertRendererSupported, rendererFor, detectBundlerReactDomAlias, BUNDLER_PREACT_ALIAS_WARNING, stylesheetRuleCount, hasAnyEnvFile, NO_ENV_FILE_REMEDY_NOTE, presentBundlerFailure, stylesheetReadFailureTarget, CSS_UNREADABLE_DROPPED_WARNING, type HarnessResult } from "./harness.js";
+import { buildAndServe, collectStaticPreBuildWarnings, detectComponentExport, detectProjectTransforms, discoverGlobalCss, detectScaleExport, detectWrapper, findProjectRoot, resolveReactCompilerState, assertReactDomClient, assertRendererSupported, rendererFor, detectBundlerReactDomAlias, BUNDLER_PREACT_ALIAS_WARNING, stylesheetRuleCount, hasAnyEnvFile, NO_ENV_FILE_REMEDY_NOTE, presentBundlerFailure, stylesheetReadFailureTarget, CSS_UNREADABLE_DROPPED_WARNING, SUPPORTED_TRANSFORM_PLUGINS, VITE_CONFIG_IGNORED_WARNING, readViteConfigData, type HarnessResult, type ReactCompilerState, type ViteConfigData } from "./harness.js";
 import {
   attachPageErrorCapture,
   gotoWithErrorContext,
@@ -13,18 +13,19 @@ import {
   waitForReadyOrFatal,
 } from "./page-errors.js";
 import { extractProps, extractPropsDetailed, extractExports, extractAllProps, detectScalingProps, projectSourceFiles, isVuePropsScopeExclusionWarning, isVueUnresolvedPropsTypeWarning, isUntypedJsComponentWarning, projectCompilerOptions, type PropSchema, type ScalingPropMatch } from "./prop-gen.js";
-import { hintsForReport, hintsForMountAbort, formatHints } from "./hints.js";
+import { hintsForReport, formatHints, formatMountAbortHints } from "./hints.js";
 import {
   probeMachineNoise,
   buildNoiseReport,
-  NOISY_RUN_WARNING,
-  HOSTILE_RUN_WARNING,
+  formatNoiseWarning,
 } from "./noise.js";
 import {
   detectPropPresets,
+  describePresetSibling,
   loadPropPresets,
   applyPropPresets,
   isPresetRef,
+  PRESET_SHAPE_WARNING,
   UNKNOWN_PRESET_PROPS_WARNING,
 } from "./prop-presets.js";
 import {
@@ -37,12 +38,13 @@ import {
   PROJECT_TRANSFORM_WARNING,
   PREFLIGHT_BYPASSED_WARNING,
   PreflightHardRejectionError,
-  classifyPreprocessorAvailability,
+  classifyProjectTransformHits,
 } from "./preflight.js";
 import {
   inferComposition,
   shouldRollbackComposition,
   buildFixtureScaffold,
+  buildUncomposedFixtureScaffold,
   fixtureScaffoldPath,
   COMPOSITION_EMPTY_WARNING,
   declaredCompositionSiblings,
@@ -50,10 +52,11 @@ import {
   scanJsxComposedLocalImports,
   UNCOMPOSED_SIBLINGS_WARNING,
   type CompositionTree,
+  type ExportInfo,
 } from "./composition.js";
 import { detectFramework, runReactAnalysis, hasReactWarning, type ReactOptimizations } from "./react-profiler.js";
 import { findWorkspaceRoot } from "./project-model.js";
-import { isVueFile, loadVueCompiler, VUE_COMPILER_MISSING } from "./vue-sfc.js";
+import { isVueFile, loadVueCompiler, parseSfcScript, VUE_COMPILER_MISSING } from "./vue-sfc.js";
 import {
   generateCombinations,
   generateDeltaPairs,
@@ -67,9 +70,10 @@ import {
   countCombinationSpace,
   countDeltaPairSpace,
   DEFAULT_MEASURED_COMBOS,
+  type DeltaPair,
   type PropCombination,
 } from "./prop-gen-values.js";
-import { applyWrapperViewport, createBrowserPool, measureMount, measureRerender, measureWrapperOverhead, openMeasurementSession, settleStyles, reportFontSettle, suspendThrottle, CONTEXT_RETRY_WARNING, HARNESS_NAV_WAIT, type BrowserPool, type MeasurementSession, type MountResult, type RerenderResult } from "./measure.js";
+import { applyWrapperViewport, createBrowserPool, measuredOnly, measureMount, measureRerender, measureWrapperOverhead, openMeasurementSession, settleStyles, reportFontSettle, suspendThrottle, CONTEXT_RETRY_WARNING, HARNESS_NAV_WAIT, type BrowserPool, type MeasurementSession, type MountResult, type RerenderResult } from "./measure.js";
 import {
   explore,
   restoreComboIndices,
@@ -98,6 +102,7 @@ import {
   computeEnvKey,
   parseBaselineKey,
   selectBaselineEntry,
+  selectPhaseTimingEntry,
   sameMachineIdentity,
   envAdvisory,
   NO_ENV_BASELINE_WARNING,
@@ -147,6 +152,13 @@ import {
   type WrapperReport,
   type PropProvenance,
   formatStylesheetsLine,
+  createPhaseClock,
+  formatElapsedClock,
+  formatPhaseDuration,
+  type PhaseClock,
+  type PhaseTimings,
+  type ReactCompilerReport,
+  dedupeWarnings,
 } from "./report.js";
 
 // M40: the numbers are real, but they describe a transient scene. Warn, never
@@ -240,6 +252,31 @@ export const MATRIX_AUTO_ACTIVATED_NOTICE = (cellCount: number): string =>
 export const MATRIX_SUPPRESSED_BY_CURVE_WARNING = (propName: string): string =>
   `--matrix did not activate: curve mode auto-activated on ${propName} first, and a run is one ` +
   "whole-run mode or the other. Re-run with --no-curve to force matrix instead.";
+
+// M110 C3 (calcom-R1): the other two branches that make the matrix
+// unreachable. Both fell through to `progress("mode: prop combos")` with
+// nothing said, so an explicit --matrix was dropped in silence; the curve
+// suppressor above has named its winner since M83.
+export const MATRIX_SUPPRESSED_BY_COMPOSITION_WARNING = (rootName: string): string =>
+  `--matrix did not activate: an auto-composed scene rooted at ${rootName} supplies the props, and ` +
+  "a composed scene measures one combo. Re-run with --no-auto-compose to force matrix instead.";
+
+// M110 review: `--target` throws TARGET_WITH_FIXTURE_ERROR whenever the
+// fixture came from an explicit --fixture or from the input file itself, so
+// the `<file>#Export` remedy is only usable for the auto-detected sibling.
+export type FixtureProvenance = "sibling" | "explicit-flag" | "fixture-input";
+
+export const MATRIX_SUPPRESSED_BY_FIXTURE_WARNING = (
+  fixtureFile: string,
+  provenance: FixtureProvenance = "sibling",
+): string =>
+  `--matrix did not activate: the fixture ${fixtureFile} supplies the props, and a fixture measures ` +
+  "one combo. " +
+  (provenance === "sibling"
+    ? "Re-run with <file>#Export to name one export and force matrix instead."
+    : provenance === "explicit-flag"
+      ? "Re-run against the component file without --fixture to force matrix instead."
+      : "Re-run against the component file, not this fixture, to force matrix instead.");
 
 // M83 #4c (commerce-F5): an explicit --matrix bypasses shouldAutoActivateMatrix's
 // 2-eligible-axis floor; when the component genuinely has none, the run still
@@ -396,24 +433,33 @@ export interface AnalyzeOptions {
 export function resolveProgressReporter(
   options: Pick<AnalyzeOptions, "ci" | "onProgress" | "onPhase">,
   write: (chunk: string) => void = (chunk) => process.stdout.write(chunk),
+  // M115 C4: the run clock. Every boundary is charged here, on the one path
+  // every label already travels, so a phase is measured once and `onPhase` and
+  // `onProgress` see the identical stamped string.
+  clock?: PhaseClock,
 ): (line: string) => void {
   // Review A2: every phase boundary reaches `onPhase` on every path, `--ci`
   // included. Console reporting is decided after that, not instead of it.
   const heartbeat = options.onPhase;
-  const emit = (line: string): void => {
-    heartbeat?.(line);
-  };
-  if (options.ci) return emit;
+  const stamp = (line: string): string =>
+    clock ? `${line}  (${formatElapsedClock(clock.boundary(line))})` : line;
+  if (options.ci) {
+    return (line) => {
+      heartbeat?.(stamp(line));
+    };
+  }
   const sink = options.onProgress;
   if (sink) {
     return (line) => {
-      emit(line);
-      sink(line);
+      const stamped = stamp(line);
+      heartbeat?.(stamped);
+      sink(stamped);
     };
   }
   return (line) => {
-    emit(line);
-    write(line + "\n");
+    const stamped = stamp(line);
+    heartbeat?.(stamped);
+    write(stamped + "\n");
   };
 }
 
@@ -452,6 +498,11 @@ export interface BuildReportInput {
   // M84) and may not exist on a given schema; when it is absent everywhere,
   // no combo is ever exonerated (see detectHarnessFault).
   schemas?: Array<PropSchema & { provenance?: PropProvenance }>;
+  // M115 C2: `attributeCost` runs per combo inside this function, between the
+  // mount phase and the report boundary, so its window is handed back to the
+  // clock here and carved out of whichever phase was open. No progress line
+  // names it; the report's `attribution` key is where it shows up.
+  phaseClock?: Pick<PhaseClock, "addAttribution">;
 }
 
 // M85: mirrors isHarnessInternalNoise's (src/page-errors.ts) principle for a
@@ -581,7 +632,11 @@ function valueEvidencedInText(value: unknown, errorText: string, depth = 0): boo
 export function buildReport(input: BuildReportInput): Report {
   const combos: ComboReport[] = [];
 
-  for (const mount of input.mounts) {
+  // M116 end-game fix-up (midday-F1): a pass that stopped early leaves holes in
+  // `mounts`/`rerenders`. `for...of` yields `undefined` for a hole and
+  // `Array.prototype.find` calls its predicate with it, so every consumer here
+  // asks for the measured entries.
+  for (const mount of measuredOnly(input.mounts)) {
     const exploreResult = input.explores.find(
       (e) => e.comboIndex === mount.comboIndex,
     );
@@ -625,7 +680,7 @@ export function buildReport(input: BuildReportInput): Report {
         ? mount.mount.median / input.calibration.totalDuration
         : 0;
 
-    const rerenderResult = input.rerenders?.find(
+    const rerenderResult = measuredOnly(input.rerenders ?? []).find(
       (r) => r.comboIndex === mount.comboIndex,
     );
 
@@ -655,6 +710,8 @@ export function buildReport(input: BuildReportInput): Report {
       scalingCurve: null,
       relativeMount,
       verdict: "pass",
+      // M115 C3: the state graph already measured this; nothing else read it.
+      ...(exploreResult ? { exploreWallClockMs: exploreResult.graph.wallClockMs } : {}),
       measuredState: mount.measuredState ?? "settled",
       ...(isScaleProbe ? { scaleProbe: scaleProbeValue as number } : {}),
       ...(input.measuredWithoutProps && !isScaleProbe ? { measuredWithoutProps: true } : {}),
@@ -672,7 +729,9 @@ export function buildReport(input: BuildReportInput): Report {
     }
 
     if (!input.skipAttribution && mount.mountTraces && mount.mountTraces.length > 0) {
+      const attributionStart = Date.now();
       combo.costAttribution = attributeCost(mount.mountTraces);
+      input.phaseClock?.addAttribution(Date.now() - attributionStart);
     }
 
     // M59: mount and rerender each watched the page over their own window; the
@@ -746,7 +805,7 @@ export function buildReport(input: BuildReportInput): Report {
       const isScaleCombo = combo.scaleProbe !== undefined && probesAccompanyPropCombos;
       const hasPortal = combo.interactions.some((i) => i.portal === true);
       const hasScaling = combo.scalingCurve != null || combo.rerenderScalingCurve != null;
-      const mountResult = input.mounts.find((m) => m.comboIndex === combo.comboIndex);
+      const mountResult = measuredOnly(input.mounts).find((m) => m.comboIndex === combo.comboIndex);
       const hasAnimation = mountResult?.hasAnimation ?? false;
       const tier = classifyTier({ domNodeCount: combo.domNodeCount, hasPortal, hasScaling, hasAnimation });
       combo.tier = tier;
@@ -867,7 +926,7 @@ export function buildReport(input: BuildReportInput): Report {
   return report;
 }
 
-interface BaselineWorkflowContext {
+export interface BaselineWorkflowContext {
   options: AnalyzeOptions;
   projectRoot: string;
   relativeComponent: string;
@@ -876,6 +935,11 @@ interface BaselineWorkflowContext {
   envPolicy: BaselineEnvPolicy;
   // M39: stored with the entry on save so unchanged components can reuse it.
   sourceFingerprint?: string;
+  // M115 C7: where this run's minutes went, and the combo and sample counts it
+  // spent them on, so a later dry run can scale them. Read by the estimate
+  // only; it never enters the environment key or the reuse decision.
+  phaseTimings?: PhaseTimings;
+  phaseUnits?: { combos: number; samples: number };
 }
 
 // Shared by every output mode: the isolation branch returns before the combo
@@ -935,6 +999,15 @@ function applyBaselineWorkflow(
       }
 
       report.baseline = comparison;
+      // M117 C6: whether a comparison was applicable is only known here, and
+      // the noise text was recorded before this ran.
+      if (report.noise && report.warnings) {
+        const uncompared = formatNoiseWarning(report.noise, false);
+        const compared = formatNoiseWarning(report.noise, true);
+        if (uncompared && compared !== uncompared) {
+          report.warnings = report.warnings.map((w) => (w === uncompared ? compared : w));
+        }
+      }
       // A noisy run's regressions are reported but do not fail: the same
       // philosophy as M22's unstable-metric downgrade, run-scoped instead of
       // metric-scoped. Budget breaches are unaffected; they are absolute.
@@ -966,23 +1039,38 @@ function applyBaselineWorkflow(
   }
 
   if (ctx.options.saveBaseline && metrics) {
-    const entry: BaselineEntry = {
-      mount: metrics.mount,
-      rerender: metrics.rerender,
-      unmount: metrics.unmount,
-      domNodeCount: metrics.domNodeCount,
-      interactions: metrics.interactions,
-      tier: metrics.tier,
-      env: ctx.currentEnv,
-      ...(ctx.sourceFingerprint ? { sourceFingerprint: ctx.sourceFingerprint } : {}),
-      pass: report.pass,
-      ...(metrics.measuredState ? { measuredState: metrics.measuredState } : {}),
-    };
+    const entry = buildBaselineEntry(metrics, report.pass, ctx);
     const { pruned } = saveBaselineFile(baselinePath, entry, ctx.relativeComponent);
     if (pruned.length > 0) {
       report.warnings = [...(report.warnings ?? []), PRUNED_SLOTS_NOTICE(pruned)];
     }
   }
+}
+
+// The entry `--save-baseline` writes. M115 C7 rides along here: a run that
+// recorded both its phase timings and the units it spent them on carries them
+// on the entry, so a later dry run can scale them; a run missing either (an
+// isolation run has no combos or samples) carries neither.
+export function buildBaselineEntry(
+  metrics: BaselineMetrics,
+  pass: boolean,
+  ctx: Pick<BaselineWorkflowContext, "currentEnv" | "sourceFingerprint" | "phaseTimings" | "phaseUnits">,
+): BaselineEntry {
+  return {
+    mount: metrics.mount,
+    rerender: metrics.rerender,
+    unmount: metrics.unmount,
+    domNodeCount: metrics.domNodeCount,
+    interactions: metrics.interactions,
+    tier: metrics.tier,
+    env: ctx.currentEnv,
+    ...(ctx.sourceFingerprint ? { sourceFingerprint: ctx.sourceFingerprint } : {}),
+    pass,
+    ...(metrics.measuredState ? { measuredState: metrics.measuredState } : {}),
+    ...(ctx.phaseTimings && ctx.phaseUnits
+      ? { phaseTimings: ctx.phaseTimings, phaseUnits: ctx.phaseUnits }
+      : {}),
+  };
 }
 
 // Everything the mode branches (isolation, curve, matrix, standard combos)
@@ -1024,6 +1112,9 @@ interface ModeContext {
   onWarning: (warning: string) => void;
   // M65: one line per phase boundary, already silenced in CI mode.
   progress: (line: string) => void;
+  // M115 C1: the clock the progress reporter charges, so every mode branch
+  // puts the same run's breakdown on the report it returns.
+  phaseClock: PhaseClock;
   getSchemas: () => Promise<PropSchema[]>;
   getSourceFingerprint: () => Promise<string>;
   attachHarnessContext: (report: Report) => void;
@@ -1214,6 +1305,8 @@ async function runIsolationMode(
     },
   );
 
+  // M115 C1: the run's own breakdown, on the report the run returns.
+  report.phaseTimings = ctx.phaseClock.timings();
   writeReportJson(report, options.jsonPath);
 
   return report;
@@ -1320,6 +1413,7 @@ async function runCurveMode(ctx: ModeContext, match: ScalingPropMatch): Promise<
     calibration,
     thresholds,
     skipAttribution: options.skipAttribution,
+    phaseClock: ctx.phaseClock,
   });
 
   // A sweep that never moved the DOM measured no growth. The verdict still
@@ -1399,6 +1493,8 @@ async function runCurveMode(ctx: ModeContext, match: ScalingPropMatch): Promise<
     if (point) point.reactOptimizations = opts;
   }
 
+  // M115 C1: the run's own breakdown, on the report the run returns.
+  report.phaseTimings = ctx.phaseClock.timings();
   writeReportJson(report, options.jsonPath);
 
   return report;
@@ -1549,8 +1645,9 @@ async function runMatrixMode(ctx: ModeContext, matrixAutoActivated: boolean): Pr
       runWarnings.push(DELTA_PAIR_CAP_WARNING(deltaPairs.length, totalDeltaPairs));
     }
     const measured = new Map<string, { mount: MountResult; rerender?: RerenderResult }>();
-    for (const m of matrixMounts) {
-      measured.set(JSON.stringify(m.props), { mount: m, rerender: matrixRerenders.find((r) => r.comboIndex === m.comboIndex) });
+    const measuredMatrixRerenders = measuredOnly(matrixRerenders);
+    for (const m of measuredOnly(matrixMounts)) {
+      measured.set(JSON.stringify(m.props), { mount: m, rerender: measuredMatrixRerenders.find((r) => r.comboIndex === m.comboIndex) });
     }
     const missingPairs = deltaPairs.filter((p) => !measured.has(JSON.stringify(p.baseCombo)) || !measured.has(JSON.stringify(p.flipCombo)));
     if (missingPairs.length > 0) {
@@ -1560,23 +1657,17 @@ async function runMatrixMode(ctx: ModeContext, matrixAutoActivated: boolean): Pr
         // would merge a differently-estimated number into one report.
         const extraMounts = await measureMount(harness, { samples: matrixEffectiveSamples, cpuThrottle, warmupRuns, combos: missingCombos, pool });
         const extraRerenders = await measureRerender(harness, { samples: matrixEffectiveSamples, cpuThrottle, warmupRuns, combos: missingCombos, animatedComboIndices: animatedIndices(extraMounts), pool });
-        for (const m of extraMounts) measured.set(JSON.stringify(m.props), { mount: m, rerender: extraRerenders.find((r) => r.comboIndex === m.comboIndex) });
+        const measuredExtraRerenders = measuredOnly(extraRerenders);
+        for (const m of measuredOnly(extraMounts)) measured.set(JSON.stringify(m.props), { mount: m, rerender: measuredExtraRerenders.find((r) => r.comboIndex === m.comboIndex) });
       }
     }
-    matrixDeltas = [];
-    for (const pair of deltaPairs) {
-      const base = measured.get(JSON.stringify(pair.baseCombo));
-      const flip = measured.get(JSON.stringify(pair.flipCombo));
-      if (base && flip) {
-        matrixDeltas.push({
-          propName: pair.propName,
-          baseValue: pair.baseValue,
-          flipValue: pair.flipValue,
-          mountDelta: flip.mount.mount.median - base.mount.mount.median,
-          rerenderDelta: (flip.rerender?.stable.median ?? 0) - (base.rerender?.stable.median ?? 0),
-        });
-      }
-    }
+    const matrixMedians = new Map(
+      [...measured].map(([key, cell]) => [
+        key,
+        { mount: cell.mount.mount.median, rerender: cell.rerender?.stable.median },
+      ]),
+    );
+    matrixDeltas = propDeltasFromMeasured(deltaPairs, matrixMedians);
   }
 
   const heapDeltas = matrixMounts.map((m) => m.heapDelta ?? 0);
@@ -1590,6 +1681,7 @@ async function runMatrixMode(ctx: ModeContext, matrixAutoActivated: boolean): Pr
     explores: matrixExplores,
     heapDeltas,
     thresholds,
+    phaseClock: ctx.phaseClock,
     rerenders: matrixRerenders,
     flatThresholds: options.flatThresholds,
     explicitThresholds,
@@ -1621,6 +1713,8 @@ async function runMatrixMode(ctx: ModeContext, matrixAutoActivated: boolean): Pr
   if (ctx.wrapper) attachWrapperReport(report, ctx.wrapper);
   ctx.attachHarnessContext(report);
 
+  // M115 C1: the run's own breakdown, on the report the run returns.
+  report.phaseTimings = ctx.phaseClock.timings();
   writeReportJson(report, options.jsonPath);
 
   return report;
@@ -1629,6 +1723,29 @@ async function runMatrixMode(ctx: ModeContext, matrixAutoActivated: boolean): Pr
 // M11: pairwise deltas for the standard combo path. Pairs whose combos the
 // sweep already measured reuse those numbers; the rest are measured at the
 // same effective sample count. Sorted by absolute mount impact.
+// M116 end-game fix-up (midday-F2): the one place a pair becomes a delta, for
+// both the standard and the matrix path. A pair is reported only when both
+// sides measured both timings: a side the pass never reached used to be
+// subtracted as a fabricated 0.00 ms.
+export function propDeltasFromMeasured(
+  pairs: DeltaPair[],
+  measured: Map<string, { mount: number; rerender?: number }>,
+): PropDelta[] {
+  return pairs.flatMap((pair) => {
+    const base = measured.get(JSON.stringify(pair.baseCombo));
+    const flip = measured.get(JSON.stringify(pair.flipCombo));
+    if (!base || !flip) return [];
+    if (base.rerender === undefined || flip.rerender === undefined) return [];
+    return [{
+      propName: pair.propName,
+      baseValue: pair.baseValue,
+      flipValue: pair.flipValue,
+      mountDelta: flip.mount - base.mount,
+      rerenderDelta: flip.rerender - base.rerender,
+    }];
+  });
+}
+
 async function measureStandardPropDeltas(
   ctx: ModeContext,
   schemas: PropSchema[],
@@ -1644,12 +1761,15 @@ async function measureStandardPropDeltas(
   }
   if (pairs.length === 0) return undefined;
 
-  const measured = new Map<string, { mount: number; rerender: number }>();
-  for (const m of mounts) {
+  // M116 end-game fix-up (midday-F2): `rerender` stays absent until a rerender
+  // was actually measured for that combo. The rerender pass can now end before
+  // the mount pass did, so a mount-only combo is an ordinary outcome.
+  const measured = new Map<string, { mount: number; rerender?: number }>();
+  for (const m of measuredOnly(mounts)) {
     const key = JSON.stringify(m.props);
-    measured.set(key, { mount: m.mount.median, rerender: 0 });
+    measured.set(key, { mount: m.mount.median });
   }
-  for (const r of rerenders) {
+  for (const r of measuredOnly(rerenders)) {
     const key = JSON.stringify(r.props);
     const existing = measured.get(key);
     if (existing) {
@@ -1657,13 +1777,19 @@ async function measureStandardPropDeltas(
     }
   }
 
+  // M116 end-game fix-up (midday-F1): the combos this pass still owes a
+  // measurement. They used to be seeded into `measured` with zeros, so a combo
+  // the mount pass omitted (frame starvation, a wedged page) reported a
+  // fabricated 0 ms delta instead of nothing at all -- and the pass-level bound
+  // in measure.ts makes omitted combos an ordinary outcome, not a rarity.
   const needed: PropCombination[] = [];
+  const requested = new Set<string>();
   for (const pair of pairs) {
     for (const combo of [pair.baseCombo, pair.flipCombo]) {
       const key = JSON.stringify(combo);
-      if (!measured.has(key)) {
+      if (!measured.has(key) && !requested.has(key)) {
         needed.push(combo);
-        measured.set(key, { mount: 0, rerender: 0 });
+        requested.add(key);
       }
     }
   }
@@ -1703,10 +1829,10 @@ async function measureStandardPropDeltas(
     } catch (err) {
       throw retagPhaseError(err, deltaPhaseContext);
     }
-    for (const m of extraMounts) {
-      measured.set(JSON.stringify(m.props), { mount: m.mount.median, rerender: 0 });
+    for (const m of measuredOnly(extraMounts)) {
+      measured.set(JSON.stringify(m.props), { mount: m.mount.median });
     }
-    for (const r of extraRerenders) {
+    for (const r of measuredOnly(extraRerenders)) {
       const key = JSON.stringify(r.props);
       const existing = measured.get(key);
       if (existing) {
@@ -1715,19 +1841,8 @@ async function measureStandardPropDeltas(
     }
   }
 
-  const propDeltas = pairs.map((pair) => {
-    const baseKey = JSON.stringify(pair.baseCombo);
-    const flipKey = JSON.stringify(pair.flipCombo);
-    const base = measured.get(baseKey) ?? { mount: 0, rerender: 0 };
-    const flip = measured.get(flipKey) ?? { mount: 0, rerender: 0 };
-    return {
-      propName: pair.propName,
-      baseValue: pair.baseValue,
-      flipValue: pair.flipValue,
-      mountDelta: flip.mount - base.mount,
-      rerenderDelta: flip.rerender - base.rerender,
-    };
-  });
+  const propDeltas = propDeltasFromMeasured(pairs, measured);
+  if (propDeltas.length === 0) return undefined;
   propDeltas.sort((a, b) => Math.abs(b.mountDelta) - Math.abs(a.mountDelta));
   return propDeltas;
 }
@@ -1956,6 +2071,7 @@ async function runComboMode(ctx: ModeContext, fixtureHasScale: boolean): Promise
     explores,
     heapDeltas,
     thresholds,
+    phaseClock: ctx.phaseClock,
     rerenders,
     flatThresholds: options.flatThresholds,
     explicitThresholds,
@@ -2097,6 +2213,11 @@ async function runComboMode(ctx: ModeContext, fixtureHasScale: boolean): Promise
     currentEnv,
     envPolicy,
     ...(options.saveBaseline ? { sourceFingerprint: await ctx.getSourceFingerprint() } : {}),
+    // M115 C7: a reading, not a closing -- the total still ends at the
+    // `report` boundary a few lines below, where the JSON's own number is
+    // taken.
+    phaseTimings: ctx.phaseClock.snapshot(),
+    phaseUnits: { combos: combos.length, samples: effectiveSamples },
   });
 
   // M51: recorded before serialization so the JSON carries the same ids the
@@ -2105,6 +2226,8 @@ async function runComboMode(ctx: ModeContext, fixtureHasScale: boolean): Promise
   if (hintIds.length > 0) report.hints = hintIds;
 
   ctx.progress("report");
+  // M115 C1: the run's own breakdown, on the report the run returns.
+  report.phaseTimings = ctx.phaseClock.timings();
   writeReportJson(report, options.jsonPath);
 
   return report;
@@ -2220,6 +2343,10 @@ export interface PropsExplanation {
   // the schema bound to. Absent for a Vue SFC and for a file with no component.
   bindingFile?: string;
   bindingLine?: number;
+  // M114 C1 (gutenberg-F2): the measured file re-exports the component another
+  // module declares, and the props below are that module's. Both paths, posix,
+  // relative to the project root.
+  reExport?: { barrel: string; module: string };
   exports: string[];
   props: ExplainedProp[];
   curve?: { propName: string; reason: string };
@@ -2239,13 +2366,87 @@ export interface PropsExplanation {
   // M100 (review C-5): why the matrix branch was unreachable, when it was.
   // "combo" alone cannot say, and the two readings need different sentences:
   // a flag the user typed, or a fixture that owns the props.
-  matrixIneligibleReason?: "no-matrix-flag" | "fixture";
+  // M110 C2 (supabase-F3, calcom-R1): "composed" is the third reading, and
+  // the one the dry run used to be structurally unable to give.
+  matrixIneligibleReason?: "no-matrix-flag" | "fixture" | "composed";
+  // M110 C1: the dispatcher's own composition answer, decided from export
+  // names and schemas. Absent when the run would measure the bound export
+  // alone.
+  composition?: { root: string; exportCount: number };
+  // M110 review: the fixture that would supply the scene (projectRoot-relative
+  // posix path), so the composition line does not claim the component would be
+  // measured alone when a fixture owns the render.
+  fixtureFile?: string;
   // Set when a scaling prop was detected and `--no-curve` suppressed it, so
   // "would not activate: no array or numeric scaling prop" is not printed over
   // a component that has one.
   curveSuppressedByFlag?: boolean;
   presetPath?: string;
+  // M115 C6: what the real run this dry run predicts is about to cost.
+  costEstimate?: RunCostEstimate;
   warnings: string[];
+}
+
+export interface RunCostEstimate {
+  estimatedMs: number;
+  // The counts the real run would measure: the same combo cap and the same
+  // `computeEffectiveSamples` the dispatcher applies.
+  combos: number;
+  samples: number;
+  // "baseline" means the per-phase numbers are this component's own, recorded
+  // by a `--save-baseline` run on this machine. "defaults" means they are the
+  // documented fleet medians and the line says so.
+  source: "baseline" | "defaults";
+}
+
+// M115 C6: the fallback per-phase numbers, from the 283 logged runs of field
+// test run 5 (`remediation/timing-profile.md`, section 4: a 4-combo x 5-sample
+// combo run has a median of 39 s). `fixedMs` covers preflight, build,
+// calibration and analysis; `perMountSampleMs` is one mount sample;
+// `perComboMs` covers the rerender, explore and attribution work a combo
+// carries beyond its mount samples.
+export const DEFAULT_PHASE_ESTIMATE = {
+  fixedMs: 15_000,
+  perMountSampleMs: 700,
+  perComboMs: 2_500,
+};
+
+// An estimate, never a measurement: it multiplies per-unit costs by the units
+// the real run would measure. Nothing here starts a server, a browser or a
+// measurement.
+export function estimateRunCost(input: {
+  combos: number;
+  samples: number;
+  recorded?: { timings: PhaseTimings; units: { combos: number; samples: number } };
+}): RunCostEstimate {
+  const { combos, samples } = input;
+  const recorded = input.recorded;
+  const units = recorded?.units;
+  const usable =
+    recorded !== undefined && units !== undefined && units.combos > 0 && units.samples > 0;
+  if (!usable) {
+    return {
+      estimatedMs:
+        DEFAULT_PHASE_ESTIMATE.fixedMs +
+        DEFAULT_PHASE_ESTIMATE.perMountSampleMs * combos * samples +
+        DEFAULT_PHASE_ESTIMATE.perComboMs * combos,
+      combos,
+      samples,
+      source: "defaults",
+    };
+  }
+  const t = recorded!.timings;
+  const recordedUnits = units!;
+  const fixed = t.preflight + t.build + t.calibration + t.analysis;
+  const perMountSample = t.mount / (recordedUnits.combos * recordedUnits.samples);
+  const perCombo =
+    (t.rerender + t.explore + t.scale + t.deltas + t.attribution) / recordedUnits.combos;
+  return {
+    estimatedMs: Math.round(fixed + perMountSample * combos * samples + perCombo * combos),
+    combos,
+    samples,
+    source: "baseline",
+  };
 }
 
 // M82: always constructed, even for "none" — the fingerprint call sites guard
@@ -2275,7 +2476,29 @@ export function buildCssReport(
         rules: stylesheetRuleCount(f),
       };
     }),
+    // M112 C4 / I5: lane A's `discoverGlobalCss` (src/harness.ts) declares the
+    // shape, `resolveCssFiles` re-exports it, and it is read as typed here; a
+    // project-root-relative posix path regardless of where the producer put it.
+    ...(() => {
+      const declared = resolvedCss.declaredMissing;
+      // An empty array is a producer that found nothing: no key at all, so a
+      // report of a project with no declaration is byte-identical.
+      if (declared === undefined || declared.length === 0) return {};
+      const rel = (f: string): string =>
+        (path.isAbsolute(f) ? path.relative(projectRoot, f) : f).replace(/\\/g, "/");
+      return {
+        declaredMissing: declared.map((d) => rel(d.path)),
+        declaredMissingFields: declared.map((d) => ({
+          field: d.field,
+          path: rel(d.path),
+          ...(d.buildCommand !== undefined ? { buildCommand: d.buildCommand } : {}),
+        })),
+      };
+    })(),
     ...(resolvedCss.runtimeEngines !== undefined ? { runtimeEngines: resolvedCss.runtimeEngines } : {}),
+    ...(resolvedCss.runtimeEnginesRecognised !== undefined
+      ? { runtimeEnginesRecognised: resolvedCss.runtimeEnginesRecognised }
+      : {}),
     ...(resolvedCss.onlyCandidate !== undefined ? { onlyCandidate: resolvedCss.onlyCandidate } : {}),
     ...(resolvedCss.noEntryInPackage !== undefined
       ? { noEntryInPackage: resolvedCss.noEntryInPackage }
@@ -2306,6 +2529,25 @@ export async function explainProps(
     matrixMode?: boolean;
     isolation?: { phases: string[]; memoryCycles?: number };
     fixturePath?: string;
+    // M110 C1, C4: the two remaining flags that change what the dispatcher
+    // decides from disk. Same names and types as `AnalyzeOptions`, so the CLI
+    // forwards one shape to both entry points.
+    skipAutoCompose?: boolean;
+    noTransforms?: boolean;
+    // M110 I2 (review): the static pre-build both modes read resolves the
+    // external-dependency scan against the shim aliases, which `--no-shims`
+    // removes. Without this flag a `--no-shims` real run could report a
+    // different unresolved set than the dry run predicted from the same files.
+    noShims?: boolean;
+    // I12 (M115 C6): the two flags that decide how many combos and samples the
+    // real run would measure. Same names and types as `AnalyzeOptions`, so the
+    // CLI forwards one shape to both entry points.
+    samples?: number;
+    maxCombos?: number;
+    // M115 C6 fix-up: curve mode measures one unit per scale point and the
+    // combo path appends these same points as anchors, so the estimate prices
+    // whichever list the real run would use.
+    scalePoints?: number[];
   } = {},
 ): Promise<PropsExplanation> {
   const resolvedPath = path.resolve(componentPath);
@@ -2313,7 +2555,7 @@ export async function explainProps(
     throw new Error(`Component file not found: ${componentPath}`);
   }
 
-  const { projectRoot } = resolveProjectPaths(resolvedPath);
+  const { projectRoot, relativeComponent } = resolveProjectPaths(resolvedPath);
   const componentName = detectComponentExport(resolvedPath, options.target).name;
 
   const warnings: string[] = [];
@@ -2335,7 +2577,10 @@ export async function explainProps(
   // run resolves them (resolveWrapPath then resolveCssFiles), so a wrapper's
   // own stylesheet imports are discoverable in both modes.
   const { wrapPath } = resolveWrapPath({}, projectRoot, framework, warnings);
-  const resolvedCss = resolveCssFiles({}, projectRoot, warnings, wrapPath ? { wrapPath } : undefined);
+  const resolvedCss = resolveCssFiles({}, projectRoot, warnings, {
+    ...(wrapPath ? { wrapPath } : {}),
+    measuredFile: resolvedPath,
+  });
   // M100 (preact-app-F1): the real run formats this line the moment the CSS
   // decision is made (analyze.ts's `cssDecisionWarning`) and carries it
   // through every exit path including a crash; the dry run resolved the same
@@ -2358,11 +2603,18 @@ export async function explainProps(
   // tooling check. All of it was unreachable from a dry run only because it
   // was nested inside the function that starts a server, so the cheap probe
   // said nothing about the fact that then killed the real run.
+  // M117 C4: the same filter the real run applies to the same list, from the
+  // same two reads, so a note the dry run prints is a note the real run prints.
   warnings.push(
-    ...collectStaticPreBuildWarnings(projectRoot, {
-      componentPath: resolvedPath,
-      ...(wrapPath ? { wrapPath } : {}),
-    }).warnings,
+    ...suppressHonoredPluginNote(
+      collectStaticPreBuildWarnings(projectRoot, {
+        componentPath: resolvedPath,
+        ...(wrapPath ? { wrapPath } : {}),
+        ...(options.noShims ? { noShims: true } : {}),
+      }).warnings,
+      projectRoot,
+      options.noTransforms ? { noTransforms: true } : {},
+    ),
   );
 
   // M78: the comment at this function's cli.ts call site has always promised
@@ -2372,12 +2624,40 @@ export async function explainProps(
   // via --no-preflight), then the always-on react-dom gate, at zero build
   // cost (no harness dir, no dev server), matching this function's own
   // "measures nothing" contract.
-  const preflight = runPreflight({ projectRoot, entries: [resolvedPath], componentName });
+  // M110 A5 end-game (directus-NEW1): the real run walks a `.vue` graph with
+  // the project's own SFC parser (see the `vueCompiler` argument at the run
+  // path's own runPreflight call); the dry run walked it without one and so
+  // stopped at the first SFC import. A refusal five files deeper was therefore
+  // invisible here and fatal there. Same compiler, same edges, same decision.
+  const vueCompiler = framework === "vue" ? await loadVueCompiler(projectRoot) : undefined;
+  // Same gate the run path applies (M57): without the SFC parser the walk sees
+  // no edge out of a `.vue` target at all, so predicting a clean run here while
+  // the run refuses outright is the parity break this whole block closes.
+  if (framework === "vue" && !vueCompiler && isVueFile(resolvedPath)) {
+    throw new Error(VUE_COMPILER_MISSING(projectRoot));
+  }
+  const preflight = runPreflight({
+    projectRoot,
+    entries: [resolvedPath],
+    componentName,
+    ...(vueCompiler ? { vueCompiler } : {}),
+  });
   // M91 (commerce-F3): folded in before the hard/soft handling below runs,
   // so a one-hop-composed async server component gates identically here and
   // in the full run.
   preflight.hard.push(...composedChildPreflightHits(resolvedPath, projectRoot));
   for (const hit of preflight.soft) warnings.push(NODE_BUILTIN_WARNING(hit));
+  // M110 C4 (logto-F3): `runPreflight` returned `transforms` on this path all
+  // along and only the run path read it, so the dry run stayed silent about
+  // the lines the real run printed a minute later from the same files. I3's
+  // one classifier, same order, same text.
+  for (const { hit, availability } of classifyProjectTransformHits(
+    projectRoot,
+    preflight.transforms,
+    { ...(options.noTransforms ? { noTransforms: true } : {}) },
+  )) {
+    warnings.push(PROJECT_TRANSFORM_WARNING(hit, availability));
+  }
   if (preflight.hard.length > 0) {
     if (options.noPreflight) warnings.push(PREFLIGHT_BYPASSED_WARNING(preflight.hard));
     else throw new Error(preflightFailureMessage(preflight.hard));
@@ -2415,37 +2695,102 @@ export async function explainProps(
     // A sink, not stderr: a dry run prints its diagnostics in its own output.
     onWarning: () => {},
   });
-  warnings.push(...detail.warnings);
-
+  // M112 C1: the preset decides which extraction remedies still have a
+  // subject, so it is detected and applied before any of them is pushed. The
+  // old order pushed them three lines before the preset loaded, which made the
+  // capped-extraction remedy stale by construction (logto-F4).
   let schemas = detail.schemas;
   const presetPath = detectPropPresets(resolvedPath);
   const presets = presetPath ? loadPropPresets(presetPath, projectRoot) : undefined;
+  let appliedPropNames: string[] = [];
+  let unknownPresetProps: string[] = [];
   if (presets) {
     const applied = applyPropPresets(schemas, presets);
     schemas = applied.schemas;
-    if (applied.unknown.length > 0) {
-      warnings.push(UNKNOWN_PRESET_PROPS_WARNING(presets.path, applied.unknown));
-    }
+    appliedPropNames = applied.applied;
+    unknownPresetProps = applied.unknown;
+  }
+  warnings.push(...remediesAfterPreset(detail.warnings, appliedPropNames, presets?.path));
+  if (presets && unknownPresetProps.length > 0) {
+    warnings.push(UNKNOWN_PRESET_PROPS_WARNING(presets.path, unknownPresetProps));
   }
   // M92 (element-plus-F3): same suppression as runComboMode -- a zero-prop
   // count `detail.warnings` already attributes to a Vue scope exclusion does
   // not also get the generic "extraction may have failed" text.
-  if (schemas.length === 0 && !detail.warnings.some(explainsZeroPropCount)) {
+  // M114 C1 (react-spectrum-F3): a specifier that did not resolve is the whole
+  // explanation of the zero count, so it replaces the generic text rather than
+  // preceding it.
+  const projectRel = (file: string): string =>
+    path.relative(projectRoot, file).replace(/\\/g, "/");
+  if (detail.unresolvedReExport) {
+    warnings.push(
+      UNRESOLVED_RE_EXPORT_WARNING(
+        projectRel(detail.unresolvedReExport.barrel),
+        detail.unresolvedReExport.specifier,
+      ),
+    );
+  }
+  if (
+    schemas.length === 0 &&
+    !detail.unresolvedReExport &&
+    !detail.warnings.some(explainsZeroPropCount)
+  ) {
     warnings.push(ZERO_PROPS_WARNING);
   }
 
-  const exports = isVueFile(resolvedPath)
-    ? [componentName]
-    : (await extractExports(resolvedPath)).map((e) => e.name);
+  // M110 C1: kept as records, not names, because `inferComposition` reads the
+  // same shape the dispatcher hands it.
+  const componentExports = isVueFile(resolvedPath) ? undefined : await extractExports(resolvedPath);
+  const exports = componentExports ? componentExports.map((e) => e.name) : [componentName];
   const curveMatch = detectScalingProps(schemas)[0];
   // The fixture inputs the real run has before it dispatches: an explicit
   // --fixture, a target that is itself a fixture, or one sitting next to the
-  // component. Auto-composition is the one input no dry run can decide, and
-  // the footer says so rather than this pretending to know.
-  const dryRunUsesFixture =
-    options.fixturePath !== undefined ||
-    isFixturePath(resolvedPath) ||
-    detectFixture(resolvedPath) !== undefined;
+  // component. Kept as the path, not a boolean, so a dropped --matrix can name
+  // the file that took precedence.
+  // The sibling probe mirrors the dispatcher's own gate (`!fixturePath &&
+  // !options.target`): with a --target the real run ignores a sibling
+  // fixture entirely.
+  const dryRunFixturePath = options.fixturePath
+    ? path.resolve(options.fixturePath)
+    : isFixturePath(resolvedPath)
+      ? resolvedPath
+      : options.target
+        ? undefined
+        : detectFixture(resolvedPath);
+  const dryRunUsesFixture = dryRunFixturePath !== undefined;
+  // M112 C2: the sibling that carries the preset name without the preset
+  // shape, disclosed once by its path instead of dropped. Gated on the fixture
+  // decision the real run makes (src/analyze.ts's `presetShapeWarning`): a
+  // fixture owns its scene, so both modes stay silent about a preset-named
+  // sibling there (M100 parity).
+  const shapeDisclosure = dryRunUsesFixture
+    ? undefined
+    : presetShapeDisclosure(resolvedPath, projectRoot);
+  if (shapeDisclosure) warnings.push(shapeDisclosure);
+  const dryRunFixtureFile = dryRunFixturePath
+    ? path.relative(projectRoot, dryRunFixturePath).replace(/\\/g, "/")
+    : undefined;
+  const dryRunFixtureProvenance: FixtureProvenance = options.fixturePath
+    ? "explicit-flag"
+    : isFixturePath(resolvedPath)
+      ? "fixture-input"
+      : "sibling";
+
+  // M110 C1 (supabase-F3, calcom-R1): the dispatcher's own gate, evaluated
+  // here from the same filesystem inputs. `inferComposition` reads export
+  // names and schemas only, so this costs a source parse, not a browser --
+  // the old "composition needs a runtime" rationale was never true.
+  let composition: { root: string; exportCount: number } | undefined;
+  if (
+    componentExports &&
+    componentExports.length > 1 &&
+    !dryRunUsesFixture &&
+    !options.skipAutoCompose &&
+    !options.target
+  ) {
+    const tree = inferComposition(componentExports, await extractAllProps(resolvedPath));
+    if (tree) composition = { root: tree.root, exportCount: componentExports.length };
+  }
 
   // M83 #8 (chakra-ui-F7): detectComponentExport resolving to the file's own
   // marked `export default` is correct by JS/TS export semantics, not a bug
@@ -2457,14 +2802,90 @@ export async function explainProps(
   const altNote = await alternativeExportNote(resolvedPath, componentName, schemas, options.target);
   if (altNote) warnings.push(altNote);
 
+  // M100 (element-plus-F4): the real dispatcher's own precedence, not two
+  // independent booleans. A fixture (given or auto-detected next to the
+  // component) makes the matrix branch unreachable exactly as it does in
+  // analyze(), and since M110 C1 an auto-composed scene is read from the same
+  // source parse the dispatcher uses.
+  const predictedMode = predictMode({
+    isolation: options.isolation !== undefined,
+    // `resolveCurveMatch`'s own precedence: --no-curve suppresses it
+    // entirely, an explicit --curve names the prop itself, otherwise
+    // detection answers -- and a fixture or composed scene has no curve
+    // (resolveCurveMatch returns undefined for both).
+    curve:
+      options.curveMode === false || dryRunUsesFixture || composition !== undefined
+        ? false
+        : options.curveMode !== undefined && options.curveMode !== true
+          ? true
+          : curveMatch !== undefined,
+    matrixEligible: options.matrixMode !== false && !dryRunUsesFixture && composition === undefined,
+    matrixRequested: options.matrixMode === true,
+    matrixAutoActivates: shouldAutoActivateMatrix(schemas),
+  });
+
+  // M110 C3 (calcom-R1): the same two lines the dispatcher now pushes, from
+  // the same two inputs. Restricted to a `combo` prediction because isolation
+  // and curve return before the dispatcher's matrix branch is reached, and
+  // curve carries its own suppressor.
+  if (options.matrixMode === true && predictedMode === "combo") {
+    if (composition) {
+      warnings.push(MATRIX_SUPPRESSED_BY_COMPOSITION_WARNING(composition.root));
+    } else if (dryRunFixturePath) {
+      warnings.push(
+        MATRIX_SUPPRESSED_BY_FIXTURE_WARNING(dryRunFixtureFile!, dryRunFixtureProvenance),
+      );
+    }
+  }
+
+  // M110 review: `resolveCurveMatch` warns whenever an explicit --curve meets
+  // a scene that has no curve; the dry run now knows both of those scenes, so
+  // it says the same line from the same two inputs.
+  if (options.curveMode === true || typeof options.curveMode === "object") {
+    if (dryRunUsesFixture) {
+      warnings.push(CURVE_NOT_ACTIVATED_WARNING("the run measures a fixture file"));
+    } else if (composition) {
+      warnings.push(CURVE_NOT_ACTIVATED_WARNING("the run measures a composed scene"));
+    }
+  }
+
+  // M115 C6: what the real run would cost. Filesystem reads only -- the units
+  // the mode this same dry run predicts would measure, the samples that mode
+  // allows, and this component's own recorded phases when a `--save-baseline`
+  // run on this machine left some.
+  const costEstimate = estimateExplainedRunCost({
+    schemas,
+    projectRoot,
+    relativeComponent,
+    usesFixture: dryRunUsesFixture,
+    mode: predictedMode,
+    ...(options.scalePoints ? { scalePoints: options.scalePoints } : {}),
+    samples: options.samples,
+    maxCombos: options.maxCombos,
+  });
+
   return {
     componentPath,
     componentName,
     ...(options.target ? { target: options.target } : {}),
+    // M114 review: the line belongs to the file the declaration was read from.
+    // Pairing it with the barrel's path printed a file:line the barrel does not
+    // contain; the re-export line below still names the barrel.
     ...(detail.targetLine !== undefined
       ? {
-          bindingFile: path.relative(projectRoot, resolvedPath).replace(/\\/g, "/"),
+          bindingFile: projectRel(detail.targetFile ?? resolvedPath),
           bindingLine: detail.targetLine,
+        }
+      : {}),
+    // M114 C1: only when the declaring module is a different file; a component
+    // declared where it was measured has no re-export to disclose.
+    ...(detail.targetFile !== undefined &&
+    path.resolve(detail.targetFile) !== path.resolve(resolvedPath)
+      ? {
+          reExport: {
+            barrel: projectRel(resolvedPath),
+            module: projectRel(detail.targetFile),
+          },
         }
       : {}),
     exports,
@@ -2487,44 +2908,107 @@ export async function explainProps(
       ? { curve: { propName: curveMatch.schema.name, reason: curveMatch.reason } }
       : {}),
     // M83 #5: the same gating condition runComboMode's non-curve, non-fixture
-    // branch uses. Accurate for the common case this predicts; an
-    // auto-composed scene is not cheaply detectable inside a dry run's scope,
-    // so this may be imprecise for that shape — an accepted, stated limit,
-    // not silently glossed over.
-    scaleProbeWillRun: !isFixturePath(resolvedPath) && !curveMatch,
+    // branch uses, including the `!composed` half M110 C1 made visible here.
+    scaleProbeWillRun:
+      !isFixturePath(resolvedPath) && !curveMatch && composition === undefined,
     matrixWouldActivate: shouldAutoActivateMatrix(schemas),
-    // M100 (element-plus-F4): the real dispatcher's own precedence, not two
-    // independent booleans. A fixture (given or auto-detected next to the
-    // component) makes the matrix branch unreachable exactly as it does in
-    // analyze(); an auto-composed scene is the one input a dry run cannot see
-    // cheaply, so it is assumed absent here — the same stated limit
-    // `scaleProbeWillRun` already carries.
-    predictedMode: predictMode({
-      isolation: options.isolation !== undefined,
-      // `resolveCurveMatch`'s own precedence: --no-curve suppresses it
-      // entirely, an explicit --curve names the prop itself, otherwise
-      // detection answers -- and a fixture or composed scene has no curve.
-      curve:
-        options.curveMode === false || dryRunUsesFixture
-          ? false
-          : options.curveMode !== undefined && options.curveMode !== true
-            ? true
-            : curveMatch !== undefined,
-      matrixEligible: options.matrixMode !== false && !dryRunUsesFixture,
-      matrixRequested: options.matrixMode === true,
-      matrixAutoActivates: shouldAutoActivateMatrix(schemas),
-    }),
+    predictedMode,
     ...(options.matrixMode === false
       ? { matrixIneligibleReason: "no-matrix-flag" as const }
       : dryRunUsesFixture
         ? { matrixIneligibleReason: "fixture" as const }
-        : {}),
+        // M110 C2: reported only when the matrix would otherwise have run, so
+        // a component that never qualified is not told it lost a race.
+        : composition && (options.matrixMode === true || shouldAutoActivateMatrix(schemas))
+          ? { matrixIneligibleReason: "composed" as const }
+          : {}),
+    ...(composition ? { composition } : {}),
+    ...(dryRunFixtureFile ? { fixtureFile: dryRunFixtureFile } : {}),
     ...(options.curveMode === false && curveMatch !== undefined
       ? { curveSuppressedByFlag: true }
       : {}),
     ...(presets ? { presetPath: presets.path } : {}),
-    warnings,
+    costEstimate,
+    // M117 C1: the dry run deduplicates its own list by the same rule, so the
+    // parity the real run owes it (M100/M110) is parity of what a reader sees.
+    warnings: dedupeWarnings(warnings),
   };
+}
+
+// The units the mode this dry run predicts would actually measure. Curve mode
+// measures one point per scale point and applies no sample throttle; matrix
+// mode measures capped cells; the standard combo path measures the capped prop
+// combos *plus* the scale anchors `runComboMode` always appends, and throttles
+// samples against that larger count.
+function estimateMeasuredUnits(
+  input: {
+    schemas: PropSchema[];
+    usesFixture: boolean;
+    mode: PredictedMode;
+    scalePoints?: number[];
+  },
+  cap: number,
+  requested: number,
+): { combos: number; samples: number } {
+  if (input.mode === "curve") {
+    const points = input.scalePoints ?? [1, 3, 5, 10, 20, 50];
+    return { combos: Math.max(1, points.length), samples: requested };
+  }
+  if (input.mode === "matrix") {
+    const cells = generatePropMatrix(input.schemas).length;
+    const combos = Math.max(1, Math.min(cells === 0 ? 1 : cells, cap));
+    return { combos, samples: computeEffectiveSamples(combos, requested) };
+  }
+  const generated = input.usesFixture ? 1 : generateCombinations(input.schemas).length;
+  const anchors = input.usesFixture ? 0 : (input.scalePoints ?? [1, 5, 20, 50]).length;
+  const combos = Math.max(1, Math.min(generated === 0 ? 1 : generated, cap)) + anchors;
+  return { combos, samples: computeEffectiveSamples(combos, requested) };
+}
+
+// The dry run's half of M115 C6: no server, no browser, no measurement. A
+// fixture or an auto-composed scene supplies one combo; otherwise the real
+// run's own combo generation, cap and sample throttle decide the units.
+function estimateExplainedRunCost(input: {
+  schemas: PropSchema[];
+  projectRoot: string;
+  relativeComponent: string;
+  usesFixture: boolean;
+  mode: PredictedMode;
+  scalePoints?: number[];
+  samples?: number;
+  maxCombos?: number;
+}): RunCostEstimate {
+  const cap = input.maxCombos ?? DEFAULT_MEASURED_COMBOS;
+  const requested = input.samples ?? 10;
+  const { combos, samples } = estimateMeasuredUnits(input, cap, requested);
+
+  const cpus = os.cpus();
+  // A truncated or hand-edited baseline file must not abort a dry run that
+  // measures nothing: the estimate falls back to the documented defaults.
+  const baseline = (() => {
+    try {
+      return loadBaseline(path.join(input.projectRoot, "120fps-baseline.json"));
+    } catch {
+      return null;
+    }
+  })();
+  const entry = selectPhaseTimingEntry(
+    baseline,
+    input.relativeComponent,
+    {
+      cpu: cpus.length > 0 ? cpus[0].model : "unknown",
+      cores: cpus.length,
+      os: `${os.type()} ${os.release()}`,
+    },
+  );
+
+  return estimateRunCost({
+    combos,
+    samples,
+    ...(entry?.phaseTimings && entry.phaseUnits
+      ? { recorded: { timings: entry.phaseTimings, units: entry.phaseUnits } }
+      : {}),
+  });
 }
 
 const EXPLAIN_VALUE_CAP = 4;
@@ -2608,6 +3092,13 @@ export function formatExplainProps(explained: PropsExplanation): string {
       ? `  binding:  ${explained.bindingFile}:${explained.bindingLine}`
       : "  binding:  no component declaration (props read from the file itself)",
   );
+  // M114 C1: beside the binding, because it is the reason the binding names a
+  // file the reader did not pass.
+  if (explained.reExport) {
+    lines.push(
+      `  ${RE_EXPORT_MEASURED_DISCLOSURE(explained.reExport.barrel, explained.reExport.module)}`,
+    );
+  }
   lines.push(
     `  exports:  ${explained.exports.length > 0 ? explained.exports.join(", ") : "(none)"}`,
   );
@@ -2655,9 +3146,23 @@ export function formatExplainProps(explained: PropsExplanation): string {
   }
 
   lines.push("");
+  // M110 C1 (supabase-F3, calcom-R1): before the mode lines, because which
+  // scene the run builds is what makes the matrix branch reachable at all.
+  lines.push(
+    explained.composition
+      ? `Composition:  would auto-compose from ${explained.composition.root} ` +
+        `(${explained.composition.exportCount} exports)`
+      : explained.fixtureFile
+        ? `Composition:  would measure the scene in ${explained.fixtureFile}`
+        : `Composition:  would measure ${explained.componentName} alone`,
+  );
   lines.push(
     explained.curveSuppressedByFlag
       ? "Curve mode:   would not activate: --no-curve, though this component has a scaling prop"
+      // M110 review: `resolveCurveMatch` returns undefined for a composed
+      // scene, so a scaling prop on the root does not make curve mode run.
+      : explained.composition && explained.curve
+        ? "Curve mode:   would not activate: an auto-composed scene supplies the props"
       : explained.curve
         ? `Curve mode:   would activate on ${explained.curve.propName} (${explained.curve.reason})`
         : "Curve mode:   would not activate: no array or numeric scaling prop",
@@ -2678,7 +3183,21 @@ export function formatExplainProps(explained: PropsExplanation): string {
   // run never ran. The predicate's answer is still shown; what it loses to is
   // now shown with it.
   lines.push(
-    explained.matrixWouldActivate
+    // M110 C2: an explicit --matrix reaches this branch over a component whose
+    // own predicate never matched, so the composed answer is given before the
+    // predicate's, and "would auto-activate" can never print for a scene the
+    // dispatcher composes.
+    // The predicate's own answer decides the first clause: an explicit
+    // --matrix reaches "composed" over a component whose predicate never
+    // matched, and saying "predicate matches" there would be false (M92).
+    explained.matrixIneligibleReason === "composed" && explained.composition
+      ? (explained.matrixWouldActivate
+          ? "Matrix mode:  predicate matches, but an auto-composed scene supplies the props, so " +
+            "this run would measure that scene's single combo"
+          : "Matrix mode:  --matrix was passed, but an auto-composed scene supplies the props, so " +
+            "this run would measure that scene's single combo") +
+        ` (auto-composed from ${explained.composition.root})`
+    : explained.matrixWouldActivate
       ? explained.predictedMode === "matrix"
         ? "Matrix mode:  would auto-activate"
         // C-6: combo mode takes no precedence over matrix -- when the
@@ -2694,6 +3213,19 @@ export function formatExplainProps(explained: PropsExplanation): string {
           : `Matrix mode:  predicate matches, but ${explained.predictedMode} mode takes precedence and is what this run would use`
       : "Matrix mode:  would not auto-activate",
   );
+
+  // M115 C6: an estimate, said in that word, with the units it multiplied and
+  // where the per-phase numbers came from. Nothing was measured to produce it.
+  const estimate = explained.costEstimate;
+  if (estimate) {
+    lines.push(
+      `Estimated real run: ~${formatPhaseDuration(estimate.estimatedMs)} ` +
+      `(${estimate.combos} combos x ${estimate.samples} samples; ` +
+      (estimate.source === "baseline"
+        ? "phase timings from 120fps-baseline.json)"
+        : "defaults: no phase timings recorded for this component yet)"),
+    );
+  }
 
   if (explained.warnings.length > 0) {
     lines.push("");
@@ -2725,6 +3257,90 @@ function writeFixtureScaffold(
   const stem = path.basename(componentPath, path.extname(componentPath));
   fs.writeFileSync(target, buildFixtureScaffold(stem, exports, tree), "utf8");
   return `wrote fixture scaffold ${target}; edit it to render the real composition, then re-run`;
+}
+
+// M112 C3 (radix-themes-F3): the same outcome for the never-composed path,
+// where there is no `CompositionTree` to hand `writeFixtureScaffold` — that
+// value is `undefined` exactly because auto-composition found no root, so the
+// flag could not act there even in principle. Returning the line rather than
+// printing it keeps both emission sites on the run's one warning channel, and
+// makes "accepted the flag and wrote nothing in silence" unrepresentable.
+export function initFixtureOutcome(
+  componentPath: string,
+  root: string,
+  siblings: string[],
+  // The measured file's own exports, so the scaffold imports only names that
+  // resolve from it and leaves the rest as placeholders.
+  exports: ExportInfo[] = [],
+): string {
+  const target = fixtureScaffoldPath(componentPath);
+  if (fs.existsSync(target)) {
+    return `--init-fixture skipped: ${target} already exists`;
+  }
+  const stem = path.basename(componentPath, path.extname(componentPath));
+  // The write runs early in analyze(), before measurement: an EACCES or a
+  // read-only checkout would otherwise throw out of the run and produce the
+  // silence C3 forbids. The failure is an outcome line like any other.
+  try {
+    fs.writeFileSync(
+      target,
+      buildUncomposedFixtureScaffold(stem, root, siblings, exports),
+      "utf8",
+    );
+  } catch (error) {
+    return `--init-fixture skipped: ${target} could not be written (${(error as Error).message})`;
+  }
+  return `wrote fixture scaffold ${target}; edit it to render the real composition, then re-run`;
+}
+
+// M112 C2 (radix-themes-F1, epic-stack-F3): the sibling that carries a preset's
+// name without its shape. One producer for both modes, so the dry run and the
+// real run disclose it in the same words (M100 parity).
+export function presetShapeDisclosure(
+  componentPath: string,
+  projectRoot: string,
+): string | undefined {
+  const sibling = describePresetSibling(componentPath);
+  if (sibling === undefined || sibling.shape === "preset") return undefined;
+  return PRESET_SHAPE_WARNING(path.relative(projectRoot, sibling.path).replace(/\\/g, "/"));
+}
+
+// M112 C1 (logto-F4): the extraction warnings a preset answers. A collapsed
+// union whose prop the preset supplies values for has no subject left — the
+// branch the extraction guessed at was replaced by the values the user named —
+// so it is dropped rather than re-worded. With no preset candidate on disk
+// the list is returned untouched, character for character.
+function remediesAfterPreset(
+  warnings: string[],
+  appliedPropNames: string[],
+  presetFile?: string,
+): string[] {
+  // The loaded preset governs the wording, the applied names govern the
+  // filter: a preset whose keys miss the extracted schema applies nothing yet
+  // is still on disk, so the remedy still must not ask for it.
+  const named = presetFile
+    ? warnings.map((warning) => remedyNamesLoadedPreset(warning, presetFile))
+    : warnings;
+  if (appliedPropNames.length === 0) return named;
+  return named.filter((warning) => !presetAnswersRemedy(warning, appliedPropNames));
+}
+
+// The predicate both modes share: the dry run filters a list with it, the real
+// run's `onWarning` filters one warning at a time as extraction produces it.
+export function presetAnswersRemedy(warning: string, appliedPropNames: string[]): boolean {
+  return appliedPropNames.some(
+    (name) => warning.includes(`prop "${name}"`) && warning.includes("is a union of"),
+  );
+}
+
+// M112 C1, second half: a remedy the preset did not answer still prints, and
+// asking for a file the run already loaded is the MUST NOT. The clause names
+// the loaded preset instead, and the rest of the sentence is untouched.
+export function remedyNamesLoadedPreset(warning: string, presetFile: string): string {
+  return warning.replace(
+    /Add (\S+\.props\.tsx?) to /,
+    `The applied preset ${presetFile} is already loaded; extend it to `,
+  );
 }
 
 // One untimed mount, before calibration, purely to find out whether the
@@ -2923,6 +3539,21 @@ export function formatAccumulatedWarnings(warnings: string[]): string {
   return ["", "", "Warnings recorded before this failure:", ...warnings.map((w) => `  ${w}`)].join("\n");
 }
 
+// M108 A4: one place turns the harness's React Compiler state into the report's
+// disclosure, so the JSON field and the terminal line describe the same run.
+export function buildReactCompilerReport(
+  state: ReactCompilerState | undefined,
+): ReactCompilerReport | undefined {
+  if (!state || !(state.detected || state.active || state.skipped)) return undefined;
+  return {
+    active: state.active,
+    detected: state.detected,
+    ...(state.version ? { version: state.version } : {}),
+    ...(state.target ? { target: state.target } : {}),
+    ...(state.skipped ? { skipped: state.skipped } : {}),
+  };
+}
+
 export async function analyze(
   componentPath: string,
   options: AnalyzeOptions = {},
@@ -2954,7 +3585,12 @@ export async function analyze(
   const pool = options.browserPool ?? createBrowserPool();
   const ownsPool = options.browserPool === undefined;
 
-  const progress = resolveProgressReporter(options);
+  // M115 C1: the run clock opens before anything is read from disk, so the
+  // interval that precedes the first `preflight:` boundary is charged rather
+  // than lost. Every stamp is taken at a phase boundary, never inside a traced
+  // window.
+  const phaseClock = createPhaseClock();
+  const progress = resolveProgressReporter(options, undefined, phaseClock);
 
   let fixturePath: string | undefined = options.fixturePath;
   let fixtureAutoDetected = false;
@@ -2999,6 +3635,9 @@ export async function analyze(
   // below can fire before that point.
   let disclosureReason: "uncomposed" | "propsExcluded" | undefined;
   let uncomposedWarning: string | undefined;
+  // M112 C3: what `--init-fixture` did on the never-composed path, folded into
+  // the run's warnings below beside the disclosure that recommended it.
+  let uncomposedFixtureLine: string | undefined;
   // M65: an explicit target names the one export to render, which is the
   // opposite of inferring a scene from several.
   if (!fixturePath && !inputIsFixture && !options.skipAutoCompose && !rendererIsVue && !options.target) {
@@ -3021,6 +3660,18 @@ export async function analyze(
       if (siblings.length > 0) {
         disclosureReason = "uncomposed";
         uncomposedWarning = UNCOMPOSED_SIBLINGS_WARNING(boundName, siblings.map((s) => s.name));
+        // M112 C3 (radix-themes-F3): the flag was accepted on the one path
+        // whose warning recommends it and wrote nothing. There is no inferred
+        // tree here, so the scaffold is the bound root plus a placeholder per
+        // declared sibling; either way the run says what the flag did.
+        if (options.initFixture) {
+          uncomposedFixtureLine = initFixtureOutcome(
+            resolvedPath,
+            boundName,
+            siblings.map((s) => s.name),
+            componentExports,
+          );
+        }
       }
     }
   }
@@ -3044,12 +3695,10 @@ export async function analyze(
   const { wrapPath, wrapAutoDetected } = resolveWrapPath(options, projectRoot, framework, wrapWarnings);
   // M71: what discovery had to guess at, folded into the run's warnings below.
   const cssWarnings: string[] = [];
-  const resolvedCss = resolveCssFiles(
-    options,
-    projectRoot,
-    cssWarnings,
-    wrapPath ? { wrapPath } : undefined,
-  );
+  const resolvedCss = resolveCssFiles(options, projectRoot, cssWarnings, {
+    ...(wrapPath ? { wrapPath } : {}),
+    measuredFile: resolvedPath,
+  });
   const cssReport = buildCssReport(resolvedCss, projectRoot);
   // M90 (ant-design-F6, dub-F3, nuxt-ui-F4, mantine-F5, calcom-F6,
   // shadcn-ui-F3): computed once, right where the decision is made, so it
@@ -3068,6 +3717,17 @@ export async function analyze(
   // M44: a fixture already owns its scene, so presets never apply there.
   const presetPath = useFixture ? undefined : detectPropPresets(resolvedPath);
   const presets = presetPath ? loadPropPresets(presetPath, projectRoot) : undefined;
+  // M112 C2: the same disclosure the dry run prints, from the same producer, so
+  // both modes name the rejected sibling in the same words (M100 parity). A
+  // fixture owns its scene, so a preset-named sibling is irrelevant there.
+  const presetShapeWarning = useFixture
+    ? undefined
+    : presetShapeDisclosure(resolvedPath, projectRoot);
+  // M112 C1: the props the preset supplies values for, known before extraction
+  // runs, so the remedies it answers never reach the terminal.
+  const presetSuppliedProps = presets
+    ? [...presets.entries].filter(([, values]) => values.length > 0).map(([name]) => name)
+    : [];
 
   // M65: provider-dependent imports found by the preflight walk.
   let providerCandidates: string[] = [];
@@ -3077,11 +3737,17 @@ export async function analyze(
   // M48: kept outside the try so a failure on the way out can still name them.
   let transformHits: import("./preflight.js").PreflightHit[] = [];
   let activeTransforms: string[] | undefined;
+  // M117 C4: applied to every harness build, so a rebuilt harness cannot bring
+  // back a note about a plugin this run applies itself.
+  const withoutHonoredPlugins = (list: string[]): string[] =>
+    suppressHonoredPluginNote(list, projectRoot, options.noTransforms ? { noTransforms: true } : {});
   const runWarnings: string[] = [
     ...frameworkWarnings,
     ...cssWarnings,
     ...wrapWarnings,
     ...(uncomposedWarning ? [uncomposedWarning] : []),
+    ...(uncomposedFixtureLine ? [uncomposedFixtureLine] : []),
+    ...(presetShapeWarning ? [presetShapeWarning] : []),
   ];
   // M46: counted before dedup: one surviving reload is a noise signal, and the
   // warning list deliberately shows it once however often it happened.
@@ -3116,13 +3782,44 @@ export async function analyze(
     // defineProps({...}) call -- so either one downgrades to the same
     // disclosure instead of the generic "extraction may have failed" text.
     let sawPropsScopeExclusion = false;
-    const raw = await extractProps(file, {
+    const extracted = await extractPropsDetailed(file, {
       ...(options.target ? { target: options.target } : {}),
       onWarning: (warning) => {
         if (isVuePropsScopeExclusionWarning(warning)) sawPropsScopeExclusion = true;
-        onWarning(warning);
+        // M112 C1: the preset is loaded before extraction runs here, so a
+        // collapsed-union remedy for a prop it supplies values for is dropped
+        // as it is produced rather than printed and then contradicted. The
+        // same rule the dry run applies, on the same warning texts.
+        if (presetSuppliedProps.length > 0 && presetAnswersRemedy(warning, presetSuppliedProps)) {
+          return;
+        }
+        // M112 C1: a remedy the preset did not answer survives, and names the
+        // preset the run already loaded instead of asking for a file.
+        onWarning(presets ? remedyNamesLoadedPreset(warning, presets.path) : warning);
       },
     });
+    const raw = extracted.schemas;
+    // M114 C1 (gutenberg-F2, react-spectrum-F3): the same two disclosures the
+    // dry run prints, in the same words, from the same extraction record. Both
+    // are decided by the filesystem, so M100's parity rule covers them.
+    const asProjectPath = (target: string): string =>
+      path.relative(projectRoot, target).replace(/\\/g, "/");
+    if (
+      extracted.targetFile !== undefined &&
+      path.resolve(extracted.targetFile) !== path.resolve(file)
+    ) {
+      onWarning(
+        RE_EXPORT_MEASURED_DISCLOSURE(asProjectPath(file), asProjectPath(extracted.targetFile)),
+      );
+    }
+    if (extracted.unresolvedReExport) {
+      onWarning(
+        UNRESOLVED_RE_EXPORT_WARNING(
+          asProjectPath(extracted.unresolvedReExport.barrel),
+          extracted.unresolvedReExport.specifier,
+        ),
+      );
+    }
     // The producer for BuildReportInput.disclosureReason's "propsExcluded"
     // value (M80 scope 1 built the downgrade; nothing produced this value
     // until now). `disclosureReason` is untouched by the auto-composition
@@ -3208,7 +3905,11 @@ export async function analyze(
 
   const attachHarnessContext = (report: Report): void => {
     if (runWarnings.length > 0) {
-      report.warnings = [...(report.warnings ?? []), ...runWarnings];
+      // M117 C1: one entry per distinct text, in first-occurrence order,
+      // counted when the run produced it more than once. The three sites that
+      // collect `harness.warnings` each append the whole static pre-build list,
+      // so a run that rebuilt its harness recorded identical sentences twice.
+      report.warnings = dedupeWarnings([...(report.warnings ?? []), ...runWarnings]);
     }
     if (cssReport) report.css = cssReport;
 
@@ -3242,10 +3943,13 @@ export async function analyze(
         contextRetries,
       });
       report.noise = noise;
-      if (noise.level === "noisy") {
-        report.warnings = [...(report.warnings ?? []), NOISY_RUN_WARNING];
-      } else if (noise.level === "hostile") {
-        report.warnings = [...(report.warnings ?? []), HOSTILE_RUN_WARNING];
+      // M117 C6: the JSON carries the full text — the machine sentence, the
+      // provisional-numbers sentence, and (once the baseline step below knows a
+      // comparison happened) the baseline sentence. The terminal and the
+      // markdown fold shorten it to one line, in src/report.ts.
+      const noiseWarning = formatNoiseWarning(noise, report.baseline !== undefined);
+      if (noiseWarning) {
+        report.warnings = dedupeWarnings([...(report.warnings ?? []), noiseWarning]);
       }
     }
 
@@ -3257,12 +3961,9 @@ export async function analyze(
       report.projectTransforms = activeTransforms;
     }
     const compiler = harness?.reactCompiler;
-    if (compiler && (compiler.detected || compiler.active)) {
-      report.reactCompiler = {
-        active: compiler.active,
-        detected: compiler.detected,
-        ...(compiler.version ? { version: compiler.version } : {}),
-      };
+    const compilerReport = buildReactCompilerReport(compiler);
+    if (compilerReport) {
+      report.reactCompiler = compilerReport;
     }
     if (compiler?.warning) {
       report.warnings = [...(report.warnings ?? []), compiler.warning];
@@ -3332,25 +4033,15 @@ export async function analyze(
     );
     for (const hit of preflight.soft) runWarnings.push(NODE_BUILTIN_WARNING(hit));
 
-    // M48: only warn about transforms the harness will not apply. A project
-    // whose plugin is on the supported list and installed gets it loaded, and
-    // crying wolf about a transform that worked is worse than silence.
     const loadableTransforms = new Set(
       (options.noTransforms ? [] : detectProjectTransforms(projectRoot)).map((t) => t.code),
     );
-    // M79 (twenty-F3, half 2): a css-preprocessor hit fires unconditionally
-    // (recognizeTransform performs no availability check by design). Vite's
-    // own CSS pipeline resolves sass/less/stylus directly, so an installed
-    // preprocessor needs no warning at all, and a declared-but-uninstalled
-    // one needs different wording than the genuinely-neither case.
-    const preprocessorWorkspaceRoot = findWorkspaceRoot(projectRoot);
-    const candidateTransformHits = preflight.transforms
-      .filter((hit) => !hit.transformCode || !loadableTransforms.has(hit.transformCode))
-      .map((hit) => ({
-        hit,
-        availability: classifyPreprocessorAvailability(hit, projectRoot, preprocessorWorkspaceRoot),
-      }))
-      .filter(({ availability }) => availability !== "installed");
+    // M110 C4 (logto-F3): I3's classifier in `src/preflight.ts`, shared with
+    // the dry run's own warning list, so the two modes cannot disagree about
+    // which transform hits are worth a warning or in which order they are said.
+    const candidateTransformHits = classifyProjectTransformHits(projectRoot, preflight.transforms, {
+      ...(options.noTransforms ? { noTransforms: true } : {}),
+    });
     transformHits = candidateTransformHits.map(({ hit }) => hit);
     // Named up front, and again on the way out if the run dies: a transform
     // the harness cannot apply is the first thing to check.
@@ -3398,7 +4089,7 @@ export async function analyze(
     };
     progress("harness: building");
     harness = await buildAndServe(harnessPath, composedHarnessOpts);
-    if (harness.warnings) runWarnings.push(...harness.warnings);
+    if (harness.warnings) runWarnings.push(...withoutHonoredPlugins(harness.warnings));
 
     // M35: calibration, trial mount, and wrapper overhead run under the same
     // driven frame pacing as the measurement passes they normalize.
@@ -3494,6 +4185,7 @@ export async function analyze(
       delete cssReport.onlyCandidate;
       delete cssReport.noEntryInPackage;
       delete cssReport.runtimeEngines;
+      delete cssReport.runtimeEnginesRecognised;
       // The early cache-lookup fingerprint (tryReuseStoredVerdict, above)
       // may already have memoized a value computed with the now-dropped
       // file still in it; un-memoize so a later --save-baseline call
@@ -3502,7 +4194,7 @@ export async function analyze(
       fingerprintValue = undefined;
       await harness!.cleanup();
       harness = await buildAndServe(harnessPath, { ...composedHarnessOpts, cssFiles: undefined });
-      if (harness.warnings) runWarnings.push(...harness.warnings);
+      if (harness.warnings) runWarnings.push(...withoutHonoredPlugins(harness.warnings));
       // Not wrapped again: a second failure here is a different, genuine
       // problem (or the same page never recovering for an unrelated
       // reason) and must propagate and fail the run like any other.
@@ -3541,7 +4233,7 @@ export async function analyze(
         componentExports = undefined;
         await harness.cleanup();
         harness = await buildAndServe(harnessPath, baseHarnessOpts);
-        if (harness.warnings) runWarnings.push(...harness.warnings);
+        if (harness.warnings) runWarnings.push(...withoutHonoredPlugins(harness.warnings));
         await enterHarnessPage();
       }
     }
@@ -3645,6 +4337,7 @@ export async function analyze(
       runWarnings,
       onWarning,
       progress,
+      phaseClock,
       getSchemas: async () => (schemas ??= await extractSchemas(harness!.componentPath)),
       getSourceFingerprint,
       attachHarnessContext,
@@ -3691,6 +4384,22 @@ export async function analyze(
         matrixAutoActivates,
       }) === "matrix";
     const matrixAutoActivated = activateMatrix && matrixAutoActivates;
+    // M110 C3 (calcom-R1): the curve branch above has named its winner since
+    // M83; these two dropped an explicit --matrix in silence. A composed scene
+    // and a fixture are mutually exclusive here (composition is skipped
+    // whenever a fixture applies), so at most one line is pushed.
+    if (matrixRequested && !activateMatrix) {
+      if (composed) {
+        runWarnings.push(MATRIX_SUPPRESSED_BY_COMPOSITION_WARNING(compositionTree!.root));
+      } else if (useFixture) {
+        runWarnings.push(
+          MATRIX_SUPPRESSED_BY_FIXTURE_WARNING(
+            path.relative(projectRoot, path.resolve(fixturePath!)).replace(/\\/g, "/"),
+            inputIsFixture ? "fixture-input" : fixtureAutoDetected ? "sibling" : "explicit-flag",
+          ),
+        );
+      }
+    }
 
     if (activateMatrix) {
       progress("mode: prop matrix");
@@ -3737,7 +4446,15 @@ export async function analyze(
     // printed a bare browser stack with no remediation text at all. The block
     // is appended next to the accumulated warnings, so every consumer of this
     // message shows it without a new channel.
-    const abortHints = formatHints(hintsForMountAbort(message));
+    // M114 C2, C3 (ark-F2, vitesse-F1): both hints name a cause only from what
+    // this run read — the measured SFC's own setup block (I8) and the vite
+    // config keys the harness recorded as read-but-not-honored (I10).
+    const abortHints = formatMountAbortHints(message, {
+      usesInject: await measuredSfcUsesInject(resolvedPath, projectRoot, (warning) => {
+        combined.push(warning);
+      }),
+      ...(viteConfigIgnoredKeys(combined) ?? {}),
+    });
     throw new Error(presented + formatAccumulatedWarnings(combined) + abortHints, { cause: err });
   } finally {
     if (msession) await msession.close();
@@ -3761,11 +4478,158 @@ export const ZERO_PROPS_WARNING =
 // ADR 0002 defines, a `defineProps<T>()` type argument that did not resolve,
 // or a JS component with no declaration to bind -- that phrase is false and
 // must not stack on top of the disclosure that explains it.
+// M114 C1 (gutenberg-F2): the measured file only re-exports the component; the
+// props on the table are the declaring module's. Both paths print this text, so
+// a dry run and a real run name the same two modules (M100's parity rule).
+export function RE_EXPORT_MEASURED_DISCLOSURE(barrel: string, module: string): string {
+  return `re-export of ${barrel}: measuring ${module}`;
+}
+
+// M114 C1 (react-spectrum-F3): the specifier the barrel re-exports resolves to
+// nothing on disk, so no props table could have been filled. A cause the
+// filesystem decides, stated instead of ZERO_PROPS_WARNING's floated
+// "extraction may have failed".
+export function UNRESOLVED_RE_EXPORT_WARNING(barrel: string, specifier: string): string {
+  return (
+    `${barrel} re-exports ${specifier}, which did not resolve: no props were read there`
+  );
+}
+
+const UNRESOLVED_RE_EXPORT_SIGNATURE = / re-exports .+, which did not resolve: no props were read there$/;
+
+// M114 C2 / I8 (ark-F2): read evidence for the provide/inject hint. A mount
+// abort throws before any report exists, so the SFC is re-read here, on the
+// failure path only. No compiler, an unreadable file or a malformed SFC all
+// mean the run read no `inject(` call, and a hint may not name a cause the run
+// did not read.
+// M114 review: the read covers `<script setup>` only -- parseSfcScript
+// (src/vue-sfc.ts) returns undefined without one, so an Options-API SFC whose
+// setup() injects records false and prints no hint. A read or compiler failure
+// is a different case from "no inject( call", so it is disclosed rather than
+// swallowed.
+export function SFC_INJECT_READ_FAILED_WARNING(component: string, reason: string): string {
+  return (
+    `${component} could not be re-read to check for an inject( call (${reason}), so no ` +
+    "provide/inject hint is offered for this abort"
+  );
+}
+
+async function measuredSfcUsesInject(
+  componentPath: string,
+  projectRoot: string,
+  onWarning?: (warning: string) => void,
+): Promise<boolean> {
+  if (!isVueFile(componentPath)) return false;
+  try {
+    const compiler = await loadVueCompiler(projectRoot);
+    if (!compiler) return false;
+    const source = fs.readFileSync(componentPath, "utf-8");
+    return parseSfcScript(source, componentPath, compiler)?.usesInject === true;
+  } catch (err) {
+    onWarning?.(
+      SFC_INJECT_READ_FAILED_WARNING(
+        path.relative(projectRoot, componentPath).replace(/\\/g, "/"),
+        err instanceof Error ? err.message : String(err),
+      ),
+    );
+    return false;
+  }
+}
+
+// M114 C3 / I10 (vitesse-F1): the config file and the keys the harness read and
+// could not honor, as `VITE_CONFIG_IGNORED_WARNING` (src/harness.ts) recorded
+// them for this run. Read from the run's own warnings until lane A carries
+// `ViteConfigData` to this call site; the hint may name only what is here.
+// M117 C3 / I10 hand-off: A3 gave the note a second wording, the one a config
+// with a named plugin list now prints ("... declares resolve.alias and plugins
+// the harness cannot honor: react — ..."). Both wordings are live: a `plugins`
+// value that is not an array literal still carries no names and keeps the
+// key-only sentence, so the scan reads either and normalizes to the key list.
+const VITE_CONFIG_IGNORED_SHAPE =
+  /^(\S+) declares (.+?)(?:, which the harness read but cannot honor: the project's Vite config is never executed| the harness cannot honor: )/;
+
+export function viteConfigIgnoredKeys(
+  warnings: string[],
+): { viteConfig: { file: string; ignoredKeys: string[] } } | undefined {
+  // M114 review: VITE_CONFIG_PREPROCESSOR_OPTION_WARNING (src/harness.ts)
+  // opens with the identical prefix, so the first match is not necessarily the
+  // ignored-keys warning. Only a warning that carries `plugins` can feed C3's
+  // hint, so that is what the scan keeps.
+  for (const warning of warnings) {
+    const match = VITE_CONFIG_IGNORED_SHAPE.exec(warning);
+    if (!match) continue;
+    const ignoredKeys = match[2]!.split(", ").flatMap((key) => key.split(" and "));
+    if (!ignoredKeys.includes("plugins")) continue;
+    return { viteConfig: { file: match[1]!, ignoredKeys } };
+  }
+  return undefined;
+}
+
+// M117 C4 (dx-audit item 6): the note is true only about plugins the run did
+// not apply. `@vitejs/plugin-vue` declared in a config the harness loads the
+// same plugin for is not a dropped plugin, and a note listing it sends a reader
+// after a difference that does not exist. A declared name matches a transform
+// by the recognizer code or by the factory the harness imports for it.
+function honoredPluginNames(appliedTransforms: readonly string[]): Set<string> {
+  const names = new Set<string>();
+  for (const plugin of SUPPORTED_TRANSFORM_PLUGINS) {
+    if (!appliedTransforms.includes(plugin.code)) continue;
+    names.add(plugin.code);
+    if (plugin.exportName) names.add(plugin.exportName);
+  }
+  return names;
+}
+
+// The note the run printed is rebuilt, never edited as text: the same
+// constructor lane A's constants own (M108), fed the plugins that are still
+// news to the reader. When none are left the `plugins` key goes with them, and
+// a config that had no other ignored key loses the note entirely.
+export function withoutHonoredPluginNote(
+  warnings: string[],
+  viteConfig: Pick<ViteConfigData, "configFile" | "ignoredKeys" | "pluginNames">,
+  appliedTransforms: readonly string[],
+): string[] {
+  const { configFile, ignoredKeys, pluginNames } = viteConfig;
+  if (!configFile || !pluginNames || pluginNames.length === 0) return warnings;
+  if (!ignoredKeys.includes("plugins")) return warnings;
+  const honored = honoredPluginNames(appliedTransforms);
+  const kept = pluginNames.filter((name) => !honored.has(name));
+  if (kept.length === pluginNames.length) return warnings;
+  const file = path.basename(configFile);
+  const printed = VITE_CONFIG_IGNORED_WARNING(file, ignoredKeys, pluginNames);
+  const remainingKeys = kept.length > 0 ? ignoredKeys : ignoredKeys.filter((key) => key !== "plugins");
+  const replacement =
+    kept.length > 0
+      ? VITE_CONFIG_IGNORED_WARNING(file, remainingKeys, kept)
+      : remainingKeys.length > 0
+        ? VITE_CONFIG_IGNORED_WARNING(file, remainingKeys)
+        : undefined;
+  return warnings.flatMap((warning) =>
+    warning === printed ? (replacement ? [replacement] : []) : [warning],
+  );
+}
+
+// M117 C4: the one entry point both modes use, so `--explain-props` and the
+// real run cannot disagree about which plugins the run applied. Reads the same
+// two sources the run itself reads (the config's text, the installed
+// transforms) and nothing that only exists after a measurement.
+export function suppressHonoredPluginNote(
+  warnings: string[],
+  projectRoot: string,
+  opts: { noTransforms?: boolean } = {},
+): string[] {
+  const applied = opts.noTransforms
+    ? []
+    : detectProjectTransforms(projectRoot).map((plugin) => plugin.code);
+  return withoutHonoredPluginNote(warnings, readViteConfigData(projectRoot), applied);
+}
+
 export function explainsZeroPropCount(warning: string): boolean {
   return (
     isVuePropsScopeExclusionWarning(warning) ||
     isVueUnresolvedPropsTypeWarning(warning) ||
-    isUntypedJsComponentWarning(warning)
+    isUntypedJsComponentWarning(warning) ||
+    UNRESOLVED_RE_EXPORT_SIGNATURE.test(warning)
   );
 }
 
@@ -3888,7 +4752,11 @@ export function resolveCssFiles(
   // walked the project entry only, so a wrapper's imports were invisible and
   // the run measured unstyled while a `120fps.setup.tsx` sat right there
   // importing `@mantine/core/styles.css`.
-  opts?: { wrapPath?: string },
+  // M114 A2 review: `measuredFile` is the component file the run measures. It
+  // is the last read discovery has when no stylesheet and no declared engine
+  // exist, and it decides between "none found" and an engine the recogniser
+  // cannot name.
+  opts?: { wrapPath?: string; measuredFile?: string },
 ): {
   files: string[];
   autoDetected: boolean;
@@ -3896,6 +4764,8 @@ export function resolveCssFiles(
   onlyCandidate?: boolean;
   noEntryInPackage?: boolean;
   runtimeEngines?: string[];
+  runtimeEnginesRecognised?: boolean;
+  declaredMissing?: Array<{ field: string; path: string; buildCommand?: string }>;
 } {
   if (options.noCss) return { files: [], autoDetected: false, layer: "disabled" };
 
@@ -3915,11 +4785,10 @@ export function resolveCssFiles(
     return { files, autoDetected: false, layer: "explicit" };
   }
 
-  const discovered = discoverGlobalCss(
-    projectRoot,
-    warningsOut,
-    opts?.wrapPath ? { extraEntryFiles: [opts.wrapPath] } : undefined,
-  );
+  const discovered = discoverGlobalCss(projectRoot, warningsOut, {
+    ...(opts?.wrapPath ? { extraEntryFiles: [opts.wrapPath] } : {}),
+    ...(opts?.measuredFile ? { measuredFile: opts.measuredFile } : {}),
+  });
   const layer: CssReport["layer"] =
     discovered.source === "entry"
       ? "entry-chain"
@@ -3946,6 +4815,10 @@ export function resolveCssFiles(
       ? { noEntryInPackage: discovered.noEntryInPackage }
       : {}),
     ...(discovered.runtimeEngines !== undefined ? { runtimeEngines: discovered.runtimeEngines } : {}),
+    ...(discovered.runtimeEnginesRecognised !== undefined
+      ? { runtimeEnginesRecognised: discovered.runtimeEnginesRecognised }
+      : {}),
+    ...(discovered.declaredMissing !== undefined ? { declaredMissing: discovered.declaredMissing } : {}),
   };
 }
 

@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { STYLESHEET_MATCHED_NOTHING_WARNING, buildCssReport } from "../../src/analyze.js";
+import path from "node:path";
+import { discoverGlobalCss } from "../../src/harness.js";
+import {
+  STYLESHEET_MATCHED_NOTHING_WARNING,
+  buildCssReport,
+  resolveCssFiles,
+} from "../../src/analyze.js";
 import { formatStylesheetsLine, type CssReport } from "../../src/report.js";
 
 // shadcn-ui-F3: a stylesheet dropped because it could not be read left
@@ -127,5 +133,147 @@ describe("a stylesheet the package itself declared is labelled as such", () => {
       layer: "known-name",
     });
     expect(line).toContain("matched a conventional filename");
+  });
+});
+
+// radix-themes-F2 / M112 C4: the package's own package.json declared a
+// stylesheet the build had not produced yet, and the run said "none found".
+describe("a stylesheet the package declared but never built", () => {
+  it("is named on the Stylesheets line instead of 'none found'", () => {
+    const line = formatStylesheetsLine({
+      files: [],
+      autoDetected: true,
+      layer: "none",
+      declaredMissing: ["styles.css"],
+    });
+    expect(line).toContain("styles.css");
+    expect(line).toContain("declares");
+    expect(line).not.toContain("none found");
+  });
+
+  it("names every declared target that is missing", () => {
+    const line = formatStylesheetsLine({
+      files: [],
+      autoDetected: true,
+      layer: "none",
+      declaredMissing: ["styles.css", "dist/theme.css"],
+    });
+    expect(line).toContain("styles.css");
+    expect(line).toContain("dist/theme.css");
+  });
+
+  it("leaves the none branch alone when nothing was declared", () => {
+    const line = formatStylesheetsLine({
+      files: [],
+      autoDetected: true,
+      layer: "none",
+      declaredMissing: [],
+    });
+    expect(line).toContain("none found");
+  });
+
+  it("names the declaring field and the build command when the producer supplies them", () => {
+    const line = formatStylesheetsLine({
+      files: [],
+      autoDetected: true,
+      layer: "none",
+      declaredMissing: ["styles.css"],
+      declaredMissingFields: [
+        { field: "style", path: "styles.css", buildCommand: "pnpm build" },
+      ],
+    });
+    expect(line).toContain('package.json "style" declares styles.css');
+    expect(line).toContain("pnpm build");
+    expect(line).not.toContain("none found");
+  });
+
+  it("says \"are\" when two declared fields are missing", () => {
+    const line = formatStylesheetsLine({
+      files: [],
+      autoDetected: true,
+      layer: "none",
+      declaredMissing: ["a.css", "b.css"],
+      declaredMissingFields: [
+        { field: "style", path: "a.css", buildCommand: "pnpm build" },
+        { field: "exports", path: "b.css", buildCommand: "pnpm build" },
+      ],
+    });
+    expect(line).toContain('package.json "style" declares a.css');
+    expect(line).toContain('package.json "exports" declares b.css');
+    expect(line).toContain("which are not built yet");
+    expect(line).not.toContain("which is not built yet");
+  });
+
+  it("falls back to the paths alone when no field came with them", () => {
+    const line = formatStylesheetsLine({
+      files: [],
+      autoDetected: true,
+      layer: "none",
+      declaredMissing: ["styles.css"],
+    });
+    expect(line).toContain("styles.css");
+    expect(line).toContain("declares");
+  });
+
+  it("adds no declaredMissing key to a report built from a real discovery", () => {
+    // The producer, not a cast literal: a project with nothing declared must
+    // not grow an empty array in every report.
+    const discovered = discoverGlobalCss(path.resolve("fixtures/css-font"), undefined);
+    const report = buildCssReport(discovered, path.resolve("fixtures/css-font"));
+    expect(Object.prototype.hasOwnProperty.call(report, "declaredMissing")).toBe(false);
+  });
+  it("carries the declared targets into the report's css object", () => {
+    const report = buildCssReport(
+      {
+        files: [],
+        autoDetected: true,
+        layer: "none",
+        declaredMissing: [{ field: "style", path: "styles.css" }],
+      } as unknown as Parameters<typeof buildCssReport>[0],
+      process.cwd(),
+    );
+    expect(report.declaredMissing).toEqual(["styles.css"]);
+    expect(report.declaredMissingFields).toEqual([{ field: "style", path: "styles.css" }]);
+  });
+});
+
+// radix-themes-F2 / C4: the whole path, producer to printed line. Lane A's
+// discovery records the declaration; the report carries it; the line names the
+// field, the missing file and the script that builds it. A cast literal cannot
+// catch a break anywhere along that path.
+describe("a declared-but-unbuilt stylesheet from discovery to the printed line", () => {
+  const DECLARED_ABSENT = path.resolve("fixtures/declared-absent-style");
+
+  it("names the declaring field, the missing path and the producing script", () => {
+    const report = buildCssReport(
+      resolveCssFiles({}, DECLARED_ABSENT, []),
+      DECLARED_ABSENT,
+    );
+    // The package manager is read from the checkout, so the command is the
+    // only part of the sentence that is not fixed.
+    expect(formatStylesheetsLine(report)).toMatch(
+      /^Stylesheets: none injected — package\.json "style" declares styles\.css, which is not built yet; run `[^`]+ build` in that package, then re-run$/,
+    );
+  });
+
+  it("carries the declaring fields into the report's css object", () => {
+    const report = buildCssReport(
+      resolveCssFiles({}, DECLARED_ABSENT, []),
+      DECLARED_ABSENT,
+    );
+    expect(report.layer).toBe("none");
+    expect(report.files).toEqual([]);
+    expect(report.declaredMissing).toEqual(["styles.css"]);
+    expect(report.declaredMissingFields).toEqual([
+      { field: "style", path: "styles.css", buildCommand: expect.stringMatching(/ build$/) },
+    ]);
+  });
+
+  it("keeps the size-ranked sheet out of the injected set", () => {
+    const report = buildCssReport(
+      resolveCssFiles({}, DECLARED_ABSENT, []),
+      DECLARED_ABSENT,
+    );
+    expect(report.files.some((f) => f.includes("tokens.css"))).toBe(false);
   });
 });

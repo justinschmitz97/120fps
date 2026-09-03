@@ -368,12 +368,15 @@ describe("H11: noise warning without signals", () => {
 // H12: the baseline clause tracks whether a comparison happened, not whether
 // one was asked for and found nothing.
 describe("H12: baseline clause conditions", () => {
+  // M117 C6: the clause is part of the full text `report.warnings` carries for
+  // the JSON; the terminal's one line never repeats it.
   it("turns on for a baseline field that reports no entry", () => {
     const report = makeReport({
-      warnings: [HOSTILE_RUN_WARNING], noise: noise("hostile"),
+      warnings: [formatNoiseWarning(noise("hostile"), true)], noise: noise("hostile"),
       baseline: { hasBaseline: false, regressions: [], improvements: [] },
     });
-    expect(formatTable(report)).toContain(HOSTILE_BASELINE_NOTE);
+    expect(report.warnings![0]).toContain(HOSTILE_BASELINE_NOTE);
+    expect(formatTable(report)).not.toContain(HOSTILE_BASELINE_NOTE);
   });
 });
 

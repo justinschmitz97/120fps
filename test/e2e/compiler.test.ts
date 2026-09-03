@@ -418,6 +418,7 @@ describe("compiler e2e: full pipeline", () => {
         active: true,
         detected: true,
         version: "1.0.0",
+        target: "19",
       });
       expect(report.warnings ?? []).not.toContain(REACT_COMPILER_DISABLED_WARNING);
       expect(report.combos.length).toBeGreaterThan(0);

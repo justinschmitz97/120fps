@@ -30,6 +30,21 @@ export interface SfcScript {
   content: string;
   // "ts" | "tsx" | "js" | whatever the author wrote; "js" when unstated.
   lang: string;
+  // M114 B6 / I8 (ark-F2): the setup block calls `inject(`. A provide/inject
+  // hint may name that cause only from evidence the run read.
+  usesInject: boolean;
+}
+
+// `inject(` as a setup block writes it, including `inject<T>(key)`. The lookbehind
+// keeps `useInject(` and `ctx.inject(` out: only Vue's own injector counts.
+const INJECT_CALL = /(?<![\w$.])inject\s*[<(]/;
+
+// M114 (review B-minor): a commented-out `inject(` is not read evidence. The
+// hint may name provide/inject only from a call the block actually makes.
+const COMMENT = /\/\*[\s\S]*?\*\/|\/\/.*/g;
+
+function callsInject(content: string): boolean {
+  return INJECT_CALL.test(content.replace(COMMENT, " "));
 }
 
 export function isVueFile(filePath: string): boolean {
@@ -42,20 +57,36 @@ const compilerCache = new Map<string, Promise<VueSfcCompiler | undefined>>();
 
 export function resetVueCompilerCache(): void {
   compilerCache.clear();
+  compilerFailures.clear();
+}
+
+// M114 (baseline): why each specifier failed, per lookup directory. The bare
+// `catch {}` here hid a fixture that resolved no compiler at all for weeks: two
+// test files were red and the loader said nothing about the cause.
+const compilerFailures = new Map<string, string[]>();
+
+export function vueCompilerLoadFailures(fromDir: string): string[] {
+  return compilerFailures.get(path.resolve(fromDir)) ?? [];
 }
 
 async function importVueCompiler(fromDir: string): Promise<VueSfcCompiler | undefined> {
   const projectRequire = createRequire(path.join(fromDir, "/"));
+  const failures: string[] = [];
   for (const specifier of VUE_SFC_SPECIFIERS) {
     try {
       const resolved = projectRequire.resolve(specifier);
       const mod = await import(pathToFileURL(resolved).href);
       const candidate = (mod.parse ? mod : mod.default) as VueSfcCompiler | undefined;
-      if (candidate && typeof candidate.parse === "function") return candidate;
-    } catch {
-      // Not installed under this name; try the next one.
+      if (candidate && typeof candidate.parse === "function") {
+        compilerFailures.delete(fromDir);
+        return candidate;
+      }
+      failures.push(`${specifier}: resolved ${resolved} but it exports no parse function`);
+    } catch (error) {
+      failures.push(`${specifier}: ${error instanceof Error ? error.message.split("\n")[0] : String(error)}`);
     }
   }
+  compilerFailures.set(fromDir, failures);
   return undefined;
 }
 
@@ -70,10 +101,12 @@ export async function loadVueCompiler(fromDir: string): Promise<VueSfcCompiler |
 }
 
 export function VUE_COMPILER_MISSING(projectRoot: string): string {
+  const failures = vueCompilerLoadFailures(projectRoot);
   return (
     `Cannot read .vue components: neither ${VUE_SFC_SPECIFIERS.join(" nor ")} resolves from ` +
     `${projectRoot}. Install vue in the project: 120fps deliberately does not ship a Vue ` +
-    "version of its own, so your components compile against the one they ship with."
+    "version of its own, so your components compile against the one they ship with." +
+    (failures.length > 0 ? ` Resolution reported: ${failures.join("; ")}.` : "")
   );
 }
 
@@ -118,8 +151,12 @@ export function parseSfcScript(
   if (!block || typeof block.content !== "string") return undefined;
   const companion = descriptor?.script;
   const companionContent = typeof companion?.content === "string" ? companion.content : "";
+  const content = companionContent.trim() ? `${companionContent}\n${block.content}` : block.content;
   return {
-    content: companionContent.trim() ? `${companionContent}\n${block.content}` : block.content,
+    content,
+    // M114 B6 / I8: read once, here, so a hint about provide/inject rests on
+    // the same text the props extraction read.
+    usesInject: callsInject(content),
     lang: strongerLang(
       typeof block.lang === "string" ? block.lang : undefined,
       typeof companion?.lang === "string" ? companion.lang : undefined,

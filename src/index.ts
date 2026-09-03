@@ -197,6 +197,7 @@ export {
   normalizeComponentName,
   type ExtractPropsOptions,
   type PropsExtraction,
+  type PropWarningRecord,
 } from "./prop-gen.js";
 export {
   detectProviderImport,
@@ -355,14 +356,17 @@ export {
 
 // M44
 export {
+  describePresetSibling,
   detectPropPresets,
   loadPropPresets,
   applyPropPresets,
   isPresetRef,
   UNKNOWN_PRESET_PROPS_WARNING,
   PRESET_REF_KEY,
+  PRESET_SHAPE_WARNING,
   type PropPresets,
   type PresetRef,
+  type PresetSibling,
 } from "./prop-presets.js";
 
 // M45

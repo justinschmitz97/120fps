@@ -32,6 +32,15 @@ export interface PageErrorCapture {
   // A caller races this against its own readiness wait; a healthy run simply
   // never resolves it.
   waitForFatal(): Promise<FatalPageError>;
+  // M108 A8 (documenso-F1): the first uncaught page exception of the current
+  // segment, whether or not a waiter existed when it arrived. A module that
+  // throws during evaluation throws before the readiness wait is even set up;
+  // read on the failure path so that error, not the timeout, leads the report.
+  capturedFatal(): FatalPageError | undefined;
+  // M108 review: a new document ends the old document's fatal. Without this,
+  // an error captured after the last drain leads the NEXT segment's readiness
+  // timeout and suppresses the true "did not become ready" wording.
+  resetCapturedFatal(): void;
 }
 
 // Retention is by distinct message: repeats of one noisy message must not
@@ -100,6 +109,54 @@ export function isHarnessInternalNoise(url: string, harnessDirName: string): boo
   return !match[1].includes(".");
 }
 
+// M114 A6 (supabase-F2): Playwright renders a console call as the format
+// string followed by every argument's preview, joined by a space, and
+// substitutes nothing — so React's `Warning: %s is invalid` reached the report
+// with the `%s` intact and the value stranded at the end of the line. The same
+// previews arrive through `msg.args()`, which is what the browser's own
+// console would have formatted with.
+//
+// `text` is the fallback for a message that carries no arguments at all;
+// `args[0]` is the format string and the rest fill its placeholders, in order.
+// A placeholder with no argument left stays literal, `%%` collapses to one
+// percent sign and consumes nothing, `%c` consumes its CSS argument and prints
+// nothing, and arguments the format never used are appended, exactly as a
+// browser console renders them.
+export function substituteConsoleFormat(text: string, args: string[]): string {
+  const format = args[0];
+  if (format === undefined) return text;
+  const rest = args.slice(1);
+  let next = 0;
+  let out = "";
+  for (let i = 0; i < format.length; i++) {
+    if (format[i] !== "%" || i + 1 >= format.length) {
+      out += format[i];
+      continue;
+    }
+    const directive = format[i + 1]!;
+    if (directive === "%") {
+      out += "%";
+      i++;
+      continue;
+    }
+    if (!"sdifoOc".includes(directive)) {
+      out += format[i];
+      continue;
+    }
+    if (next >= rest.length) {
+      out += format[i];
+      continue;
+    }
+    const argument = rest[next]!;
+    next++;
+    i++;
+    if (directive === "c") continue;
+    out += argument;
+  }
+  const surplus = rest.slice(next);
+  return surplus.length > 0 ? [out, ...surplus].join(" ") : out;
+}
+
 export function attachPageErrorCapture(page: Page, harnessDirName?: string): PageErrorCapture {
   // Two buckets over one event stream. The session bucket feeds
   // `enrichTimeoutError` and spans the whole run; the segment bucket is reset
@@ -108,6 +165,9 @@ export function attachPageErrorCapture(page: Page, harnessDirName?: string): Pag
   const session = createBucket();
   const segment = createBucket();
   let segmentFatal = false;
+  // Segment-scoped, reset by every drain: a combo never inherits the fatal a
+  // previous combo already reported.
+  let capturedFatal: FatalPageError | undefined;
   // M79 gap 3b: fresh per `waitForFatal()` call, so a caller that already
   // missed one fatal event (e.g. from an earlier phase) only ever gets
   // notified of the NEXT one, never a stale replay.
@@ -117,17 +177,22 @@ export function attachPageErrorCapture(page: Page, harnessDirName?: string): Pag
     session.record(err.message);
     segment.record(err.message);
     segmentFatal = true;
+    const fatal: FatalPageError = { message: err.message, ...(err.stack ? { stack: err.stack } : {}) };
+    capturedFatal ??= fatal;
     if (fatalWaiters.length > 0) {
       const waiters = fatalWaiters;
       fatalWaiters = [];
-      const fatal: FatalPageError = { message: err.message, ...(err.stack ? { stack: err.stack } : {}) };
       for (const resolve of waiters) resolve(fatal);
     }
   });
   page.on("console", (msg) => {
     if (msg.type() !== "error") return;
-    session.record(msg.text());
-    segment.record(msg.text());
+    const text = substituteConsoleFormat(
+      msg.text(),
+      msg.args().map((arg) => String(arg)),
+    );
+    session.record(text);
+    segment.record(text);
   });
   // A CSS import that 404s, or a preprocessor that answers 500, kills module
   // evaluation with no exception of its own: the readiness gate just never
@@ -169,12 +234,19 @@ export function attachPageErrorCapture(page: Page, harnessDirName?: string): Pag
       };
       segment.reset();
       segmentFatal = false;
+      capturedFatal = undefined;
       return result;
     },
     waitForFatal() {
       return new Promise<FatalPageError>((resolve) => {
         fatalWaiters.push(resolve);
       });
+    },
+    capturedFatal() {
+      return capturedFatal;
+    },
+    resetCapturedFatal() {
+      capturedFatal = undefined;
     },
   };
 }
@@ -257,6 +329,24 @@ function errorDetailBlock(capture: PageErrorCapture): string {
     : " No page errors were captured.";
 }
 
+// M108 A9 (documenso-F1): "Unable to determine current node version" was given
+// an environment-file remedy, a guess about an error that names no environment
+// variable. These three shapes are what that remedy answers for.
+const ENV_VARIABLE_PATTERNS = [
+  /\bprocess\.env\.[A-Za-z_$][\w$]*/,
+  /\bimport\.meta\.env\.[A-Za-z_$][\w$]*/,
+  /\benv(?:ironment)? variable/i,
+];
+
+export function namesEnvironmentVariable(text: string): boolean {
+  return ENV_VARIABLE_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+function envRemedyFor(capture: PageErrorCapture, remedyLine: string | undefined): string {
+  if (!remedyLine) return "";
+  return capture.errors.some(namesEnvironmentVariable) ? `\n${remedyLine}` : "";
+}
+
 // M105 (taxonomy-F3): `remedyLine` is the same line buildFatalPageErrorMessage
 // already appends. It reaches this branch because the readiness wait's own
 // timeout usually beats the fatal signal (verify/V7's side finding), which left
@@ -273,7 +363,7 @@ export function enrichTimeoutError(
   const isTimeout = base.name === "TimeoutError" || base.message.includes("Timeout");
   if (!isTimeout) return base;
 
-  const remedy = remedyLine && capture.errors.length > 0 ? `\n${remedyLine}` : "";
+  const remedy = envRemedyFor(capture, remedyLine);
   // M106 A2: a temporal-dead-zone error has a known cause, so it is attributed
   // instead of speculated about; the env-file line would read as a guess next
   // to it and is dropped for that one shape.
@@ -316,7 +406,7 @@ export function buildFatalPageErrorMessage(
 ): Error {
   const moduleName = extractThrowingModule(fatal.stack);
   const modulePrefix = moduleName ? `${moduleName}: ` : "";
-  const remedy = envRemedyLine ? `\n${envRemedyLine}` : "";
+  const remedy = envRemedyFor(capture, envRemedyLine);
   return new Error(
     `${context} failed before it became ready: ${modulePrefix}${fatal.message}.${errorDetailBlock(capture)}${remedy}`,
   );
@@ -345,7 +435,13 @@ export async function waitForReadyOrFatal(
     // arrived — on taxonomy it always arrives, seconds earlier, and the race is
     // decided by whichever promise settles first. A fatal signal that is
     // already here still leads; otherwise the timeout carries the remedy.
-    if (fatal) throw buildFatalPageErrorMessage(fatal, capture, context, buildEnvRemedyLine?.());
+    // M108 A8: the throw may instead have arrived before this call registered a
+    // waiter (a module that fails during evaluation always does), in which case
+    // the capture is holding it and it still leads the report.
+    const delivered = fatal ?? capture.capturedFatal();
+    if (delivered) {
+      throw buildFatalPageErrorMessage(delivered, capture, context, buildEnvRemedyLine?.());
+    }
     // Still lazy: a timeout that captured nothing has nothing to attribute a
     // remedy to, so the callback is not even called for it.
     const remedyLine = capture.errors.length > 0 ? buildEnvRemedyLine?.() : undefined;
@@ -371,6 +467,7 @@ export async function gotoWithErrorContext(
   options?: Record<string, unknown>,
 ): Promise<void> {
   try {
+    capture.resetCapturedFatal();
     await page.goto(url, options);
   } catch (err) {
     throw enrichTimeoutError(err, capture, context);

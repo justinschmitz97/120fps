@@ -155,18 +155,20 @@ describe("H12: union with 9 values crossed over a truncated value set", () => {
   });
 });
 
-describe("H13: optional boolean has 2 matrix values, no undefined", () => {
-  it("produces 2 values (false, true)", () => {
+describe("H13: a boolean axis has 2 matrix values, never 3", () => {
+  it("crosses absent against present for an optional boolean", () => {
     const schemas = [
       makeSchema({ name: "a", kind: "boolean", required: false }),
-      makeSchema({ name: "b", kind: "boolean" }),
+      makeSchema({ name: "b", kind: "boolean", required: true }),
     ];
     const cells = generatePropMatrix(schemas);
     expect(cells).toHaveLength(4); // 2x2, not 3x2
     const aValues = new Set(cells.map((c) => c.a));
-    expect(aValues.has(false)).toBe(true);
     expect(aValues.has(true)).toBe(true);
-    expect(aValues.has(undefined)).toBe(false);
+    expect(aValues.has(undefined)).toBe(true);
+    expect(aValues.has(false)).toBe(false);
+    expect(cells.filter((c) => !("a" in c))).toHaveLength(2);
+    expect(new Set(cells.map((c) => c.b))).toEqual(new Set([false, true]));
   });
 });
 

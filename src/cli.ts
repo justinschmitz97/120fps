@@ -8,15 +8,20 @@ import { compareAgainstRef, formatCompare, validateCompareOptions } from "./comp
 import { formatMarkdown, formatJUnit } from "./ci-report.js";
 import { createBrowserPool } from "./measure.js";
 import {
+  beginHarnessDirTeardown,
   createServerPool,
+  HARNESS_DIR_REMOVAL_FAILED_WARNING,
   presentBundlerFailure,
   refreshHarnessDirMarkers,
+  removeActiveHarnessDirs,
   sweepActiveHarnessDirs,
 } from "./harness.js";
 import { scanExports } from "./prop-gen.js";
+import { formatResolvedRoots, resolveProjectModel } from "./project-model.js";
 import { parseIsolationPhases, strictModeUnsupported, VUE_STRICTMODE_ERROR } from "./isolation.js";
 import { setPreflightBypassed } from "./preflight.js";
-import { formatTable, DEFAULT_THRESHOLDS } from "./report.js";
+import { formatTable, formatPhaseBreakdown, DEFAULT_THRESHOLDS } from "./report.js";
+import type { PhaseTimings } from "./report.js";
 
 // M88: the taxonomy hang -- a fatal error printed in full, then the process
 // stayed alive until an external `timeout` killed it (EXIT=124). Pool/server
@@ -106,11 +111,42 @@ type ClosablePools = {
 // the dev-server pool takes its esbuild workers with it; when either hangs,
 // armExitWatchdog still delivers the exit code, by which point nothing is left
 // on disk.
+//
+// M113 (base-ui-R1): "by which point nothing is left on disk" was false. The
+// first removal runs while Chromium, the dev server and its esbuild workers
+// still hold handles on entry.tsx, index.html and the directory itself, so on
+// Windows it throws EBUSY and leaves the directory behind. The second pass
+// below runs once those handles are gone, retries a busy removal, and says so
+// when a directory still survives.
+export function sweepHarnessDirsAfterClose(
+  hooks: {
+    remove?: (dir: string) => void;
+    warn?: (line: string) => void;
+    cwd?: string;
+  } = {},
+): void {
+  const warn = hooks.warn ?? ((line: string) => console.error(line));
+  // M113 (final re-test): from here on a harness directory the build is still
+  // creating removes itself the moment it exists. The set this pass reads was
+  // fixed when the pass started, and the build does not stop because a signal
+  // arrived; latching is what makes "every directory this process created"
+  // true rather than "every directory that existed when the sweep began".
+  beginHarnessDirTeardown();
+  for (const failure of removeActiveHarnessDirs({
+    retry: true,
+    remove: hooks.remove,
+    cwd: hooks.cwd,
+  })) {
+    warn(HARNESS_DIR_REMOVAL_FAILED_WARNING(failure.dir, failure.reason));
+  }
+}
+
 export async function abortRun(
   exitCode: number,
   pools?: ClosablePools,
   hooks: {
     sweep?: () => void;
+    finalSweep?: () => void;
     exit?: (code: number) => void;
     timeoutMs?: number;
   } = {},
@@ -123,9 +159,20 @@ export async function abortRun(
   // to process.exit: the deadline has to leave through the same door as the
   // ordinary path, so a caller (and a test) sees exactly one exit.
   let exited = false;
+  // M113 (final re-test): the retrying, disclosing pass runs on both ways out.
+  // The deadline used to leave through exit() alone, so a run whose pools never
+  // settled reached process.exit with only the pre-close attempt spent: the
+  // directory stayed and nothing said so. One pass either way, at most once.
+  let sweptAfterClose = false;
+  const sweepAfterClose = (): void => {
+    if (sweptAfterClose) return;
+    sweptAfterClose = true;
+    (hooks.finalSweep ?? hooks.sweep ?? (() => sweepHarnessDirsAfterClose()))();
+  };
   const exitOnce = (): void => {
     if (exited) return;
     exited = true;
+    sweepAfterClose();
     exit(exitCode);
   };
   // Review A8: both this deadline and closePoolsBounded's own timer are
@@ -137,6 +184,9 @@ export async function abortRun(
   deadline.unref();
   if (pools) await closePoolsBounded(pools.pool, pools.serverPool, timeoutMs);
   clearTimeout(deadline);
+  // The pass that actually leaves the working tree clean: the handles are gone
+  // by now, and a directory the first pass could not remove is still tracked.
+  sweepAfterClose();
   exitOnce();
 }
 
@@ -219,6 +269,38 @@ export function RUN_WATCHDOG_ABORT_ERROR(
     "Re-run with --explore-budget to allow a longer exploration, or with --no-deltas / " +
     "--max-combos to measure less.\n"
   );
+}
+
+// M116 end-game fix-up (midday-NEW1): what an aborted run says on its way out.
+// It used to be the abort sentence alone -- no roots line (M111 A4), no total
+// (M115 A1), no report -- and then a second, unrelated error from the analyze()
+// call still running under the closing pools. The two lines a finished run
+// prints around its table are the two an aborted run needs most: which roots it
+// resolved, and how long it spent before it was stopped.
+export function watchdogAbortOutput(
+  componentPath: string,
+  budgetMs: number,
+  bound: "stalled" | "total",
+  elapsedMs: number,
+  ci: boolean,
+): { stderr: string; stdout: string } {
+  // The roots line resolves the project model, which reads the filesystem --
+  // inside the watchdog's timer callback, on a machine already in the state
+  // that caused the abort. An exception there would escape the timer and skip
+  // the `abortRun` that closes the pools and sweeps the harness dirs, so the
+  // roots line is the only part of this output that can be lost.
+  let stdout = "";
+  if (!ci) {
+    try {
+      stdout = resolvedRootsOutput(componentPath, false) + formatTotalLine(elapsedMs, undefined) + "\n";
+    } catch {
+      stdout = formatTotalLine(elapsedMs, undefined) + "\n";
+    }
+  }
+  return {
+    stderr: RUN_WATCHDOG_ABORT_ERROR(componentPath, budgetMs, bound),
+    stdout,
+  };
 }
 
 const ISOLATE_USAGE_ERROR =
@@ -361,6 +443,16 @@ export function formatWallClock(elapsedMs: number): string {
   const wholeSeconds = Math.round(elapsedMs / 1000);
   const minutes = Math.floor(wholeSeconds / 60);
   return `Total: ${minutes}m ${wholeSeconds - minutes * 60}s`;
+}
+
+// M115 A1: the wait and where it went, on one line. A run whose report carries
+// no phase timings (a cached verdict, a report written before M115) prints the
+// line it printed before, so the breakdown is an addition and never a rewrite.
+export function formatTotalLine(
+  elapsedMs: number,
+  timings: PhaseTimings | undefined,
+): string {
+  return formatWallClock(elapsedMs) + formatPhaseBreakdown(timings);
 }
 
 export function parseArgs(argv: string[]): CliArgs {
@@ -1159,9 +1251,16 @@ export const GITIGNORE_SUGGESTED_PATTERNS = [
   ".120fps-harness-*",
 ];
 
-export const GITIGNORE_ADVISORY_HINT =
-  "Tip: 120fps writes report/baseline files into this repo. Consider adding to .gitignore: " +
-  GITIGNORE_SUGGESTED_PATTERNS.join(", ");
+// M117 A2: the tip names the patterns the paths that fired it need, so a run
+// that only wrote a report does not ask for the baseline and harness patterns
+// it never produced. No patterns, no tip.
+export function formatGitignoreTip(patterns: string[]): string {
+  if (patterns.length === 0) return "";
+  return (
+    "Tip: 120fps writes report/baseline files into this repo. Consider adding to .gitignore: " +
+    patterns.join(", ")
+  );
+}
 
 // Nearest ancestor of startDir containing a .git entry (directory or, for a
 // worktree, file); undefined outside any repo. Independent of
@@ -1214,6 +1313,48 @@ export function needsGitignoreAdvisory(gitRoot: string, writtenFilenames: string
   return writtenFilenames.some((name) => !gitignoreCoversFile(content, name));
 }
 
+// The suggested pattern one written path asks for, or nothing for a path this
+// tool did not produce.
+function suggestedPatternFor(writtenPath: string): string | undefined {
+  const name = path.basename(writtenPath);
+  if (name.startsWith(".120fps-harness-")) return ".120fps-harness-*";
+  if (name === "120fps-baseline.json") return "120fps-baseline.json";
+  if (/^120fps-report.*\.json$/.test(name)) return "120fps-report*.json";
+  return undefined;
+}
+
+// M117 A1 (shadcn-admin/dialog-real2.log:67): the gate mapped every written
+// report through path.basename, so a report written to a directory outside the
+// repository still counted as written into it. The resolved path decides now: a
+// file this run wrote outside the repository is not that repository's hygiene
+// problem, whatever it is called.
+export function gitignoreTipPatterns(gitRoot: string, writtenPaths: string[]): string[] {
+  const asked = new Set<string>();
+  for (const written of writtenPaths) {
+    const pattern = suggestedPatternFor(written);
+    if (!pattern || asked.has(pattern)) continue;
+    const relative = path.relative(gitRoot, path.resolve(written));
+    if (relative === "" || relative.startsWith("..") || path.isAbsolute(relative)) continue;
+    if (!needsGitignoreAdvisory(gitRoot, [path.basename(written)])) continue;
+    asked.add(pattern);
+  }
+  return GITIGNORE_SUGGESTED_PATTERNS.filter((pattern) => asked.has(pattern));
+}
+
+// M117 A1: a harness directory this run left behind is about to be tracked; one
+// it cleaned up (M113) is not, and asks for no pattern.
+export function harnessLeftoverDirs(dir: string): string[] {
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  return entries
+    .filter((entry) => entry.isDirectory() && entry.name.startsWith(".120fps-harness-"))
+    .map((entry) => path.join(dir, entry.name));
+}
+
 // M72: engines: >=22 in package.json (see package.json) is declarative only
 // — npx only soft-warns below it. A hard gate at entry turns a confusing
 // syntax/runtime crash deep inside a dependency into one clear message.
@@ -1228,6 +1369,21 @@ export function nodeVersionError(version: string): string | undefined {
   const major = nodeMajorVersion(version);
   if (major === undefined || major >= MIN_NODE_MAJOR) return undefined;
   return `Node ${MIN_NODE_MAJOR}+ required, found ${version}`;
+}
+
+// M111 A4: one line per component, from the component path the user gave,
+// resolved the way every other stage resolves it. The paths are absolute, so
+// the line reads the same from every shell directory.
+export function resolvedRootsLine(componentPath: string): string {
+  const model = resolveProjectModel(path.dirname(path.resolve(componentPath)));
+  return formatResolvedRoots(model.memberRoot, model.workspaceRoot);
+}
+
+// M111 A4: --ci output is read by a machine, so the line is written for a
+// reader or not at all. One place decides that, for the dry run and for the
+// measured run.
+export function resolvedRootsOutput(componentPath: string, ci: boolean): string {
+  return ci ? "" : resolvedRootsLine(componentPath) + "\n";
 }
 
 // I3a (element-plus-F2): every flag the dry run can honour, in one place a
@@ -1245,6 +1401,11 @@ export function explainPropsOptions(
   matrixMode?: ReturnType<typeof resolveMatrixOption>;
   isolation?: ReturnType<typeof resolveIsolationOption>;
   fixturePath?: string;
+  skipAutoCompose?: boolean;
+  noTransforms?: boolean;
+  noShims?: boolean;
+  samples?: number;
+  maxCombos?: number;
 } {
   // C-5: the four flags below decide which mode the real run takes, and the
   // dry run's whole job is to predict that mode. They are resolved with the
@@ -1261,6 +1422,23 @@ export function explainPropsOptions(
     ...(matrixMode !== undefined ? { matrixMode } : {}),
     ...(isolation !== undefined ? { isolation } : {}),
     ...(args.fixturePath ? { fixturePath: args.fixturePath } : {}),
+    // M110 C1, C4 (review): the dry run read both of these all along; the call
+    // site dropped them, so `--explain-props --no-auto-compose` predicted an
+    // auto-composed scene the real run does not build and
+    // `--explain-props --no-transforms` printed the transform lines the real
+    // run suppresses. Same two lines the real run forwards below.
+    ...(args.noAutoCompose ? { skipAutoCompose: true } : {}),
+    ...(args.noTransforms ? { noTransforms: true } : {}),
+    // M110 I2 (review): `noShims` changes the alias set the external-dependency
+    // scan resolves against, so the shared static pre-build only reports the
+    // same unresolved externals in both modes when the dry run gets it too.
+    ...(args.noShims ? { noShims: true } : {}),
+    // M115 A2, I12: the dry run prices the real run from the combo and sample
+    // counts that run would measure, and both are flags. Same two names the
+    // real run forwards to AnalyzeOptions, so the estimate is priced against
+    // the command line the user typed rather than the defaults.
+    ...(args.samples !== undefined ? { samples: args.samples } : {}),
+    ...(args.maxCombos !== undefined ? { maxCombos: args.maxCombos } : {}),
   };
 }
 
@@ -1315,6 +1493,10 @@ async function main(): Promise<void> {
     for (let idx = 0; idx < componentPaths.length; idx++) {
       const componentPath = componentPaths[idx];
       if (componentPaths.length > 1) process.stdout.write(`\n=== ${componentPath} ===\n`);
+      // M111 A4: the first line of this component's block, so a reader
+      // comparing two shell directories sees the roots both runs resolved
+      // before anything those runs could disagree about.
+      process.stdout.write(resolvedRootsOutput(componentPath, args.ci === true));
       try {
         const explained = await explainProps(componentPath, explainPropsOptions(args, componentPath));
         process.stdout.write(formatExplainProps(explained) + "\n");
@@ -1379,6 +1561,9 @@ async function main(): Promise<void> {
   let anyFail = false;
   // M50: collected across the sweep so both formats describe the whole run.
   const ciReports: import("./report.js").Report[] = [];
+  // M117 A1: where this sweep's baselines and harness directories can be, one
+  // entry per distinct project the components belong to.
+  const projectRoots = new Set<string>();
 
   // M37: browsers are project-agnostic: one pool serves every component of
   // the sweep (two Chromium processes total instead of ~5 launches each).
@@ -1405,7 +1590,9 @@ async function main(): Promise<void> {
     // M92: set before the harness build a fire-and-forget dep-optimizer
     // rejection (surface 3) could still fail on, cleared once this component
     // is done -- see resolveFatalProcessError's own comment.
-    setCurrentRunProjectRoot(resolveProjectPaths(path.resolve(componentPath)).projectRoot);
+    const componentProjectRoot = resolveProjectPaths(path.resolve(componentPath)).projectRoot;
+    projectRoots.add(componentProjectRoot);
+    setCurrentRunProjectRoot(componentProjectRoot);
     // Item A: same lifecycle as the project root above -- reset before this
     // component's own run() populates it via AnalyzeOptions.onWarning, so a
     // surface-3 rejection on component 2 of a multi-component sweep never
@@ -1419,8 +1606,18 @@ async function main(): Promise<void> {
     // every path, --ci included. The total-budget wording stays for a caller
     // that omits it.
     const bound = "stalled" as const;
+    // M116 end-game fix-up (midday-NEW1): the aborted run's own analyze() call
+    // keeps running until the pools close under it, and whatever it throws on
+    // the way down ("Cannot read properties of undefined (reading 'props')" on
+    // midday) used to print as a second, unrelated Error after the abort
+    // sentence -- two errors for one failure, the second of them noise. The
+    // abort owns the exit from here on.
+    let aborted = false;
     const runWatchdog = createRunWatchdog(budgetMs, () => {
-      process.stderr.write(RUN_WATCHDOG_ABORT_ERROR(componentPath, budgetMs, bound));
+      aborted = true;
+      const out = watchdogAbortOutput(componentPath, budgetMs, bound, Date.now() - started, args.ci);
+      process.stderr.write(out.stderr);
+      if (out.stdout) process.stdout.write(out.stdout);
       void abortRun(2, { pool, serverPool });
     });
     try {
@@ -1439,11 +1636,22 @@ async function main(): Promise<void> {
         },
       );
       if (!args.ci) {
+        // M111 A4: ahead of this component's table, once per component.
+        process.stdout.write(resolvedRootsOutput(componentPath, false));
         process.stdout.write(formatTable(report) + "\n");
-        process.stdout.write(formatWallClock(Date.now() - started) + "\n");
+        // M115 A1: the breakdown rides on the line that already prints the
+        // wait, under the same `!args.ci` guard -- `--ci` owns stdout for JSON
+        // and reads `phaseTimings` from the report instead.
+        process.stdout.write(
+          formatTotalLine(Date.now() - started, report.phaseTimings) + "\n",
+        );
       }
       if (!report.pass) anyFail = true;
     } catch (err: unknown) {
+      // The abort already printed the one error this run failed on and owns
+      // the teardown and the exit code (2); returning leaves it that one exit
+      // and prints no second error for the same failure.
+      if (aborted) return;
       if (!multi) {
         process.stderr.write(formatCliError(err, process.env.DEBUG));
         const watchdog = armExitWatchdog(2);
@@ -1473,11 +1681,14 @@ async function main(): Promise<void> {
   if (!args.ci) {
     const gitRoot = findGitRoot(process.cwd());
     if (gitRoot) {
-      const writtenFilenames = reportPaths.map((p) => path.basename(p));
-      if (args.saveBaseline) writtenFilenames.push("120fps-baseline.json");
-      if (needsGitignoreAdvisory(gitRoot, writtenFilenames)) {
-        process.stdout.write(GITIGNORE_ADVISORY_HINT + "\n");
+      const writtenPaths = reportPaths.map((reportPath) => path.resolve(reportPath));
+      for (const projectRoot of projectRoots) {
+        if (args.saveBaseline) writtenPaths.push(path.join(projectRoot, "120fps-baseline.json"));
+        writtenPaths.push(...harnessLeftoverDirs(projectRoot));
       }
+      writtenPaths.push(...harnessLeftoverDirs(gitRoot));
+      const tip = formatGitignoreTip(gitignoreTipPatterns(gitRoot, writtenPaths));
+      if (tip) process.stdout.write(tip + "\n");
     }
   }
 

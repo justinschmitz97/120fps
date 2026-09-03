@@ -173,7 +173,8 @@ describe("tearing down a run that was told to stop", () => {
   it("sweeps even with no pools to close", async () => {
     const swept: string[] = [];
     await abortRun(129, undefined, { sweep: () => swept.push("dirs"), exit: () => {} });
-    expect(swept).toEqual(["dirs"]);
+    // M113: the pass before the pools close and the pass after they have.
+    expect(swept).toEqual(["dirs", "dirs"]);
   });
 });
 

@@ -18,7 +18,9 @@ function makeFakePage(): { page: Page; emitter: EventEmitter } {
 }
 
 function makeConsoleMessage(type: string, text: string) {
-  return { type: () => type, text: () => text };
+  // M114 A6: a real ConsoleMessage always exposes its arguments; a message
+  // logged without a format string has the rendered text as its only one.
+  return { type: () => type, text: () => text, args: () => [{ toString: () => text }] };
 }
 
 function makeTimeoutError(message = "Timeout 30000ms exceeded."): Error {
@@ -627,7 +629,9 @@ describe("waitForReadyOrFatal", () => {
       "component harness",
       () => "No .env or .env.local found; only NEXT_PUBLIC_*/VITE_* keys reach the page.",
     );
-    emitter.emit("pageerror", new Error("createEnv failed"));
+    // M108 A9: the line attaches to an error that names an environment
+    // variable, which is what this remedy answers for.
+    emitter.emit("pageerror", new Error("createEnv failed: process.env.DATABASE_URL is required"));
     await expect(pending).rejects.toThrow(/NEXT_PUBLIC_/);
   });
 

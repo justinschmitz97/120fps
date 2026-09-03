@@ -17,6 +17,9 @@ import {
   detectPnP,
   findCompilerConfig,
   findProjectRoot,
+  resolveGoverningTsconfig,
+  TSCONFIG_EXTENDS_BROKEN_WARNING,
+  TSCONFIG_REFERENCES_MARKER,
   findWorkspaceRoot,
   installedPackageDir,
   isPackageAvailable,
@@ -24,7 +27,12 @@ import {
   readProjectManifest,
   workspaceLevels,
 } from "./project-model.js";
-import { detectMissingInstall, hardRemedyFor } from "./preflight.js";
+import {
+  declaredTransformOwner,
+  detectMissingInstall,
+  hardRemedyFor,
+  recognizeVirtualNamespace,
+} from "./preflight.js";
 // Import cycle (harness -> react-profiler -> measure -> harness), safe by
 // construction: every cross-module binding on all three edges is read inside a
 // function body, never during module evaluation, so no partially-initialized
@@ -263,30 +271,182 @@ export function HARNESS_DIR_UNWRITABLE(projectRoot: string, detail: string): str
 // on a graceful return.
 const activeHarnessDirs = new Set<string>();
 
-// The body the `process.on("exit")` handler below runs. Exported so the
-// mechanism is testable without triggering a real process exit — a test can
-// call this directly (or synthesize the event via `process.emit("exit")`,
-// which Node runs its listeners for exactly as a real exit would, since
-// listeners cannot tell the two apart).
-export function sweepActiveHarnessDirs(): void {
-  for (const dir of activeHarnessDirs) {
-    try {
-      // "exit" only permits synchronous work; fs.rmSync already is.
-      fs.rmSync(dir, { recursive: true, force: true });
-    } catch {
-      // Best-effort: the process is already on its way out.
-    }
+// M113 (base-ui-R1): on Windows a handle Chromium, the dev server or an
+// esbuild worker still holds makes a removal throw EBUSY/EPERM/ENOTEMPTY, and
+// that handle is gone milliseconds later. A single attempt turned a transient
+// lock into a directory the developer found in `git status`.
+export const HARNESS_DIR_REMOVAL_BUDGET_MS = 1000;
+export const HARNESS_DIR_REMOVAL_MIN_ATTEMPTS = 5;
+const HARNESS_DIR_REMOVAL_DELAY_MS = 200;
+// Every outstanding directory together: a root full of locked leftovers must
+// not push a signalled exit near the CLI's 8 s watchdog, so the per-directory
+// budget above yields to this one.
+export const HARNESS_SWEEP_BUDGET_MS = 1500;
+
+// The codes a held handle produces. Anything else (ENOTDIR, a hostile
+// injected remover) says the next attempt would fail the same way.
+const HARNESS_DIR_RETRY_CODES = new Set(["EBUSY", "EPERM", "EACCES", "ENOTEMPTY", "EMFILE", "ENFILE"]);
+
+// The pending-delete shape: the removal reported success and the directory is
+// still on disk. Leads with EBUSY so the retry decision reads it as retryable.
+export const HARNESS_DIR_PENDING_DELETE_REASON =
+  "EBUSY (still on disk after a removal that reported success)";
+
+// The `process.on("exit")` handler permits synchronous work only, so the wait
+// between attempts cannot be a timer.
+function sleepSync(ms: number): void {
+  if (ms <= 0) return;
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+// maxRetries covers the handle that closes within a few milliseconds without
+// leaving this function; the loop around it owns the budget, the injection
+// point and the disclosure.
+function removeHarnessDirOnce(dir: string): void {
+  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 2, retryDelay: 25 });
+}
+
+// M113 (final re-test): a removal that returns without throwing has not
+// necessarily removed anything. On Windows a file another process opened with
+// FILE_SHARE_DELETE unlinks into a pending-delete state and the directory
+// survives the rmdir that reported success, so every caller crossed the
+// directory off its list while it was still in `git status`. One attempt,
+// answered by the disk: removal means gone.
+function attemptHarnessDirRemoval(dir: string, remove: (dir: string) => void): string | undefined {
+  try {
+    remove(dir);
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code ?? (err as Error).message;
   }
-  activeHarnessDirs.clear();
+  // A4 asks for the error code. No error occurred on this path, so the
+  // reason says what the disk said instead of naming a code the OS never
+  // produced; the retry decision below reads its leading code.
+  return fs.existsSync(dir) ? HARNESS_DIR_PENDING_DELETE_REASON : undefined;
+}
+
+// Returns the error code of the last failed attempt, or undefined once the
+// directory is gone. Never throws: every caller is on a teardown path.
+export function removeHarnessDirWithRetries(
+  dir: string,
+  remove: (dir: string) => void = removeHarnessDirOnce,
+  deadline: number = Date.now() + HARNESS_SWEEP_BUDGET_MS,
+): string | undefined {
+  const started = Date.now();
+  for (let attempt = 1; ; attempt++) {
+    const reason = attemptHarnessDirRemoval(dir, remove);
+    if (reason === undefined) return undefined;
+    if (!HARNESS_DIR_RETRY_CODES.has(reason.split(" ")[0])) return reason;
+    const spent = Date.now() - started;
+    const budgetSpent =
+      attempt >= HARNESS_DIR_REMOVAL_MIN_ATTEMPTS && spent >= HARNESS_DIR_REMOVAL_BUDGET_MS;
+    if (budgetSpent || Date.now() >= deadline) return reason;
+    sleepSync(Math.min(HARNESS_DIR_REMOVAL_DELAY_MS, deadline - Date.now()));
+  }
+}
+
+// The path as the developer sees it: what `ls` in the directory they started
+// the run from would print.
+function harnessDirDisplayPath(dir: string, cwd: string): string {
+  const rel = path.relative(cwd, dir);
+  return rel && !rel.startsWith("..") && !path.isAbsolute(rel) ? rel.replace(/\\/g, "/") : dir;
+}
+
+export function HARNESS_DIR_REMOVAL_FAILED_WARNING(dir: string, reason: string): string {
+  return (
+    `Could not remove the harness directory ${dir} (${reason}). It is this run's own scratch ` +
+    "directory, not part of your project; remove it by hand, or the next run in this project will."
+  );
+}
+
+// M113 (final re-test): the run's own removal sites (`cleanup()` and the
+// bootServer catch) crossed the directory off the moment their rmSync
+// returned. On Windows that call returns on a directory that is still there,
+// and the crossed-off directory became invisible to every later sweep,
+// including the signal handler's. A directory is forgotten once it is gone.
+export function forgetHarnessDirIfRemoved(dir: string): void {
+  if (!fs.existsSync(dir)) activeHarnessDirs.delete(dir);
+}
+
+// The body the `process.on("exit")` handler below runs, and the pass the CLI
+// runs after the pools have closed. A directory whose removal failed stays in
+// the set: that is what makes the second pass — after Chromium and the dev
+// server have let go — able to see it at all.
+export function removeActiveHarnessDirs(
+  options: {
+    retry?: boolean;
+    // Injected so the failure path is testable without contriving a real
+    // Windows lock; every caller uses the default.
+    remove?: (dir: string) => void;
+    cwd?: string;
+  } = {},
+): Array<{ dir: string; reason: string }> {
+  const remove = options.remove ?? removeHarnessDirOnce;
+  const cwd = options.cwd ?? process.cwd();
+  const deadline = Date.now() + HARNESS_SWEEP_BUDGET_MS;
+  const failures: Array<{ dir: string; reason: string }> = [];
+  for (const dir of activeHarnessDirs) {
+    let reason: string | undefined;
+    if (options.retry) {
+      reason = removeHarnessDirWithRetries(dir, remove, deadline);
+    } else {
+      reason = attemptHarnessDirRemoval(dir, remove);
+    }
+    if (reason === undefined) activeHarnessDirs.delete(dir);
+    else failures.push({ dir: harnessDirDisplayPath(dir, cwd), reason });
+  }
+  return failures;
+}
+
+// Exported so the mechanism is testable without triggering a real process exit
+// — a test can call this directly (or synthesize the event via
+// `process.emit("exit")`, which Node runs its listeners for exactly as a real
+// exit would, since listeners cannot tell the two apart). One attempt per
+// directory: this is the pass that runs while the handles are still open, and
+// the CLI's post-close pass is the one that spends the retry budget.
+export function sweepActiveHarnessDirs(): void {
+  removeActiveHarnessDirs();
+}
+
+// M113 (final re-test): the signal handler's last pass reads a set, and a
+// harness directory the build creates a millisecond later is not in it. The
+// pass latches this flag instead of racing: createHarnessDir below removes
+// what it creates from that point on, under the same budget and with the same
+// disclosure, so the handler covers every directory this process created,
+// including the ones it created after the sweep started.
+let harnessDirTeardownStarted = false;
+
+export function beginHarnessDirTeardown(): void {
+  harnessDirTeardownStarted = true;
+}
+
+// M113 (final re-test): the last exit any run can take, and until now the one
+// that spent a single attempt and said nothing. `abortRun`'s deadline timer
+// and `closePoolsBounded`'s own are both unref'd, so a signalled run whose
+// `closeAll` never settles drains its loop and leaves through here, with the
+// signal's code already recorded and the pass that retries never reached: exit
+// 143, a silent EBUSY, and `.120fps-harness-FeVcEh/` in `git status`. This
+// handler spends the same budget and prints the same line. The retries are
+// synchronous (`sleepSync`), which is all this event permits, and a run that
+// left nothing behind reads an empty set and costs nothing.
+export function sweepActiveHarnessDirsOnExit(): void {
+  for (const failure of removeActiveHarnessDirs({ retry: true })) {
+    process.stderr.write(HARNESS_DIR_REMOVAL_FAILED_WARNING(failure.dir, failure.reason) + "\n");
+  }
 }
 
 let exitSweepRegistered = false;
 function registerHarnessDirExitSweep(): void {
   if (exitSweepRegistered) return;
   exitSweepRegistered = true;
-  process.on("exit", sweepActiveHarnessDirs);
+  process.on("exit", sweepActiveHarnessDirsOnExit);
 }
 registerHarnessDirExitSweep();
+
+// M113: what a build reads when it asked for a harness directory after the
+// teardown sweep latched. The directory was created and removed again, so
+// there is no path to hand back.
+export const HARNESS_DIR_TEARDOWN_IN_PROGRESS =
+  "120fps is shutting down: the harness directory was removed by the teardown sweep.";
 
 // accessSync answers POSIX permission bits; the real mkdtempSync answers
 // everything it cannot see (Windows ACLs, a read-only mount, a root that is a
@@ -303,26 +463,47 @@ export function createHarnessDir(projectRoot: string): string {
   } catch (err) {
     return fail(err);
   }
+  let dir: string;
   try {
-    const dir = fs.mkdtempSync(path.join(projectRoot, ".120fps-harness-"));
+    dir = fs.mkdtempSync(path.join(projectRoot, ".120fps-harness-"));
     // M83 #7: tracked from the moment it exists, regardless of what happens
     // next — `cleanup()` and the bootServer catch's own rmSync both remove
     // it as soon as they remove the directory; anything left when the
     // process exits is a leftover the exit sweep above still has to catch.
     activeHarnessDirs.add(dir);
-    // M101: the marker that lets a later run tell an abandoned directory from
-    // one a live run is still writing into. Best-effort: a marker that cannot
-    // be written costs the directory only the older, more conservative age
-    // gate, and must never fail the run that was about to measure.
+    // M101: written before the teardown branch below, so a directory whose
+    // retry budget runs out down there carries its owner pid, and the next
+    // run's stale sweep removes it on the dead-pid path instead of waiting
+    // out the one-hour age gate the line below promises it will not wait out.
+    // Best-effort: a marker that cannot be written costs the directory only
+    // the older, more conservative age gate, and must never fail the run that
+    // was about to measure.
     try {
       fs.writeFileSync(path.join(dir, HARNESS_PID_FILE), `${process.pid}\n`);
     } catch {
       // Unwritable marker: sweepStaleHarnessDirs falls back to age alone.
     }
-    return dir;
   } catch (err) {
     return fail(err);
   }
+  // M113 (final re-test): the signal arrived while this directory was being
+  // created, so the handler's sweep could not have seen it. The handler's
+  // work happens here instead, on the same budget, rather than leaving the
+  // directory for the next run to find.
+  if (harnessDirTeardownStarted) {
+    const reason = removeHarnessDirWithRetries(dir);
+    if (reason === undefined) activeHarnessDirs.delete(dir);
+    else {
+      process.stderr.write(
+        HARNESS_DIR_REMOVAL_FAILED_WARNING(harnessDirDisplayPath(dir, process.cwd()), reason) + "\n",
+      );
+    }
+    // The directory is gone either way, so handing its path back would fail
+    // the build on an unrelated ENOENT for entry.tsx after the abort
+    // sentence. The build stops here instead, named.
+    throw new Error(HARNESS_DIR_TEARDOWN_IN_PROGRESS);
+  }
+  return dir;
 }
 
 // M101 (V2 repro 5): the process that owns a harness directory, so a later run
@@ -590,6 +771,9 @@ export interface BuildHarnessOptions {
 export interface StaticPreBuild {
   warnings: string[];
   viteConfig: ViteConfigData;
+  // M109 (A5): the conditions the dev server resolves exports under — the vite
+  // config's own list, then the governing tsconfig's customConditions.
+  resolveConditions: string[];
   externalDeps: string[];
   styleTooling: StyleTooling;
   nextModules: { detected: boolean; activeShims?: string[]; unsupported: string[] };
@@ -602,6 +786,10 @@ export interface StaticPreBuild {
     fromWorkspaceRoot?: WorkspaceRootAliasSource;
   }>;
   importedSpecifiers: Set<string>;
+  // M110 (A2/I2, epic-stack-F2): every specifier the scan could not resolve to
+  // a package, an alias or an `imports` entry, so both modes report the same
+  // set without walking the graph again.
+  unresolvedExternals: Array<{ specifier: string; importer: string }>;
   workspaceRoot: string;
 }
 
@@ -910,28 +1098,52 @@ const NEXT_ENTRY_STEMS = ["app/layout", "src/app/layout", "pages/_app", "src/pag
 const ENTRY_EXTENSIONS = [".tsx", ".jsx", ".ts", ".js"];
 const MODULE_SCRIPT_TAG = /<script\b[^>]*>/gi;
 
-// The module the project's own toolchain starts from: what index.html loads, or
-// the module Next.js renders every route through.
-export function findProjectEntry(projectRoot: string): string | undefined {
-  const html = path.join(projectRoot, "index.html");
-  let markup: string | undefined;
+// The module one html file loads. `rootDir` is the directory a root-absolute
+// `src="/x.js"` is resolved against — Vite's own `root`, which is the package
+// root only when the config declares no other one (M114 A3).
+function entryFromHtml(html: string, rootDir: string): string | undefined {
+  let markup: string;
   try {
     markup = fs.readFileSync(html, "utf-8");
   } catch {
-    markup = undefined;
+    return undefined;
   }
-  if (markup) {
-    MODULE_SCRIPT_TAG.lastIndex = 0;
-    for (const tag of markup.match(MODULE_SCRIPT_TAG) ?? []) {
-      if (!/\btype\s*=\s*["']module["']/i.test(tag)) continue;
-      const src = /\bsrc\s*=\s*["']([^"']+)["']/i.exec(tag)?.[1];
-      if (!src || /^[a-z][a-z0-9+.-]*:/i.test(src)) continue;
-      const resolved = src.startsWith("/")
-        ? path.join(projectRoot, src)
-        : path.resolve(path.dirname(html), src);
-      if (isFile(resolved)) return resolved;
-    }
+  MODULE_SCRIPT_TAG.lastIndex = 0;
+  for (const tag of markup.match(MODULE_SCRIPT_TAG) ?? []) {
+    if (!/\btype\s*=\s*["']module["']/i.test(tag)) continue;
+    const src = /\bsrc\s*=\s*["']([^"']+)["']/i.exec(tag)?.[1];
+    if (!src || /^[a-z][a-z0-9+.-]*:/i.test(src)) continue;
+    const resolved = src.startsWith("/")
+      ? path.join(rootDir, src)
+      : path.resolve(path.dirname(html), src);
+    if (isFile(resolved)) return resolved;
   }
+  return undefined;
+}
+
+// The module the project's own toolchain starts from: what index.html loads, or
+// the module Next.js renders every route through.
+// M114 A3, A5 (vuetify-F1): the package root's own index.html still decides
+// first; a `root` the vite config declares and a foldable
+// `build.rollupOptions.input` are two more places one can be, and vuetify has
+// its only entry under the first of them.
+export function findProjectEntry(
+  projectRoot: string,
+  opts?: { configRoot?: string; rollupInputs?: string[] },
+): string | undefined {
+  const fromPackageRoot = entryFromHtml(path.join(projectRoot, "index.html"), projectRoot);
+  if (fromPackageRoot) return fromPackageRoot;
+
+  const configRoot = opts?.configRoot;
+  if (configRoot && path.resolve(configRoot) !== path.resolve(projectRoot)) {
+    const fromConfigRoot = entryFromHtml(path.join(configRoot, "index.html"), configRoot);
+    if (fromConfigRoot) return fromConfigRoot;
+  }
+  for (const input of opts?.rollupInputs ?? []) {
+    const fromInput = entryFromHtml(input, configRoot ?? projectRoot);
+    if (fromInput) return fromInput;
+  }
+
   for (const stem of NEXT_ENTRY_STEMS) {
     for (const extension of ENTRY_EXTENSIONS) {
       const candidate = path.join(projectRoot, stem + extension);
@@ -1122,22 +1334,42 @@ export interface CssDiscovery {
   // present only when source === "fallback"
   onlyCandidate?: boolean;
   noEntryInPackage?: boolean;
-  // present only when source === "runtime"
+  // present when source === "runtime", and on the "none" of a declared-but-
+  // unbuilt stylesheet whose package also styles at runtime (M112 review).
   runtimeEngines?: string[];
+  // M114 A1, A2 / I5 (fluentui-F3): whether the engines above are ones
+  // RUNTIME_STYLE_ENGINES names. `false` means the measured file imported a
+  // `makeStyles`/`createUseStyles`/`styled` binding from a package the list
+  // does not carry — an observation about one file, not a fact about the
+  // package's dependencies. Present whenever `runtimeEngines` is.
+  runtimeEnginesRecognised?: boolean;
+  // M112 A1, A2 / I5 (radix-themes-F2): the measured package's own declarations
+  // whose target is not on disk, as projectRoot-relative posix paths beside the
+  // manifest field that named them. Present only when `source` is "none"
+  // because the declaration is what stopped the size-ranked fallback.
+  declaredMissing?: Array<{ field: string; path: string; buildCommand?: string }>;
 }
 
 // M102 (heroui-F1): the fields a package uses to tell a bundler where its own
 // stylesheet is. Read in the order a "style" condition would be looked up, and
 // only for the measured package itself — never an ancestor application's
 // manifest (M82).
-export function packageStylesheetCandidates(projectRoot: string): string[] {
+// M112 A1 / I5 (radix-themes-F2): a declaration whose target is absent used to
+// leave no trace, so a package that names its own stylesheet and has not built
+// it read exactly like a package that names none. The two answers are kept
+// apart in the `StylesheetImportTarget` shape this file already uses, and the
+// declared arm carries the manifest field that named it so a remedy can quote
+// it back.
+export type PackageStylesheetCandidate = { file: string } | { declared: string; field: string };
+
+export function packageStylesheetCandidates(projectRoot: string): PackageStylesheetCandidate[] {
   const manifest = readProjectManifest(projectRoot);
   if (!manifest) return [];
-  const declared: string[] = [];
-  const add = (value: unknown): void => {
-    if (typeof value === "string" && isStylesheet(value)) declared.push(value);
+  const declared: Array<{ field: string; value: string }> = [];
+  const add = (field: string, value: unknown): void => {
+    if (typeof value === "string" && isStylesheet(value)) declared.push({ field, value });
   };
-  add(manifest.style);
+  add("style", manifest.style);
   const exportsField = manifest.exports;
   if (exportsField && typeof exportsField === "object" && !Array.isArray(exportsField)) {
     const entries = exportsField as Record<string, unknown>;
@@ -1147,20 +1379,51 @@ export function packageStylesheetCandidates(projectRoot: string): string[] {
         : entry && typeof entry === "object" && !Array.isArray(entry)
           ? (entry as Record<string, unknown>).style ?? (entry as Record<string, unknown>).default
           : undefined;
-    add(styleOf(entries["./styles"]));
-    add(styleOf(entries["./style.css"]));
+    add("exports[./styles]", styleOf(entries["./styles"]));
+    add("exports[./style.css]", styleOf(entries["./style.css"]));
     for (const [subpath, entry] of Object.entries(entries)) {
       if (subpath === "./styles" || subpath === "./style.css") continue;
       if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
-      add((entry as Record<string, unknown>).style);
+      add(`exports[${subpath}].style`, (entry as Record<string, unknown>).style);
     }
   }
-  const files: string[] = [];
-  for (const value of declared) {
+  const targets: PackageStylesheetCandidate[] = [];
+  const seen = new Set<string>();
+  for (const { field, value } of declared) {
     const resolved = path.resolve(projectRoot, value);
-    if (isFile(resolved) && !files.includes(resolved)) files.push(resolved);
+    if (seen.has(resolved)) continue;
+    seen.add(resolved);
+    targets.push(isFile(resolved) ? { file: resolved } : { declared: resolved, field });
   }
-  return files;
+  return targets;
+}
+
+// M112 A1 (radix-themes-F2): the package said where its stylesheet is; the
+// build that writes it has not run. Named by the field that declared it, the
+// path it points at and the package's own build script, on the M95 rule that a
+// remedy quotes a script the manifest declares or none at all.
+export function CSS_DECLARED_UNBUILT_WARNING(
+  declarations: Array<{ field: string; path: string }>,
+  buildCommand?: string,
+  // M112 review: a package that declares an unbuilt stylesheet and also styles
+  // at runtime is not measured unstyled — M82's outcome stands, so the clause
+  // asserting it names the engines that do the styling instead.
+  runtimeEngines: string[] = [],
+): string {
+  const named = declarations
+    .map((d) => `"${d.field}" declares ${d.path}`)
+    .join(declarations.length === 2 ? " and " : ", ");
+  const one = declarations.length === 1;
+  return (
+    `this package's package.json ${named}, which ${one ? "is" : "are"} not on disk yet — ` +
+    `most likely because a build this harness never runs produces ${one ? "it" : "them"}. ` +
+    (runtimeEngines.length > 0
+      ? `No stylesheet was injected; styling is generated at runtime by ${runtimeEngines.join(", ")}, ` +
+        "so a built stylesheet may add nothing. "
+      : "No stylesheet was injected and the component is measured unstyled; ") +
+    (buildCommand ? `run \`${buildCommand}\` in this package` : "build this package") +
+    ", then re-run, or pass --css to name a stylesheet that exists."
+  );
 }
 
 export function CSS_PASSTHROUGH_RESOLVED_WARNING(candidate: string, targets: string[]): string {
@@ -1241,7 +1504,10 @@ function brokenNestedImport(
 export function discoverGlobalCss(
   projectRoot: string,
   warningsOut?: string[],
-  opts?: { extraEntryFiles?: string[] },
+  // M114 A2 (fluentui-F3 review): the file the run measures, read only for the
+  // styling binding it imports. Absent means the unrecognised-engine branch is
+  // never taken, so the line stays "none found".
+  opts?: { extraEntryFiles?: string[]; measuredFile?: string },
 ): CssDiscovery {
   const workspaceRoot = findWorkspaceRoot(projectRoot);
   const aliases = loadTsconfigAliases(projectRoot);
@@ -1265,7 +1531,15 @@ export function discoverGlobalCss(
     return false;
   };
 
-  const entry = findProjectEntry(projectRoot);
+  // M114 A3, A5 (vuetify-F1): the entry chain is what the project's own config
+  // says it is. A `root` the config declares moves index.html out of the
+  // package root, and a foldable `build.rollupOptions.input` names an html
+  // file that is nowhere near either.
+  const viteConfig = readViteConfigData(projectRoot, workspaceRoot);
+  const entry = findProjectEntry(projectRoot, {
+    ...(viteConfig.root !== undefined ? { configRoot: viteConfig.root } : {}),
+    ...(viteConfig.rollupInputs !== undefined ? { rollupInputs: viteConfig.rollupInputs } : {}),
+  });
   const entryFiles: string[] = [];
   for (const file of [...(entry ? [entry] : []), ...(opts?.extraEntryFiles ?? [])]) {
     const resolved = path.resolve(file);
@@ -1286,11 +1560,14 @@ export function discoverGlobalCss(
 
   // M102 (heroui-F1): what the package says about itself, above a filename
   // convention and above the size-ranked guess.
+  const packageDeclared = packageStylesheetCandidates(projectRoot);
   const declaredCandidates: Array<{ file: string; source: "package-declared" | "candidate" }> = [
-    ...packageStylesheetCandidates(projectRoot).map((file) => ({
-      file,
-      source: "package-declared" as const,
-    })),
+    ...packageDeclared
+      .filter((target): target is { file: string } => "file" in target)
+      .map((target) => ({
+        file: target.file,
+        source: "package-declared" as const,
+      })),
     ...GLOBAL_CSS_CANDIDATES.map((name) => path.join(projectRoot, name))
       .filter(isFile)
       .map((file) => ({ file, source: "candidate" as const })),
@@ -1313,6 +1590,37 @@ export function discoverGlobalCss(
       continue;
     }
     return { files, source };
+  }
+
+  // M112 A1, A2 (radix-themes-F2): a package that declares its own stylesheet
+  // and has not built it yet is not a package without one. The size-ranked
+  // walk below would inject an unrelated file and call it the global sheet,
+  // so the declaration is disclosed and the walk never starts.
+  const declaredMissingTargets = packageDeclared.filter(
+    (target): target is { declared: string; field: string } => "declared" in target,
+  );
+  if (declaredMissingTargets.length > 0) {
+    const buildCommand = packageScriptCommand(projectRoot, "build");
+    const declaredMissing = declaredMissingTargets.map((target) => ({
+      field: target.field,
+      path: relativeToRoot(target.declared, projectRoot),
+      ...(buildCommand !== undefined ? { buildCommand } : {}),
+    }));
+    // The runtime layer (M82) sits below the ranked walk this return skips, so
+    // it is asked here: an unbuilt declaration plus emotion or styled-components
+    // is a package whose styling never needed a static stylesheet.
+    const declaredRuntimeEngines = detectRuntimeStyleEngines(projectRoot, workspaceRoot);
+    warningsOut?.push(
+      CSS_DECLARED_UNBUILT_WARNING(declaredMissing, buildCommand, declaredRuntimeEngines),
+    );
+    return {
+      files: [],
+      source: "none",
+      declaredMissing,
+      ...(declaredRuntimeEngines.length > 0
+        ? { runtimeEngines: declaredRuntimeEngines, runtimeEnginesRecognised: true }
+        : {}),
+    };
   }
 
   const ranked = rankedStylesheets(projectRoot);
@@ -1346,7 +1654,24 @@ export function discoverGlobalCss(
   }
 
   const runtimeEngines = detectRuntimeStyleEngines(projectRoot, workspaceRoot);
-  if (runtimeEngines.length > 0) return { files: [], source: "runtime", runtimeEngines };
+  if (runtimeEngines.length > 0) {
+    return { files: [], source: "runtime", runtimeEngines, runtimeEnginesRecognised: true };
+  }
+
+  // M114 A2: no declared engine and no stylesheet anywhere. What the measured
+  // file imports is the last read left, and it decides between "none found"
+  // and an engine this recogniser cannot name.
+  const unlisted = opts?.measuredFile
+    ? unrecognisedRuntimeStyleEngine(opts.measuredFile)
+    : undefined;
+  if (unlisted !== undefined) {
+    return {
+      files: [],
+      source: "runtime",
+      runtimeEngines: [unlisted],
+      runtimeEnginesRecognised: false,
+    };
+  }
 
   return { files: [], source: "none" };
 }
@@ -1355,14 +1680,58 @@ export function discoverGlobalCss(
 // ever going to exist. Checked only once the fallback layer's ranked walk has
 // no survivor — never before layers 1-3, and never as a reason to skip a real
 // find.
+// M114 A1 (fluentui-F3): the list is what the recogniser can name, not what
+// exists. Griffel styles every Fluent v9 component and was absent, so a
+// package whose only styling is `makeStyles` read as "no stylesheet found".
 export const RUNTIME_STYLE_ENGINES = [
   "@ant-design/cssinjs",
+  "antd-style",
   "@emotion/react",
   "@emotion/styled",
   "@emotion/css",
+  "@griffel/react",
+  "@griffel/core",
+  "css-render",
   "styled-components",
   "primevue",
 ];
+
+// M114 A2: the bindings a runtime styling engine exports. An import of one of
+// them from a package the list does not name is an observation about the
+// measured file, not a fact about the package's dependencies, and it is
+// disclosed in weaker wording (report.ts, formatStylesheetsLine).
+const RUNTIME_STYLE_BINDINGS = new Set(["makeStyles", "createUseStyles", "styled"]);
+
+// The package a `makeStyles`/`createUseStyles`/`styled` binding was imported
+// from in the measured file, when that package is not one the list above
+// carries. Bare specifiers only: a relative import is the project's own code,
+// not an engine.
+export function unrecognisedRuntimeStyleEngine(measuredFile: string): string | undefined {
+  let sourceText: string;
+  try {
+    sourceText = fs.readFileSync(measuredFile, "utf-8");
+  } catch {
+    return undefined;
+  }
+  const kind = /\.[jt]sx$/i.test(measuredFile) ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
+  const source = ts.createSourceFile(measuredFile, sourceText, ts.ScriptTarget.Latest, false, kind);
+  for (const statement of source.statements) {
+    if (!ts.isImportDeclaration(statement) || !statement.importClause) continue;
+    if (!ts.isStringLiteral(statement.moduleSpecifier)) continue;
+    const specifier = statement.moduleSpecifier.text;
+    if (specifier.startsWith(".") || specifier.startsWith("/")) continue;
+    if (RUNTIME_STYLE_ENGINES.includes(specifier)) continue;
+    const clause = statement.importClause;
+    const named = clause.namedBindings;
+    const imported: string[] = [];
+    if (clause.name) imported.push(clause.name.text);
+    if (named && ts.isNamedImports(named)) {
+      for (const element of named.elements) imported.push((element.propertyName ?? element.name).text);
+    }
+    if (imported.some((name) => RUNTIME_STYLE_BINDINGS.has(name))) return specifier;
+  }
+  return undefined;
+}
 
 export function detectRuntimeStyleEngines(
   projectRoot: string,
@@ -1483,10 +1852,282 @@ export function findPostcssConfigAbove(
   return undefined;
 }
 
+// M111 A1 (midday-F1): Tailwind 3 has no Vite plugin of its own; it enters
+// through PostCSS, and `resolveDefaultConfigPath` resolves `tailwind.config.*`
+// against `process.cwd()`. A run started at the repository root of a monorepo
+// therefore built a workspace member with Tailwind's *default* config -- empty
+// `content`, no theme extension -- and `@apply` threw inside PostCSS. The
+// config the member is built with has to come from the member, not the shell.
+export const TAILWIND_CONFIG_FILES = [
+  "tailwind.config.js",
+  "tailwind.config.cjs",
+  "tailwind.config.mjs",
+  "tailwind.config.ts",
+];
+
+// Member first, then each ancestor up to and including the workspace root:
+// Vite's own PostCSS search order, so the file found here is the file the
+// pipeline would have used had it been started in the member.
+function findPostcssConfigFile(memberRoot: string, workspaceRoot: string): string | undefined {
+  for (const level of workspaceLevels(memberRoot, workspaceRoot)) {
+    for (const name of POSTCSS_CONFIG_FILES) {
+      const candidate = path.join(level, name);
+      if (isFile(candidate)) return candidate;
+    }
+  }
+  return undefined;
+}
+
+// `@tailwindcss/postcss` and `@tailwindcss/vite` are the version-4 entries; the
+// bare `tailwindcss` plugin name is the version-3 one.
+function postcssTextDeclaresBareTailwind(text: string): boolean {
+  return /(?<![@\w/-])tailwindcss(?![\w/-])/.test(text);
+}
+
+// Installed metadata first, the declared range second: a fixture or a member
+// measured before its install still states which major it means.
+function tailwindMajor(memberRoot: string, workspaceRoot: string): number | undefined {
+  const versions: string[] = [];
+  // Bounded by the workspace: an install above the workspace root belongs to
+  // whatever checkout this project happens to sit inside, not to this project.
+  for (const level of workspaceLevels(memberRoot, workspaceRoot)) {
+    const manifest = readProjectManifest(path.join(level, "node_modules", "tailwindcss"));
+    if (typeof manifest?.version === "string") {
+      versions.push(manifest.version);
+      break;
+    }
+  }
+  for (const level of workspaceLevels(memberRoot, workspaceRoot)) {
+    const manifest = readProjectManifest(level);
+    for (const field of ["dependencies", "devDependencies", "peerDependencies"] as const) {
+      const deps = manifest?.[field] as Record<string, unknown> | undefined;
+      const range = deps?.tailwindcss;
+      if (typeof range === "string") versions.push(range);
+    }
+  }
+  for (const version of versions) {
+    const major = /(\d+)/.exec(version);
+    if (major) return Number(major[1]);
+  }
+  return undefined;
+}
+
+export interface Tailwind3Pipeline {
+  postcssConfigFile: string;
+  configPath?: string;
+  searched: string[];
+}
+
+// Undefined when nothing about this member is a Tailwind 3 PostCSS pipeline:
+// no PostCSS config, a config that names no bare `tailwindcss` entry, or a
+// major other than 3. The start directory is not an input -- that is the whole
+// point of the milestone -- so it appears only in the message A3 builds.
+export function resolveTailwind3Config(
+  memberRoot: string,
+  workspaceRoot: string = findWorkspaceRoot(memberRoot),
+): Tailwind3Pipeline | undefined {
+  if (detectTailwindVite(memberRoot)) return undefined;
+  const postcssConfigFile = findPostcssConfigFile(memberRoot, workspaceRoot);
+  if (postcssConfigFile === undefined) return undefined;
+  let text: string;
+  try {
+    text = fs.readFileSync(postcssConfigFile, "utf-8");
+  } catch {
+    return undefined;
+  }
+  if (!postcssTextDeclaresBareTailwind(text)) return undefined;
+  const major = tailwindMajor(memberRoot, workspaceRoot);
+  if (major !== undefined && major !== 3) return undefined;
+  const searched = workspaceLevels(memberRoot, workspaceRoot);
+  for (const level of searched) {
+    for (const name of TAILWIND_CONFIG_FILES) {
+      const candidate = path.join(level, name);
+      if (isFile(candidate)) return { postcssConfigFile, configPath: candidate, searched };
+    }
+  }
+  return { postcssConfigFile, searched };
+}
+
+// M111 A3. Names what was looked for, where, and the directory this run was
+// started in, because that directory is what Tailwind falls back to once the
+// search comes back empty. It never names a build script: no script produces a
+// config the repository does not carry.
+export function TAILWIND3_CONFIG_MISSING_WARNING(searched: string[], startDir: string): string {
+  return (
+    `This project builds its CSS with Tailwind 3 through PostCSS, but none of ` +
+    `${TAILWIND_CONFIG_FILES.join(", ")} was found in ${searched.join(", ")}. ` +
+    `Tailwind then resolves its config from the directory the run started in ` +
+    `(${startDir}) and falls back to its default config, whose content list is empty: ` +
+    `utility classes and @apply rules resolve to nothing. Add one of those files to ${searched[0]}.`
+  );
+}
+
+interface PostcssPluginDeclaration {
+  name?: string;
+  options?: unknown;
+  instance?: unknown;
+}
+
+// The member's own config file decides the plugin list. Loaded, not parsed:
+// the object map and the array forms both reach the same declarations, and a
+// plugin the member instantiated itself passes through untouched.
+async function readPostcssPluginDeclarations(
+  file: string,
+): Promise<PostcssPluginDeclaration[] | undefined> {
+  if (![".js", ".cjs", ".mjs"].includes(path.extname(file))) return undefined;
+  let config: unknown;
+  try {
+    config = createRequire(file)(file);
+  } catch {
+    const mod = (await import(pathToFileURL(file).href)) as { default?: unknown };
+    config = mod.default ?? mod;
+  }
+  const plugins = (config as { plugins?: unknown } | undefined)?.plugins;
+  if (Array.isArray(plugins)) {
+    return plugins.map((entry) => {
+      if (typeof entry === "string") return { name: entry };
+      if (Array.isArray(entry) && typeof entry[0] === "string") {
+        return { name: entry[0], options: entry[1] };
+      }
+      return { instance: entry };
+    });
+  }
+  if (plugins && typeof plugins === "object") {
+    return Object.entries(plugins as Record<string, unknown>)
+      // PostCSS's object form disables a plugin with `false`. A disabled entry
+      // is not part of the pipeline the member declared, so it produces none.
+      .filter(([, options]) => options !== false)
+      .map(([name, options]) => ({
+      name,
+      ...(options === true || options === null || options === undefined ? {} : { options }),
+    }));
+  }
+  return undefined;
+}
+
+// M111 A1: the member's pipeline rebuilt with one difference -- its Tailwind 3
+// entry receives the config path resolved from the member. Every other plugin
+// the member declared keeps its own options and its own place in the order.
+// Any failure returns undefined, which leaves the run on the directory-search
+// behaviour it had before: a stylesheet decision is never worth aborting for.
+// M111 A2 (midday-F1): Tailwind 3 resolves a relative `content` glob against
+// `process.cwd()`, so the same config generated different CSS from different
+// shell directories. This writes the member's config back out with every
+// relative glob anchored to the member root and returns the generated file's
+// path. A path, not an object: Tailwind's context cache is keyed by the config
+// file path, and an object config rebuilds that context on every build.
+export function writeAnchoredTailwind3Config(
+  memberRoot: string,
+  tailwindConfigPath: string,
+  outputDir: string,
+): string {
+  const loadConfigPath = createRequire(path.join(memberRoot, "/")).resolve(
+    "tailwindcss/loadConfig",
+  );
+  const generated = path.join(outputDir, "tailwind.anchored.config.cjs");
+  const source = [
+    `// Generated by 120fps: the member's own Tailwind config, with every relative`,
+    "// `content` glob resolved against the member root instead of the directory",
+    "// this run started in.",
+    `const path = require("node:path");`,
+    `const loaded = require(${JSON.stringify(loadConfigPath)});`,
+    "const loadConfig = loaded.default || loaded;",
+    `const base = ${JSON.stringify(memberRoot)};`,
+    `const config = loadConfig(${JSON.stringify(tailwindConfigPath)});`,
+    "const anchor = (glob) => {",
+    `  if (typeof glob !== "string") return glob;`,
+    `  const negated = glob.startsWith("!");`,
+    "  const body = negated ? glob.slice(1) : glob;",
+    "  if (path.isAbsolute(body)) return glob;",
+    `  return (negated ? "!" : "") + path.resolve(base, body).split(path.sep).join("/");`,
+    "};",
+    "const content = config.content;",
+    "module.exports = Array.isArray(content)",
+    "  ? { ...config, content: content.map(anchor) }",
+    `  : content && typeof content === "object"`,
+    "    ? { ...config, content: { ...content, files: (content.files || []).map(anchor) } }",
+    "    : config;",
+    "",
+  ].join("\n");
+  fs.writeFileSync(generated, source);
+  return generated;
+}
+
+export async function loadTailwind3PostcssPipeline(
+  memberRoot: string,
+  postcssConfigFile: string,
+  tailwindConfigPath: string,
+  outputDir?: string,
+  onWarning?: (warning: string) => void,
+): Promise<{ plugins: unknown[] } | undefined> {
+  try {
+    const declared = await readPostcssPluginDeclarations(postcssConfigFile);
+    // A plugin list this reader cannot read -- a `.ts` postcss config, or a
+    // `plugins` value that is neither an array nor an object -- leaves the run
+    // on the directory-dependent search. Disclosed, never silent.
+    if (declared === undefined) {
+      onWarning?.(
+        `Could not read a plugin list from ${postcssConfigFile}: Tailwind resolves its own config ` +
+          `from the directory this run started in, so the result depends on that directory.`,
+      );
+      return undefined;
+    }
+    let configPath = tailwindConfigPath;
+    if (outputDir !== undefined) {
+      try {
+        configPath = writeAnchoredTailwind3Config(memberRoot, tailwindConfigPath, outputDir);
+      } catch (err) {
+        onWarning?.(
+          `Could not anchor the content globs of ${tailwindConfigPath} to ${memberRoot} ` +
+            `(${err instanceof Error ? err.message : String(err)}): a relative glob in that config ` +
+            `resolves against the directory this run started in, so the CSS built depends on it.`,
+        );
+      }
+    }
+    const require = createRequire(path.join(memberRoot, "/"));
+    const plugins: unknown[] = [];
+    for (const entry of declared) {
+      if (entry.name === undefined) {
+        plugins.push(entry.instance);
+        continue;
+      }
+      // A member that already pinned a config path had no directory dependence
+      // to take away, so its own value stands.
+      const declaredConfig = (entry.options as Record<string, unknown> | undefined)?.config;
+      const options =
+        entry.name === "tailwindcss" && declaredConfig === undefined
+          ? {
+              ...(entry.options as Record<string, unknown> | undefined),
+              config: configPath,
+            }
+          : entry.options;
+      const loaded = (await import(pathToFileURL(require.resolve(entry.name)).href)) as {
+        default?: unknown;
+      };
+      const factory = loaded.default ?? loaded;
+      plugins.push(
+        typeof factory === "function"
+          ? (factory as (o?: unknown) => unknown)(options)
+          : factory,
+      );
+    }
+    return { plugins };
+  } catch (err) {
+    onWarning?.(
+      `Could not rebuild the PostCSS pipeline from ${postcssConfigFile} with an explicit Tailwind ` +
+        `config (${err instanceof Error ? err.message : String(err)}): Tailwind resolves its own ` +
+        `config from the directory this run started in, so the result depends on that directory.`,
+    );
+    return undefined;
+  }
+}
+
 export interface StyleTooling {
   tailwind: boolean;
   unsupportedEngines: string[];
   postcssConfigDir?: string;
+  tailwind3ConfigPath?: string;
+  tailwind3PostcssConfigFile?: string;
   warnings: string[];
 }
 
@@ -1497,15 +2138,27 @@ export function resolveStyleTooling(
   projectRoot: string,
   workspaceRoot: string = findWorkspaceRoot(projectRoot),
   importedPackages: readonly string[] = [],
+  startDir: string = process.cwd(),
 ): StyleTooling {
   const unsupportedEngines = detectUnsupportedStyleEngines(projectRoot, workspaceRoot, importedPackages);
   const postcssConfigDir = findPostcssConfigAbove(projectRoot, workspaceRoot);
+  const tailwind3 = resolveTailwind3Config(projectRoot, workspaceRoot);
+  const warnings =
+    unsupportedEngines.length > 0 ? [UNSUPPORTED_STYLE_ENGINE_WARNING(unsupportedEngines)] : [];
+  if (tailwind3 && tailwind3.configPath === undefined) {
+    warnings.push(TAILWIND3_CONFIG_MISSING_WARNING(tailwind3.searched, startDir));
+  }
   return {
     tailwind: detectTailwindVite(projectRoot),
     unsupportedEngines,
-    warnings:
-      unsupportedEngines.length > 0 ? [UNSUPPORTED_STYLE_ENGINE_WARNING(unsupportedEngines)] : [],
+    warnings,
     ...(postcssConfigDir ? { postcssConfigDir } : {}),
+    ...(tailwind3?.configPath
+      ? {
+          tailwind3ConfigPath: tailwind3.configPath,
+          tailwind3PostcssConfigFile: tailwind3.postcssConfigFile,
+        }
+      : {}),
   };
 }
 
@@ -1523,6 +2176,7 @@ const VITE_CONFIG_FILES = [
 // Ordered so the warning reads the same however the config file was written.
 const IGNORED_KEY_ORDER = [
   "a computed config object",
+  "root",
   "publicDir",
   "resolve.alias",
   "css.preprocessorOptions",
@@ -1531,9 +2185,19 @@ const IGNORED_KEY_ORDER = [
 
 export interface ViteConfigData {
   configFile?: string;
+  // M114 A3 (vuetify-F1): the directory the config makes Vite's root, when a
+  // text read can fold it. Absent when the config declares none or computes
+  // one, and then "root" is among `ignoredKeys`.
+  root?: string;
+  // M114 A5: the html files `build.rollupOptions.input` names, folded and
+  // confirmed on disk, in the config's own order.
+  rollupInputs?: string[];
   publicDir?: string;
   aliases: Array<{ find: RegExp; replacement: string }>;
   ignoredKeys: string[];
+  // M117 A3 (I10): the plugins the config declares, in the config's own order,
+  // named as the config writes them. Absent when it declares none.
+  pluginNames?: string[];
   // M76: resolve.conditions read from the member layer, or the workspace
   // root's when the member declares none.
   conditions: string[];
@@ -1572,10 +2236,33 @@ export function VITE_CONFIG_PREPROCESSOR_OPTION_WARNING(
   );
 }
 
-export function VITE_CONFIG_IGNORED_WARNING(configFile: string, keys: string[]): string {
+// M117 A3: a note that named the key `plugins` and none of the plugins left a
+// reader unable to tell whether the harness dropped anything that mattered.
+// With the names in hand the note states what it dropped; without them (a
+// `plugins` value that is not an array literal) the key-only wording stands.
+function VITE_CONFIG_DROPPED_PLUGINS_CLAUSE(
+  configFile: string,
+  keys: string[],
+  pluginNames: string[],
+): string {
+  const others = keys.filter((key) => key !== "plugins");
+  const declared = others.length > 0 ? `${others.join(", ")} and plugins` : "plugins";
+  return (
+    `${configFile} declares ${declared} the harness cannot honor: ${pluginNames.join(", ")} — ` +
+    "the project's Vite config is never executed"
+  );
+}
+
+export function VITE_CONFIG_IGNORED_WARNING(
+  configFile: string,
+  keys: string[],
+  pluginNames?: string[],
+): string {
   const base =
-    `${configFile} declares ${keys.join(", ")}, which the harness read but cannot honor: the project's ` +
-    "Vite config is never executed";
+    pluginNames && pluginNames.length > 0 && keys.includes("plugins")
+      ? VITE_CONFIG_DROPPED_PLUGINS_CLAUSE(configFile, keys, pluginNames)
+      : `${configFile} declares ${keys.join(", ")}, which the harness read but cannot honor: the project's ` +
+        "Vite config is never executed";
   return keys.includes("css.preprocessorOptions")
     ? `${base}; preprocessor globals (additionalData) are not replicated, so Sass or Less variables ` +
         "injected there are missing"
@@ -1735,6 +2422,14 @@ export function foldPathArray(node: ts.Expression, configDir: string): string[] 
   return dirs;
 }
 
+// An argument whose value the config text states outright: a string literal,
+// or `__dirname`, which is the config's own directory and so already the base
+// every fold resolves against.
+function isFoldableCallArgument(arg: ts.Expression): boolean {
+  if (stringLiteralValue(arg) !== undefined) return true;
+  return ts.isIdentifier(arg) && arg.text === "__dirname";
+}
+
 function resolveCallExpressionPath(node: ts.Expression, configDir: string): string | undefined {
   if (!ts.isCallExpression(node)) return undefined;
   const name = calleeName(node.expression);
@@ -1744,6 +2439,45 @@ function resolveCallExpressionPath(node: ts.Expression, configDir: string): stri
     .filter((v): v is string => v !== undefined);
   if (literalArgs.length === 0) return undefined;
   return path.resolve(configDir, ...literalArgs);
+}
+
+// M114 A5: `build.rollupOptions.input`, in the four shapes a config writes it
+// — one path, an array of paths, an object map of them, each a string literal
+// or a `resolve(...)`/`join(...)` call. Only html files that exist survive: an
+// entry the run cannot open is not an entry. Relative paths fold against the
+// config's own directory, the form every corpus config uses; a path relative
+// to a declared `root` instead simply does not resolve and is dropped.
+function foldRollupInputs(build: ts.ObjectLiteralExpression, configDir: string): string[] {
+  const rollupOptions = build.properties.find(
+    (property) => literalPropertyName(property) === "rollupOptions",
+  );
+  if (!rollupOptions || !ts.isPropertyAssignment(rollupOptions)) return [];
+  if (!ts.isObjectLiteralExpression(rollupOptions.initializer)) return [];
+  const input = rollupOptions.initializer.properties.find(
+    (property) => literalPropertyName(property) === "input",
+  );
+  if (!input || !ts.isPropertyAssignment(input)) return [];
+
+  const expressions: ts.Expression[] = [];
+  const value = input.initializer;
+  if (ts.isArrayLiteralExpression(value)) expressions.push(...value.elements);
+  else if (ts.isObjectLiteralExpression(value)) {
+    for (const entry of value.properties) {
+      if (ts.isPropertyAssignment(entry)) expressions.push(entry.initializer);
+    }
+  } else expressions.push(value);
+
+  const files: string[] = [];
+  for (const expression of expressions) {
+    const literal = stringLiteralValue(expression);
+    const resolved =
+      literal === undefined
+        ? resolveCallExpressionPath(expression, configDir)
+        : path.resolve(configDir, literal);
+    if (!resolved || !/\.html?$/i.test(resolved) || !isFile(resolved)) continue;
+    if (!files.includes(resolved)) files.push(resolved);
+  }
+  return files;
 }
 
 // The exported config object, through the shapes a config file is written in.
@@ -1787,6 +2521,28 @@ function findViteConfigObject(source: ts.SourceFile): ts.ObjectLiteralExpression
   return undefined;
 }
 
+// M117 A3: a call expression by its callee, an object literal by its `name`,
+// anything else by where it sits in the array. Text only: M71's invariant is
+// that a project's vite.config is read and never executed.
+function declaredPluginName(element: ts.Expression, index: number): string {
+  const positional = `unnamed plugin #${index + 1}`;
+  if (ts.isCallExpression(element)) {
+    const callee = element.expression;
+    return ts.isIdentifier(callee) || ts.isPropertyAccessExpression(callee)
+      ? callee.getText().replace(/\s+/g, "")
+      : positional;
+  }
+  if (ts.isObjectLiteralExpression(element)) {
+    for (const property of element.properties) {
+      if (!ts.isPropertyAssignment(property)) continue;
+      if (literalPropertyName(property) !== "name") continue;
+      const value = stringLiteralValue(property.initializer);
+      if (value !== undefined) return value;
+    }
+  }
+  return positional;
+}
+
 function findViteConfigFile(dir: string): string | undefined {
   for (const name of VITE_CONFIG_FILES) {
     const candidate = path.join(dir, name);
@@ -1796,10 +2552,15 @@ function findViteConfigFile(dir: string): string | undefined {
 }
 
 interface ParsedViteConfig {
+  // M114 A3, A5
+  root?: string;
+  rollupInputs?: string[];
   publicDir?: string;
   aliasEntries: Array<{ find: string; replacement: string }>;
   conditions: string[];
   ignored: Set<string>;
+  // M117 A3
+  pluginNames?: string[];
   // M106 A3 (twenty-F2)
   preprocessorOptions?: PreprocessorOptions;
   unfoldablePreprocessor?: string[];
@@ -1817,6 +2578,7 @@ function parseViteConfigFile(configFile: string): ParsedViteConfig | undefined {
   }
 
   const ignored = new Set<string>();
+  let pluginNames: string[] | undefined;
   const source = ts.createSourceFile(configFile, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   const config = findViteConfigObject(source);
   if (!config) {
@@ -1828,12 +2590,47 @@ function parseViteConfigFile(configFile: string): ParsedViteConfig | undefined {
   const aliasEntries: Array<{ find: string; replacement: string }> = [];
   let conditions: string[] = [];
   let publicDir: string | undefined;
+  let root: string | undefined;
+  let rollupInputs: string[] | undefined;
   const preprocessorOptions: PreprocessorOptions = {};
   const unfoldable: string[] = [];
 
   for (const property of config.properties) {
     if (!ts.isPropertyAssignment(property)) continue;
     const name = literalPropertyName(property);
+
+    // M114 A3 (vuetify-F1): vuetify's own `root: resolve('dev')` decides where
+    // its index.html is, and the loop had no branch for it, so the run
+    // asserted the package has no application entry.
+    if (name === "root") {
+      const literal = stringLiteralValue(property.initializer);
+      // M114 A3 review: `resolve(process.env.APP_ROOT, "dev")` folds to
+      // <configDir>/dev once the non-literal argument is dropped, which would
+      // name a root the config never declared. A call folds only when every
+      // argument is readable from the config text.
+      if (
+        literal === undefined &&
+        ts.isCallExpression(property.initializer) &&
+        !property.initializer.arguments.every(isFoldableCallArgument)
+      ) {
+        ignored.add("root");
+        continue;
+      }
+      const resolved =
+        literal === undefined
+          ? resolveCallExpressionPath(property.initializer, configDir)
+          : path.resolve(configDir, literal);
+      if (resolved && isDirectory(resolved)) root = resolved;
+      else ignored.add("root");
+      continue;
+    }
+
+    // M114 A5: the html file the project builds from, when the path folds.
+    if (name === "build" && ts.isObjectLiteralExpression(property.initializer)) {
+      const inputs = foldRollupInputs(property.initializer, configDir);
+      if (inputs.length > 0) rollupInputs = inputs;
+      continue;
+    }
 
     if (name === "publicDir") {
       const literal = stringLiteralValue(property.initializer);
@@ -1958,10 +2755,13 @@ function parseViteConfigFile(configFile: string): ParsedViteConfig | undefined {
     }
 
     if (name === "plugins") {
-      const empty =
-        ts.isArrayLiteralExpression(property.initializer) &&
-        property.initializer.elements.length === 0;
-      if (!empty) ignored.add("plugins");
+      const elements = ts.isArrayLiteralExpression(property.initializer)
+        ? property.initializer.elements
+        : undefined;
+      if (elements && elements.length === 0) continue;
+      ignored.add("plugins");
+      // M117 A3: what the note names, in the order the config declares them.
+      if (elements) pluginNames = elements.map(declaredPluginName);
     }
   }
 
@@ -1973,9 +2773,12 @@ function parseViteConfigFile(configFile: string): ParsedViteConfig | undefined {
   }
   return {
     publicDir,
+    ...(root !== undefined ? { root } : {}),
+    ...(rollupInputs !== undefined ? { rollupInputs } : {}),
     aliasEntries,
     conditions,
     ignored,
+    ...(pluginNames ? { pluginNames } : {}),
     ...(Object.keys(preprocessorOptions).length > 0 ? { preprocessorOptions } : {}),
     ...(unfoldable.length > 0 ? { unfoldablePreprocessor: unfoldable } : {}),
   };
@@ -2006,9 +2809,14 @@ export function readViteConfigData(
     parsed = parseViteConfigFile(configFile);
     if (parsed) {
       if (parsed.publicDir) data.publicDir = parsed.publicDir;
+      // M114 A3, A5: member-only, like publicDir — a workspace root's entry
+      // is not this package's entry.
+      if (parsed.root) data.root = parsed.root;
+      if (parsed.rollupInputs) data.rollupInputs = parsed.rollupInputs;
       data.aliases = parsed.aliasEntries.map(toAliasRegex);
       data.conditions = parsed.conditions;
       data.ignoredKeys = IGNORED_KEY_ORDER.filter((key) => parsed!.ignored.has(key));
+      if (parsed.pluginNames) data.pluginNames = parsed.pluginNames;
       // M106 A3: the foldable half travels to the server; the rest is named.
       if (parsed.preprocessorOptions) data.preprocessorOptions = parsed.preprocessorOptions;
       if (parsed.unfoldablePreprocessor) {
@@ -2220,6 +3028,16 @@ export const REACT_COMPILER_PACKAGE = "babel-plugin-react-compiler";
 export const REACT_COMPILER_DISABLED_WARNING =
   "React Compiler is installed but disabled for this run; rerender costs will be higher than production.";
 
+// M108 review: the plugin defaults its target to React 19 when none is passed,
+// so an undetectable React major would compile against a runtime the project
+// may not have, undisclosed. An undisclosable target keeps the compiler off.
+export function reactCompilerTargetUnknownWarning(projectRoot: string): string {
+  return (
+    `the installed React version could not be read from ${projectRoot}, so the React Compiler ` +
+    `target is unknown; measuring without the compiler transform.`
+  );
+}
+
 export function reactCompilerResolutionWarning(projectRoot: string): string {
   return (
     `${REACT_COMPILER_PACKAGE} is declared but could not be resolved from ${projectRoot}; ` +
@@ -2280,6 +3098,10 @@ export interface ReactCompilerState {
   version?: string;
   pluginPath?: string;
   warning?: string;
+  // M108 A3/A4: the React major the transform compiles for, and why it did not
+  // run when the runtime that major needs is absent.
+  target?: ReactCompilerTarget;
+  skipped?: { target: string; missingModule: string };
 }
 
 // At most one warning per state, so the disabled note and the resolution note
@@ -2313,7 +3135,40 @@ export function resolveReactCompilerState(
       warning: reactCompilerResolutionWarning(projectRoot),
     };
   }
-  return { detected, active: true, pluginPath, ...(version ? { version } : {}) };
+  const installedTarget = detectReactMajor(projectRoot);
+  // A react that IS installed answers for the major by itself: an unreadable or
+  // pre-17 install is an unknown target, never the declared range's answer.
+  const target =
+    installedTarget ??
+    (installedPackageDir("react", projectRoot) ? undefined : declaredReactMajor(projectRoot));
+  if (!target) {
+    return {
+      detected,
+      active: false,
+      ...(version ? { version } : {}),
+      warning: reactCompilerTargetUnknownWarning(projectRoot),
+    };
+  }
+  const runtime = reactCompilerRuntime(target);
+  // The runtime probe reads what is installed, so it only speaks when react
+  // itself is installed; a declared-only target has nothing to probe.
+  if (installedTarget && reactCompilerRuntimeDeps(projectRoot, target).length === 0) {
+    return {
+      detected,
+      active: false,
+      ...(version ? { version } : {}),
+      target,
+      skipped: { target, missingModule: runtime.module },
+      warning: reactCompilerRuntimeMissingWarning(target, runtime.module, runtime.package),
+    };
+  }
+  return {
+    detected,
+    active: true,
+    pluginPath,
+    ...(version ? { version } : {}),
+    ...(target ? { target } : {}),
+  };
 }
 
 // Compiled output imports react/compiler-runtime. @vitejs/plugin-react only
@@ -2322,13 +3177,83 @@ export function resolveReactCompilerState(
 // declared here: otherwise Vite discovers it on the first page load and forces
 // a full reload that destroys the execution context mid-measurement. React 18
 // projects have no such module; there the entry is skipped.
-export function reactCompilerRuntimeDeps(projectRoot: string): string[] {
+export function reactCompilerRuntimeDeps(
+  projectRoot: string,
+  target: ReactCompilerTarget = "19",
+): string[] {
+  const runtime = reactCompilerRuntime(target);
   try {
-    createRequire(path.join(projectRoot, "/")).resolve("react/compiler-runtime");
-    return ["react/compiler-runtime"];
+    createRequire(path.join(projectRoot, "/")).resolve(runtime.module);
+    return [runtime.module];
   } catch {
     return [];
   }
+}
+
+// M108 A3 (primer-react-F1): the compiler emits the runtime import its target
+// names, so the target has to be the React the project installs. React 19
+// ships the runtime inside react itself; 17 and 18 take it from the separate
+// react-compiler-runtime package the project installs beside them.
+export type ReactCompilerTarget = "17" | "18" | "19";
+
+export function detectReactMajor(projectRoot: string): ReactCompilerTarget | undefined {
+  const reactDir = installedPackageDir("react", projectRoot);
+  if (!reactDir) return undefined;
+  return majorOf(readProjectManifest(reactDir)?.version);
+}
+
+// With no react installed the declared range is the only evidence of the major
+// there is. An install that reads always wins over it.
+function declaredReactMajor(projectRoot: string): ReactCompilerTarget | undefined {
+  const manifest = readProjectManifest(projectRoot) as
+    | {
+        dependencies?: Record<string, unknown>;
+        devDependencies?: Record<string, unknown>;
+        peerDependencies?: Record<string, unknown>;
+      }
+    | undefined;
+  return majorOf(
+    manifest?.dependencies?.react ??
+      manifest?.devDependencies?.react ??
+      manifest?.peerDependencies?.react,
+  );
+}
+
+function majorOf(version: unknown): ReactCompilerTarget | undefined {
+  if (typeof version !== "string") return undefined;
+  const major = /^\D*(\d+)/.exec(version)?.[1];
+  if (major === "17" || major === "18") return major;
+  return Number(major) >= 19 ? "19" : undefined;
+}
+
+export function reactCompilerRuntime(target: ReactCompilerTarget): {
+  module: string;
+  package: string;
+} {
+  return target === "19"
+    ? { module: "react/compiler-runtime", package: "react" }
+    : { module: "react-compiler-runtime", package: "react-compiler-runtime" };
+}
+
+// M92: an option the plugin defaults for us is an option this run cannot
+// disclose, so the target is always passed explicitly once it is known.
+export function reactCompilerBabelOptions(
+  target: ReactCompilerTarget | undefined,
+): Record<string, string> {
+  return target ? { target } : {};
+}
+
+export function reactCompilerRuntimeMissingWarning(
+  target: ReactCompilerTarget,
+  module: string,
+  supplier: string,
+): string {
+  return (
+    `${REACT_COMPILER_PACKAGE} runs at target ${target} here (the React this project installs), ` +
+    `whose runtime import "${module}" ` +
+    `does not resolve from this project (${supplier} supplies it); skipping the compiler ` +
+    "transform and measuring without it."
+  );
 }
 
 // Vite transforms the generated .tsx entry with the automatic JSX runtime, so
@@ -2352,14 +3277,17 @@ export function reactJsxRuntimeDeps(projectRoot: string): string[] {
 }
 
 // Imported on demand: a run without the compiler never loads @babel/core.
-export async function loadReactCompilerPlugin(pluginPath: string): Promise<unknown[]> {
+export async function loadReactCompilerPlugin(
+  pluginPath: string,
+  target?: ReactCompilerTarget,
+): Promise<unknown[]> {
   const mod = await import("@vitejs/plugin-react");
   const factory = (mod as { default?: unknown }).default ?? mod;
   if (typeof factory !== "function") {
     throw new Error("@vitejs/plugin-react has no callable default export");
   }
   const plugin = (factory as (options: unknown) => unknown)({
-    babel: { plugins: [[pluginPath, {}]] },
+    babel: { plugins: [[pluginPath, reactCompilerBabelOptions(target)]] },
   });
   return Array.isArray(plugin) ? plugin : [plugin];
 }
@@ -2713,24 +3641,105 @@ export function jsxInJsPlugin(jsxImportSource: string = DEFAULT_JSX_IMPORT_SOURC
 export function resolveJsxImportSource(
   projectRoot: string,
   workspaceRoot: string = findWorkspaceRoot(projectRoot),
+  forFile?: string,
 ): string {
-  const configPath = findCompilerConfig(projectRoot, workspaceRoot);
-  if (!configPath) return DEFAULT_JSX_IMPORT_SOURCE;
   try {
-    const configFile = ts.readConfigFile(configPath, ts.sys.readFile);
-    if (configFile.error) return DEFAULT_JSX_IMPORT_SOURCE;
-    const parsed = ts.parseJsonConfigFileContent(
-      configFile.config,
-      ts.sys,
-      path.dirname(configPath),
-      undefined,
-      configPath,
-    );
-    const declared = parsed.options.jsxImportSource;
+    // M109 (I1): the governing config, so a references-only root reaches the
+    // referenced config that declares jsxImportSource. The file decides which
+    // referenced config that is: a directory query matches whichever config
+    // covers any file under the root, which is the first `references` entry,
+    // not the one covering the component being measured.
+    const declared = resolveGoverningTsconfig(
+      forFile ?? projectRoot,
+      workspaceRoot,
+    ).options.jsxImportSource;
     return declared && declared.length > 0 ? declared : DEFAULT_JSX_IMPORT_SOURCE;
   } catch {
     return DEFAULT_JSX_IMPORT_SOURCE;
   }
+}
+
+// M109 (A3, ark-F1): with no esbuild option of its own, vite:esbuild reads the
+// project tsconfig for the ts/tsx loaders, so ark's `"jsx": "preserve"` (the
+// standard Vite library setup, where the project's own plugin-react supplies
+// the runtime the harness does not run) fell through to esbuild's classic
+// React.createElement transform. ark imports only named React exports, so the
+// first JSX evaluation threw `React is not defined` and every .tsx in the
+// repository was mis-transformed. These are the two settings jsxInJsPlugin has
+// applied to project .js files since M77.
+export function harnessEsbuildOptions(
+  projectRoot: string,
+  workspaceRoot?: string,
+  forFile?: string,
+): { jsx: "automatic"; jsxImportSource: string } {
+  return {
+    jsx: "automatic",
+    jsxImportSource: resolveJsxImportSource(
+      projectRoot,
+      workspaceRoot ?? findWorkspaceRoot(projectRoot),
+      forFile,
+    ),
+  };
+}
+
+// The two compile-shaping keys createServer receives, in one place a test can
+// hold: a Vue project keeps the vue plugin's own compilation of its SFC blocks
+// and receives no esbuild key at all.
+export function harnessServerCompileOptions(
+  renderer: string,
+  projectRoot: string,
+  workspaceRoot: string,
+  componentPath: string,
+  resolveConditions: string[],
+): {
+  esbuild?: { jsx: "automatic"; jsxImportSource: string };
+  conditions?: string[];
+} {
+  return {
+    ...(renderer === "vue"
+      ? {}
+      : { esbuild: harnessEsbuildOptions(projectRoot, workspaceRoot, componentPath) }),
+    ...(resolveConditions.length > 0 ? { conditions: resolveConditions } : {}),
+  };
+}
+
+export function RESOLVE_CONDITIONS_WARNING(
+  conditions: string[],
+  tsconfigPath: string,
+  viteConfigFile?: string,
+): string {
+  const source = viteConfigFile
+    ? `${path.basename(viteConfigFile)}'s resolve.conditions and customConditions in ${tsconfigPath}`
+    : `customConditions in ${tsconfigPath}`;
+  return `resolve.conditions [${conditions.join(", ")}] came from ${source}.`;
+}
+
+// M109 (A5, react-spectrum-F2): react-aria publishes its subpaths only under
+// the `source` condition the consuming tsconfig declares, with no dist/ to fall
+// back to, and the dev server answered 500 for every one of them; nothing here
+// ever read customConditions. The vite config's own list stays first, so every
+// export a project already resolved resolves the same way.
+export function resolveServerConditions(
+  projectRoot: string,
+  viteConditions: string[],
+  opts?: { forFile?: string; workspaceRoot?: string; viteConfigFile?: string },
+): { conditions: string[]; warning?: string } {
+  const governing = resolveGoverningTsconfig(
+    opts?.forFile ?? projectRoot,
+    opts?.workspaceRoot ?? findWorkspaceRoot(projectRoot),
+  );
+  const declared = governing.options.customConditions ?? [];
+  const added = declared.filter((condition) => !viteConditions.includes(condition));
+  const conditions = [...viteConditions, ...added];
+  if (added.length === 0 || !governing.configPath) return { conditions };
+  return {
+    conditions,
+    warning: RESOLVE_CONDITIONS_WARNING(
+      conditions,
+      governing.configPath,
+      viteConditions.length > 0 ? opts?.viteConfigFile : undefined,
+    ),
+  };
 }
 
 const RESOLVE_ENTRY_FAILURE = /Failed to resolve entry for package "([^"]+)"/;
@@ -2757,7 +3766,7 @@ function resolveManifestEntry(manifest: Record<string, unknown>): string | undef
 
 export const UNBUILT_WORKSPACE_PACKAGE_WARNING = (pkg: string, entryRelative: string): string =>
   `${pkg} is a workspace package whose package.json points at ${entryRelative}, which does not ` +
-  "exist on disk: it needs a build step (its dist/ output was never produced), not a " +
+  "exist on disk: it needs a build step (that build output was never produced), not a " +
   "package.json fix. Run this workspace's build for that package, then measure again.";
 
 // M79 (3a). Vite's own "Failed to resolve entry for package" message blames a
@@ -2767,7 +3776,10 @@ export const UNBUILT_WORKSPACE_PACKAGE_WARNING = (pkg: string, entryRelative: st
 // Returns undefined — falling through to the unchanged VITE_START_FAILED
 // message — for anything that is not exactly this shape: a genuinely broken
 // external dependency, or a workspace package whose entry does resolve.
-function diagnoseUnbuiltWorkspacePackage(viteMessage: string, projectRoot: string): string | undefined {
+export function diagnoseUnbuiltWorkspacePackage(
+  viteMessage: string,
+  projectRoot: string,
+): string | undefined {
   const match = RESOLVE_ENTRY_FAILURE.exec(viteMessage);
   if (!match) return undefined;
   const pkg = match[1];
@@ -2790,6 +3802,10 @@ function diagnoseUnbuiltWorkspacePackage(viteMessage: string, projectRoot: strin
   if (entry === undefined) return undefined;
   const entryPath = path.resolve(real, entry);
   if (fs.existsSync(entryPath)) return undefined;
+  // M107 (gutenberg-F1): a build is not what this package needs when its own
+  // source is on disk — scanExternalDeps aliases it, and the run reaches a
+  // verdict instead of aborting.
+  if (resolveWorkspaceSourceEntry(real, manifest) !== undefined) return undefined;
   return UNBUILT_WORKSPACE_PACKAGE_WARNING(pkg, path.relative(real, entryPath).replace(/\\/g, "/"));
 }
 
@@ -2854,7 +3870,7 @@ export function presentBundlerFailure(
     diagnoseMissingShimExport(message) ??
     diagnoseGitignoredGeneratedFile(message, projectRoot) ??
     diagnoseNuxtBuildModule(message, buildWarnings, projectRoot) ??
-    diagnoseBundlerFailure(message) ??
+    diagnoseBundlerFailure(message, projectRoot) ??
     stripBundlerStackFrames(message)
   );
 }
@@ -2868,6 +3884,25 @@ export function BUNDLER_IMPORT_UNRESOLVED_ERROR(target: string, importer: string
     "Check that the target exists; if it lives in an unbuilt workspace package, run that package's " +
     "own build first."
   );
+}
+
+// M108 A5: names the layer that produces the specifier (a Vite plugin this
+// harness never loads), and the package this repository declares for it. No
+// build command: nothing on disk is missing, so no build produces it.
+export function VIRTUAL_NAMESPACE_IMPORT_ERROR(
+  target: string,
+  importer: string,
+  namespace: string,
+  producer: string | undefined,
+): string {
+  const base =
+    `${importer} imports "${target}", a module in the \`${namespace}\` virtual namespace: a Vite ` +
+    "plugin generates it at request time, and 120fps never reads your vite.config, so nothing " +
+    "answers for it here.";
+  return producer
+    ? `${base} This repository declares ${producer}, the plugin that owns that namespace; measure ` +
+        "a component that does not import from it, or stub the import."
+    : `${base} Measure a component that does not import from it, or stub the import.`;
 }
 
 export function BUNDLER_STYLESHEET_MISSING_ERROR(target: string): string {
@@ -2918,9 +3953,22 @@ export function CSS_UNREADABLE_DROPPED_WARNING(
 // both patterns could match the same message; returns undefined for any
 // shape neither recognizes, so the caller's own stripBundlerStackFrames still
 // runs as the universal fallback.
-function diagnoseBundlerFailure(message: string): string | undefined {
+function diagnoseBundlerFailure(message: string, projectRoot: string): string | undefined {
   const importMatch = VITE_IMPORT_RESOLVE_FAILURE.exec(message);
-  if (importMatch) return BUNDLER_IMPORT_UNRESOLVED_ERROR(importMatch[1], importMatch[2]);
+  if (importMatch) {
+    // M108 A5 (hoppscotch-F2): a virtual namespace has no file behind it and no
+    // build that produces one, so the unbuilt-workspace clause is false here.
+    const virtual = recognizeVirtualNamespace(importMatch[1]);
+    if (virtual) {
+      return VIRTUAL_NAMESPACE_IMPORT_ERROR(
+        importMatch[1],
+        importMatch[2],
+        virtual.namespace,
+        declaredTransformOwner("virtual-module", importMatch[1], projectRoot),
+      );
+    }
+    return BUNDLER_IMPORT_UNRESOLVED_ERROR(importMatch[1], importMatch[2]);
+  }
   const cssMatch = POSTCSS_ENOENT_FAILURE.exec(message);
   if (cssMatch) return BUNDLER_STYLESHEET_MISSING_ERROR(cssMatch[1]);
   return undefined;
@@ -3005,6 +4053,26 @@ export function NUXT_BUILD_MODULE_MISSING_ERROR(
     : base;
 }
 
+// M108 A2 (epic-stack-F1, primer-react-F1): the Nuxt mechanism is `#build`,
+// `#imports` and `#app`, and only in a repository that declares nuxt. Every
+// other package-imports/exports miss is Node's own resolver reporting a map
+// that lacks a subpath, and that is what the message says.
+const NUXT_VIRTUAL_PREFIXES = ["#build", "#imports", "#app"];
+
+export function MISSING_PACKAGE_SUBPATH_ERROR(
+  specifier: string,
+  pkg: string,
+  importer: string | undefined,
+): string {
+  const from = importer ? `, imported by ${importer}` : "";
+  const map = specifier.startsWith("#") ? "imports" : "exports";
+  return (
+    `${pkg} does not declare "${specifier}" in its package.json \`${map}\` map${from}, so Node's ` +
+    `own resolver refused it. Declare that subpath in ${pkg}'s \`${map}\` map, or import a path ` +
+    "the map already exposes."
+  );
+}
+
 function diagnoseNuxtBuildModule(
   message: string,
   buildWarnings: readonly string[],
@@ -3012,6 +4080,14 @@ function diagnoseNuxtBuildModule(
 ): string | undefined {
   const match = NUXT_BUILD_MODULE_MISSING.exec(message);
   if (!match) return undefined;
+  // M108 review: on a segment boundary. `#appsettings/x` is an ordinary
+  // imports-map miss, and `nuxi prepare` is no remedy for it.
+  const isNuxtVirtual = NUXT_VIRTUAL_PREFIXES.some(
+    (prefix) => match[1] === prefix || match[1].startsWith(prefix + "/"),
+  );
+  if (!isNuxtVirtual || !isPackageDeclared("nuxt", projectRoot, findWorkspaceRoot(projectRoot))) {
+    return MISSING_PACKAGE_SUBPATH_ERROR(match[1], match[2], VITE_IMPORT_RESOLVE_FAILURE.exec(message)?.[2]);
+  }
   const extendsHint = buildWarnings.some((w) => w.includes(".nuxt"));
   const nuxtDirExists = fs.existsSync(path.join(projectRoot, ".nuxt"));
   return NUXT_BUILD_MODULE_MISSING_ERROR(
@@ -3019,7 +4095,7 @@ function diagnoseNuxtBuildModule(
     match[2],
     extendsHint,
     nuxtDirExists,
-    nuxtDirExists ? findLikelyGenerateCommand(projectRoot) : undefined,
+    nuxtDirExists ? findLikelyGenerateCommand(projectRoot, undefined, process.cwd()) : undefined,
   );
 }
 
@@ -3078,11 +4154,41 @@ export function detectPackageManager(root: string): PackageManager {
   return "npm";
 }
 
+// M111 A5: a command the reader can paste. `<dir>` is the package's directory
+// relative to the directory the run started in, posix-separated; the absolute
+// path when no relative path exists (a different drive); nothing when the two
+// are the same directory. `startDir` is a parameter rather than a read of
+// `process.cwd()` so the message is a function of its inputs alone.
+export function runDirectoryPrefix(root: string, startDir: string): string {
+  const target = path.resolve(root);
+  const from = path.resolve(startDir);
+  if (target === from) return "";
+  const relative = path.relative(from, target);
+  const dir = relative === "" || path.isAbsolute(relative) ? target : relative.replace(/\\/g, "/");
+  // A directory whose name contains a space is not pasteable unquoted.
+  return `cd ${/\s/.test(dir) ? `"${dir}"` : dir} && `;
+}
+
 // yarn runs a script by bare name; npm and pnpm need `run` for anything
 // outside their own lifecycle names.
-export function packageManagerRunCommand(root: string, script: string): string {
+export function packageManagerRunCommand(root: string, script: string, startDir?: string): string {
   const manager = detectPackageManager(root);
-  return manager === "yarn" ? `yarn ${script}` : `${manager} run ${script}`;
+  const run = manager === "yarn" ? `yarn ${script}` : `${manager} run ${script}`;
+  return startDir === undefined ? run : runDirectoryPrefix(root, startDir) + run;
+}
+
+// M111 A5: the one place a remedy turns a package's script into a command. A
+// script the manifest does not declare has no command, and a script *body* is
+// never printed: it belongs to another package's build, not to the reader's
+// shell.
+export function packageScriptCommand(
+  root: string,
+  script: string,
+  startDir?: string,
+): string | undefined {
+  const scripts = readProjectManifest(root)?.scripts as Record<string, unknown> | undefined;
+  if (typeof scripts?.[script] !== "string") return undefined;
+  return packageManagerRunCommand(root, script, startDir);
 }
 
 // M105 (ant-design-F1): the script *name* list alone chose `prepare`
@@ -3095,6 +4201,7 @@ const GENERATOR_TOKEN = /(generate|codegen|gen)/i;
 export function findLikelyGenerateCommand(
   root: string,
   missingRelativePath?: string,
+  startDir?: string,
 ): string | undefined {
   const manifest = readProjectManifest(root);
   const scripts = manifest?.scripts as Record<string, unknown> | undefined;
@@ -3106,7 +4213,7 @@ export function findLikelyGenerateCommand(
   if (missingRelativePath) {
     const posix = missingRelativePath.replace(/\\/g, "/");
     const named = commands.find(([, command]) => command.replace(/\\/g, "/").includes(posix));
-    if (named) return packageManagerRunCommand(root, named[0]);
+    if (named) return packageManagerRunCommand(root, named[0], startDir);
 
     const stem = path.basename(posix, path.extname(posix)).toLowerCase();
     if (stem) {
@@ -3114,12 +4221,12 @@ export function findLikelyGenerateCommand(
         const lower = command.toLowerCase();
         return lower.includes(stem) && GENERATOR_TOKEN.test(lower);
       });
-      if (generates) return packageManagerRunCommand(root, generates[0]);
+      if (generates) return packageManagerRunCommand(root, generates[0], startDir);
     }
   }
 
   for (const name of CODEGEN_SCRIPT_PRIORITY) {
-    if (typeof scripts[name] === "string") return packageManagerRunCommand(root, name);
+    if (typeof scripts[name] === "string") return packageManagerRunCommand(root, name, startDir);
   }
   return undefined;
 }
@@ -3209,7 +4316,7 @@ function diagnoseGitignoredGeneratedFile(message: string, projectRoot: string): 
     relativeToProject,
     // M105 (ant-design-F1): the missing file is the evidence for which script
     // produces it, so it is passed rather than left to a name list.
-    findLikelyGenerateCommand(projectRoot, relativeToProject),
+    findLikelyGenerateCommand(projectRoot, relativeToProject, process.cwd()),
   );
 }
 
@@ -3232,7 +4339,7 @@ export function collectStaticPreBuildWarnings(
   // M69: alias construction and the scan both report what they could not
   // resolve, and both feed the same run warnings.
   const warnings: string[] = [];
-  const tsconfigAliases = loadTsconfigAliases(projectRoot, warnings);
+  const tsconfigAliases = loadTsconfigAliases(projectRoot, warnings, opts.componentPath);
   const detected = !opts.noShims && detectNextJs(projectRoot);
   const shimAliases = buildShimAliases(detected);
   // M71: what the project's own vite.config says, read as text. Its aliases sit
@@ -3241,10 +4348,22 @@ export function collectStaticPreBuildWarnings(
   const viteConfig = readViteConfigData(projectRoot, workspaceRoot);
   if (viteConfig.configFile && viteConfig.ignoredKeys.length > 0) {
     warnings.push(
-      VITE_CONFIG_IGNORED_WARNING(path.basename(viteConfig.configFile), viteConfig.ignoredKeys),
+      VITE_CONFIG_IGNORED_WARNING(
+        path.basename(viteConfig.configFile),
+        viteConfig.ignoredKeys,
+        viteConfig.pluginNames,
+      ),
     );
   }
   warnings.push(...viteConfig.warnings);
+  // M109 (A5): decided here, so the dry run discloses the list the real run
+  // resolves with.
+  const serverConditions = resolveServerConditions(projectRoot, viteConfig.conditions, {
+    forFile: opts.componentPath,
+    workspaceRoot,
+    ...(viteConfig.configFile ? { viteConfigFile: viteConfig.configFile } : {}),
+  });
+  if (serverConditions.warning) warnings.push(serverConditions.warning);
   const aliases: StaticPreBuild["aliases"] = [
     ...tsconfigAliases,
     ...viteConfig.aliases,
@@ -3254,6 +4373,10 @@ export function collectStaticPreBuildWarnings(
   // The wrapper is imported by the entry, so its packages must be pre-bundled
   // too: otherwise the first mount pays Vite's on-demand optimize cost.
   const importedSpecifiers = new Set<string>();
+  // M110 (A2/I2): filled by the same walk that produces the include list, so
+  // the dry run reports what the real run's optimizer would have choked on.
+  const unresolvedExternals: Array<{ specifier: string; importer: string }> = [];
+  const reportedUnresolvedSpecifiers = new Set<string>();
   const externalDeps = [
     ...new Set([
       ...scanExternalDeps(
@@ -3264,6 +4387,8 @@ export function collectStaticPreBuildWarnings(
         warnings,
         workspaceRoot,
         aliases,
+        unresolvedExternals,
+        reportedUnresolvedSpecifiers,
       ),
       ...(opts.wrapPath
         ? scanExternalDeps(
@@ -3274,6 +4399,8 @@ export function collectStaticPreBuildWarnings(
             warnings,
             workspaceRoot,
             aliases,
+            unresolvedExternals,
+            reportedUnresolvedSpecifiers,
           )
         : []),
     ]),
@@ -3302,11 +4429,13 @@ export function collectStaticPreBuildWarnings(
   return {
     warnings,
     viteConfig,
+    resolveConditions: serverConditions.conditions,
     externalDeps,
     styleTooling,
     nextModules: { detected, ...(activeShims ? { activeShims } : {}), unsupported },
     aliases,
     importedSpecifiers,
+    unresolvedExternals,
     workspaceRoot,
   };
 }
@@ -3470,7 +4599,9 @@ export async function buildAndServe(
           "react",
           "react-dom/client",
           ...reactJsxRuntimeDeps(projectRoot),
-          ...(reactCompiler.active ? reactCompilerRuntimeDeps(projectRoot) : []),
+          ...(reactCompiler.active
+            ? reactCompilerRuntimeDeps(projectRoot, reactCompiler.target ?? "19")
+            : []),
         ];
 
   const stableInclude = unionCachedDeps(
@@ -3481,14 +4612,38 @@ export async function buildAndServe(
   const plugins: unknown[] = styleTooling.tailwind
     ? await loadTailwindVitePlugin(projectRoot)
     : [];
+  // M111 A1 (midday-F1): Tailwind 3 enters through PostCSS and resolves its own
+  // config against `process.cwd()`, so the shell directory decided whether the
+  // member's CSS built at all. Rebuilding the member's declared pipeline with
+  // the config path resolved from the member takes that decision away from the
+  // shell without replacing a single plugin the member declared.
+  const tailwind3Postcss =
+    styleTooling.tailwind3ConfigPath && styleTooling.tailwind3PostcssConfigFile
+      ? await loadTailwind3PostcssPipeline(
+          projectRoot,
+          styleTooling.tailwind3PostcssConfigFile,
+          styleTooling.tailwind3ConfigPath,
+          harnessDir,
+          (warning) => configWarnings.push(warning),
+        )
+      : undefined;
   // M77: unconditional and cheap (a no-op for every file outside a
   // non-node_modules `.js`); array position does not matter for ordering
   // relative to Vite's own esbuild plugin, since `enforce: "pre"` alone
   // decides that.
-  plugins.push(jsxInJsPlugin(resolveJsxImportSource(projectRoot, workspaceRoot)));
+  plugins.push(
+    jsxInJsPlugin(resolveJsxImportSource(projectRoot, workspaceRoot, absoluteComponentPath)),
+  );
+  const compileOptions = harnessServerCompileOptions(
+    renderer,
+    projectRoot,
+    workspaceRoot,
+    absoluteComponentPath,
+    preBuild.resolveConditions,
+  );
   // Appended, never substituted: the Tailwind entries above must survive.
   if (reactCompiler.active) {
-    plugins.push(...(await loadReactCompilerPlugin(reactCompiler.pluginPath!)));
+    plugins.push(...(await loadReactCompilerPlugin(reactCompiler.pluginPath!, reactCompiler.target)));
   }
 
   // M48: the project's own transforms, resolved from its own node_modules with
@@ -3524,6 +4679,12 @@ export async function buildAndServe(
   // reading process.env throws before it renders.
   const define = readEnvDefines(projectRoot, workspaceRoot);
 
+  // The rebuilt Tailwind 3 pipeline wins over the inherited config directory:
+  // it is that directory's config, already loaded, with the config path the
+  // member's own search would have found.
+  const postcssOption: string | { plugins: unknown[] } | undefined =
+    tailwind3Postcss ?? styleTooling.postcssConfigDir;
+
   const bootServer = async (): Promise<ViteDevServer> => {
     const created = await createServer({
       root: projectRoot,
@@ -3544,12 +4705,10 @@ export async function buildAndServe(
       // M106 A3: postcss and the folded preprocessor options share one `css`
       // object — twenty declares both, and passing either alone dropped the
       // other.
-      ...(styleTooling.postcssConfigDir || viteConfig.preprocessorOptions
+      ...(postcssOption || viteConfig.preprocessorOptions
         ? {
             css: {
-              ...(styleTooling.postcssConfigDir
-                ? { postcss: styleTooling.postcssConfigDir }
-                : {}),
+              ...(postcssOption ? { postcss: postcssOption as never } : {}),
               ...(viteConfig.preprocessorOptions
                 ? { preprocessorOptions: viteConfig.preprocessorOptions }
                 : {}),
@@ -3571,11 +4730,15 @@ export async function buildAndServe(
         watch: null,
         ...(fsAllow ? { fs: { allow: fsAllow } } : {}),
       },
+      // M109 (A3): what the project's tsconfig says about `jsx` never decides
+      // how the harness compiles its .ts/.tsx/.jsx. M109 (A5): resolve
+      // conditions carry the governing tsconfig's customConditions.
+      ...(compileOptions.esbuild ? { esbuild: compileOptions.esbuild } : {}),
       resolve: {
         alias,
         dedupe: renderer === "vue" ? ["vue"] : ["react", "react-dom"],
         // M76: a pass-through to Vite's own condition-aware exports resolver.
-        ...(viteConfig.conditions.length > 0 ? { conditions: viteConfig.conditions } : {}),
+        ...(compileOptions.conditions ? { conditions: compileOptions.conditions } : {}),
       },
       optimizeDeps: {
         include: stableInclude,
@@ -3627,7 +4790,7 @@ export async function buildAndServe(
     // constructed on the success path, so this catch is the one place the
     // directory would otherwise leak on every one of these.
     fs.rmSync(harnessDir, { recursive: true, force: true });
-    activeHarnessDirs.delete(harnessDir);
+    forgetHarnessDirIfRemoved(harnessDir);
     // M79 (1a): everything buildWarnings would have carried on the success
     // path travels with the thrown error too, so a crash after a computed
     // warning (VITE_CONFIG_IGNORED_WARNING, an unreplicated style engine, a
@@ -3652,7 +4815,7 @@ export async function buildAndServe(
   const cleanup = async () => {
     if (ownsServer) await closeServerBounded(server);
     fs.rmSync(harnessDir, { recursive: true, force: true });
-    activeHarnessDirs.delete(harnessDir);
+    forgetHarnessDirIfRemoved(harnessDir);
   };
 
   return {
@@ -3735,6 +4898,12 @@ export function HARNESS_DIR_UNREMOVABLE_WARNING(dir: string, reason: string): st
   );
 }
 
+// M113 A5: the run that removed a leftover said nothing, so the developer had
+// no evidence the previous run had left anything behind at all.
+export function HARNESS_DIR_SWEPT_WARNING(dir: string, reason: string): string {
+  return `Removed a stale harness directory from an earlier run: ${dir} (${reason}).`;
+}
+
 export function sweepStaleHarnessDirs(
   projectRoot: string,
   warningsOut?: string[],
@@ -3744,6 +4913,9 @@ export function sweepStaleHarnessDirs(
 ): void {
   try {
     const now = Date.now();
+    // M113 A6: the retries are bounded across the whole sweep, so a root full
+    // of locked leftovers cannot delay the start of a run.
+    const deadline = now + HARNESS_SWEEP_BUDGET_MS;
     for (const entry of fs.readdirSync(projectRoot, { withFileTypes: true })) {
       if (!entry.isDirectory() || !entry.name.startsWith(".120fps-harness-")) continue;
       const full = path.join(projectRoot, entry.name);
@@ -3752,23 +4924,24 @@ export function sweepStaleHarnessDirs(
         // Never this process's own directory, at any age: this run knows it is
         // still using it, and its own exit paths already remove it.
         if (owner === process.pid) continue;
-        const abandoned =
+        const staleBecause =
           owner === undefined
             ? now - fs.statSync(full).mtimeMs > STALE_HARNESS_MAX_AGE_MS
-            : !isProcessAlive(owner) ||
-              now - (harnessDirHeartbeatMs(full) ?? 0) > LIVE_PID_HARNESS_MAX_AGE_MS;
-        if (!abandoned) continue;
-        try {
-          remove(full);
-        } catch (err) {
-          const reason = (err as NodeJS.ErrnoException).code ?? (err as Error).message;
-          warningsOut?.push(
-            HARNESS_DIR_UNREMOVABLE_WARNING(
-              path.relative(projectRoot, full).replace(/\\/g, "/") || entry.name,
-              reason,
-            ),
-          );
-        }
+              ? "unmarked and older than the age gate"
+              : undefined
+            : !isProcessAlive(owner)
+              ? "its owner process is gone"
+              : now - (harnessDirHeartbeatMs(full) ?? 0) > LIVE_PID_HARNESS_MAX_AGE_MS
+                ? "its owner stopped heartbeating"
+                : undefined;
+        if (staleBecause === undefined) continue;
+        const shown = path.relative(projectRoot, full).replace(/\\/g, "/") || entry.name;
+        const failure = removeHarnessDirWithRetries(full, remove, deadline);
+        warningsOut?.push(
+          failure === undefined
+            ? HARNESS_DIR_SWEPT_WARNING(shown, staleBecause)
+            : HARNESS_DIR_UNREMOVABLE_WARNING(shown, failure),
+        );
       } catch {
         // best-effort: the directory may have vanished between readdir and stat
       }
@@ -3922,6 +5095,29 @@ type LocalResolution =
     }
   | { kind: "unaliased" };
 
+// M107 (directus-F1): a package written for NodeNext resolution imports its
+// own modules with the extension of the build output (`./parse-now.js`), and
+// only the TypeScript source is on disk. Without this the walk stops at the
+// first file of an aliased sibling and never sees the siblings that file
+// imports. Same mapping TypeScript itself applies, source extensions only.
+const TS_COUNTERPARTS: Record<string, string[]> = {
+  ".js": [".ts", ".tsx"],
+  ".mjs": [".mts"],
+  ".cjs": [".cts"],
+  ".jsx": [".tsx"],
+};
+
+function resolveTypeScriptCounterpart(target: string): string | undefined {
+  const extension = path.extname(target);
+  const counterparts = TS_COUNTERPARTS[extension];
+  if (counterparts === undefined) return undefined;
+  const stem = target.slice(0, target.length - extension.length);
+  for (const counterpart of counterparts) {
+    if (isFile(stem + counterpart)) return stem + counterpart;
+  }
+  return undefined;
+}
+
 function resolveLocalImport(
   fromFile: string,
   spec: string,
@@ -3954,7 +5150,7 @@ function resolveLocalImport(
     target = path.isAbsolute(aliasedPath) ? aliasedPath : path.resolve(projectRoot, aliasedPath);
   }
 
-  const resolved = resolveTarget(target);
+  const resolved = resolveTarget(target) ?? resolveTypeScriptCounterpart(target);
   if (resolved) return { kind: "resolved", path: resolved, viaShimAlias, viaWorkspaceRootAlias };
   if (!aliased) return { kind: "unaliased" };
   return {
@@ -3972,8 +5168,16 @@ function resolveLocalImport(
 // type` from-specifier: type-space, never loaded at runtime. A mixed clause
 // (`import { type A, b } from "x"`) still matches, because `b` is a real
 // value import and "x" genuinely needs runtime resolution.
+// M110 (A4, gutenberg): a clause written over several lines
+// (`import {`, `  escapeHTML,`, `} from "@wordpress/escape-html"`) is the same
+// import. `[\w$*,{}\s]*?` spans newlines where `.` did not, and stops at the
+// first character an import clause cannot contain — a `;`, a quote, a `(`, a
+// comment slash — so a side-effect import standing above the clause
+// (`import "./a.css"`, with or without its semicolon) stays its own match, and
+// prose or JSX below an `export` keyword ends the scan instead of reaching a
+// later `from "…"` and reporting its string as a specifier.
 const STATIC_IMPORT_PATTERN =
-  /(?:^|\s)(?:import|export)\s+(?!type\s).*?from\s+["']([^"']+)["']|(?:^|\s)import\s+["']([^"']+)["']/gm;
+  /(?:^|\s)(?:import|export)\s+(?!type\s)[\w$*,{}\s]*?from\s+["']([^"']+)["']|(?:^|\s)import\s+["']([^"']+)["']/gm;
 const DYNAMIC_IMPORT_PATTERN = /\bimport\s*\(\s*["']([^"']+)["']/g;
 const REQUIRE_PATTERN = /\brequire\s*\(\s*["']([^"']+)["']/g;
 
@@ -3988,6 +5192,17 @@ function readSpecifiers(content: string): string[] {
     }
   }
   return specifiers;
+}
+
+// M110 (A1, epic-stack-F2): the scan used to `continue` past a specifier that
+// resolved to nothing, so `--explain-props` and the real run both stayed silent
+// until the dev server died on it at dep-optimization.
+export function UNRESOLVED_PREBUNDLE_ENTRY_WARNING(specifier: string, importer: string): string {
+  return (
+    `"${specifier}" (imported by ${importer}) resolves to no installed package, no alias and no ` +
+    "`imports` entry, so the pre-bundle cannot include it: the browser resolves it at request time " +
+    "or fails on it."
+  );
 }
 
 export function BROKEN_ALIAS_WARNING(specifier: string, target: string): string {
@@ -4013,10 +5228,39 @@ export function TYPE_ONLY_PACKAGE_WARNING(pkg: string): string {
 // dist/, now answers for the bare specifier — the alias applies to Vite's
 // real per-request resolution, not only optimizeDeps, so this import
 // resolves rather than merely avoiding one particular crash site.
-export function UNBUILT_WORKSPACE_SOURCE_ALIAS_WARNING(pkg: string, sourceEntry: string): string {
+// M107: the message names the manifest field the derivation followed, the
+// path that field declared and whether that path is on disk, so no message
+// claims a `dist/` the package never named.
+export function UNBUILT_WORKSPACE_SOURCE_ALIAS_WARNING(
+  pkg: string,
+  sourceEntry: string,
+  entry?: { field: string; declared: string; exists: boolean },
+): string {
+  if (entry === undefined) {
+    return (
+      `${pkg} is a workspace package with no built entry to load; its own source at ${sourceEntry} ` +
+      "resolves and was aliased in its place, so this run measures the real module."
+    );
+  }
+  const existence = entry.exists ? "exists on disk" : "does not exist on disk";
   return (
-    `${pkg} is a workspace package whose package.json points at an unbuilt dist/; its own source ` +
-    `at ${sourceEntry} resolves and was aliased in its place, so this run measures the real module.`
+    `${pkg} is a workspace package whose ${entry.field} names ${entry.declared}, which ${existence}; ` +
+    `its own source at ${sourceEntry} resolves and was aliased in its place, so this run measures ` +
+    "the real module."
+  );
+}
+
+// M107 (react-spectrum-F1): a workspace sibling that declares no runtime entry
+// at all ships declarations only. It is not an unbuilt package, nothing about
+// it can fail when the browser loads it, and no build command helps.
+export function TYPES_ONLY_WORKSPACE_PACKAGE_WARNING(
+  pkg: string,
+  typesPath: string | undefined,
+): string {
+  return (
+    `${pkg} is a workspace package that declares no runtime entry (no main, module or exports)` +
+    (typesPath ? `, only types at ${typesPath}` : "") +
+    "; it ships declarations only, so it was left out of the pre-bundle and needs no build."
   );
 }
 
@@ -4030,12 +5274,34 @@ export function UNBUILT_WORKSPACE_SOURCE_ALIAS_WARNING(pkg: string, sourceEntry:
 export function UNBUILT_WORKSPACE_PACKAGE_NO_SOURCE_WARNING(
   pkg: string,
   buildCommand: string | undefined,
+  entry?: { field: string; declared: string; exists: boolean },
 ): string {
+  const build = buildCommand ? ` Run \`${buildCommand}\` in that package first.` : "";
+  if (entry === undefined) {
+    return (
+      `${pkg} is a workspace package whose package.json points at an unbuilt dist/, and no ` +
+      "resolvable source was found to measure instead: this import may still fail when the browser " +
+      "loads it, not only at pre-bundle time." +
+      build
+    );
+  }
+  const existence = entry.exists ? "exists on disk" : "does not exist on disk";
   return (
-    `${pkg} is a workspace package whose package.json points at an unbuilt dist/, and no ` +
-    "resolvable source was found to measure instead: this import may still fail when the browser " +
-    "loads it, not only at pre-bundle time." +
-    (buildCommand ? ` Run \`${buildCommand}\` in that package first.` : "")
+    `${pkg} is a workspace package whose ${entry.field} names ${entry.declared}, which ${existence}, ` +
+    "and no resolvable source was found to measure instead: this import may still fail when the " +
+    "browser loads it, not only at pre-bundle time." +
+    build
+  );
+}
+
+// M107 (review): a subpath specifier of a sibling whose root was aliased is
+// removed from the pre-bundle by that root decision alone. Nothing aliased the
+// subpath itself, so the removal is disclosed instead of silent.
+export function UNALIASED_WORKSPACE_SUBPATH_WARNING(specifier: string, pkg: string): string {
+  return (
+    `${specifier} is a subpath of the workspace package ${pkg}, whose root was aliased to its own ` +
+    "source; that subpath resolved to no source of its own and was left out of the pre-bundle, so " +
+    "this import may still fail when the browser loads it, not only at pre-bundle time."
   );
 }
 
@@ -4071,7 +5337,405 @@ function isWorkspaceSibling(pkgDir: string, workspaceRoot: string): boolean {
   return !relative.split("/").includes("node_modules");
 }
 
+// M107: the manifest fields that can name a runtime entry, in the order the
+// source derivation tries them.
+type DeclaredEntry = { field: string; declared: string };
+
+const EXPORT_ENTRY_CONDITIONS = ["development", "source", "import", "default", "require"];
+
+const DECLARATION_FILE = /\.d\.[cm]?ts$/;
+
+function exportConditionTargets(value: unknown, depth = 0): string[] {
+  if (typeof value === "string") return [value];
+  if (value === null || typeof value !== "object" || Array.isArray(value) || depth > 2) return [];
+  const record = value as Record<string, unknown>;
+  const targets: string[] = [];
+  for (const condition of EXPORT_ENTRY_CONDITIONS) {
+    if (!(condition in record)) continue;
+    for (const target of exportConditionTargets(record[condition], depth + 1)) {
+      if (!targets.includes(target)) targets.push(target);
+    }
+  }
+  return targets;
+}
+
+function exportsRootTargets(exportsField: unknown): string[] {
+  if (typeof exportsField === "string") return [exportsField];
+  if (exportsField === null || typeof exportsField !== "object" || Array.isArray(exportsField)) {
+    return [];
+  }
+  const record = exportsField as Record<string, unknown>;
+  if ("." in record) return exportConditionTargets(record["."]);
+  // A sugar form: conditions at the top level, no subpath keys at all.
+  if (Object.keys(record).some((key) => key.startsWith("."))) return [];
+  return exportConditionTargets(record);
+}
+
+function declaredRuntimeEntries(manifest: Record<string, unknown>): DeclaredEntry[] {
+  const entries: DeclaredEntry[] = [];
+  if (typeof manifest.source === "string") entries.push({ field: "source", declared: manifest.source });
+  for (const declared of exportsRootTargets(manifest.exports)) {
+    entries.push({ field: 'exports["."]', declared });
+  }
+  if (typeof manifest.module === "string") entries.push({ field: "module", declared: manifest.module });
+  if (typeof manifest.main === "string") entries.push({ field: "main", declared: manifest.main });
+  return entries;
+}
+
+function declaresRuntimeEntry(manifest: Record<string, unknown> | undefined): boolean {
+  if (!manifest) return false;
+  return ["source", "exports", "module", "main"].some((field) => manifest[field] !== undefined);
+}
+
+// M107: a declared entry names a build output, and the source it was built
+// from sits at the same path with the build directory dropped and a source
+// extension applied (`dist/shared/index.js` -> `shared/index.ts`).
+function sourceCandidatesFor(real: string, declared: string): string[] {
+  const normalized = declared.replace(/\\/g, "/").replace(/^\.\//, "");
+  const withoutExtension = (value: string) => value.replace(/\.[^./]+$/, "");
+  const relatives = [normalized, withoutExtension(normalized)];
+  const segments = normalized.split("/").filter((segment) => segment.length > 0 && segment !== ".");
+  if (segments.length > 1) {
+    const tail = segments.slice(1).join("/");
+    relatives.push(withoutExtension(tail), tail);
+  }
+  const seen = new Set<string>();
+  const candidates: string[] = [];
+  for (const relative of relatives) {
+    if (relative.length === 0 || relative === ".." || seen.has(relative)) continue;
+    seen.add(relative);
+    candidates.push(path.resolve(real, relative));
+  }
+  return candidates;
+}
+
+function resolveSourceCandidate(real: string, declared: string): string | undefined {
+  for (const candidate of sourceCandidatesFor(real, declared)) {
+    const resolved = resolveTarget(candidate);
+    if (resolved !== undefined && !DECLARATION_FILE.test(resolved)) {
+      return resolved.replace(/\\/g, "/");
+    }
+  }
+  return undefined;
+}
+
+type WorkspaceSourceEntry = {
+  entry: string;
+  field: string;
+  declared: string;
+  declaredExists: boolean;
+};
+
+// M107 (directus-F1, gutenberg-F1): the source an unbuilt workspace sibling
+// declares, whatever layout it uses. `<pkg>/src` is the last fallback, not the
+// only candidate.
+function resolveWorkspaceSourceEntry(
+  real: string,
+  manifest: Record<string, unknown> | undefined,
+): WorkspaceSourceEntry | undefined {
+  const declaredEntries = manifest ? declaredRuntimeEntries(manifest) : [];
+  const declaredExists = (declared: string) => fs.existsSync(path.resolve(real, declared));
+  for (const candidate of declaredEntries) {
+    const resolved = resolveSourceCandidate(real, candidate.declared);
+    if (resolved !== undefined) {
+      return {
+        entry: resolved,
+        field: candidate.field,
+        declared: candidate.declared,
+        declaredExists: declaredExists(candidate.declared),
+      };
+    }
+  }
+  const primary = declaredEntries[0];
+  const types = manifest && typeof manifest.types === "string" ? manifest.types : undefined;
+  if (types !== undefined && DECLARATION_FILE.test(types)) {
+    const stem = path.resolve(real, types.replace(/\\/g, "/").replace(DECLARATION_FILE, ""));
+    for (const extension of SOURCE_EXTENSIONS) {
+      if (!isFile(stem + extension)) continue;
+      return {
+        entry: (stem + extension).replace(/\\/g, "/"),
+        field: "types",
+        declared: types,
+        declaredExists: declaredExists(types),
+      };
+    }
+  }
+  const fallback = resolveTarget(path.join(real, "src"));
+  if (fallback === undefined || DECLARATION_FILE.test(fallback)) return undefined;
+  return {
+    entry: fallback.replace(/\\/g, "/"),
+    field: primary?.field ?? "src",
+    declared: primary?.declared ?? "src",
+    declaredExists: primary === undefined ? true : declaredExists(primary.declared),
+  };
+}
+
+// M107 (directus-F1): an `exports` subpath key gets the same derivation as the
+// root entry. A key whose declared target already resolves needs no source
+// counterpart and keeps the resolution it has today.
+function workspaceSubpathSourceEntries(
+  real: string,
+  manifest: Record<string, unknown> | undefined,
+): Array<{ subpath: string; entry: string }> {
+  const exportsField = manifest?.exports;
+  if (!exportsField || typeof exportsField !== "object" || Array.isArray(exportsField)) return [];
+  const rescued: Array<{ subpath: string; entry: string }> = [];
+  for (const [key, value] of Object.entries(exportsField as Record<string, unknown>)) {
+    if (!key.startsWith("./") || key === "./package.json" || key.includes("*")) continue;
+    for (const declared of exportConditionTargets(value)) {
+      const literal = resolveTarget(path.resolve(real, declared.replace(/^\.\//, "")));
+      if (literal !== undefined) break;
+      const resolved = resolveSourceCandidate(real, declared);
+      if (resolved === undefined || !SOURCE_EXTENSIONS.includes(path.extname(resolved))) continue;
+      rescued.push({ subpath: key.slice(2), entry: resolved });
+      break;
+    }
+  }
+  return rescued;
+}
+
+// M108 A1 (epic-stack-F1): Node's subpath-imports map, the way Vite reads it.
+// The conditions are the browser-development set Vite resolves a dev request
+// with; `types` and `node` deliberately absent, `require` last-resort only.
+const SUBPATH_IMPORT_CONDITIONS = [
+  "source",
+  "development",
+  "browser",
+  "module",
+  "import",
+  "require",
+  "default",
+];
+
+function nearestManifestDir(fromDir: string): string | undefined {
+  let dir = path.resolve(fromDir);
+  for (;;) {
+    if (isFile(path.join(dir, "package.json"))) return dir;
+    const parent = path.dirname(dir);
+    if (parent === dir) return undefined;
+    dir = parent;
+  }
+}
+
+// Conditions are declaration-ordered in Node's algorithm: the first key this
+// resolver recognises wins, and an array is a fallback list.
+function pickConditionalTarget(value: unknown): string | undefined {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      const picked = pickConditionalTarget(entry);
+      if (picked) return picked;
+    }
+    return undefined;
+  }
+  if (value && typeof value === "object") {
+    for (const [condition, nested] of Object.entries(value as Record<string, unknown>)) {
+      if (!SUBPATH_IMPORT_CONDITIONS.includes(condition)) continue;
+      const picked = pickConditionalTarget(nested);
+      if (picked) return picked;
+    }
+  }
+  return undefined;
+}
+
+// The file a "#"-prefixed specifier names, resolved through the `imports` map
+// of the importer's OWN package (a workspace member's map, not the measured
+// root's). Undefined when no map declares it: that specifier stays unresolved
+// and gets the generic missing-subpath diagnosis, never an optimizeDeps entry.
+function pickSubpathImportTarget(
+  importerFile: string,
+  specifier: string,
+): string | undefined {
+  if (!specifier.startsWith("#")) return undefined;
+  const pkgDir = nearestManifestDir(path.dirname(importerFile));
+  if (!pkgDir) return undefined;
+  const manifest = readProjectManifest(pkgDir);
+  const imports = manifest?.imports;
+  if (!imports || typeof imports !== "object") return undefined;
+
+  const entries = Object.entries(imports as Record<string, unknown>);
+  let target = entries.find(([key]) => key === specifier)?.[1];
+  let substitution: string | undefined;
+  if (target === undefined) {
+    // Longest matching prefix wins, as Node's PATTERN_KEY_COMPARE does.
+    let bestPrefix = "";
+    for (const [key, value] of entries) {
+      const star = key.indexOf("*");
+      if (star < 0) continue;
+      const prefix = key.slice(0, star);
+      const suffix = key.slice(star + 1);
+      if (!specifier.startsWith(prefix) || !specifier.endsWith(suffix)) continue;
+      if (specifier.length < prefix.length + suffix.length) continue;
+      if (prefix.length < bestPrefix.length) continue;
+      bestPrefix = prefix;
+      target = value;
+      substitution = specifier.slice(prefix.length, specifier.length - suffix.length);
+    }
+  }
+
+  const picked = pickConditionalTarget(target);
+  if (!picked) return undefined;
+  const filled = substitution === undefined ? picked : picked.split("*").join(substitution);
+  return picked.startsWith(".") ? path.resolve(pkgDir, filled) : filled;
+}
+
+export function resolveSubpathImport(
+  importerFile: string,
+  specifier: string,
+): string | undefined {
+  const target = pickSubpathImportTarget(importerFile, specifier);
+  if (!target || !path.isAbsolute(target)) return undefined;
+  return resolveTarget(target);
+}
+
+// M108 review: an `imports` entry may point at a dependency ("#dep":
+// "lodash-es") instead of a file of the package's own. That edge is an
+// ordinary external import and belongs in the pre-bundle list; dropped, Vite
+// discovers it on the first page load and forces the full reload the
+// pre-bundle list exists to prevent.
+export function subpathImportPackage(
+  importerFile: string,
+  specifier: string,
+): string | undefined {
+  const target = pickSubpathImportTarget(importerFile, specifier);
+  if (!target || path.isAbsolute(target) || target.startsWith(".") || target.startsWith("#")) {
+    return undefined;
+  }
+  return target;
+}
+
+type ExternalDepsAliases = Array<{
+  find: RegExp;
+  replacement: string;
+  isShim?: boolean;
+  fromWorkspaceRoot?: WorkspaceRootAliasSource;
+}>;
+
+interface ExternalDepsWalkRecord {
+  packages: string[];
+  specifiers: string[];
+  warnings: string[];
+  extraAliases: Array<{ find: RegExp; replacement: string }>;
+  unresolved: Array<{ specifier: string; importer: string }>;
+  // Specifiers the walk added to the caller's dedupe set, replayed so a second
+  // walk sharing that set reports what the first one left it reporting.
+  reported: string[];
+  files: Array<[string, string | undefined]>;
+}
+
+// M116 A2: the component walk and the wrapper walk run per build, and a sweep
+// builds per component; the same entry over the same files, alias set and roots
+// cannot produce a different list. The key carries every input the walk reads,
+// including the dedupe set it was handed, and the entry is served again only
+// while every file it read has the mtime and size it read.
+const externalDepsWalks = new Map<string, ExternalDepsWalkRecord>();
+
+function sourceSignature(file: string): string | undefined {
+  try {
+    const stat = fs.statSync(file);
+    return `${stat.mtimeMs}:${stat.size}`;
+  } catch {
+    return undefined;
+  }
+}
+
+function externalDepsKey(
+  componentPath: string,
+  projectRoot: string,
+  workspaceRoot: string,
+  aliases: ExternalDepsAliases,
+  reported: Set<string> | undefined,
+): string {
+  return JSON.stringify([
+    path.resolve(componentPath),
+    path.resolve(projectRoot),
+    path.resolve(workspaceRoot),
+    aliases.map((alias) => [
+      alias.find.source,
+      alias.find.flags,
+      alias.replacement,
+      alias.isShim ?? false,
+      alias.fromWorkspaceRoot ?? null,
+    ]),
+    [...(reported ?? [])].sort(),
+  ]);
+}
+
 export function scanExternalDeps(
+  componentPath: string,
+  projectRoot: string,
+  aliases: ExternalDepsAliases,
+  specifiersOut?: Set<string>,
+  warningsOut?: string[],
+  workspaceRoot: string = findWorkspaceRoot(projectRoot),
+  extraAliasesOut?: Array<{ find: RegExp; replacement: string }>,
+  unresolvedOut?: Array<{ specifier: string; importer: string }>,
+  reportedUnresolvedOut?: Set<string>,
+): string[] {
+  const key = externalDepsKey(
+    componentPath,
+    projectRoot,
+    workspaceRoot,
+    aliases,
+    reportedUnresolvedOut,
+  );
+  const cached = externalDepsWalks.get(key);
+  if (cached && cached.files.every(([file, signature]) => sourceSignature(file) === signature)) {
+    for (const specifier of cached.specifiers) specifiersOut?.add(specifier);
+    for (const warning of cached.warnings) warningsOut?.push(warning);
+    for (const alias of cached.extraAliases) extraAliasesOut?.push(alias);
+    for (const entry of cached.unresolved) unresolvedOut?.push({ ...entry });
+    for (const specifier of cached.reported) reportedUnresolvedOut?.add(specifier);
+    return [...cached.packages];
+  }
+
+  // The walk writes into the caller's own channels, unchanged: buildAndServe
+  // passes one array as both `aliases` and `extraAliasesOut`, so a rescue alias
+  // pushed mid-walk resolves the imports below it. What each channel gained is
+  // read off afterwards as the delta, never by substituting a collector.
+  // `specifiersOut` is the one channel the walk only writes to, so it collects
+  // separately: a delta against the caller's prior contents would depend on a
+  // set the key does not carry, and a later walk handed an empty set would be
+  // served the short list.
+  const collected = new Set<string>();
+  const warnings = warningsOut ?? [];
+  const extraAliases = extraAliasesOut ?? [];
+  const unresolved = unresolvedOut ?? [];
+  const reported = reportedUnresolvedOut ?? new Set<string>();
+  const reportedBefore = new Set(reported);
+  const warningsBefore = warnings.length;
+  const extraAliasesBefore = extraAliases.length;
+  const unresolvedBefore = unresolved.length;
+  const files = new Map<string, string | undefined>();
+
+  const packages = walkExternalDeps(
+    componentPath,
+    projectRoot,
+    aliases,
+    collected,
+    warnings,
+    workspaceRoot,
+    extraAliases,
+    unresolved,
+    reported,
+    files,
+  );
+
+  for (const specifier of collected) specifiersOut?.add(specifier);
+
+  externalDepsWalks.set(key, {
+    packages: [...packages],
+    specifiers: [...collected],
+    warnings: warnings.slice(warningsBefore),
+    extraAliases: extraAliases.slice(extraAliasesBefore),
+    unresolved: unresolved.slice(unresolvedBefore).map((entry) => ({ ...entry })),
+    reported: [...reported].filter((specifier) => !reportedBefore.has(specifier)),
+    files: [...files],
+  });
+  return packages;
+}
+
+function walkExternalDeps(
   componentPath: string,
   projectRoot: string,
   aliases: Array<{
@@ -4089,18 +5753,52 @@ export function scanExternalDeps(
   // from, so the rescue applies to Vite's real per-request resolution too,
   // not only to optimizeDeps.
   extraAliasesOut?: Array<{ find: RegExp; replacement: string }>,
+  // M110 (A2/I2): the specifiers this walk could not resolve, in the order it
+  // read them, for the caller that publishes them on `StaticPreBuild`.
+  unresolvedOut?: Array<{ specifier: string; importer: string }>,
+  // M110 (A1, review): a caller that walks twice into one `unresolvedOut`
+  // (component and wrapper) shares the dedupe set, so a specifier unresolved in
+  // both walks is still reported once.
+  reportedUnresolvedOut?: Set<string>,
+  // M116 (A2): every file this walk read, with the mtime and size it had, for
+  // the memo that decides whether the result still stands.
+  filesReadOut?: Map<string, string | undefined>,
 ): string[] {
   const externalPkgs = new Set<string>();
   const visited = new Set<string>();
   const reportedBrokenAliases = new Set<string>();
   const reportedWorkspaceRootAliases = new Set<string>();
+  // M110 (A1): one report per specifier, however many files import it.
+  const reportedUnresolved = reportedUnresolvedOut ?? new Set<string>();
   const queue = [componentPath];
+  const pkgNameOf = (spec: string) =>
+    spec.startsWith("@") ? spec.split("/").slice(0, 2).join("/") : spec.split("/")[0];
+  // M107: a sibling rescued in a later round is imported from inside another
+  // package, where a pnpm install links dependencies the entry project's own
+  // node_modules chain never carries. The directory the specifier was first
+  // read from answers for it; projectRoot stays the first probe.
+  const firstImporterDir = new Map<string, string>();
+  // M110 (A1, review): the same bookkeeping at file granularity, so a specifier
+  // that resolves nowhere can name the file that imported it.
+  const firstImporterFile = new Map<string, string>();
+  // M107 (review): a specifier whose package directory no importer has yet
+  // produced re-reads its importer from the newest file that imported it.
+  const unresolvedImporters = new Set<string>();
 
+  // M107 (gutenberg-F1): the walk runs again from every source an unbuilt
+  // sibling was aliased to, so a sibling first reached through an import the
+  // scanner could not resolve is rescued in the same pass.
+  const walk = () => {
   while (queue.length > 0) {
     const file = queue.shift()!;
     const normalizedFile = path.resolve(file);
     if (visited.has(normalizedFile)) continue;
     visited.add(normalizedFile);
+
+    // M116 A2: what the memo above this function has to re-check before it
+    // serves this walk again. A file the walk could not read is recorded too,
+    // so one that appears later invalidates the entry.
+    filesReadOut?.set(normalizedFile, sourceSignature(normalizedFile));
 
     let content: string;
     try {
@@ -4150,11 +5848,48 @@ export function scanExternalDeps(
           reportedBrokenAliases.add(spec);
           warningsOut?.push(BROKEN_ALIAS_WARNING(spec, localResolved.target));
         }
+      } else if (spec.startsWith("#")) {
+        // M108 A1: a subpath import is the importer's own package talking to
+        // itself. Resolved, it is an ordinary graph edge; unresolved, it is a
+        // map that lacks the key — never a package to pre-bundle, and never a
+        // truncation of one ("#app/utils/misc" collapsed to "#app" is what
+        // manufactured epic-stack's failure).
+        const viaImports = resolveSubpathImport(normalizedFile, spec);
+        if (viaImports && SOURCE_EXTENSIONS.includes(path.extname(viaImports))) {
+          queue.push(viaImports);
+        } else if (!viaImports) {
+          // The map may name a dependency rather than a local file; that target,
+          // never the "#" specifier, is what a bundler pre-bundles.
+          const viaPackage = subpathImportPackage(normalizedFile, spec);
+          if (viaPackage) {
+            specifiersOut?.add(viaPackage);
+            externalPkgs.add(pkgNameOf(viaPackage));
+          } else if (!reportedUnresolved.has(spec)) {
+            // M110 (A1): no file, no package, no alias. Nothing can pre-bundle
+            // it, and the specifier stays out of the include list (M108) — the
+            // report is the only thing that was missing.
+            reportedUnresolved.add(spec);
+            const importer = relativeToRoot(normalizedFile, projectRoot);
+            unresolvedOut?.push({ specifier: spec, importer });
+            warningsOut?.push(UNRESOLVED_PREBUNDLE_ENTRY_WARNING(spec, importer));
+          }
+        }
       } else if (isBareSpecifier) {
         specifiersOut?.add(spec);
         const pkg = spec.startsWith("@")
           ? spec.split("/").slice(0, 2).join("/")
           : spec.split("/")[0];
+        const importerDir = path.dirname(normalizedFile);
+        if (!firstImporterDir.has(spec) || unresolvedImporters.has(spec)) {
+          firstImporterDir.set(spec, importerDir);
+          firstImporterFile.set(spec, normalizedFile);
+          unresolvedImporters.delete(spec);
+        }
+        if (!firstImporterDir.has(pkg) || unresolvedImporters.has(pkg)) {
+          firstImporterDir.set(pkg, importerDir);
+          firstImporterFile.set(pkg, normalizedFile);
+          unresolvedImporters.delete(pkg);
+        }
         if (spec === pkg) {
           // The specifier was already the bare root: unchanged, covers every
           // ordinary dependency including subpath-only ones like swiper.
@@ -4180,9 +5915,7 @@ export function scanExternalDeps(
       }
     }
   }
-
-  externalPkgs.delete("react");
-  externalPkgs.delete("react-dom");
+  };
 
   const BLOCKED = new Set([
     "next", "webpack", "critters", "fibers",
@@ -4197,12 +5930,16 @@ export function scanExternalDeps(
   // M76: an entry may now be a subpath string rather than a bare name, so the
   // blocklist's membership and prefix checks apply to the package-name
   // portion re-derived from each entry, not to the raw entry text.
-  for (const entry of externalPkgs) {
-    const pkg = entry.startsWith("@") ? entry.split("/").slice(0, 2).join("/") : entry.split("/")[0];
-    if (BLOCKED.has(pkg) || pkg.startsWith("@next/") || pkg.startsWith("@vercel/turbopack")) {
-      externalPkgs.delete(entry);
+  const dropIgnored = () => {
+    externalPkgs.delete("react");
+    externalPkgs.delete("react-dom");
+    for (const entry of externalPkgs) {
+      const pkg = pkgNameOf(entry);
+      if (BLOCKED.has(pkg) || pkg.startsWith("@next/") || pkg.startsWith("@vercel/turbopack")) {
+        externalPkgs.delete(entry);
+      }
     }
-  }
+  };
 
   // M77: a bare specifier that resolves to an installed package with no
   // runtime entry (no package.json main/module/exports, no index file) is
@@ -4223,10 +5960,67 @@ export function scanExternalDeps(
   // both the optimizer and Vite's real resolver succeed; one with no
   // resolvable source anywhere is still excluded (nothing else is safe), but
   // the warning stops promising a crash it cannot actually prevent.
-  for (const pkg of externalPkgs) {
-    const dir = installedPackageDir(pkg, projectRoot);
-    if (dir === undefined || resolveTarget(dir) !== undefined) continue;
-    if (isWorkspaceSibling(dir, workspaceRoot)) {
+  //
+  // M107: each sibling is decided once per pass; a sibling aliased to its own
+  // source hands that source back to the walk, so the pass reaches a fixed
+  // point instead of stopping at the first ring of imports.
+  type SiblingDecision = { aliasedRoot: boolean; aliasedSpecifiers: Set<string> };
+  const siblingDecisions = new Map<string, SiblingDecision>();
+  const decidedEntries = new Set<string>();
+  const keptEntries = new Set<string>();
+
+  const reportedUnaliasedSubpaths = new Set<string>();
+  const applyDecision = (entry: string, pkg: string, decision: SiblingDecision): void => {
+    if (decision.aliasedSpecifiers.has(entry) || entry === pkg) {
+      externalPkgs.delete(entry);
+      return;
+    }
+    if (!decision.aliasedRoot) return;
+    externalPkgs.delete(entry);
+    if (reportedUnaliasedSubpaths.has(entry)) return;
+    reportedUnaliasedSubpaths.add(entry);
+    warningsOut?.push(UNALIASED_WORKSPACE_SUBPATH_WARNING(entry, pkg));
+  };
+
+  const resolvePackages = (): boolean => {
+    let queuedSource = false;
+    for (const entry of [...externalPkgs]) {
+      const pkg = pkgNameOf(entry);
+      const decided = siblingDecisions.get(pkg);
+      if (decided !== undefined) {
+        applyDecision(entry, pkg, decided);
+        continue;
+      }
+      if (decidedEntries.has(entry)) {
+        externalPkgs.delete(entry);
+        continue;
+      }
+      if (keptEntries.has(entry)) continue;
+      const importerDir = firstImporterDir.get(entry) ?? firstImporterDir.get(pkg);
+      const dir =
+        installedPackageDir(pkg, projectRoot) ??
+        (importerDir === undefined ? undefined : resolvePackageDir(pkg, importerDir));
+      if (dir === undefined) {
+        // M107 (review): the importer this specifier was first read from may be
+        // a file where the package is not installed; a later round can reach the
+        // same specifier from a directory where it is, so the entry is left
+        // undecided rather than kept for good.
+        unresolvedImporters.add(entry);
+        unresolvedImporters.add(pkg);
+        continue;
+      }
+      if (!isWorkspaceSibling(dir, workspaceRoot)) {
+        // A subpath of a package that is not a workspace sibling keeps the
+        // resolution it has today (M76, calcom-F1).
+        if (entry !== pkg || resolveTarget(dir) !== undefined) {
+          keptEntries.add(entry);
+          continue;
+        }
+        decidedEntries.add(entry);
+        externalPkgs.delete(entry);
+        warningsOut?.push(TYPE_ONLY_PACKAGE_WARNING(entry));
+        continue;
+      }
       // Realpath, not the node_modules symlink/junction location: the
       // physical source directory, matching isWorkspaceSibling's own check
       // and avoiding routing Vite's resolution and fs watching through the
@@ -4237,22 +6031,105 @@ export function scanExternalDeps(
       } catch {
         real = dir;
       }
-      const resolvedSourceEntry = resolveTarget(path.join(real, "src"));
-      const sourceEntry = resolvedSourceEntry?.replace(/\\/g, "/");
-      externalPkgs.delete(pkg);
-      if (sourceEntry !== undefined) {
-        extraAliasesOut?.push({ find: new RegExp(`^${escapeRegex(pkg)}$`), replacement: sourceEntry });
-        warningsOut?.push(UNBUILT_WORKSPACE_SOURCE_ALIAS_WARNING(pkg, sourceEntry));
-      } else {
-        const manifest = readProjectManifest(real);
-        const scripts = manifest?.scripts as Record<string, unknown> | undefined;
-        const buildCommand = typeof scripts?.build === "string" ? scripts.build : undefined;
-        warningsOut?.push(UNBUILT_WORKSPACE_PACKAGE_NO_SOURCE_WARNING(pkg, buildCommand));
+      const manifest = readProjectManifest(real);
+      // M107: a sibling that declares a runtime entry is unbuilt when that
+      // entry does not resolve, whatever else happens to sit in its root; one
+      // that declares none keeps M94's probe.
+      const declaresEntry = declaresRuntimeEntry(manifest);
+      if (
+        resolveDirectoryEntry(dir) !== undefined ||
+        (!declaresEntry && resolveTarget(dir) !== undefined)
+      ) {
+        keptEntries.add(entry);
+        continue;
       }
-      continue;
+      const decision: SiblingDecision = { aliasedRoot: false, aliasedSpecifiers: new Set() };
+      siblingDecisions.set(pkg, decision);
+      const source = declaresEntry ? resolveWorkspaceSourceEntry(real, manifest) : undefined;
+      const subpaths = workspaceSubpathSourceEntries(real, manifest);
+      if (source !== undefined) {
+        decision.aliasedRoot = true;
+        extraAliasesOut?.push({
+          find: new RegExp(`^${escapeRegex(pkg)}$`),
+          replacement: source.entry,
+        });
+        warningsOut?.push(
+          UNBUILT_WORKSPACE_SOURCE_ALIAS_WARNING(pkg, source.entry, {
+            field: source.field,
+            declared: source.declared,
+            exists: source.declaredExists,
+          }),
+        );
+        if (SOURCE_EXTENSIONS.includes(path.extname(source.entry))) {
+          queue.push(source.entry);
+          queuedSource = true;
+        }
+      }
+      for (const subpath of subpaths) {
+        const specifier = `${pkg}/${subpath.subpath}`;
+        decision.aliasedSpecifiers.add(specifier);
+        extraAliasesOut?.push({
+          find: new RegExp(`^${escapeRegex(specifier)}$`),
+          replacement: subpath.entry,
+        });
+        queue.push(subpath.entry);
+        queuedSource = true;
+      }
+      if (source === undefined) {
+        if (!declaresEntry) {
+          const types = typeof manifest?.types === "string" ? manifest.types : undefined;
+          warningsOut?.push(TYPES_ONLY_WORKSPACE_PACKAGE_WARNING(pkg, types));
+        } else {
+          // M111 A5: the package manager invocation of the script name, with the
+          // directory to run it in, never the script body.
+          const buildCommand = packageScriptCommand(real, "build", process.cwd());
+          const declaredEntry = manifest ? declaredRuntimeEntries(manifest)[0] : undefined;
+          warningsOut?.push(
+            UNBUILT_WORKSPACE_PACKAGE_NO_SOURCE_WARNING(
+              pkg,
+              buildCommand,
+              declaredEntry && {
+                field: declaredEntry.field,
+                declared: declaredEntry.declared,
+                exists: fs.existsSync(path.resolve(real, declaredEntry.declared)),
+              },
+            ),
+          );
+        }
+      }
+      for (const known of [...externalPkgs]) {
+        if (pkgNameOf(known) === pkg) applyDecision(known, pkg, decision);
+      }
     }
-    externalPkgs.delete(pkg);
-    warningsOut?.push(TYPE_ONLY_PACKAGE_WARNING(pkg));
+    return queuedSource;
+  };
+
+  for (;;) {
+    walk();
+    dropIgnored();
+    if (!resolvePackages()) break;
+  }
+
+  // M110 (A1, review): the `#`-specifier branch above covers only what M108
+  // already keeps out of the include list. The root cause is here: a bare
+  // package that resolves to no installed directory in any round survives the
+  // fixed point, reaches optimizeDeps.include and kills the run at
+  // dep-optimization. The entry itself stays (M77/M94: an entry excluded on a
+  // resolution this scanner cannot see is worse than one Vite resolves per
+  // request); the report is what was missing.
+  for (const entry of externalPkgs) {
+    if (reportedUnresolved.has(entry)) continue;
+    const pkg = pkgNameOf(entry);
+    const importerDir = firstImporterDir.get(entry) ?? firstImporterDir.get(pkg);
+    const dir =
+      installedPackageDir(pkg, projectRoot) ??
+      (importerDir === undefined ? undefined : resolvePackageDir(pkg, importerDir));
+    if (dir !== undefined) continue;
+    reportedUnresolved.add(entry);
+    const importerFile = firstImporterFile.get(entry) ?? firstImporterFile.get(pkg);
+    const importer = importerFile === undefined ? "" : relativeToRoot(importerFile, projectRoot);
+    unresolvedOut?.push({ specifier: entry, importer });
+    warningsOut?.push(UNRESOLVED_PREBUNDLE_ENTRY_WARNING(entry, importer));
   }
 
   return [...externalPkgs];
@@ -4388,6 +6265,19 @@ export function TYPES_ONLY_ALIAS_WARNING(pattern: string, target: string): strin
   );
 }
 
+// True when nothing outside the key's wildcard constrains what it matches, so
+// the alias fires on every root-absolute URL: "*" and "/*" do, "@/*" (prefix
+// "@"), "/app/*" (prefix "app") and "*-suffix" (suffix "-suffix") do not. The
+// slashes are stripped because a leading one is what a root-absolute URL is
+// made of, not a constraint on the rest of the path.
+function capturesEveryRootAbsoluteUrl(pattern: string): boolean {
+  const first = pattern.indexOf("*");
+  if (first === -1) return false;
+  const bare = (part: string): string =>
+    part.replace(/^\/+/, "").replace(/\/+$/, "");
+  return bare(pattern.slice(0, first)) === "" && bare(pattern.slice(pattern.lastIndexOf("*") + 1)) === "";
+}
+
 // The per-entry logic shared by the member's own `paths` and, additively, the
 // workspace root's (M76). M77 adds the loadable-entry check to the exact-match
 // branch only: a `@/*`-style prefix aliases a directory Vite resolves per
@@ -4396,11 +6286,18 @@ function buildPathAliasEntry(
   pattern: string,
   targets: readonly string[],
   base: string,
+  configFile: string,
   warningsOut?: string[],
 ): { find: RegExp; replacement: string } | undefined {
   if (!targets.length) return undefined;
   // First target only: Vite aliases support a single replacement.
   const target = targets[0];
+  // M109 (A4): a key with no prefix and no suffix of its own fires on every
+  // root-absolute URL, which is Vite's client, /@fs/ and the harness entry too.
+  if (capturesEveryRootAbsoluteUrl(pattern)) {
+    warningsOut?.push(ROOT_ABSOLUTE_ALIAS_WARNING(pattern, target, configFile));
+    return undefined;
+  }
   if (pattern.endsWith("/*") && target.endsWith("/*")) {
     const prefix = pattern.slice(0, -2);
     const dir = path.resolve(base, target.slice(0, -2)).replace(/\\/g, "/");
@@ -4444,14 +6341,25 @@ interface ParsedTsconfigPaths {
   configErrors?: string[];
 }
 
-// M95 (nuxt-ui-F1/F2): a broken extends chain, named and connected to the
-// downstream consequence (an empty prop schema) it silently causes, instead
-// of two unrelated-looking facts a user has to connect themselves.
-export function TSCONFIG_EXTENDS_BROKEN_WARNING(tsconfigPath: string, detail: string): string {
+// M95 (nuxt-ui-F1/F2). M109 moved the builder to `src/project-model.ts`, where
+// the one tsconfig reader produces it; every existing importer keeps this name.
+export { TSCONFIG_EXTENDS_BROKEN_WARNING };
+
+// M109 (A4, react-spectrum-F2): react-spectrum's root declares
+// `paths: { "/*": ["./*"] }`. Vite merges user aliases ahead of its own client
+// alias, so the alias built from that key rewrote `/@vite/client` and the
+// harness entry into the workspace root: two 404s and exit 2 before anything
+// rendered. A key with no prefix of its own aliases every root-absolute URL the
+// dev server owns, so it builds no alias at all.
+export function ROOT_ABSOLUTE_ALIAS_WARNING(
+  pattern: string,
+  target: string,
+  configFile: string,
+): string {
   return (
-    `${tsconfigPath}: ${detail} Path aliases and compiler options from the broken part of this ` +
-    "config chain are unavailable, and prop extraction for files under it may report fewer props " +
-    "than the source actually declares."
+    `${configFile}: the path alias "${pattern}" -> "${target}" has no prefix of its own, so it ` +
+    "would rewrite every root-absolute URL the dev server serves, including Vite's own client " +
+    "and the harness entry. It is skipped; the other keys in this config still apply."
   );
 }
 
@@ -4513,14 +6421,30 @@ function parseTsconfigPathsConfig(tsconfigPath: string): ParsedTsconfigPaths | u
   }
 }
 
+// M109 (A2): the references handover describes the run, not the caller, so it
+// is disclosed once per process per config — `loadTsconfigAliases` runs several
+// times in one run and the sentence is the same every time.
+const disclosedGoverningConfigs = new Set<string>();
+
+// The register spans a process, so a test process measuring several projects
+// needs to start from empty; without this every assertion on a first
+// disclosure depends on which test file ran first in the same worker.
+export function resetGoverningDisclosures(): void {
+  disclosedGoverningConfigs.clear();
+}
+
 export function loadTsconfigAliases(
   projectRoot: string,
   warningsOut?: string[],
+  forFile?: string,
 ): Array<{ find: RegExp; replacement: string; fromWorkspaceRoot?: WorkspaceRootAliasSource }> {
   // M69: upward from the member, bounded by the root that governs the install.
   // A member inheriting the workspace tsconfig used to get no aliases at all.
+  // M109 (I1): through the reader, so a references-only root hands over to the
+  // referenced config that covers the file being measured.
   const workspaceRoot = findWorkspaceRoot(projectRoot);
-  const tsconfigPath = findCompilerConfig(projectRoot, workspaceRoot);
+  const governing = resolveGoverningTsconfig(forFile ?? projectRoot, workspaceRoot);
+  const tsconfigPath = governing.configPath;
 
   let memberAliases: Array<{ find: RegExp; replacement: string }> = [];
   let memberPatterns = new Set<string>();
@@ -4533,29 +6457,44 @@ export function loadTsconfigAliases(
   // sets this flag.
   let memberDeclaredBaseUrlOnly = false;
 
+  // A malformed member config gives up entirely, same as before M76, rather
+  // than guessing whether a root layer should still apply. The reader keeps
+  // quiet about it so this message is printed once, by whoever asked.
+  if (governing.nearestConfigPath && !tsconfigPath) {
+    process.stderr.write(`Warning: ${governing.warnings[0]}\n`);
+    return [];
+  }
+
   if (tsconfigPath) {
-    const parsed = parseTsconfigPathsConfig(tsconfigPath);
-    // A malformed member config already warned to stderr above: give up
-    // entirely, same as before M76, rather than guess whether a root layer
-    // should still apply.
-    if (parsed === undefined) return [];
     // M95: a broken extends chain (parseJsonConfigFileContent's own
     // diagnostics, previously discarded) is disclosed once per config file —
     // the rest of this function still runs on whatever paths/baseUrl it
-    // could parse despite the broken part of the chain.
-    for (const detail of parsed.configErrors ?? []) {
-      warningsOut?.push(TSCONFIG_EXTENDS_BROKEN_WARNING(tsconfigPath, detail));
+    // could parse despite the broken part of the chain. M109: the references
+    // handover travels the same channel, once per process per config.
+    for (const warning of governing.warnings) {
+      if (!warningsOut) break;
+      if (warning.includes(TSCONFIG_REFERENCES_MARKER)) {
+        if (disclosedGoverningConfigs.has(warning)) continue;
+        disclosedGoverningConfigs.add(warning);
+      }
+      warningsOut.push(warning);
     }
-    if (parsed.paths) {
+    if (governing.options.paths) {
       // The member's own declared pattern names, regardless of whether its
       // own target resolves: the member deliberately owns any name it lists.
-      memberPatterns = new Set(Object.keys(parsed.paths));
-      for (const [pattern, targets] of Object.entries(parsed.paths)) {
-        const entry = buildPathAliasEntry(pattern, targets, parsed.base, warningsOut);
+      memberPatterns = new Set(Object.keys(governing.options.paths));
+      for (const [pattern, targets] of Object.entries(governing.options.paths)) {
+        const entry = buildPathAliasEntry(
+          pattern,
+          targets,
+          governing.base,
+          tsconfigPath,
+          warningsOut,
+        );
         if (entry) memberAliases.push(entry);
       }
-    } else if (parsed.baseUrl) {
-      memberAliases = baseUrlAliases(parsed.baseUrl, projectRoot, workspaceRoot);
+    } else if (governing.options.baseUrl) {
+      memberAliases = baseUrlAliases(governing.options.baseUrl, projectRoot, workspaceRoot);
       memberDeclaredBaseUrlOnly = true;
     }
   }
@@ -4570,7 +6509,12 @@ export function loadTsconfigAliases(
     replacement: string;
     fromWorkspaceRoot: WorkspaceRootAliasSource;
   }> = [];
-  if (!memberDeclaredBaseUrlOnly && rootConfigPath && rootConfigPath !== tsconfigPath) {
+  if (
+    !memberDeclaredBaseUrlOnly &&
+    rootConfigPath &&
+    rootConfigPath !== tsconfigPath &&
+    rootConfigPath !== governing.nearestConfigPath
+  ) {
     const rootParsed = parseTsconfigPathsConfig(rootConfigPath);
     for (const detail of rootParsed?.configErrors ?? []) {
       warningsOut?.push(TSCONFIG_EXTENDS_BROKEN_WARNING(rootConfigPath, detail));
@@ -4578,7 +6522,13 @@ export function loadTsconfigAliases(
     if (rootParsed?.paths) {
       for (const [pattern, targets] of Object.entries(rootParsed.paths)) {
         if (memberPatterns.has(pattern) || !targets.length) continue;
-        const entry = buildPathAliasEntry(pattern, targets, rootParsed.base, warningsOut);
+        const entry = buildPathAliasEntry(
+          pattern,
+          targets,
+          rootParsed.base,
+          rootConfigPath,
+          warningsOut,
+        );
         if (!entry) continue;
         workspaceRootAliases.push({
           ...entry,

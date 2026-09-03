@@ -1,0 +1,9 @@
+{
+  "name": "declared-absent-style",
+  "version": "0.0.0",
+  "private": true,
+  "style": "./styles.css",
+  "scripts": {
+    "build": "node ./build.mjs"
+  }
+}

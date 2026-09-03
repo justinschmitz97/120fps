@@ -155,17 +155,18 @@ export const Badge: React.FC<{ label: string }> = () => null;`,
 });
 
 describe("H11: export default memo(X) call expression", () => {
-  it("falls back to filename with a working default import", () => {
+  it("names the component the wrapper wraps", () => {
     const dir = mkProject({
       "fancy.tsx": `import { memo } from "react";
 const Widget = () => null;
 export default memo(Widget);`,
     });
-    // Call expressions are not identifier assignments; the module still has
-    // a default export, so the filename fallback with isDefaultOnly: true
-    // generates a valid default import.
+    // M114 B1 / I9 (logto-F1): the wrapper chain names `Widget`, and it is the
+    // default export, so the default import stays valid while the header and
+    // the props table now describe the same binding. Before, the filename
+    // fallback named `Fancy`, a binding the file never declares.
     expect(detectComponentExport(path.join(dir, "fancy.tsx"))).toEqual({
-      name: "Fancy",
+      name: "Widget",
       isDefaultOnly: true,
     });
   });

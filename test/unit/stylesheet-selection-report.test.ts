@@ -88,6 +88,7 @@ describe("resolveCssFiles names which layer decided", () => {
       autoDetected: false,
       layer: "runtime",
       runtimeEngines: ["styled-components"],
+      runtimeEnginesRecognised: true,
     });
   });
 

@@ -24,14 +24,57 @@ export interface PropPresets {
   entries: Map<string, unknown[]>;
 }
 
-// Mirrors fixture detection: adjacent to the component, named after it.
-export function detectPropPresets(componentPath: string): string | undefined {
+// M112 (radix-themes-F1, epic-stack-F3): the preferred name first, then the
+// older one. `<stem>.props.tsx` next to a component is real component source in
+// several design systems, so a name alone never makes a file a preset.
+const PRESET_SUFFIXES = [".120fps.props.tsx", ".120fps.props.ts", ".props.tsx", ".props.ts"];
+
+export interface PresetSibling {
+  path: string;
+  // "preset" is the shape `loadPropPresets` reads: a default-exported object
+  // literal. Anything else is a file that only shares the name.
+  shape: "preset" | "no-default-export";
+}
+
+// M112 B2: the sibling that carries a preset's name without its shape, named so
+// a caller discloses it instead of dropping it.
+export const PRESET_SHAPE_WARNING = (presetPath: string): string =>
+  `${presetPath} exists, not a preset: no default-exported object literal ` +
+  "(expected `export default { prop: [values] }`)";
+
+function parsePresetFile(absolutePath: string): ts.SourceFile | undefined {
+  const text = ts.sys.readFile(absolutePath);
+  if (text === undefined) return undefined;
+  return ts.createSourceFile(
+    absolutePath,
+    text,
+    ts.ScriptTarget.Latest,
+    true,
+    absolutePath.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+  );
+}
+
+// M112 B1: the first candidate carrying the preset shape wins; an earlier
+// candidate without it is kept for the disclosure and does not stop the search.
+export function describePresetSibling(componentPath: string): PresetSibling | undefined {
   const ext = path.extname(componentPath);
-  const stem = componentPath.slice(0, -ext.length);
-  for (const candidate of [`${stem}.props.tsx`, `${stem}.props.ts`]) {
-    if (fs.existsSync(candidate)) return candidate;
+  const stem = ext ? componentPath.slice(0, -ext.length) : componentPath;
+  let shapeless: string | undefined;
+  for (const suffix of PRESET_SUFFIXES) {
+    const candidate = `${stem}${suffix}`;
+    if (!fs.existsSync(candidate)) continue;
+    const sourceFile = parsePresetFile(candidate);
+    if (sourceFile && findDefaultExport(sourceFile)) return { path: candidate, shape: "preset" };
+    if (shapeless === undefined) shapeless = candidate;
   }
-  return undefined;
+  return shapeless === undefined ? undefined : { path: shapeless, shape: "no-default-export" };
+}
+
+// Mirrors fixture detection: adjacent to the component, named after it, shaped
+// like a preset.
+export function detectPropPresets(componentPath: string): string | undefined {
+  const sibling = describePresetSibling(componentPath);
+  return sibling?.shape === "preset" ? sibling.path : undefined;
 }
 
 // Literals are evaluated so they flow through the existing pipeline unchanged:
@@ -113,16 +156,8 @@ function findDefaultExport(sf: ts.SourceFile): ts.ObjectLiteralExpression | unde
 // and running it in Node would be a second, worse module loader.
 export function loadPropPresets(presetPath: string, projectRoot: string): PropPresets | undefined {
   const absolutePath = path.resolve(presetPath);
-  const text = ts.sys.readFile(absolutePath);
-  if (text === undefined) return undefined;
-
-  const sf = ts.createSourceFile(
-    absolutePath,
-    text,
-    ts.ScriptTarget.Latest,
-    true,
-    absolutePath.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
-  );
+  const sf = parsePresetFile(absolutePath);
+  if (!sf) return undefined;
 
   const object = findDefaultExport(sf);
   if (!object) return undefined;

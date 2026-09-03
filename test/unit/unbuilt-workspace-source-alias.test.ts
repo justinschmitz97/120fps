@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import {
+  packageScriptCommand,
   scanExternalDeps,
   UNBUILT_WORKSPACE_SOURCE_ALIAS_WARNING,
   UNBUILT_WORKSPACE_PACKAGE_NO_SOURCE_WARNING,
@@ -83,7 +84,15 @@ describe("workspace-sibling packages with unbuilt dist but resolvable source (M9
     // itself already resolves through.
     const sourceEntry = fs.realpathSync(path.join(real, "src", "index.ts")).replace(/\\/g, "/");
     expect(extraAliases[0].replacement).toBe(sourceEntry);
-    expect(warnings).toContain(UNBUILT_WORKSPACE_SOURCE_ALIAS_WARNING("@dub/utils", sourceEntry));
+    // M107: the message names the field the derivation followed and the path
+    // that field declared, in place of the blanket "unbuilt dist/" claim.
+    expect(warnings).toContain(
+      UNBUILT_WORKSPACE_SOURCE_ALIAS_WARNING("@dub/utils", sourceEntry, {
+        field: "main",
+        declared: "./dist/index.mjs",
+        exists: false,
+      }),
+    );
     expect(warnings.some((w) => w.includes("type-only"))).toBe(false);
   });
 
@@ -105,7 +114,21 @@ describe("workspace-sibling packages with unbuilt dist but resolvable source (M9
     const deps = scanExternalDeps(entryPath, member, [], undefined, warnings, workspaceRoot);
 
     expect(deps).not.toContain("@dub/utils");
-    expect(warnings).toContain(UNBUILT_WORKSPACE_PACKAGE_NO_SOURCE_WARNING("@dub/utils", "tsup"));
+    // M111 A5: the package manager invocation of the script name, with the
+    // directory to run it in, in place of the raw script body.
+    expect(warnings).toContain(
+      UNBUILT_WORKSPACE_PACKAGE_NO_SOURCE_WARNING(
+        "@dub/utils",
+        packageScriptCommand(real, "build", process.cwd()),
+        {
+          field: "main",
+          declared: "./dist/index.mjs",
+          exists: false,
+        },
+      ),
+    );
+    expect(warnings.join("\n")).toContain("run build");
+    expect(warnings.join("\n")).not.toContain("tsup");
     expect(warnings).not.toContain(TYPE_ONLY_PACKAGE_WARNING("@dub/utils"));
   });
 

@@ -285,9 +285,12 @@ describe("noise warning wording", () => {
     expect(table).not.toContain(HOSTILE_BASELINE_NOTE);
   });
 
-  it("adds the baseline clause in the terminal when a baseline was compared", () => {
+  // M117 C5, C6: the baseline clause belongs to the full text the JSON carries.
+  // The terminal prints one line, names only the signals that fired, and never
+  // repeats the sentence the JSON already holds.
+  it("keeps the baseline clause in the JSON text and out of the terminal", () => {
     const report = makeReport({
-      warnings: [HOSTILE_RUN_WARNING],
+      warnings: [formatNoiseWarning(noise("hostile"), true)],
       noise: noise("hostile"),
       baseline: {
         hasBaseline: true,
@@ -296,7 +299,10 @@ describe("noise warning wording", () => {
         skippedNoisy: true,
       },
     });
-    expect(formatTable(report)).toContain(HOSTILE_BASELINE_NOTE);
+    expect(report.warnings![0]).toContain(HOSTILE_BASELINE_NOTE);
+    const table = formatTable(report);
+    expect(table).not.toContain(HOSTILE_BASELINE_NOTE);
+    expect(table).toContain("raise --samples to measure through it.");
   });
 
   it("leaves unrelated warnings untouched", () => {

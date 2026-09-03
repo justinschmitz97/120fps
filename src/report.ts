@@ -11,9 +11,12 @@ import {
 import type { ReactOptimizations } from "./react-profiler.js";
 import { computeMedian, computeP95, type MeasuredState } from "./measure.js";
 import {
-  formatNoiseWarning,
+  HOSTILE_CV_PERCENT,
   HOSTILE_RUN_WARNING,
+  HOSTILE_UNSTABLE_FRACTION,
+  NOISE_CV_PERCENT,
   NOISY_RUN_WARNING,
+  NOISY_UNSTABLE_FRACTION,
   type NoiseReport,
 } from "./noise.js";
 import { hintsForReport, formatHints, MEASUREMENT_BASIS_LINE, type HintId } from "./hints.js";
@@ -168,6 +171,11 @@ export interface ComboReport {
   rerenderScalingCurve?: ScalingCurve | null;
   relativeMount: number;
   verdict: "pass" | "warn" | "fail";
+  // M115 C3: the wall clock the state graph already measured for this combo's
+  // exploration. Absent when this combo was never explored. The run-level
+  // `phaseTimings.explore` stays the phase interval and is never a sum of
+  // these.
+  exploreWallClockMs?: number;
   tier?: ComponentTier;
   hasAnimation?: boolean;
   // M40: whether these numbers describe the settled component or a transient
@@ -469,8 +477,25 @@ export interface CssReport {
     unreadable?: string;
     matchedRules?: number;
   }>;
+  // M112 C4 / I5 (radix-themes-F2): the stylesheets the measured package's own
+  // package.json declares (`style`, `exports[...].style`) whose target is not
+  // on disk yet, as projectRoot-relative posix paths. Present whenever the
+  // manifest declared one, so `layer: "none"` can say "declared, not built"
+  // instead of asserting nothing was declared.
+  declaredMissing?: string[];
+  // M112 C4 / I5: the same declarations with the manifest field that named
+  // each one and the package's own build command, when lane A's producer
+  // supplied them. The `none` branch names the field, the path and the
+  // command; without them it names the paths alone.
+  declaredMissingFields?: Array<{ field: string; path: string; buildCommand?: string }>;
   // present only when layer === "runtime"
   runtimeEngines?: string[];
+  // M114 C4 / I5 (fluentui-F3): whether the engines above are ones the
+  // recogniser names. `false` is a read of a `makeStyles`/`styled` import from
+  // a package the list does not carry, which is weaker evidence than a
+  // declared dependency and says so in its own wording. Absent reads as
+  // recognised: every producer before M114 resolved from the closed list.
+  runtimeEnginesRecognised?: boolean;
   // present only when layer === "largest-fallback"
   onlyCandidate?: boolean;
   noEntryInPackage?: boolean;
@@ -482,6 +507,10 @@ export interface ReactCompilerReport {
   active: boolean;
   detected: boolean;
   version?: string;
+  // M108 A4: the React major the transform compiled for, and the runtime that
+  // major needs when its absence is what kept the transform from running.
+  target?: "17" | "18" | "19";
+  skipped?: { target: string; missingModule: string };
 }
 
 // Which measurement this report describes. Same vocabulary as
@@ -544,6 +573,179 @@ export interface Report {
   // M39: verdict reused from a fingerprinted baseline entry: source
   // unchanged, environment identical, nothing was measured.
   cached?: boolean;
+  // M115 C1: where this run's minutes went. Absent on a cached verdict and on
+  // every report written before this milestone.
+  phaseTimings?: PhaseTimings;
+}
+
+// M115 C1: wall clock around phases, never inside a traced window. The ten
+// phase keys are disjoint intervals over one run and sum to `total` exactly,
+// so a printed breakdown is checkable against the number beside it.
+export interface PhaseTimings {
+  preflight: number;
+  build: number;
+  calibration: number;
+  mount: number;
+  rerender: number;
+  explore: number;
+  scale: number;
+  deltas: number;
+  attribution: number;
+  analysis: number;
+  total: number;
+}
+
+export type PhaseName = Exclude<keyof PhaseTimings, "total">;
+
+// The phase a progress label can open. `attribution` is not one of them: no
+// progress line names it (M115 C2), and its window is handed to the clock by
+// the pass that runs it.
+type BoundaryPhase = Exclude<PhaseName, "attribution">;
+
+// Declaration order is print order.
+export const PHASE_NAMES: readonly PhaseName[] = [
+  "preflight",
+  "build",
+  "calibration",
+  "mount",
+  "rerender",
+  "explore",
+  "scale",
+  "deltas",
+  "attribution",
+  "analysis",
+];
+
+// M115 C2: a boundary line is classified by its label alone, so combo, matrix,
+// curve and isolation runs are all charged by the same rule. A label matching
+// none of them keeps the phase that is already open.
+export function classifyPhaseLabel(line: string): BoundaryPhase | "report" | undefined {
+  if (line.startsWith("preflight:")) return "preflight";
+  if (line.startsWith("harness:")) return "build";
+  if (line.startsWith("calibration")) return "calibration";
+  if (line.startsWith("mount:")) return "mount";
+  if (line.startsWith("rerender:")) return "rerender";
+  if (line.startsWith("explore:")) return "explore";
+  if (line.startsWith("scaling curves")) return "scale";
+  if (line.startsWith("prop deltas")) return "deltas";
+  if (line.startsWith("react analysis")) return "analysis";
+  if (line === "report") return "report";
+  return undefined;
+}
+
+export interface PhaseClock {
+  // Charges the interval since the previous boundary and opens the phase this
+  // label names. Returns the elapsed run clock at that boundary, which is what
+  // the progress line prints.
+  boundary(line: string): number;
+  // The window a cost-attribution pass ran in, carved out of whichever phase
+  // was open so no millisecond is counted twice.
+  addAttribution(ms: number): void;
+  elapsedMs(): number;
+  // Reads the timings without closing the clock: for a caller that runs before
+  // the `report` boundary and must not decide where the total ends.
+  snapshot(): PhaseTimings;
+  // Closes the total at the `report` boundary if one arrived, otherwise now.
+  timings(): PhaseTimings;
+}
+
+export function createPhaseClock(now: () => number = Date.now): PhaseClock {
+  const start = now();
+  const spent: Record<PhaseName, number> = {
+    preflight: 0,
+    build: 0,
+    calibration: 0,
+    mount: 0,
+    rerender: 0,
+    explore: 0,
+    scale: 0,
+    deltas: 0,
+    attribution: 0,
+    analysis: 0,
+  };
+  // The interval before the first `preflight:` boundary is charged to
+  // preflight: it is the run's own start-up, and preflight is what follows it.
+  let open: BoundaryPhase = "preflight";
+  let mark = start;
+  let pendingAttribution = 0;
+  let total: number | undefined;
+
+  const attributedShare = (at: number): number => Math.min(pendingAttribution, at - mark);
+
+  return {
+    boundary(line) {
+      const at = now();
+      if (total !== undefined) return at - start;
+      const phase = classifyPhaseLabel(line);
+      const attributed = attributedShare(at);
+      spent[open] += at - mark - attributed;
+      spent.attribution += attributed;
+      pendingAttribution = 0;
+      mark = at;
+      if (phase === "report") total = at - start;
+      else if (phase) open = phase;
+      return at - start;
+    },
+    addAttribution(ms) {
+      if (ms > 0) pendingAttribution += ms;
+    },
+    elapsedMs() {
+      return now() - start;
+    },
+    snapshot() {
+      if (total !== undefined) return { ...spent, total };
+      const at = now();
+      const attributed = attributedShare(at);
+      const live = { ...spent };
+      live[open] += at - mark - attributed;
+      live.attribution += attributed;
+      return { ...live, total: at - start };
+    },
+    timings() {
+      if (total === undefined) {
+        const at = now();
+        const attributed = attributedShare(at);
+        spent[open] += at - mark - attributed;
+        spent.attribution += attributed;
+        pendingAttribution = 0;
+        mark = at;
+        total = at - start;
+      }
+      return { ...spent, total };
+    },
+  };
+}
+
+// Whole seconds up to a minute, then minutes and seconds: the units the
+// terminal's own `Total:` line prints.
+export function formatPhaseDuration(ms: number): string {
+  const wholeSeconds = Math.round(ms / 1000);
+  if (wholeSeconds < 60) return `${wholeSeconds}s`;
+  const minutes = Math.floor(wholeSeconds / 60);
+  return `${minutes}m ${wholeSeconds - minutes * 60}s`;
+}
+
+// M115 C4: the run clock beside every progress line.
+export function formatElapsedClock(ms: number): string {
+  const wholeSeconds = Math.floor(Math.max(0, ms) / 1000);
+  const minutes = Math.floor(wholeSeconds / 60);
+  return `${minutes}:${String(wholeSeconds - minutes * 60).padStart(2, "0")}`;
+}
+
+// A phase at zero is omitted: a run that never explored says nothing about
+// exploring rather than claiming it took no time.
+export function describePhaseBreakdown(timings: PhaseTimings | undefined): string {
+  if (!timings) return "";
+  return PHASE_NAMES
+    .filter((name) => timings[name] > 0)
+    .map((name) => `${name} ${formatPhaseDuration(timings[name])}`)
+    .join(", ");
+}
+
+// I11: appended to the terminal's `Total:` line by the CLI.
+export function formatPhaseBreakdown(timings: PhaseTimings | undefined): string {
+  const described = describePhaseBreakdown(timings);
+  return described === "" ? "" : `  (${described})`;
 }
 
 // Exactly the conditions the React Optimizations section prints a line for.
@@ -694,6 +896,18 @@ export function formatStylesheetsLine(css: CssReport): string {
         "verify with --css)"
       );
     case "runtime":
+      // M114 C4 (fluentui-F3): a recognised engine is a fact about the
+      // measured package's dependencies, so it closes the question. An
+      // unlisted package read from a `makeStyles`/`styled` import is an
+      // observation, so it names the escape hatch instead of asserting that
+      // no stylesheet was needed.
+      if (css.runtimeEnginesRecognised === false) {
+        return (
+          "Stylesheets: none — styling appears to be generated at runtime by " +
+          `${(css.runtimeEngines ?? []).join(", ")} (unrecognised engine); pass --css if a ` +
+          "stylesheet is needed"
+        );
+      }
       return (
         `Stylesheets: none — styling is generated at runtime by ${(css.runtimeEngines ?? []).join(", ")}; ` +
         "no stylesheet was needed"
@@ -703,6 +917,31 @@ export function formatStylesheetsLine(css: CssReport): string {
     case "unreadable":
       return "Stylesheets: dropped after a read failure -- measured unstyled (see warnings)";
     case "none":
+      // M112 C4: "none found" is false when the package named one. The
+      // declaration is the fact the user acts on, so it replaces the sentence
+      // rather than being appended to it.
+      // C4: the field and the build command when the producer named them,
+      // the paths alone when it did not.
+      if (css.declaredMissingFields && css.declaredMissingFields.length > 0) {
+        const named = css.declaredMissingFields
+          .map((d) => `package.json "${d.field}" declares ${d.path}`)
+          .join("; ");
+        const build = css.declaredMissingFields.find((d) => d.buildCommand)?.buildCommand;
+        return (
+          `Stylesheets: none injected — ${named}, which ${css.declaredMissingFields.length === 1 ? "is" : "are"} ` +
+          "not built yet; " +
+          (build
+            ? `run \`${build}\` in that package, then re-run`
+            : "build the package, then re-run")
+        );
+      }
+      if (css.declaredMissing && css.declaredMissing.length > 0) {
+        return (
+          `Stylesheets: none injected — the measured package's package.json declares ` +
+          `${css.declaredMissing.join(", ")}, which ${css.declaredMissing.length === 1 ? "is" : "are"} ` +
+          "not built yet; build the package, then re-run"
+        );
+      }
       return (
         "Stylesheets: none found (checked the project entry, conventional filenames, and the " +
         "largest stylesheet under the project)"
@@ -746,10 +985,16 @@ export function formatTable(report: Report): string {
     lines.push(formatStylesheetsLine(report.css));
   }
   if (report.reactCompiler?.active) {
-    const version = report.reactCompiler.version
-      ? ` (v${report.reactCompiler.version})`
-      : "";
-    lines.push(`React Compiler: active${version}`);
+    const details: string[] = [];
+    if (report.reactCompiler.version) details.push(`v${report.reactCompiler.version}`);
+    // M108 A4: the target the transform compiled for, beside the version that
+    // compiled it, so a React 18 project reads which React its output assumes.
+    if (report.reactCompiler.target) details.push(`target ${report.reactCompiler.target}`);
+    const suffix = details.length > 0 ? ` (${details.join(", ")})` : "";
+    lines.push(`React Compiler: active${suffix}`);
+  } else if (report.reactCompiler?.skipped) {
+    const { target, missingModule } = report.reactCompiler.skipped;
+    lines.push(`React Compiler: skipped (target ${target}: ${missingModule} not installed)`);
   }
   lines.push("");
 
@@ -1121,21 +1366,73 @@ function appendEmptyRenderNote(lines: string[], report: Report): void {
 // Every output mode ends with the run's warnings; a mode that swallowed them
 // would hide the reason its own numbers are what they are.
 function appendWarnings(lines: string[], report: Report): void {
-  for (const warning of report.warnings ?? []) {
-    lines.push(`⚠ ${enrichNoiseWarning(warning, report)}`);
+  for (const warning of presentWarnings(report)) {
+    lines.push(`⚠ ${warning}`);
   }
 }
 
-// The noise warning reaches `report.warnings` as a fixed sentence, because the
-// signals behind it live on `report.noise` and the baseline clause depends on
-// whether a comparison happened at all. Both are known here, so the terminal
-// prints the specific version of the sentence the JSON's numbers describe.
-function enrichNoiseWarning(warning: string, report: Report): string {
-  if (warning !== NOISY_RUN_WARNING && warning !== HOSTILE_RUN_WARNING) return warning;
+// M117 C1 (dx-audit item 6): a run that rebuilds its harness collected the same
+// static pre-build warning list twice, so one identical sentence printed twice.
+// The key is the exact string: two texts that differ by one character are two
+// warnings. The count reuses the page-error shape (src/page-errors.ts).
+export function dedupeWarnings(warnings: readonly string[]): string[] {
+  const counts = new Map<string, number>();
+  const order: string[] = [];
+  for (const warning of warnings) {
+    const seen = counts.get(warning);
+    if (seen === undefined) {
+      counts.set(warning, 1);
+      order.push(warning);
+    } else {
+      counts.set(warning, seen + 1);
+    }
+  }
+  return order.map((warning) => {
+    const count = counts.get(warning)!;
+    return count > 1 ? `${warning} (×${count})` : warning;
+  });
+}
+
+// M117 C1, C5: what a reader-facing channel prints — the terminal here, the
+// markdown fold in src/ci-report.ts. One line per distinct text, and the noise
+// warning shortened to the one line C5 defines. `report.warnings` itself keeps
+// the long form for the JSON (C6).
+export function presentWarnings(report: Report): string[] {
+  return dedupeWarnings(report.warnings ?? []).map((warning) =>
+    shortenNoiseWarning(warning, report),
+  );
+}
+
+// M117 C5 (dx-audit item 7): the four-sentence form listed both signals at
+// their raw values whether or not either crossed its threshold and named no
+// flag, in the one place a reader is scanning. One line, only the signals that
+// fired against the level's own thresholds, and the one flag that helps.
+export function formatNoiseLine(noise: NoiseReport): string {
+  if (noise.level === "quiet") return "";
+  const hostile = noise.level === "hostile";
+  const cvLimit = hostile ? HOSTILE_CV_PERCENT : NOISE_CV_PERCENT;
+  const unstableLimit = hostile ? HOSTILE_UNSTABLE_FRACTION : NOISY_UNSTABLE_FRACTION;
+  const { probeCv, unstableFraction, contextRetries } = noise.signals;
+  const signals: string[] = [];
+  if (probeCv > cvLimit) signals.push(`probe CV ${Math.round(probeCv)}%`);
+  if (unstableFraction >= unstableLimit) {
+    signals.push(`${Math.round(unstableFraction * 100)}% of metrics unstable`);
+  }
+  if (contextRetries > 0) {
+    signals.push(`${contextRetries} context ${contextRetries === 1 ? "retry" : "retries"}`);
+  }
+  if (signals.length === 0) return "";
+  return `machine: ${noise.level} (${signals.join(", ")}); raise --samples to measure through it.`;
+}
+
+// The noise warning is the one text that differs by channel (M117 C6): the JSON
+// carries the full sentences `formatNoiseWarning` builds, a reader gets one
+// line. Recognized by the fixed sentence the full form is built around, so both
+// the bare constant and the expanded text shorten to the same line.
+function shortenNoiseWarning(warning: string, report: Report): string {
+  if (!warning.includes(NOISY_RUN_WARNING) && !warning.includes(HOSTILE_RUN_WARNING)) return warning;
   if (!report.noise) return warning;
-  // `analyze.ts` sets `report.baseline` only when --check found an entry to
-  // compare against, which is exactly when a comparison was skippable.
-  return formatNoiseWarning(report.noise, report.baseline !== undefined) || warning;
+  return formatNoiseLine(report.noise) || warning;
 }
 
 // M64: WARN rows under "Result: PASS" read as a contradiction without the
@@ -1430,6 +1727,9 @@ export interface BuildCurveReportInput {
   calibration: CalibrationResult;
   thresholds: Thresholds;
   skipAttribution?: boolean;
+  // M115 C2: curve mode's attribution work belongs to the `attribution` phase,
+  // exactly as combo and matrix mode charge it.
+  phaseClock?: Pick<PhaseClock, "addAttribution">;
 }
 
 export function buildCurveReport(input: BuildCurveReportInput): ScalingCurveReport {
@@ -1469,7 +1769,9 @@ export function buildCurveReport(input: BuildCurveReportInput): ScalingCurveRepo
     };
 
     if (!input.skipAttribution && mount?.mountTraces && mount.mountTraces.length > 0) {
+      const attributionStart = Date.now();
       point.costAttribution = attributeCost(mount.mountTraces);
+      input.phaseClock?.addAttribution(Date.now() - attributionStart);
     }
 
     // M104 (commerce-F2) / M106 C3 (dub-F6): the same split combo mode draws.

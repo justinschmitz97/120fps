@@ -414,6 +414,16 @@ async function navigateToState(
   }
 }
 
+// M116 C4b: a pattern the budget cut short, or one of whose steps threw, did
+// not end where it started, so the state-invariance proof no longer covers the
+// state it left. The next sample replays the path instead of measuring from
+// that state. `executeStressPattern` swallows a throwing step and still counts
+// it as run, so `stepsFailed` is the only signal for that case.
+function patternRanShort(run: StressPatternRun | undefined): boolean {
+  if (!run) return false;
+  return run.budgetExhausted || run.stepsRun < run.stepsPlanned || run.stepsFailed > 0;
+}
+
 function computeGlobalMedianEdgeCost(edges: StateEdge[]): number {
   if (edges.length === 0) return 0;
   const medians = edges.map((e) => e.median);
@@ -681,6 +691,26 @@ async function exploreCombo(
     // being discarded at the call site.
     let patternRun: StressPatternRun | undefined;
 
+    // M116 C1: a state-invariant pattern ends where it started (the same proof
+    // that makes this edge a self-loop below), so samples 2..N already stand in
+    // the state the path leads to. Replaying it per sample cost (depth+1)
+    // double-rAF fences on the vsync context for a state nothing had changed.
+    // The flag is per pattern, so an edge whose pattern is not state-invariant
+    // keeps replaying per sample.
+    let pathIsCurrent = false;
+    const replayPath = async (): Promise<void> => {
+      if (pattern.stateInvariant && pathIsCurrent) return;
+      await navigateToState(page, props, sourceNode.pathFromRoot);
+      pathIsCurrent = true;
+    };
+    // M116 C4: both retry layers re-enter the harness before they run the body
+    // again, which unmounts whatever the previous sample left. The next sample
+    // is measured from a replayed path, never from what a retry destroyed.
+    const enterAndInvalidatePath = async (): Promise<void> => {
+      pathIsCurrent = false;
+      await enter();
+    };
+
     for (let s = 0; s < opts.sampleCount; s++) {
       if (Date.now() - startTime >= opts.maxWallClockMs) break;
 
@@ -696,14 +726,14 @@ async function exploreCombo(
           try {
             observed = await withFrameStarvationRetry(
               opts.comboIndex,
-              enter,
+              enterAndInvalidatePath,
               () => {
                 if (remainingWallClock() <= 0) throw new ExploreBudgetSpent();
                 return withContextRetry(
-                  enter,
+                  enterAndInvalidatePath,
                   async () => {
                     await suspendThrottle(session.cdp, opts.cpuThrottle, () => tryCollectGarbage(session.cdp));
-                    await navigateToState(page, props, sourceNode.pathFromRoot);
+                    await replayPath();
                     await installObservers(page);
                     await beginObservedWindow(page);
                     patternRun = await executeStressPattern(page, pattern, remainingWallClock());
@@ -725,6 +755,7 @@ async function exploreCombo(
           break;
         }
         samples.push(observedInteractionMs(observed));
+        if (patternRanShort(patternRun)) pathIsCurrent = false;
         traces.push([]);
         if (s === 0) {
           targetHash = pattern.stateInvariant ? item.stateId : await computeDomHash(page, volatile);
@@ -751,14 +782,14 @@ async function exploreCombo(
         try {
           traceEvents = await withFrameStarvationRetry(
             opts.comboIndex,
-            enter,
+            enterAndInvalidatePath,
             () => {
               if (remainingWallClock() <= 0) throw new ExploreBudgetSpent();
               return withContextRetry(
-                enter,
+                enterAndInvalidatePath,
                 async () => {
                   await suspendThrottle(session.cdp, opts.cpuThrottle, () => tryCollectGarbage(session.cdp));
-                  await navigateToState(page, props, sourceNode.pathFromRoot);
+                  await replayPath();
                   return collectTrace(session.cdp, async () => {
                     patternRun = await executeStressPattern(page, pattern, remainingWallClock());
                   });
@@ -786,6 +817,7 @@ async function exploreCombo(
 
       const parsed = parseTraceDuration(traceEvents);
       samples.push(parsed.totalDuration);
+      if (patternRanShort(patternRun)) pathIsCurrent = false;
       traces.push(traceEvents);
 
       if (s === 0) {

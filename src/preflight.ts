@@ -12,6 +12,11 @@ import {
   isPackageDeclared,
   workspaceLevels,
 } from "./project-model.js";
+// M110 (I3): the loadable-plugin probe the classifier below filters against.
+// harness.ts imports this module in turn; the call sits inside a function body,
+// so the binding is resolved when the classifier runs, never while either
+// module is still evaluating.
+import { detectProjectTransforms, SUPPORTED_TRANSFORM_PLUGINS } from "./harness.js";
 
 // The marker package a server module imports to make the boundary explicit.
 // M72: "next/server-only" was never a real module (Next.js re-exports the
@@ -41,7 +46,13 @@ export type PreflightKind =
   // M106 A2 (excalidraw-F1): the import graph returns to the measured module.
   // Soft: the cycle is the application's own and usually mounts; it only
   // fails when the entry enters it at a point the application never does.
-  | "import-cycle";
+  | "import-cycle"
+  // M110 A5 end-game (directus-NEW1): an import whose file type Vite parses as
+  // JavaScript unless a plugin claims it, and that no transform 120fps loads
+  // claims. Hard: the dev server answers that request with a 500 and the run
+  // dies inside Vite's import analysis, so refusing before the browser starts
+  // is the only outcome that names a cause.
+  | "unloadable-file-type";
 
 // The harness never loads the project's vite.config (M30): its plugins target
 // its own Vite major and its server options are not measurement-safe. That is
@@ -94,6 +105,25 @@ export const TRANSFORM_RECOGNIZERS: TransformRecognizer[] = [
     test: (s) => /\.wasm$/.test(s),
     owner: "vite-plugin-wasm",
   },
+  // M110 (A5, directus): Vite parses an imported file as JavaScript unless a
+  // plugin claims it. A YAML, TOML or Markdown import therefore ends the run on
+  // a parse error that never names the plugin the project itself declares for
+  // that extension.
+  {
+    code: "yaml",
+    test: (s) => /\.ya?ml$/.test(s),
+    owner: "a YAML loader plugin (e.g. @rollup/plugin-yaml)",
+  },
+  {
+    code: "toml",
+    test: (s) => /\.toml$/.test(s),
+    owner: "a TOML loader plugin (e.g. @rollup/plugin-toml)",
+  },
+  {
+    code: "markdown",
+    test: (s) => /\.md$/.test(s),
+    owner: "a Markdown loader plugin (e.g. unplugin-vue-markdown)",
+  },
   {
     code: "shader",
     test: (s) => /\.(glsl|wgsl|vert|frag|geom|comp)$/.test(s),
@@ -114,7 +144,109 @@ export const TRANSFORM_RECOGNIZERS: TransformRecognizer[] = [
     test: (s) => /\.svelte$/.test(s),
     owner: "@sveltejs/vite-plugin-svelte",
   },
+  // M108 A6 (documenso-F1): a Babel macro is compiled away by a plugin before
+  // any bundler sees it. Nothing is on disk behind the specifier, so the
+  // extension-based recognizers above never match it.
+  {
+    code: "babel-macro",
+    test: (s) => isMacroSpecifier(s),
+    owner: "a Babel macro compiler the project configures in its vite.config",
+  },
+  // M108 A7 (hoppscotch-F2): a virtual namespace is generated at request time
+  // by a plugin. Same shape: no file, no extension, no build that produces one.
+  {
+    code: "virtual-module",
+    test: (s, containingFile) => recognizeVirtualNamespace(s, containingFile) !== undefined,
+    owner: "a Vite plugin the project configures in its vite.config",
+  },
 ];
+
+// M108 A6/A7. The namespace, and the packages that can own it: a specifier in
+// the `unplugin-` namespace names its own producer, and the two other
+// namespaces are owned by the plugins seen producing them.
+const VIRTUAL_NAMESPACE_PRODUCERS: Array<{ prefix: string; packages: string[] }> = [
+  { prefix: "~icons/", packages: ["unplugin-icons"] },
+  { prefix: "virtual:uno.css", packages: ["unocss", "@unocss/vite"] },
+  { prefix: "virtual:windi", packages: ["vite-plugin-windicss"] },
+  { prefix: "virtual:pwa-register", packages: ["vite-plugin-pwa"] },
+  { prefix: "virtual:", packages: [] },
+  { prefix: "unplugin-", packages: [] },
+];
+
+export function recognizeVirtualNamespace(
+  specifier: string,
+  containingFile = "",
+): { namespace: string; candidates: string[] } | undefined {
+  const entry = VIRTUAL_NAMESPACE_PRODUCERS.find((e) => specifier.startsWith(e.prefix));
+  if (!entry) return undefined;
+  // M108 review: `~icons/` and `virtual:` name nothing that can be on disk, but
+  // the bare `unplugin-` prefix also starts ordinary package names
+  // (`unplugin-icons/runtime` is a real file inside an installed package). An
+  // installed package answers for the specifier, so it is not a virtual module.
+  if (entry.prefix === "unplugin-" && containingFile) {
+    const pkg = specifier.split("/")[0];
+    if (installedPackageDir(pkg, path.dirname(containingFile)) !== undefined) return undefined;
+  }
+  // `unplugin-icons/types/react` names its producer in the specifier itself.
+  const own = entry.prefix === "unplugin-" ? [specifier.split("/")[0]] : [];
+  return { namespace: entry.prefix, candidates: [...entry.packages, ...own] };
+}
+
+// `styled-components/macro` and `@lingui/react/macro` are the two shapes in the
+// corpus; `babel-plugin-macros` itself is imported directly by a few.
+export function isMacroSpecifier(specifier: string): boolean {
+  // M108 review: a relative `./macro` is a source file of this project, not a
+  // macro package. Flagging it prints an untrue transform note and ends the
+  // preflight walk at that edge, hiding whatever that file itself imports.
+  if (specifier.startsWith(".") || specifier.startsWith("/")) return false;
+  return (
+    /\/macro$/.test(specifier) ||
+    /\.macro$/.test(specifier) ||
+    specifier === "babel-plugin-macros"
+  );
+}
+
+// M110 (A5): the loader packages that claim each extension, most common first.
+// The project declaring one of them is the project naming its own plugin
+// (directus declares `@rollup/plugin-yaml` and its vite.config loads
+// `src/lang/translations/en-US.yaml` with it).
+const DATA_LOADER_CANDIDATES: Record<string, string[]> = {
+  yaml: ["@rollup/plugin-yaml", "@modyfi/vite-plugin-yaml", "vite-plugin-yaml"],
+  toml: ["@rollup/plugin-toml", "vite-plugin-toml"],
+  markdown: ["unplugin-vue-markdown", "vite-plugin-md", "vite-plugin-markdown"],
+  graphql: ["@rollup/plugin-graphql", "vite-plugin-graphql-loader", "@graphql-tools/vite"],
+};
+
+// The recognizer codes whose files Vite hands to its JavaScript parser: an
+// import of one of them ends the run with `Failed to parse source for import
+// analysis` unless a plugin claims it first. Every entry has a loader table
+// above, and none of them is a transform 120fps can load.
+export const UNLOADABLE_FILE_TYPE_CODES = new Set(Object.keys(DATA_LOADER_CANDIDATES));
+
+function macroCompilerCandidates(specifier: string): string[] {
+  const candidates = ["vite-plugin-babel-macros", "babel-plugin-macros"];
+  // A scoped package that ships a macro usually ships the Vite plugin that
+  // compiles it beside it (@lingui/react/macro → @lingui/vite-plugin).
+  if (specifier.startsWith("@")) candidates.push(`${specifier.split("/")[0]}/vite-plugin`);
+  return candidates;
+}
+
+// M108 A6/A7 MUST NOT: name only a package this repository declares. With none
+// declared the recognizer's own generic wording stands.
+export function declaredTransformOwner(
+  code: string,
+  specifier: string,
+  memberRoot: string,
+  workspaceRoot: string = findWorkspaceRoot(memberRoot),
+): string | undefined {
+  const candidates =
+    code === "babel-macro"
+      ? macroCompilerCandidates(specifier)
+      : code === "virtual-module"
+        ? (recognizeVirtualNamespace(specifier)?.candidates ?? [])
+        : (DATA_LOADER_CANDIDATES[code] ?? []);
+  return candidates.find((pkg) => isPackageDeclared(pkg, memberRoot, workspaceRoot));
+}
 
 export function recognizeTransform(
   specifier: string,
@@ -134,6 +266,10 @@ export interface PreflightHit {
   // M48: recognizer code and the plugin family that owns the transform.
   transformCode?: string;
   transformOwner?: string;
+  // M110: true when `transformOwner` is a package this project declares, false
+  // when it is the recognizer's generic wording. The refusal message may only
+  // claim "this project compiles that with X" in the first case.
+  transformOwnerDeclared?: boolean;
 }
 
 export interface PreflightResult {
@@ -325,10 +461,41 @@ function scriptKind(fileName: string): ts.ScriptKind {
   return ts.ScriptKind.TS;
 }
 
+// M116 A1: the same file is walked by the dry run, by every composed child and
+// by every component of a sweep, and its parse cannot differ between them while
+// it sits unchanged on disk. Keyed by mtime and size, so an edit invalidates the
+// entry without a flag; a file with no stat (missing, unreadable) is never
+// cached, so a file that appears later is read then. Process-local by design:
+// nothing here survives the run (M116 MUST NOT).
+const parsedFiles = new Map<string, { signature: string; sourceFile: ts.SourceFile | undefined }>();
+
+function fileSignature(fileName: string): string | undefined {
+  try {
+    const stat = fs.statSync(fileName);
+    return `${stat.mtimeMs}:${stat.size}`;
+  } catch {
+    return undefined;
+  }
+}
+
 // M57: a `.vue` file is not TypeScript. Its `<script setup>` block is, and that
 // is where its imports live: without this the walk would stop at the measured
 // file and every guarantee below it would silently become a no-op.
 function parse(fileName: string, vueCompiler?: VueSfcCompiler): ts.SourceFile | undefined {
+  // A compiler-less walk reads a `.vue` file as unreadable, so the two answers
+  // are different facts about the same file and never share a cache entry.
+  const cacheKey = `${vueCompiler ? "sfc" : "ts"} ${path.resolve(fileName)}`;
+  const signature = fileSignature(fileName);
+  if (signature !== undefined) {
+    const cached = parsedFiles.get(cacheKey);
+    if (cached && cached.signature === signature) return cached.sourceFile;
+  }
+  const sourceFile = parseUncached(fileName, vueCompiler);
+  if (signature !== undefined) parsedFiles.set(cacheKey, { signature, sourceFile });
+  return sourceFile;
+}
+
+function parseUncached(fileName: string, vueCompiler?: VueSfcCompiler): ts.SourceFile | undefined {
   const text = ts.sys.readFile(fileName);
   if (text === undefined) return undefined;
   if (isVueFile(fileName)) {
@@ -349,11 +516,61 @@ function parse(fileName: string, vueCompiler?: VueSfcCompiler): ts.SourceFile | 
 // TypeScript cannot resolve a `.vue` specifier, so relative SFC edges are
 // resolved by hand. Aliased ones are not: preflight is a best-effort net, and
 // an unresolved edge costs coverage, never a false failure.
-function resolveVueImport(fromFile: string, specifier: string): string | undefined {
-  if (!specifier.startsWith(".") && !specifier.startsWith("/")) return undefined;
-  const target = path.normalize(path.resolve(path.dirname(fromFile), specifier));
-  if (/[\\/]node_modules[\\/]/.test(target)) return undefined;
-  return fs.existsSync(target) ? target : undefined;
+function resolveVueImport(
+  fromFile: string,
+  specifier: string,
+  compilerOptions?: ts.CompilerOptions,
+): string | undefined {
+  // M110 (A5, directus): an SFC imported through a tsconfig path alias
+  // (`@/components/v-menu.vue`) is the same graph edge as a relative one.
+  // TypeScript's own resolver does not answer for a `.vue` file, so the alias
+  // is substituted here and the result probed on disk, the way the relative
+  // form already is. Without it the walk stopped at the first aliased SFC and
+  // never reached the `.yaml` import four files deeper.
+  const candidates =
+    specifier.startsWith(".") || specifier.startsWith("/")
+      ? [path.resolve(path.dirname(fromFile), specifier)]
+      : aliasCandidates(specifier, compilerOptions);
+  for (const candidate of candidates) {
+    const target = path.normalize(candidate);
+    if (/[\\/]node_modules[\\/]/.test(target)) continue;
+    if (fs.existsSync(target)) return target;
+  }
+  return undefined;
+}
+
+// The two `paths` shapes TypeScript itself supports: an exact key, or one `*`.
+function aliasCandidates(specifier: string, compilerOptions?: ts.CompilerOptions): string[] {
+  const paths = compilerOptions?.paths;
+  // Same alias base as src/harness.ts:5804 and src/project-model.ts:326:
+  // TypeScript 5 leaves `baseUrl` undefined for a tsconfig that declares only
+  // `paths`, and records the declaring config through `pathsBasePath` /
+  // `configFilePath` instead.
+  const base =
+    compilerOptions?.baseUrl ??
+    (compilerOptions as { pathsBasePath?: string } | undefined)?.pathsBasePath ??
+    (compilerOptions?.configFilePath
+      ? path.dirname(compilerOptions.configFilePath as string)
+      : undefined);
+  if (!paths || !base) return [];
+  const candidates: string[] = [];
+  for (const [pattern, targets] of Object.entries(paths)) {
+    const star = pattern.indexOf("*");
+    let rest: string;
+    if (star === -1) {
+      if (pattern !== specifier) continue;
+      rest = "";
+    } else {
+      const prefix = pattern.slice(0, star);
+      const suffix = pattern.slice(star + 1);
+      if (!specifier.startsWith(prefix) || !specifier.endsWith(suffix)) continue;
+      rest = specifier.slice(prefix.length, specifier.length - suffix.length);
+    }
+    for (const target of targets) {
+      candidates.push(path.resolve(base, target.replace("*", rest)));
+    }
+  }
+  return candidates;
 }
 
 // A statement whose specifiers are all type-only is erased before it reaches a
@@ -591,18 +808,28 @@ export function runPreflight(options: PreflightOptions): PreflightResult {
 
       const recognizer = recognizeTransform(edge.specifier, file);
       if (recognizer) {
+        // M108 A6/A7: a macro or virtual-namespace hit names the plugin this
+        // repository declares for it; the recognizer's generic owner stands
+        // when no candidate is declared.
+        const declaredOwner = declaredTransformOwner(
+          recognizer.code,
+          edge.specifier,
+          projectRoot,
+          workspaceRoot,
+        );
         transforms.push({
           kind: "project-transform",
           chain: chainTo(file),
           specifier: edge.specifier,
           transformCode: recognizer.code,
-          transformOwner: recognizer.owner,
+          transformOwner: declaredOwner ?? recognizer.owner,
+          ...(declaredOwner ? { transformOwnerDeclared: true } : {}),
         });
         // A `.vue` edge is a graph edge as well as a transform note: the note
         // must not end the walk, or a server-only import one SFC deep would
         // never be reached.
         if (recognizer.code === "vue" && vueCompiler) {
-          const sfc = resolveVueImport(file, edge.specifier);
+          const sfc = resolveVueImport(file, edge.specifier, compilerOptions);
           if (sfc && !seen.has(sfc)) {
             seen.add(sfc);
             parents.set(sfc, file);
@@ -668,6 +895,19 @@ export function runPreflight(options: PreflightOptions): PreflightResult {
     hard.push({ kind: "async-component", chain: [relative(projectRoot, path.resolve(entries[0]))] });
   }
 
+  // M110 A5 end-game (directus-NEW1): last, so every refusal that already
+  // existed stays the one the message names. A data-file import is only a
+  // refusal when nothing 120fps loads claims that extension; the hit stays in
+  // `transforms` as well, so --no-preflight still prints the plugin the
+  // project declares for it.
+  // UNLOADABLE_FILE_TYPE_CODES holds only codes 120fps cannot load (see its
+  // own comment above), so membership alone decides this.
+  for (const hit of transforms) {
+    if (!hit.transformCode) continue;
+    if (!UNLOADABLE_FILE_TYPE_CODES.has(hit.transformCode)) continue;
+    hard.push({ ...hit, kind: "unloadable-file-type" });
+  }
+
   return { hard, soft, transforms, providers };
 }
 
@@ -688,6 +928,7 @@ const HARD_CAUSE: Record<HardKind, string> = {
   "not-installed":
     "is measured in a project with no installed dependencies (no node_modules under it or its " +
     "workspace root)",
+  "unloadable-file-type": "imports a file type Vite parses as JavaScript unless a plugin claims it",
 };
 
 // M72: the server-boundary remedy ("extract the client part") only makes
@@ -718,6 +959,13 @@ export const HARD_REMEDY: Record<HardKind, string> = {
   "not-installed":
     "Run your package manager's install (npm install, yarn install, or pnpm install), then " +
     "measure again.",
+  // M110 A5 end-game: the run cannot be rescued by installing anything -- the
+  // plugin exists and 120fps still will not load it -- so the remedy is to
+  // measure a graph that does not reach the import.
+  "unloadable-file-type":
+    "Measure a component whose graph does not reach that import, or give this one a fixture " +
+    "(120fps.fixture.tsx) or a wrapper (--wrap, 120fps.setup.tsx) that supplies the data instead " +
+    "of importing the file. Pass --no-preflight to attempt the run anyway.",
 };
 
 // M105 (solid-ui-F1): the escape hatch every hard remedy offers is useless
@@ -756,9 +1004,34 @@ export class PreflightHardRejectionError extends Error {
 // The first hit is the one to fix: everything below it is unreachable until
 // that edge moves.
 export function preflightFailureMessage(hits: PreflightHit[]): string {
-  const hit = hits[0];
+  // M110: the unloadable-file-type promotion appends to `hard` after the walk,
+  // and both call sites append composed-child hits after that, so position no
+  // longer encodes precedence. Every other refusal names an edge that fails
+  // before Vite reaches the data file, so it stays the one reported.
+  const hit = hits.find((candidate) => candidate.kind !== "unloadable-file-type") ?? hits[0];
   const where = hit.chain[hit.chain.length - 1];
   const kind = hit.kind as HardKind;
+  // M94: a Vite failure is re-presented as a 120fps error naming target,
+  // importer and remedy. This one is refused before Vite ever sees the file, so
+  // the importer, the import and the plugin the project declares for it are all
+  // still in hand.
+  if (kind === "unloadable-file-type") {
+    const supported = SUPPORTED_TRANSFORM_PLUGINS.map((plugin) => plugin.code).join(", ");
+    return [
+      `Cannot measure this component in a browser: ${where} imports ${hit.specifier}, a file ` +
+        "type Vite parses as JavaScript unless a plugin claims it.",
+      "",
+      `  ${chainText(hit)}`,
+      "",
+      (hit.transformOwnerDeclared
+        ? `This project compiles that with ${hit.transformOwner}.`
+        : `Nothing in this project declares ${hit.transformOwner}, which Vite needs to load it.`) +
+        ` 120fps loads only its supported transforms (${supported}) and never reads your ` +
+        "vite.config, so nothing here can load that import: the dev server would answer it " +
+        "with a 500 and the run would end inside Vite's import analysis.",
+      hardRemedyFor(kind),
+    ].join("\n");
+  }
   return [
     `Cannot measure this component in a browser: ${where} ${HARD_CAUSE[kind]}.`,
     "",
@@ -835,6 +1108,31 @@ export function classifyPreprocessorAvailability(
   return "neither";
 }
 
+// M110 (I3): one filter for both modes. The real run and `--explain-props` read
+// the same `preflight.transforms` list, and drifting filters were why a dry run
+// stayed silent about the 13 preprocessor imports the real run named a minute
+// later from the same files on disk.
+//
+// Dropped here: a transform the run actually applies (the project's plugin is
+// installed and loadable), and a preprocessor Vite resolves on its own because
+// the project has it installed. Everything else keeps its input order.
+export function classifyProjectTransformHits(
+  projectRoot: string,
+  transforms: PreflightHit[],
+  opts: { noTransforms?: boolean; workspaceRoot?: string } = {},
+): Array<{ hit: PreflightHit; availability: PreprocessorAvailability | undefined }> {
+  if (opts.noTransforms) return [];
+  const loadable = new Set(detectProjectTransforms(projectRoot).map((t) => t.code));
+  const workspaceRoot = opts.workspaceRoot ?? findWorkspaceRoot(projectRoot);
+  return transforms
+    .filter((hit) => !hit.transformCode || !loadable.has(hit.transformCode))
+    .map((hit) => ({
+      hit,
+      availability: classifyPreprocessorAvailability(hit, projectRoot, workspaceRoot),
+    }))
+    .filter(({ availability }) => availability !== "installed");
+}
+
 // Names the transform, not the symptom. Without this the run fails deep inside
 // Vite with a message that never mentions the plugin the project relies on.
 // `availability` is only meaningful for a css-preprocessor hit (see above);
@@ -880,6 +1178,7 @@ const BYPASS_KIND_LABEL: Record<HardKind, string> = {
   "unsupported-framework": "solid",
   "yarn-pnp": "yarn-pnp",
   "not-installed": "not-installed",
+  "unloadable-file-type": "unloadable-file-type",
 };
 
 export const PREFLIGHT_BYPASSED_WARNING = (hits: PreflightHit[]): string => {

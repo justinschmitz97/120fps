@@ -49,6 +49,18 @@ afterEach(() => {
 // tsconfig-extends warning already in buildWarnings when both point at the
 // same generated directory.
 describe("Nuxt build-time virtual module (#build/...) failure", () => {
+  // M108 A2: the diagnosis is scoped to a repository that declares nuxt, so
+  // this fixture states what it is.
+  beforeEach(() => {
+    fs.writeFileSync(
+      path.join(tmpDir, "package.json"),
+      JSON.stringify({
+        dependencies: { react: "18.3.1", "react-dom": "18.3.1" },
+        devDependencies: { nuxt: "3.13.0" },
+      }),
+    );
+  });
+
   it("names nuxi prepare as the remedy, with no raw package-resolution message", async () => {
     const err = new Error('Missing "#build" specifier in "@nuxt/ui" package');
     let thrown: Error | undefined;
@@ -120,6 +132,7 @@ describe("Nuxt build-time virtual module (#build/...) failure", () => {
       path.join(tmpDir, "package.json"),
       JSON.stringify({
         dependencies: { react: "18.3.1", "react-dom": "18.3.1" },
+        devDependencies: { nuxt: "3.13.0" },
         scripts: { prepare: "nuxt-module-build prepare" },
       }),
     );
