@@ -1,6 +1,6 @@
 ---
 kind: milestone
-status: draft
+status: approved
 tests:
   # Lane B
   - test/unit/preset-sibling-shape-is-disclosed.test.ts
@@ -540,3 +540,45 @@ A-M112`, tree at `9fa3b7e` plus the lanes' uncommitted work):
   the preset name: `specs/overview/00-tdd.md:38`, `:675`, `:893` and `specs/overview/01-glossary.md:76` say
   `<stem>.props.tsx|ts`, and gain `<stem>.120fps.props.tsx|ts` as the preferred name with the older one still
   loading.
+
+## Approval
+
+Approved 2026-09-03. Commits: `cf0ec3e`, `9918ee2`, `3b492ef` (lane C first wave), `9fa3b7e`,
+`a56003f` (lane A + review fix-ups), `c8f39a9`, `bdd8261` (lane B cap sink + fix-ups), `0174e7e`,
+`536102b` (lane C follow-up + fix-ups).
+
+Re-run at approval: `node node_modules/vitest/vitest.mjs run
+test/unit/preset-sibling-shape-is-disclosed.test.ts test/unit/remedy-follows-the-applied-preset.test.ts
+test/unit/init-fixture-scaffolds-or-explains.test.ts test/unit/stylesheet-disclosure-completeness.test.ts
+test/unit/declared-stylesheet-absent-is-named.test.ts test/unit/package-declared-stylesheets.test.ts
+--maxWorkers=2` -> `Test Files  6 passed (6)`, `Tests  103 passed (103)`.
+`test/unit/prop-cap-preset-exempt.test.ts` (the MUST NOT's named guard): `Tests  3 passed (3)`.
+
+- Lane B (`src/prop-presets.ts`, `src/prop-gen.ts`) — B1, B2, B3.
+  `preset-sibling-shape-is-disclosed.test.ts` 18 passed; `tsc --noEmit` clean. Corpus: radix-themes-F1
+  and epic-stack-F3 name `<stem>.120fps.props.tsx`, logto-F4 names the loaded preset, control
+  shadcn-admin's sentence is unchanged word for word on the warning channel.
+- Lane C (`src/analyze.ts`, `src/composition.ts`, `src/report.ts`) — C1, C2, C3, C4.
+  `remedy-follows-the-applied-preset.test.ts` + `init-fixture-scaffolds-or-explains.test.ts` +
+  `stylesheet-disclosure-completeness.test.ts` 43 passed; `tsc --noEmit` clean. Corpus:
+  radix-themes-F1/F2 disclosure and `Stylesheets:` line closed, radix-themes-F3 wrote the dialog
+  scaffold (`exit=0`, verdict unchanged), logto-F4 closed, control unchanged.
+- Lane A (`src/harness.ts`) — A1, A2. `declared-stylesheet-absent-is-named.test.ts` +
+  `package-declared-stylesheets.test.ts` 40 passed; `tsc --noEmit` clean. Corpus: radix-themes-F2
+  reports `css layer=none files=0`, no `CSS_FALLBACK_WARNING`, build command named; control's
+  stylesheet line unchanged.
+
+### Deferred / open
+
+- Lifting the prop cap for a preset: M86's Tier 0 promotion stands, nothing changes.
+- vuetify-F1's false "this package has no application entry" clause: M114 (G8) owns it. The vuetify
+  row's expected line is now the M112 declared-but-unbuilt outcome observed in
+  `C:/Projekte/120fps-fieldtest/retest/hoppscotch-vitesse-vuetify.md`.
+- Dry-run and real-run parity for transforms and composition inside `explainProps`: M110 (G4).
+- Migrating `<stem>.props.tsx` presets to the new name: both names keep working, nothing renames.
+- radix-themes-F4 and logto-F2: overturned as by-design in verification.
+- The `--init-fixture` scope conflict (`specs/overview/00-tdd.md:529`) and the preset-name updates in
+  `00-tdd.md:38,:675,:893` and `01-glossary.md:76`: coordinator edits, outside this spec's commit.
+- B1's "an earlier shapeless candidate does not stop the search" branch is implemented
+  (`src/prop-presets.ts:58-70`) and covered indirectly (the legacy `<stem>.props.tsx` fallback), with
+  no fixture pairing a shapeless `.120fps.props.tsx` against a valid `.props.tsx`.
