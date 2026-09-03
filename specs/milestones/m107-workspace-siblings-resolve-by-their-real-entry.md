@@ -1,6 +1,6 @@
 ---
 kind: milestone
-status: draft
+status: approved
 tests:
   - test/unit/workspace-sibling-entry-resolution.test.ts
   - test/unit/workspace-sibling-transitive-rescue.test.ts
@@ -276,3 +276,30 @@ Corpus, through `scratch/A-M107/dist/cli.js`:
   `resolvePackageDir` both answer from the resolution chain, and MUST NOT keeps a registry install on
   the target it resolves to today. Reading `pnpm-workspace.yaml` globs to find a member by manifest
   name is a different mechanism.
+
+## Approval
+
+Approved 2026-09-03. Commits: `2ea27d8` (lane A implementation), `2efea48` (lane A review fix-ups).
+
+- Lane A (`src/harness.ts`): `vitest run test/unit/workspace-sibling-entry-resolution.test.ts
+  test/unit/workspace-sibling-transitive-rescue.test.ts
+  test/unit/workspace-sibling-diagnosis-wording.test.ts --maxWorkers=2` re-run at approval →
+  `Test Files 3 passed (3) / Tests 14 passed (14)`; the spec's wider lane run records
+  `Test Files 12 passed (12) / Tests 222 passed (222)` and `tsc --noEmit` clean. Corpus: directus,
+  gutenberg and react-spectrum all ran through `scratch/A-M107/dist/cli.js` with their after lines
+  quoted above — the sibling-resolution aborts are gone on all three (directus and gutenberg now stop
+  one layer later on a YAML transform and a multi-line import clause, both deferred), react-spectrum
+  prints the types-only line at exit 0, and the shadcn-admin control still reaches its report.
+
+### Deferred / open
+
+- `#`-prefixed and `imports`-field specifiers, the Nuxt `#build`/`#imports` diagnosis, and virtual or
+  macro imports: M108.
+- A warning when a specifier has no installed directory at all (`src/harness.ts:4228` `continue`): M110.
+- Memoising the import-graph walk per (file, mtime-set): M116, gated by M115's numbers.
+- Running the sibling's own build: out of scope.
+- Subpath aliasing for packages that are not workspace siblings: no run-5 finding requires it.
+- Adding `.d.ts` to `SOURCE_EXTENSIONS`: A4's message covers the types-only sibling instead.
+- Multi-line `import { a, b } from "pkg"` clauses: `STATIC_IMPORT_PATTERN` matches within one line;
+  gutenberg's run stops on it (`@wordpress/escape-html`). Needs its own milestone and tests.
+- A workspace member that no `node_modules` link points at: resolution answers from the chain only.
