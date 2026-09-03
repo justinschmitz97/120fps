@@ -1,6 +1,6 @@
 ---
 kind: milestone
-status: draft
+status: approved
 tests:
   # Lane C
   - test/unit/report-carries-phase-timings.test.ts
@@ -398,3 +398,32 @@ worktree, through `node C:/Projekte/120fps-fieldtest/tools/run120.mjs`:
   run measures neither, so `--isolate --explain-props` prices the combo path it would have taken.
 - The dry run's own wall clock (median 7 s, max 92 s, `dx-audit.md`): worth naming once the real
   run's phases are known, and not before.
+
+## Approval
+
+Approved 2026-09-03. Commits: `661ab79` and `0b72589` (Lane C), `b1921fa` (Lane A).
+
+- **Lane C (C1-C7)**: `report-carries-phase-timings.test.ts`,
+  `progress-lines-carry-elapsed-time.test.ts` and `dry-run-estimates-the-real-run.test.ts` green
+  (`3 passed` / `32 passed`), `tsc --noEmit` clean. Corpus: shadcn-admin-F2 real run closed C1-C4
+  (ten keys sum to `total` exactly, `26036 == 26036`, verdict and warnings identical to the
+  pre-change run); n8n-F4 dry run closed C6; n8n-F3 closed C4 only and cannot reach a report on its
+  own unresolved `~icons/` import (M108/M110 work).
+- **Lane A (A1, A2)**: `total-line-breaks-down-by-phase.test.ts` and `dry-run-flag-forwarding.test.ts`
+  green (`2 passed` / `14 passed`), `tsc --noEmit` clean, no baseline-green test turned red across
+  the 41 files importing `src/cli.js`. Corpus: shadcn-admin-F2 printed
+  `Total: 21.6s  (preflight 0s, build 1s, ...)` with a 33 ms gap to `phaseTimings.total`; the n8n
+  Button dry run priced `4 combos x 5 samples` from the flags and the defaults without them.
+- Re-run at approval: all five spec test files, `5 passed (5)` / `55 passed (55)`.
+
+Deferred / open:
+
+- Levers B, C and D of `perf-levers.md`; B and C are M116, D stays deferred there.
+- Per-phase CPU and memory, and per-context or per-browser-process accounting.
+- Sub-phase keys for isolation and matrix runs, and a per-scale-point breakdown.
+- A `--timings` flag, a machine-readable timing stream, and any way to silence the breakdown.
+- Cross-machine estimate calibration for C6: a fingerprint mismatch falls back to the defaults.
+- Pricing an isolation dry run: `--isolate --explain-props` prices the combo path instead.
+- The dry run's own wall clock, worth naming once the real run's phases are known.
+- A phase under half a second renders as `0s`: `formatPhaseDuration` rounds to whole seconds and
+  A1's omission rule reads the millisecond value.
