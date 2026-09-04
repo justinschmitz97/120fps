@@ -57,7 +57,6 @@ const COMMENT_TOKENS: Record<string, number> = {
   "harness/stylesheets.ts": 15,
   "harness/vite-config.ts": 29,
   "harness/workspace-entries.ts": 4,
-  "index.ts": 17,
   "pipeline/analyze.ts": 46,
   "pipeline/build-report.ts": 46,
   "pipeline/estimate.ts": 2,

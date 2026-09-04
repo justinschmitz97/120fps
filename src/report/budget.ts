@@ -238,7 +238,7 @@ function checkBudgetNumber(configPath: string, keyPath: string, value: unknown):
 // would otherwise silently reach resolveComponentBudget/resolveTolerances and
 // produce nonsense budgets. Unknown keys are left untouched: forward compat
 // for fields a newer version of 120fps understands.
-function validateBudgetConfig(configPath: string, config: unknown): asserts config is BudgetConfig {
+export function validateBudgetConfig(configPath: string, config: unknown): asserts config is BudgetConfig {
   if (config === null || typeof config !== "object" || Array.isArray(config)) {
     throw new Error(
       `Invalid ${configPath}: config must be a JSON object, received ${describeConfigValue(config)}`,
