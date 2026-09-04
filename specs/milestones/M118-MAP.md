@@ -264,6 +264,32 @@ reads them today.
   909, `analysis/react-profiler.ts` 902, `browser/discovery.ts` 823, `browser/measure.ts`,
   `cli/main.ts`, `pipeline/analyze.ts` (2b), `props/values.ts` 822, `report/budget.ts` 808.
 
+## Wave 2b outcome (merged at 9d7910e)
+
+- `cli/`: `main.ts` 1,979 → 507; `args.ts` 637 (also `resolveMatrixOption`, `resolveIsolationOption`),
+  `lifecycle.ts` 290, `errors.ts` 147, `help.ts` 100, `paths.ts` 234, `gitignore.ts` 101. Sibling
+  cycle `main.ts ↔ lifecycle.ts` (`watchdogAbortOutput` reads `resolvedRootsOutput`,
+  `formatTotalLine`), function-body only.
+- `browser/`: `measure.ts` 2,099 → 790; `dom.ts` 306, `settle.ts` 87, `session.ts` 278, `retry.ts`
+  288, `pacing.ts` 124, `trace.ts` 289. `trace.ts` also holds the `TimingResult`/`MountResult`/
+  `RerenderResult`/`MeasureOptions` types and `buildTimingResult`; wave 3 may move those to
+  `browser/results.ts` once `serializeProps` leaves `measure.ts`. `isolation-orchestrate.test.ts`
+  now mocks `browser/measure.js` and `browser/session.js`.
+- `pipeline/`: `analyze.ts` 4,980 → 787; `build-report.ts` 759, `explain-props.ts` 794, `modes/`
+  (`context` 161, `combo` 403, `curve` 295, `matrix` 420, `isolation` 181), `remedies.ts` 300,
+  `resolve.ts` 225, `verdict-reuse.ts` 214, `fixtures.ts` 184, `estimate.ts` 148, and
+  `phases.ts` 717 (accepted: the nine phase functions `analyze()` delegates to, each with an explicit
+  parameter object). The boundary test's `directoryOf` now returns the stage (first path segment),
+  so `pipeline/modes/` is intra-stage.
+- Ratchet test defect to fix in wave 3 task 7: the comment scanner mis-tracks quote state across a
+  regex literal containing `"` (`COLLAPSED_UNION_WARNING`), so per-file comment-token counts can
+  shift by a few when a file is split; the allowlist values are the scanner's own observed counts.
+- Line-cap allowlist after wave 2: `analysis/explorer.ts` 909, `analysis/react-profiler.ts` 902,
+  `browser/discovery.ts` 823, `props/values.ts` 822, `report/budget.ts` 808. Boundary allowlist:
+  `project/preflight.ts → browser`, `→ props`, `report/stats.ts → analysis`, `report/ci.ts →
+  analysis`. Duplicate names: `componentStem` (cli/paths, props/candidates), `serializeProps`
+  (analysis/explorer, analysis/react-profiler, browser/measure).
+
 ## Wave 3: shared helpers, cycles, comments, surface
 
 Ordered task list (sequential in the main checkout, one commit each, tsc + the stage's tests per
