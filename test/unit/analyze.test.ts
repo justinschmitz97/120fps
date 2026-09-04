@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { analyze, buildReport, type BuildReportInput } from "../../src/pipeline/index.js";
 import type { MountResult } from "../../src/browser/index.js";
 import type { ExploreResult, StateGraph } from "../../src/analysis/index.js";
-import type { CdpMetrics } from "../../src/analysis/index.js";
+import type { CdpMetrics } from "../../src/report/index.js";
 import type { CalibrationResult, Thresholds } from "../../src/report/index.js";
 
 function makeMountResult(overrides: Partial<MountResult> = {}): MountResult {

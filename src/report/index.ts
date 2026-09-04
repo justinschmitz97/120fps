@@ -38,6 +38,7 @@ export {
 export * from "./ci.js";
 export * from "./hints.js";
 export * from "./types.js";
+export * from "./metrics.js";
 export * from "./stats.js";
 export * from "./terminal.js";
 export * from "./terminal-modes.js";

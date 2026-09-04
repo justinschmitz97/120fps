@@ -149,7 +149,7 @@ export {
   type ParseMetricsOptions,
   type CostAttribution,
   type CostBucket,
-} from "./analysis/index.js";
+} from "./report/index.js";
 export {
   computeCV,
   buildTimingWithCV,

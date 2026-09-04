@@ -11,8 +11,11 @@ import {
   type RerenderResult,
 } from "../browser/index.js";
 import { type PropSchema, type CompositionTree } from "../props/index.js";
-import { type ExploreResult, computeScalingCurve, attributeCost, computeINP } from "../analysis/index.js";
+import { type ExploreResult } from "../analysis/index.js";
 import {
+  computeScalingCurve,
+  attributeCost,
+  computeINP,
   loadBudgetConfig,
   loadBaseline,
   saveBaseline as saveBaselineFile,

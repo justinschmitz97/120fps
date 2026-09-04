@@ -20,8 +20,8 @@ import type {
 } from "./types.js";
 import { DEFAULT_THRESHOLDS } from "./types.js";
 import type { PhaseClock } from "./phases.js";
-import type { ScalingCurve } from "../analysis/index.js";
-import { computeScalingCurve, attributeCost } from "../analysis/index.js";
+import type { ScalingCurve } from "./metrics.js";
+import { computeScalingCurve, attributeCost } from "./metrics.js";
 import { computeMedian, computeP95, hasPageErrors, renderDrain } from "../browser/index.js";
 import { comboKey } from "../props/index.js";
 

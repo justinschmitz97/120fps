@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { buildAndServe } from "../../src/harness/index.js";
 import { measureMount } from "../../src/browser/index.js";
-import { attributeCost } from "../../src/analysis/index.js";
+import { attributeCost } from "../../src/report/index.js";
 
 async function attributionFor(fixture: string, options: { samples: number; warmupRuns: number }) {
   const harness = await buildAndServe(fixture);

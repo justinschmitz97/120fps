@@ -1,5 +1,6 @@
 import type { InteractionType, MeasuredState, NoiseReport } from "../browser/index.js";
-import type { ScalingCurve, CostAttribution, ReactOptimizations } from "../analysis/index.js";
+import type { ScalingCurve, CostAttribution } from "./metrics.js";
+import type { ReactOptimizations } from "../analysis/index.js";
 import type { HintId } from "./hints.js";
 import type { PhaseTimings } from "./phases.js";
 

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { buildCurveReport, computeCurveVerdict } from "../../src/report/index.js";
-import { computeScalingCurve, type ScalingCurve } from "../../src/analysis/index.js";
+import { computeScalingCurve, type ScalingCurve } from "../../src/report/index.js";
 import type { MountResult, RerenderResult } from "../../src/browser/index.js";
 import type { ExploreResult } from "../../src/analysis/index.js";
 import type { CalibrationResult, Thresholds, ScalingPoint } from "../../src/report/index.js";

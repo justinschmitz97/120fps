@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { attributeCost } from "../../src/analysis/index.js";
+import { attributeCost } from "../../src/report/index.js";
 import type { TraceEvent } from "../../src/browser/index.js";
 
 function makeEvent(

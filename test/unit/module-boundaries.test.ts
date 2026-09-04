@@ -45,13 +45,6 @@ const ALLOWLIST: readonly { file: string; target: string; reason: string }[] = [
       "CHURN_DEGRADATION_LIMIT, LEAK_BYTES_PER_CYCLE (isolation/isolation.ts constants read " +
       "so the failure body never drifts from computeIsolationVerdict's own thresholds); not moved",
   },
-  {
-    file: "report/stats.ts",
-    target: "analysis",
-    reason:
-      "computeScalingCurve, attributeCost (real analysis/metrics.ts values buildCurveReport " +
-      "calls); not moved. isSuperlinearGrowth (this file) is the only part that did move",
-  },
 ];
 
 interface Edge {

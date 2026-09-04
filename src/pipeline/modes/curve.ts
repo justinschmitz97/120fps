@@ -5,8 +5,11 @@ import {
   type ScalingPropMatch,
   generateScalingCombos,
 } from "../../props/index.js";
-import { explore, computeScalingCurve, isDomFlat, SCALING_NO_EFFECT_WARNING } from "../../analysis/index.js";
+import { explore } from "../../analysis/index.js";
 import {
+  computeScalingCurve,
+  isDomFlat,
+  SCALING_NO_EFFECT_WARNING,
   attachWrapperReport,
   buildCurveReport,
   computeCurveVerdict,

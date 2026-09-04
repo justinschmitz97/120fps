@@ -8,7 +8,7 @@ import {
   type ScalingPoint,
   type TimingWithCV,
 } from "../../src/report/index.js";
-import type { ScalingCurve } from "../../src/analysis/index.js";
+import type { ScalingCurve } from "../../src/report/index.js";
 import {
   type IsolationReport,
   LEAK_BYTES_PER_CYCLE,

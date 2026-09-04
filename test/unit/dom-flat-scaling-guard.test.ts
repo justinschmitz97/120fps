@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isDomFlat, SCALING_NO_EFFECT_WARNING } from "../../src/analysis/index.js";
+import { isDomFlat, SCALING_NO_EFFECT_WARNING } from "../../src/report/index.js";
 
 const point = (n: number, domNodeCount: number) => ({ n, domNodeCount });
 

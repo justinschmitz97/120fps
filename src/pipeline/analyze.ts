@@ -76,7 +76,7 @@ import {
   runPreflightPhase,
 } from "./phases.js";
 import { collectMachineInfo, tryReuseStoredVerdict } from "./verdict-reuse.js";
-import { createCalibrationTrace } from "../analysis/index.js";
+import { createCalibrationTrace } from "../report/index.js";
 import { detectFixture, initFixtureOutcome, isFixturePath } from "./fixtures.js";
 import { resolveCurveMatch, runCurveMode } from "./modes/curve.js";
 import { runComboMode } from "./modes/combo.js";

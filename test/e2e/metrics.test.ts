@@ -6,7 +6,7 @@ import {
   parseTraceDuration,
   type TraceEvent,
 } from "../../src/browser/index.js";
-import { parseMetrics, createCalibrationTrace } from "../../src/analysis/index.js";
+import { parseMetrics, createCalibrationTrace } from "../../src/report/index.js";
 
 describe("H15: calibration DOM cleanup", () => {
   it("removes calibration element after measurement", async () => {

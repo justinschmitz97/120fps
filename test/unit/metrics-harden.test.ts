@@ -4,7 +4,7 @@ import {
   computeINP,
   computeScalingCurve,
   isDomFlat,
-} from "../../src/analysis/index.js";
+} from "../../src/report/index.js";
 import { parseTraceDuration, type TraceEvent } from "../../src/browser/index.js";
 
 describe("H1: zero-duration events", () => {

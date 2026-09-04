@@ -4,7 +4,7 @@ import {
   growthExponent,
   SUPERLINEAR_MIN_EXPONENT,
   SUPERLINEAR_RESIDUAL_SHARE,
-} from "../../src/analysis/index.js";
+} from "../../src/report/index.js";
 import {
   buildCurveReport,
   computeCurveVerdict,

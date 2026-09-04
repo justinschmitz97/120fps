@@ -5,7 +5,7 @@ import {
   computeScalingCurve,
   linearRegression,
   type CdpMetrics,
-} from "../../src/analysis/index.js";
+} from "../../src/report/index.js";
 import { parseTraceDuration, type TraceEvent } from "../../src/browser/index.js";
 
 describe("parseMetrics", () => {

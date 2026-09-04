@@ -9,7 +9,7 @@ import {
   type ScalingCurveReport,
   type ScalingPoint,
 } from "../../src/report/index.js";
-import type { ScalingCurve } from "../../src/analysis/index.js";
+import type { ScalingCurve } from "../../src/report/index.js";
 import type { MountResult, RerenderResult } from "../../src/browser/index.js";
 import type { ExploreResult } from "../../src/analysis/index.js";
 

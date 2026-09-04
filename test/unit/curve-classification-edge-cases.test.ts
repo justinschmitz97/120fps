@@ -3,7 +3,7 @@ import {
   computeScalingCurve,
   growthExponent,
   type ScalingCurve,
-} from "../../src/analysis/index.js";
+} from "../../src/report/index.js";
 import {
   evaluateCurve,
   formatCurveViolation,
