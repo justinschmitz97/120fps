@@ -13,9 +13,9 @@ import {
 import { runPreflight, isVueFile, projectCompilerOptions } from "../project/index.js";
 import { toPosix } from "../shared/index.js";
 
-// M110 review: `--target` throws TARGET_WITH_FIXTURE_ERROR whenever the
-// fixture came from an explicit --fixture or from the input file itself, so
-// the `<file>#Export` remedy is only usable for the auto-detected sibling.
+// `--target` throws TARGET_WITH_FIXTURE_ERROR whenever the fixture came from
+// an explicit --fixture or from the input file itself, so the
+// `<file>#Export` remedy is only usable for the auto-detected sibling.
 export type FixtureProvenance = "sibling" | "explicit-flag" | "fixture-input";
 
 const JSX_COMPOSED_CHILD_EXTENSIONS = [".tsx", ".ts", ".jsx", ".js"];
@@ -33,17 +33,14 @@ function resolveJsxChildCandidates(base: string): string | undefined {
   return undefined;
 }
 
-// M91 (commerce-F3) / M92: a relative specifier resolves against the
-// importing file's own directory by plain extension probing. A bare
-// specifier -- commerce's real app/page.tsx composes its async children as
-// baseUrl-relative bare specifiers ("components/carousel", no leading "./"),
-// which the old dot-prefix check excluded outright, so the one-hop walk
-// found zero composed children for exactly the file it exists to cover --
-// resolves through the same tsconfig baseUrl/paths machinery runPreflight's
-// own import-graph walk already uses (ts.resolveModuleName), not a string
-// match on a leading dot. A bare specifier that resolves into node_modules
-// is a real dependency, not a local composed child, and is excluded exactly
-// like the rest of the graph walk excludes package internals.
+// A relative specifier resolves against the importing file's own directory
+// by plain extension probing. A bare specifier (e.g. "components/carousel",
+// no leading "./") resolves through the same tsconfig baseUrl/paths
+// machinery runPreflight's own import-graph walk uses (ts.resolveModuleName),
+// not a string match on a leading dot. A bare specifier that resolves into
+// node_modules is a real dependency, not a local composed child, and is
+// excluded exactly like the rest of the graph walk excludes package
+// internals.
 function resolveRelativeJsxChild(fromFile: string, specifier: string): string | undefined {
   if (specifier.startsWith(".") || specifier.startsWith("/")) {
     return resolveJsxChildCandidates(path.resolve(path.dirname(fromFile), specifier));
@@ -56,14 +53,13 @@ function resolveRelativeJsxChild(fromFile: string, specifier: string): string | 
   return fs.existsSync(target) ? target : undefined;
 }
 
-// M91 (commerce-F3): runPreflight's async-component check only inspects
-// entries[0] — a sync component whose JSX composes an async server
-// component one hop away is invisible to it. Reused unmodified (Lane A's
-// file, src/preflight.ts): each JSX-composed local import gets its own
-// preflight pass, entries[0] set to the child, reproducing exactly the
-// rejection a direct `120fps ./child.tsx` invocation already produces
-// correctly. Only hard hits are merged back — soft/transform/provider
-// signals one hop into a child's own graph are not this milestone's concern.
+// runPreflight's async-component check only inspects entries[0]: a sync
+// component whose JSX composes an async server component one hop away is
+// invisible to it. Each JSX-composed local import gets its own preflight
+// pass, entries[0] set to the child, reproducing the rejection a direct
+// `120fps ./child.tsx` invocation would produce. Only hard hits are merged
+// back; soft/transform/provider signals one hop into a child's own graph
+// are out of scope here.
 export function composedChildPreflightHits(
   targetFile: string,
   projectRoot: string,
@@ -109,12 +105,12 @@ export function writeFixtureScaffold(
   return `wrote fixture scaffold ${target}; edit it to render the real composition, then re-run`;
 }
 
-// M112 C3 (radix-themes-F3): the same outcome for the never-composed path,
-// where there is no `CompositionTree` to hand `writeFixtureScaffold` — that
-// value is `undefined` exactly because auto-composition found no root, so the
-// flag could not act there even in principle. Returning the line rather than
-// printing it keeps both emission sites on the run's one warning channel, and
-// makes "accepted the flag and wrote nothing in silence" unrepresentable.
+// The never-composed path has no `CompositionTree` to hand
+// `writeFixtureScaffold`: that value is `undefined` because auto-composition
+// found no root, so the flag could not act there even in principle.
+// Returning the line rather than printing it keeps both emission sites on
+// the run's one warning channel, and makes "accepted the flag and wrote
+// nothing in silence" unrepresentable.
 export function initFixtureOutcome(
   componentPath: string,
   root: string,

@@ -29,7 +29,7 @@ import {
 export async function resolveCurveMatch(ctx: ModeContext): Promise<ScalingPropMatch | undefined> {
   const { curveMode } = ctx.options;
   if (curveMode === false) return undefined;
-  // M63: a curve the user asked for and did not get must say so; auto-detection
+  // A curve the user asked for and did not get must say so; auto-detection
   // that finds nothing asked for nothing.
   const explicit = curveMode === true || typeof curveMode === "object";
   if (ctx.useFixture || ctx.composed) {
@@ -52,9 +52,9 @@ export async function resolveCurveMatch(ctx: ModeContext): Promise<ScalingPropMa
       reason: "explicit --curve flag",
     };
   }
-  // Extraction is cached by getSchemas: the matrix check and the standard path
-  // would otherwise re-extract the same file (M34, ~1.4s each on a real
-  // Next.js project).
+  // Extraction is cached by getSchemas: the matrix check and the standard
+  // path would otherwise re-extract the same file, which costs real time on
+  // a large project.
   const matches = detectScalingProps(await ctx.getSchemas());
   if (matches.length === 0) {
     if (explicit) {
@@ -128,23 +128,19 @@ export async function runCurveMode(ctx: ModeContext, match: ScalingPropMatch): P
     runWarnings.push(SCALING_NO_EFFECT_WARNING(curveReport.propName));
   }
 
-  // M59: a curve report has scale points, not combos, so the per-combo gate
-  // cannot reach it. A point that rendered nothing while the page threw still
-  // has to fail the run: every other point on the curve measured the same
-  // broken render.
-  // M106 C3 (dub-F6): the gate used to require `fatal`, so a Combobox whose
-  // every point rendered 0 nodes while React logged
-  // "`Tooltip` must be used within `TooltipProvider`" through console.error
-  // printed Result: PASS over six empty renders. Nothing rendered and the page
-  // reported something is a broken point whether the report arrived as a throw
-  // or as a logged error; the two are still told apart in the warning text.
+  // A curve report has scale points, not combos, so the per-combo gate
+  // cannot reach it. A point that rendered nothing while the page reported
+  // an error still has to fail the run, whether that report arrived as a
+  // throw or only as a logged error: nothing rendered and the page
+  // complained about it either way. The two cases are told apart in the
+  // warning text below, not in this filter.
   const brokenPoints = curveMounts.filter(
     (m) => m.domNodeCount === 0 && hasPageErrors(m.pageErrors),
   );
   if (brokenPoints.length > 0) {
-    // M79 gap: the structural counterpart to CURVE_RENDER_ERROR_WARNING's
-    // formatted string below, populated at the same point so the two never
-    // drift by construction rather than by convention.
+    // The structural counterpart to CURVE_RENDER_ERROR_WARNING's formatted
+    // string below, populated at the same point so the two never drift by
+    // construction rather than by convention.
     curveReport.renderErrorPoints = brokenPoints.map((broken) => ({
       n: curveScalePoints[broken.comboIndex] ?? broken.comboIndex,
       pageErrors: renderDrain(broken.pageErrors!),
@@ -160,8 +156,8 @@ export async function runCurveMode(ctx: ModeContext, match: ScalingPropMatch): P
     );
   }
 
-  // M104/M106 C3 (commerce-F2): a curve every one of whose points rendered
-  // nothing measured no growth of anything, whether or not the page said so.
+  // A curve every one of whose points rendered nothing measured no growth
+  // of anything, whether or not the page said so.
   const everyPointEmpty =
     curveReport.points.length > 0 && curveReport.points.every((p) => p.domNodeCount === 0);
   if (everyPointEmpty && brokenPoints.length === 0) {
@@ -188,25 +184,24 @@ export async function runCurveMode(ctx: ModeContext, match: ScalingPropMatch): P
   if (ctx.wrapper) attachWrapperReport(report, ctx.wrapper);
   ctx.attachHarnessContext(report);
 
-  // M104 (commerce-F1): a component whose only interesting prop is an array
-  // auto-activates this mode, and this pass never ran here at all — so the
-  // render fan-out its combo-mode siblings disclose in full was absent from
-  // console and JSON alike, with nothing saying a pass had been skipped.
+  // A component whose only interesting prop is an array auto-activates this
+  // mode; it must still run this pass so the render fan-out combo mode's
+  // siblings disclose reaches console and JSON here too, not just there.
   const curveReact = await collectReactOptimizations(ctx, scaleCombos, await ctx.getSchemas(), report);
   for (const [comboIndex, opts] of curveReact) {
     const point = curveReport.points[comboIndex];
     if (point) point.reactOptimizations = opts;
   }
 
-  // M115 C1: the run's own breakdown, on the report the run returns.
+  // The run's own timing breakdown travels on the report it returns.
   report.phaseTimings = ctx.phaseClock.timings();
   writeReportJson(report, options.jsonPath);
 
   return report;
 }
 
-// M12: auto-scaling sweep on the standard path. Attaches mount/rerender
-// scaling curves for the first detected scaling prop to every combo of an
+// Auto-scaling sweep on the standard path. Attaches mount/rerender scaling
+// curves for the first detected scaling prop to every combo of an
 // already-built report; measured at the full requested sample count.
 export async function applyAutoScalingCurves(
   ctx: ModeContext,
@@ -248,7 +243,7 @@ export async function applyAutoScalingCurves(
     metric: r.stable.median,
   }));
 
-  // M61: the sibling-copies probe already carries its own scale-probe curve
+  // The sibling-copies probe already carries its own scale-probe curve
   // (buildReport): overwriting it here with the real detected-prop curve
   // would silently replace a synthetic-copies fact with an unrelated one
   // under the same field. Only combos that are not scale probes take this
@@ -274,25 +269,24 @@ export async function applyAutoScalingCurves(
   report.autoScalingReason = match.reason;
 }
 
-// M59: curve mode's equivalent of the per-combo render-health gate.
+// Curve mode's equivalent of the per-combo render-health gate.
 export const CURVE_RENDER_ERROR_WARNING = (n: number, messages: string[]): string =>
   `scale point N=${n} rendered 0 DOM nodes while the page threw, so the curve describes a ` +
   `broken render: ${messages.join("; ")}`;
 
-// M106 C3 (dub-F6): the same fact without the throw. React logs a missing
-// provider through console.error and renders nothing; "while the page threw"
-// would be false, and staying silent printed PASS over six empty renders.
+// The same fact without the throw: React can log a missing provider through
+// console.error and render nothing, so "while the page threw" would be
+// false even though nothing rendered.
 export const CURVE_EMPTY_POINT_WITH_ERRORS_WARNING = (n: number, messages: string[]): string =>
   `scale point N=${n} rendered 0 DOM nodes and the page reported: ${messages.join("; ")}. The ` +
   "curve describes a render that did not happen.";
 
-// M104 (commerce-F2): every point empty, nothing reported. The growth class
-// would be fitted over a component that rendered nothing at any N.
-// M106 C3 (review gap 7): prefixed `scale point N=` -- the same shape
-// `renderFailed` (analyze.ts) and hintsForReport's curve branch already match
-// -- so an all-empty curve publishes `providerCandidates` and reaches the
-// provider hint, which is what the MUST promised. `N=all` names the whole
-// sweep rather than a point that does not exist.
+// Every point empty, nothing reported. The growth class would be fitted
+// over a component that rendered nothing at any N. Prefixed `scale point
+// N=` — the same shape `renderFailed` (pipeline/remedies.ts) and
+// hintsForReport's curve branch already match — so an all-empty curve
+// publishes `providerCandidates` and reaches the provider hint. `N=all`
+// names the whole sweep rather than a point that does not exist.
 export const CURVE_ALL_POINTS_EMPTY_WARNING = (propName: string): string =>
   `scale point N=all rendered 0 DOM nodes: the component renders nothing across the whole ` +
   `${propName} sweep, so there is no growth to classify.`;

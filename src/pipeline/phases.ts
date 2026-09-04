@@ -91,48 +91,47 @@ export function prepareRunInputs(input: {
 } {
   const { options, resolvedPath, harnessPath, useFixture } = input;
   const { projectRoot, relativeComponent } = resolveProjectPaths(resolvedPath);
-  // M57: resolved before the wrapper, because a Vue project's wrapper is an SFC
+  // Resolved before the wrapper, because a Vue project's wrapper is an SFC
   // and a `.tsx` one left lying around could not render the component at all.
   // Collected before the run's warning list exists; folded into it below.
   const frameworkWarnings: string[] = [];
   const framework = resolveFramework(options.framework ?? "auto", projectRoot, harnessPath, (w) =>
     frameworkWarnings.push(w),
   );
-  // M76: what the wrapper probe had to fall back to, folded into the run's
+  // What the wrapper probe had to fall back to, folded into the run's
   // warnings below alongside frameworkWarnings and cssWarnings.
   const wrapWarnings: string[] = [];
   const { wrapPath, wrapAutoDetected } = resolveWrapPath(options, projectRoot, framework, wrapWarnings);
-  // M71: what discovery had to guess at, folded into the run's warnings below.
+  // What discovery had to guess at, folded into the run's warnings below.
   const cssWarnings: string[] = [];
   const resolvedCss = resolveCssFiles(options, projectRoot, cssWarnings, {
     ...(wrapPath ? { wrapPath } : {}),
     measuredFile: resolvedPath,
   });
   const cssReport = buildCssReport(resolvedCss, projectRoot);
-  // M90 (ant-design-F6, dub-F3, nuxt-ui-F4, mantine-F5, calcom-F6,
-  // shadcn-ui-F3): computed once, right where the decision is made, so it
-  // survives any later throw regardless of where in the pipeline it lands.
-  // Deliberately kept out of `runWarnings`/`cssWarnings` (which become
-  // `report.warnings` on a successful run): the decision already has its own
-  // dedicated `Stylesheets:` line there, and folding this in too would print
-  // it twice. It is threaded only into the crash-path catch below.
+  // Computed once, right where the decision is made, so it survives any
+  // later throw regardless of where in the pipeline it lands. Deliberately
+  // kept out of `runWarnings`/`cssWarnings` (which become `report.warnings`
+  // on a successful run): the decision already has its own dedicated
+  // `Stylesheets:` line there, and folding this in too would print it
+  // twice. It is threaded only into the crash-path catch below.
   const cssDecisionWarning = formatStylesheetsLine(cssReport);
-  // Item A (ant-design-F5/F7/F9 follow-up): mirrored out immediately, same
-  // reasoning as the internal `onWarning` closure below -- a surface-3 async
-  // rejection needs this available before this function's own local catch
-  // ever gets a chance to build `combined`, since that catch's stack frame
-  // is exactly what a detached rejection never reaches.
+  // Mirrored out immediately, same reasoning as the internal `onWarning`
+  // closure below -- a surface-3 async rejection needs this available
+  // before this function's own local catch ever gets a chance to build
+  // `combined`, since that catch's stack frame is exactly what a detached
+  // rejection never reaches.
   options.onWarning?.(cssDecisionWarning);
-  // M44: a fixture already owns its scene, so presets never apply there.
+  // A fixture already owns its scene, so presets never apply there.
   const presetPath = useFixture ? undefined : detectPropPresets(resolvedPath);
   const presets = presetPath ? loadPropPresets(presetPath, projectRoot) : undefined;
-  // M112 C2: the same disclosure the dry run prints, from the same producer, so
-  // both modes name the rejected sibling in the same words (M100 parity). A
-  // fixture owns its scene, so a preset-named sibling is irrelevant there.
+  // The same disclosure the dry run prints, from the same producer, so
+  // both modes name the rejected sibling in the same words. A fixture owns
+  // its scene, so a preset-named sibling is irrelevant there.
   const presetShapeWarning = useFixture
     ? undefined
     : presetShapeDisclosure(resolvedPath, projectRoot);
-  // M112 C1: the props the preset supplies values for, known before extraction
+  // The props the preset supplies values for, known before extraction
   // runs, so the remedies it answers never reach the terminal.
   const presetSuppliedProps = presets
     ? [...presets.entries].filter(([, values]) => values.length > 0).map(([name]) => name)
@@ -169,10 +168,9 @@ export function createSchemaExtractor(deps: {
 }): (file: string) => Promise<PropSchema[]> {
   const { options, projectRoot, presets, presetSuppliedProps, presetApplied, onWarning, useFixture } = deps;
   return async (file: string): Promise<PropSchema[]> => {
-    // M80 scope 2: extractPropsDetailed's warnings (not just the Vue one)
-    // used to be dropped on this, the real measurement path, even though
-    // --explain-props's extractPropsDetailed call already passed onWarning.
-    // M92 (element-plus-F3): covers both Vue scope exclusions ADR 0002
+    // extractPropsDetailed's warnings (not just the Vue one) reach the real
+    // measurement path's onWarning, matching --explain-props's own
+    // extractPropsDetailed call. Covers both Vue scope exclusions ADR 0002
     // defines -- Options-API props and a <script setup> runtime-object
     // defineProps({...}) call -- so either one downgrades to the same
     // disclosure instead of the generic "extraction may have failed" text.
@@ -181,22 +179,22 @@ export function createSchemaExtractor(deps: {
       ...(options.target ? { target: options.target } : {}),
       onWarning: (warning) => {
         if (isVuePropsScopeExclusionWarning(warning)) sawPropsScopeExclusion = true;
-        // M112 C1: the preset is loaded before extraction runs here, so a
+        // The preset is loaded before extraction runs here, so a
         // collapsed-union remedy for a prop it supplies values for is dropped
         // as it is produced rather than printed and then contradicted. The
         // same rule the dry run applies, on the same warning texts.
         if (presetSuppliedProps.length > 0 && presetAnswersRemedy(warning, presetSuppliedProps)) {
           return;
         }
-        // M112 C1: a remedy the preset did not answer survives, and names the
+        // A remedy the preset did not answer survives, and names the
         // preset the run already loaded instead of asking for a file.
         onWarning(presets ? remedyNamesLoadedPreset(warning, presets.path) : warning);
       },
     });
     const raw = extracted.schemas;
-    // M114 C1 (gutenberg-F2, react-spectrum-F3): the same two disclosures the
-    // dry run prints, in the same words, from the same extraction record. Both
-    // are decided by the filesystem, so M100's parity rule covers them.
+    // The same two disclosures the dry run prints, in the same words, from
+    // the same extraction record. Both are decided by the filesystem, so
+    // the dry run and the real run cannot describe them differently.
     const asProjectPath = (target: string): string =>
       toPosix(path.relative(projectRoot, target));
     if (
@@ -216,10 +214,9 @@ export function createSchemaExtractor(deps: {
       );
     }
     // The producer for BuildReportInput.disclosureReason's "propsExcluded"
-    // value (M80 scope 1 built the downgrade; nothing produced this value
-    // until now). `disclosureReason` is untouched by the auto-composition
-    // guard above for a Vue run (rendererIsVue skips it entirely), so this is
-    // the only place a Vue run can set it.
+    // value. `disclosureReason` is untouched by the auto-composition guard
+    // above for a Vue run (rendererIsVue skips it entirely), so this is the
+    // only place a Vue run can set it.
     if (raw.length === 0 && sawPropsScopeExclusion && deps.getDisclosureReason() === undefined) {
       deps.setDisclosureReason("propsExcluded");
     }
@@ -231,11 +228,11 @@ export function createSchemaExtractor(deps: {
       }
     }
     const finalSchemas = applied ? applied.schemas : raw;
-    // M100 (chakra-ui-F4): the same note --explain-props prints, from the same
-    // function, on the same schemas the run will measure. A fixture owns its
-    // scene, so retargeting an export inside it is not the remedy there.
-    // C-10: a composed scene owns the render exactly as a fixture does, and it
-    // now reaches getSchemas(), so the retarget note would print beside
+    // The same note --explain-props prints, from the same function, on the
+    // same schemas the run will measure. A fixture owns its scene, so
+    // retargeting an export inside it is not the remedy there. A composed
+    // scene owns the render exactly as a fixture does and also reaches
+    // getSchemas(), so the retarget note would print beside
     // NO_PROPS_MEASURED_WARNING and contradict it -- advising a retarget
     // because of a required degenerate prop the run never applied.
     // Read live, not captured: this closure runs lazily (getSchemas), long
@@ -269,10 +266,10 @@ export function createSourceFingerprint(deps: {
   cpuThrottle: number;
 }): { getSourceFingerprint: () => Promise<string>; resetSourceFingerprint: () => void } {
   const { options, projectRoot, harnessPath, metadataPath, cssReport, resolvedCss, presets, wrapPath, samples, cpuThrottle } = deps;
-  // M39: everything that shapes what gets measured, hashed together with the
+  // Everything that shapes what gets measured, hashed together with the
   // measured sources. Feature drift lives here, so the environment probe only
   // has to guard the machine.
-  // M89 defect 3: a thunk, not a frozen value -- `resolvedCss.files`/
+  // A thunk, not a frozen value -- `resolvedCss.files`/
   // `cssReport.files` can still change after this point (a stylesheet
   // dropped mid-run because it could not be read), and a verdict cached or
   // saved under a fingerprint that still names the dropped file would be
@@ -280,7 +277,7 @@ export function createSourceFingerprint(deps: {
   // (non-memoized) call instead of captured once here.
   const buildFingerprintConfig = (): string =>
     JSON.stringify({
-      // M48: a transform changes the code that gets measured, exactly like the
+      // A transform changes the code that gets measured, exactly like the
       // React Compiler does, so it belongs in the identity of a cached verdict.
       transforms: options.noTransforms ? [] : detectProjectTransforms(projectRoot).map((t) => t.code),
       css: cssReport?.files ?? [],
@@ -298,7 +295,7 @@ export function createSourceFingerprint(deps: {
     const graph = await projectSourceFiles(path.resolve(harnessPath));
     const extras: string[] = [];
     if (wrapPath) extras.push(wrapPath);
-    // M44: nothing imports the preset module from the component graph, so an
+    // Nothing imports the preset module from the component graph, so an
     // edited preset would otherwise reuse a verdict about different values.
     if (presets) extras.push(presets.absolutePath);
     extras.push(...resolvedCss.files);
@@ -338,7 +335,7 @@ export function createHarnessContextAttacher(deps: {
     const { providerCandidates, transitiveProviderCandidates, noiseProbe, contextRetries, activeTransforms, harness } =
       deps.state();
     if (runWarnings.length > 0) {
-      // M117 C1: one entry per distinct text, in first-occurrence order,
+      // One entry per distinct text, in first-occurrence order,
       // counted when the run produced it more than once. The three sites that
       // collect `harness.warnings` each append the whole static pre-build list,
       // so a run that rebuilt its harness recorded identical sentences twice.
@@ -346,18 +343,18 @@ export function createHarnessContextAttacher(deps: {
     }
     if (cssReport) report.css = cssReport;
 
-    // M65: a static import is not a finding. It becomes one only once a render
+    // A static import is not a finding. It becomes one only once a render
     // actually failed, which is what keeps a healthy run's report unchanged.
     if (providerCandidates.length > 0 && renderFailed(report)) {
       report.providerCandidates = providerCandidates;
-      // M92 gap 3: additive, only when there is at least one -- a report
+      // Additive, only when there is at least one -- a report
       // whose every candidate is direct stays exactly as it printed before.
       if (transitiveProviderCandidates.length > 0) {
         report.transitiveProviderCandidates = transitiveProviderCandidates;
       }
     }
 
-    // M46: assembled from signals the run already produced, plus the one probe.
+    // Assembled from signals the run already produced, plus the one probe.
     // A run whose machine was busy must say so before anyone reads its numbers.
     if (noiseProbe.length > 0) {
       let unstableCount = 0;
@@ -376,10 +373,10 @@ export function createHarnessContextAttacher(deps: {
         contextRetries,
       });
       report.noise = noise;
-      // M117 C6: the JSON carries the full text — the machine sentence, the
+      // The JSON carries the full text — the machine sentence, the
       // provisional-numbers sentence, and (once the baseline step below knows a
       // comparison happened) the baseline sentence. The terminal and the
-      // markdown fold shorten it to one line, in src/report.ts.
+      // markdown fold shorten it to one line, in report/terminal.ts.
       const noiseWarning = formatNoiseWarning(noise, report.baseline !== undefined);
       if (noiseWarning) {
         report.warnings = dedupeWarnings([...(report.warnings ?? []), noiseWarning]);
@@ -389,7 +386,7 @@ export function createHarnessContextAttacher(deps: {
     if (presets && presetApplied.size > 0) {
       report.propPresets = { path: presets.path, props: [...presetApplied].sort() };
     }
-    // M48: which of the project's own transforms compiled this run.
+    // Which of the project's own transforms compiled this run.
     if (activeTransforms && activeTransforms.length > 0) {
       report.projectTransforms = activeTransforms;
     }
@@ -426,7 +423,7 @@ export function runPreflightPhase(input: {
   let transitiveProviderCandidates: string[] = [];
   let transformHits: PreflightHit[] = [];
   let activeTransforms: string[] | undefined;
-  // M42: before any harness directory or dev server exists. A component whose
+  // Before any harness directory or dev server exists. A component whose
   // graph reaches server-only code cannot mount in a browser at all, and the
   // check costs a source walk, not a boot.
   progress("preflight: walking the import graph");
@@ -437,22 +434,22 @@ export function runPreflightPhase(input: {
     componentName: detectComponentExport(harnessPath, options.target).name,
     ...(vueCompiler ? { vueCompiler } : {}),
   });
-  // M91 (commerce-F3): folded in before the hard-hit check below runs, so
-  // a sync component whose JSX composes an async server component one hop
-  // away gates identically to targeting that child directly.
+  // Folded in before the hard-hit check below runs, so a sync component
+  // whose JSX composes an async server component one hop away gates
+  // identically to targeting that child directly.
   preflight.hard.push(...composedChildPreflightHits(harnessPath, projectRoot));
-  // M92 (dub button.tsx): entries above is [harnessPath, wrapPath?] -- see
-  // providersFromEntry's own comment (src/preflight.ts) for why a hit
-  // discovered only through the wrapper is excluded here rather than
-  // mislabeled as something the component imports.
+  // entries above is [harnessPath, wrapPath?] -- see providersFromEntry's
+  // own comment (project/preflight.ts) for why a hit discovered only
+  // through the wrapper is excluded here rather than mislabeled as
+  // something the component imports.
   const componentEntryRelative = toPosix(path.relative(projectRoot, path.resolve(harnessPath)));
   const componentOwnProviders = providersFromEntry(preflight.providers, componentEntryRelative);
-  // M65: recorded now, published only if a combo actually fails to render.
+  // Recorded now, published only if a combo actually fails to render.
   providerCandidates = providerCandidateLabels(componentOwnProviders);
-  // M92 gap 3: the same labels, restricted to hits reached only
-  // transitively -- providerCandidateLabels' own dedup runs independently
-  // over this filtered subset, so a label present in both arrays is
-  // byte-identical between them (hints.ts matches by exact string).
+  // The same labels, restricted to hits reached only transitively --
+  // providerCandidateLabels' own dedup runs independently over this
+  // filtered subset, so a label present in both arrays is byte-identical
+  // between them (report/hints.ts matches by exact string).
   transitiveProviderCandidates = providerCandidateLabels(
     componentOwnProviders.filter((hit) => !isDirectProviderHit(hit)),
   );
@@ -461,9 +458,9 @@ export function runPreflightPhase(input: {
   const loadableTransforms = new Set(
     (options.noTransforms ? [] : detectProjectTransforms(projectRoot)).map((t) => t.code),
   );
-  // M110 C4 (logto-F3): I3's classifier in `src/preflight.ts`, shared with
-  // the dry run's own warning list, so the two modes cannot disagree about
-  // which transform hits are worth a warning or in which order they are said.
+  // The classifier in `project/preflight-gates.ts`, shared with the dry
+  // run's own warning list, so the two modes cannot disagree about which
+  // transform hits are worth a warning or in which order they are said.
   const candidateTransformHits = classifyProjectTransformHits(projectRoot, preflight.transforms, {
     ...(options.noTransforms ? { noTransforms: true } : {}),
   });
@@ -476,8 +473,8 @@ export function runPreflightPhase(input: {
   if (loadableTransforms.size > 0) {
     activeTransforms = [...loadableTransforms].sort();
   }
-  // M78 loose end: wired into --explain-props (explainProps, above) but
-  // never into the default run's own warning list. Zero cost when the
+  // Wired into --explain-props (pipeline/explain-props.ts's explainProps)
+  // but never into the default run's own warning list. Zero cost when the
   // project has no next.config/webpack.config matching the shape (a single
   // probe-order file read).
   if (framework === "react") {
@@ -490,7 +487,7 @@ export function runPreflightPhase(input: {
     if (options.noPreflight) {
       runWarnings.push(PREFLIGHT_BYPASSED_WARNING(preflight.hard));
     } else {
-      // M79/M78: a preflight hard-rejection, not a build/runtime failure —
+      // A preflight hard-rejection, not a build/runtime failure —
       // nothing has been built yet, so the diagnosis is already complete.
       // The marker lets the outer catch below skip stacking accumulated
       // warnings (e.g. an unrelated css-preprocessor note) on top of it.
@@ -516,18 +513,17 @@ export async function recoverFromUnreadableStylesheet(
   },
 ): Promise<void> {
   const { resolvedCss, cssReport, composedHarnessOpts, onWarning, resetSourceFingerprint, rebuildHarness, enterHarnessPage } = deps;
-  // M89 defect 3 (shadcn-ui, live proof): a discovered stylesheet can
-  // resolve fine on disk and still fail to compile because something
-  // IT references internally does not (Tailwind v4's generated
-  // tailwind.css, gitignored/build-only) -- entryStylesheetImports'
-  // own resolution never sees that nested reference, only Vite's real
-  // PostCSS pipeline does, at this first real request. Governing
-  // policy (M95 in specs/overview/02-milestones.md): skip unresolvable build
-  // artifacts and measure anyway wherever possible -- the component
-  // still renders, just unstyled. Scoped to ENOENT alone
-  // (stylesheetReadFailureTarget), so a stylesheet that resolves and
-  // then fails to *compile* (a real project error, e.g. twenty's sass
-  // "Undefined mixin") is untouched and still fails the run loudly.
+  // A discovered stylesheet can resolve fine on disk and still fail to
+  // compile because something it references internally does not (e.g. a
+  // build tool's generated CSS file that is gitignored/build-only) --
+  // entryStylesheetImports' own resolution never sees that nested
+  // reference, only the dev server's real transform pipeline does, at this
+  // first real request. Policy: skip unresolvable build artifacts and
+  // measure anyway wherever possible -- the component still renders, just
+  // unstyled. Scoped to ENOENT alone (stylesheetReadFailureTarget), so a
+  // stylesheet that resolves and then fails to *compile* (a real project
+  // error, e.g. an invalid sass mixin) is untouched and still fails the run
+  // loudly.
   const message = err instanceof Error ? err.message : String(err);
   const missingTarget =
     resolvedCss.files.length > 0 ? stylesheetReadFailureTarget(message) : undefined;
@@ -537,12 +533,11 @@ export async function recoverFromUnreadableStylesheet(
   resolvedCss.files = [];
   cssReport.files = [];
   cssReport.layer = "unreadable";
-  // M102 (shadcn-ui-F3): `details` used to be emptied here, so a JSON
-  // reader saw `layer: "unreadable"` with no record of which stylesheet
-  // was dropped — indistinguishable from a project that had none. Each
-  // dropped file keeps its entry and carries the path that was actually
-  // tried plus the reason it was dropped.
-  // C-9: only one file caused the ENOENT. The others were dropped with it
+  // Each dropped file keeps its entry and carries the path that was
+  // actually tried plus the reason it was dropped, so a JSON reader sees
+  // which stylesheet was dropped instead of `layer: "unreadable"` with no
+  // record, indistinguishable from a project that had none.
+  // Only one file caused the ENOENT. The others were dropped with it
   // when the harness rebuilt without any stylesheet, so "not readable at X"
   // is false of them; they keep the byte and rule counts buildCssReport had
   // already computed.
@@ -586,40 +581,38 @@ export async function classifyHarnessFault(input: {
   runWarnings: string[];
 }): Promise<{ presented: string; combined: string[]; abortHints: string }> {
   const { err, projectRoot, resolvedPath, cssDecisionWarning, runWarnings } = input;
-  // M79 (1b): subsumes the old transformHits-only special case —
   // transformHits's own warnings are already in runWarnings (pushed above),
-  // and 1a's harness.ts throw sites attach their own buildWarnings on the
-  // error itself, so both sources fold into one block here.
-  // M90 (ant-design-F5): `cssDecisionWarning` is always a non-empty
-  // string, so `combined` is never empty and every throw that reaches here
-  // gets the block — including a thrown value that is not `instanceof
-  // Error` (ant-design's raw esbuild resolve failure took exactly this
-  // shape, and the old `if (err instanceof Error)` guard silently dropped
-  // accumulation for it).
+  // and the harness's own throw sites (harness/build.ts) attach their own
+  // buildWarnings on the error itself, so both sources fold into one block
+  // here.
+  // `cssDecisionWarning` is always a non-empty string, so `combined` is
+  // never empty and every throw that reaches here gets the block —
+  // including a thrown value that is not `instanceof Error`, which a naive
+  // `if (err instanceof Error)` guard would silently drop from
+  // accumulation.
   const carried =
     err instanceof Error ? ((err as Error & { warnings?: string[] }).warnings ?? []) : [];
   const combined = [...new Set([cssDecisionWarning, ...runWarnings, ...carried])];
   const message = err instanceof Error ? err.message : String(err);
-  // M92: surface 2 of the shared pipeline (presentBundlerFailure,
-  // src/harness.ts) -- the dev server booted fine (buildAndServe's own
-  // catch, surface 1, never saw this) and a transform failed afterwards on
-  // a real request, arriving as page-error text inside a "did not become
-  // ready" / fatal-page-error message (twenty's sass "Undefined mixin",
-  // shadcn-ui's postcss ENOENT and Vite import-resolve failure). Harmless
-  // to run on every other throw that reaches this catch too: the diagnosers
-  // match only specific raw bundler shapes, and the fallback stripper is
-  // conservative (keeps a frame pointing into the target repo).
+  // Surface 2 of the shared pipeline (presentBundlerFailure,
+  // harness/bundler-failure.ts) -- the dev server booted fine
+  // (buildAndServe's own catch, in harness/build.ts, surface 1, never saw
+  // this) and a transform failed afterwards on a real request, arriving as
+  // page-error text inside a "did not become ready" / fatal-page-error
+  // message (e.g. a sass "Undefined mixin" error, a postcss ENOENT, a Vite
+  // import-resolve failure). Harmless to run on every other throw that
+  // reaches this catch too: the diagnosers match only specific raw bundler
+  // shapes, and the fallback stripper is conservative (keeps a frame
+  // pointing into the target repo).
   const presented = presentBundlerFailure(message, projectRoot, combined);
-  // M105 I12 (primevue-F2): a mount-phase abort throws before any report
-  // exists, so hintsForReport never runs and the catalog entry for exactly
-  // this failure ("a missing provider needs --wrap pointing at a setup
-  // module") was unreachable — two different primevue root causes both
-  // printed a bare browser stack with no remediation text at all. The block
-  // is appended next to the accumulated warnings, so every consumer of this
-  // message shows it without a new channel.
-  // M114 C2, C3 (ark-F2, vitesse-F1): both hints name a cause only from what
-  // this run read — the measured SFC's own setup block (I8) and the vite
-  // config keys the harness recorded as read-but-not-honored (I10).
+  // A mount-phase abort throws before any report exists, so hintsForReport
+  // never runs and its catalog entries (e.g. "a missing provider needs
+  // --wrap pointing at a setup module") are otherwise unreachable for this
+  // failure path. The block is appended next to the accumulated warnings,
+  // so every consumer of this message shows it without a new channel.
+  // Both hints name a cause only from what this run read — the measured
+  // SFC's own setup block and the vite config keys the harness recorded as
+  // read-but-not-honored.
   const abortHints = formatMountAbortHints(message, {
     usesInject: await measuredSfcUsesInject(resolvedPath, projectRoot, (warning) => {
       combined.push(warning);
@@ -654,7 +647,7 @@ export async function rollbackEmptyComposition(input: {
         writeFixtureScaffold(resolvedPath, componentExports ?? [], compositionTree),
       );
     }
-    // M80: the rolled-back mount is about to measure the bare root
+    // The rolled-back mount is about to measure the bare root
     // alone, same shape as the never-composed case above. Checked before
     // `compositionTree`/`componentExports` are cleared below: a root
     // that self-wraps in one element (nonzero domNodeCount, so
@@ -682,19 +675,19 @@ export async function recordStylesheetMatches(input: {
   onWarning: (warning: string) => void;
 }): Promise<void> {
   const { page, cssReport, onWarning } = input;
-// M102 / I7 (excalidraw-F2): read once, on the harness this run will
-// actually measure on, before throttling and before any traced window.
+// Read once, on the harness this run will actually measure on, before
+// throttling and before any traced window.
 if (cssReport.details && cssReport.details.length > 0) {
   const stats = await probeStylesheetMatchStats(page);
   for (const stat of stats ?? []) {
-    // C-16: one direction only. `d.file.endsWith(stat.file)` plus `find`'s
+    // One direction only. `d.file.endsWith(stat.file)` plus `find`'s
     // first hit could attach a probe result to the wrong entry whenever two
     // discovered stylesheets share a trailing segment.
     const normalized = stat.file.split("\\").join("/");
     const detail = cssReport.details.find((d) => normalized.endsWith(d.file));
     if (!detail) continue;
     detail.matchedRules = stat.matched;
-    // C-8: `stat.rules` is what the CSSOM probe actually read;
+    // `stat.rules` is what the CSSOM probe actually read;
     // `detail.rules` is the static count. The probe reports `rules: 0` for
     // a sheet it could not find or could not read (cross-origin), and
     // warning off the static count there asserts something about a sheet

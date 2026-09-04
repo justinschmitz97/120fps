@@ -43,10 +43,9 @@ export const COMBO_CAP_WARNING = (kept: number, total: number): string =>
   `measured ${kept} of ${total} prop combos; ${total - kept} were dropped to bound the run. ` +
   `Raise it with --max-combos <n>.`;
 
-// M61: the most lenient tier budget the tool has. A component whose single
-// instance already costs this much will not cost less per copy at N=5/20/50:
-// quadrupling the instance count is exactly the shape of dogfooding's 46.9s
-// single-probe reproduction.
+// The most lenient tier budget the tool has. A component whose single
+// instance already costs this much will not cost less per copy at
+// N=5/20/50: quadrupling the instance count only makes a slow mount slower.
 export const SCALE_PROBE_GATE_MS = TIER_BUDGETS.T4.mountMs;
 
 export const SCALE_PROBE_COST_WARNING = (
@@ -85,8 +84,8 @@ function formatComboSpace(n: number): string {
 export const STRATIFIED_SAMPLE_WARNING = (raw: number, sampled: number): string =>
   `prop space has ${formatComboSpace(raw)} combinations; measured a stratified sample of ${sampled}.`;
 
-// M61: measures the cheapest requested scale point alone (3 samples: a
-// go/no-go check, not a reported number) and applies the pure gate to decide
+// Measures the cheapest requested scale point alone (3 samples: a go/no-go
+// check, not a reported number) and applies the pure gate to decide
 // whether the rest are worth measuring. The cheapest point is remeasured
 // inside the main batch rather than spliced in: measureMount assigns
 // comboIndex by array position, and every downstream pass (measureRerender,
@@ -131,16 +130,15 @@ export async function runComboMode(ctx: ModeContext, fixtureHasScale: boolean): 
     if (gated.warning) runWarnings.push(gated.warning);
     combos = gated.points.map((n) => ({ __120fps_scaleN: n }));
   } else if (useFixture || composed) {
-    // M100 (calcom-F4): the schemas do not build the combo list here — the
-    // fixture or the composed scene owns the render — but extraction's own
-    // diagnostics are the same facts the dry run printed, and skipping the
-    // call dropped all of them. calcom's Select warned about an unsynthesizable
-    // `components` prop under --explain-props and said nothing at all in the
-    // run that then measured `props: {}`.
+    // The schemas do not build the combo list here: the fixture or the
+    // composed scene owns the render. But extraction's own diagnostics are
+    // the same facts the dry run printed, so the call still runs to surface
+    // them (e.g. an unsynthesizable prop) instead of measuring `props: {}`
+    // in silence.
     schemas = await ctx.getSchemas();
     combos = [{}];
     measuredWithoutProps = true;
-    // C-13: "none of this component's own extracted props were applied" implies
+    // "none of this component's own extracted props were applied" implies
     // props were withheld. A component whose schema is genuinely empty had none
     // to withhold, and the zero-prop chain already describes that run.
     if (schemas.length > 0) runWarnings.push(NO_PROPS_MEASURED_WARNING(useFixture));
@@ -215,7 +213,7 @@ export async function runComboMode(ctx: ModeContext, fixtureHasScale: boolean): 
     runWarnings.push(EXPLORE_BUDGET_WARNING(explores.length, exploreCombos.length));
   }
 
-  // M47: a component that renders non-deterministically is worth knowing about
+  // A component that renders non-deterministically is worth knowing about
   // in its own right, not just as a reason exploration behaved differently.
   for (const result of explores) {
     if (result.volatileRegions) {
@@ -263,14 +261,14 @@ export async function runComboMode(ctx: ModeContext, fixtureHasScale: boolean): 
     nextJsShims: harness.nextJsShims,
   });
 
-  // M92 (element-plus-F3): a zero-prop count already explained by a Vue
-  // scope-exclusion disclosure ("declares props through ... a runtime form
-  // ADR 0002 deliberately does not read") must not also get the generic
-  // "extraction may have failed" text stacked on top -- that phrase floats a
-  // possible malfunction the run already knows is not what happened.
-  // M97/M98: the same suppression on the real measurement path, keyed on the
-  // warnings this run actually produced rather than only on the Vue
-  // scope-exclusion signal `disclosureReason` carries.
+  // A zero-prop count already explained by a Vue scope-exclusion disclosure
+  // ("declares props through ... a runtime form ADR 0002 deliberately does
+  // not read") must not also get the generic "extraction may have failed"
+  // text stacked on top: that phrase floats a possible malfunction the run
+  // already knows is not what happened. The same suppression applies on the
+  // real measurement path, keyed on the warnings this run actually produced
+  // rather than only on the Vue scope-exclusion signal `disclosureReason`
+  // carries.
   if (
     zeroPropsExtracted &&
     ctx.disclosureReason !== "propsExcluded" &&
@@ -291,8 +289,7 @@ export async function runComboMode(ctx: ModeContext, fixtureHasScale: boolean): 
     await applyAutoScalingCurves(ctx, report, schemas);
   }
 
-  // --- React optimization detection (separate pass) ---
-  // M57: `ctx.framework` already folds the flag, the manifest and the measured
+  // `ctx.framework` already folds the flag, the manifest and the measured
   // file's own type together. A Vue run never reaches this and never carries a
   // ReactOptimizations block.
   const shouldRunReact = !options.skipReactAnalysis && ctx.framework === "react";
@@ -310,7 +307,7 @@ export async function runComboMode(ctx: ModeContext, fixtureHasScale: boolean): 
       warmupRuns: 1,
       fnPropNames,
       pool,
-      // M70: this pass runs after ctx.attachHarnessContext(report) already
+      // This pass runs after ctx.attachHarnessContext(report) already
       // flushed runWarnings into report.warnings above, so routing through
       // the shared onWarning would push into an array nothing reads again.
       // Writing straight onto the already-built report is order-independent.
@@ -342,8 +339,8 @@ export async function runComboMode(ctx: ModeContext, fixtureHasScale: boolean): 
     samples: effectiveSamples,
     mode: "combo",
     framework: ctx.framework,
-    // M82: cssReport is now always constructed, even for "none" — gate on
-    // files.length so a no-CSS project's fingerprint bytes stay unchanged.
+    // cssReport is always constructed, even for "none"; gate on files.length
+    // so a no-CSS project's fingerprint bytes stay unchanged.
     ...(ctx.cssReport && ctx.cssReport.files.length > 0 ? { css: ctx.cssReport.files } : {}),
     ...(ctx.wrapper ? { wrapper: ctx.wrapper.path } : {}),
     ...(harness.reactCompiler?.active ? { reactCompiler: true } : {}),
@@ -382,20 +379,19 @@ export async function runComboMode(ctx: ModeContext, fixtureHasScale: boolean): 
     currentEnv,
     envPolicy,
     ...(options.saveBaseline ? { sourceFingerprint: await ctx.getSourceFingerprint() } : {}),
-    // M115 C7: a reading, not a closing -- the total still ends at the
-    // `report` boundary a few lines below, where the JSON's own number is
-    // taken.
+    // A reading, not a closing: the total still ends at the `report`
+    // boundary a few lines below, where the JSON's own number is taken.
     phaseTimings: ctx.phaseClock.snapshot(),
     phaseUnits: { combos: combos.length, samples: effectiveSamples },
   });
 
-  // M51: recorded before serialization so the JSON carries the same ids the
+  // Recorded before serialization so the JSON carries the same ids the
   // terminal prints.
   const hintIds = hintsForReport(report);
   if (hintIds.length > 0) report.hints = hintIds;
 
   ctx.progress("report");
-  // M115 C1: the run's own breakdown, on the report the run returns.
+  // The run's own timing breakdown travels on the report it returns.
   report.phaseTimings = ctx.phaseClock.timings();
   writeReportJson(report, options.jsonPath);
 

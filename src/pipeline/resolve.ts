@@ -7,16 +7,16 @@ import { type CssReport } from "../report/index.js";
 import { type AnalyzeOptions } from "./analyze.js";
 import { toPosix } from "../shared/index.js";
 
-// M102 / I7 (excalidraw-F2): Lane A's generated entries expose
-// `window.__120fps.stylesheetMatchStats()` — per injected global stylesheet,
-// how many of its rules match at least one element under `#root`. excalidraw's
-// `css/styles.scss` is entirely scoped under an `.excalidraw` ancestor class
-// the harness never renders, so every rule was injected and none of them
-// applied: the run measured an unstyled tree and said the stylesheet was in
-// use. Probed on a deliberate mount of `{}` and gated on that mount actually
-// rendering: a component that renders nothing for empty props would match no
-// rule for a reason that has nothing to do with the stylesheet, and a warning
-// there would be false.
+// The generated harness entry exposes
+// `window.__120fps.stylesheetMatchStats()`: per injected global stylesheet,
+// how many of its rules match at least one element under `#root`. A
+// stylesheet entirely scoped under an ancestor class the harness never
+// renders would inject every rule and match none, so the run would measure
+// an unstyled tree while reporting the stylesheet as in use. Probed on a
+// deliberate mount of `{}` and gated on that mount actually rendering: a
+// component that renders nothing for empty props would match no rule for a
+// reason that has nothing to do with the stylesheet, and a warning there
+// would be false.
 export async function probeStylesheetMatchStats(
   page: import("playwright").Page,
 ): Promise<Array<{ file: string; rules: number; matched: number }> | undefined> {
@@ -41,15 +41,14 @@ export async function probeStylesheetMatchStats(
   }
 }
 
-// M102 / I7: names the file and what the reader would otherwise have to infer
-// from a styled-looking report — that the render was measured as if the
-// stylesheet were not there at all.
-// C-8: the probe asks `#root.querySelector(selectorText)`, which searches
-// descendants of the component's container only. A rule selecting `:root`,
-// `html` or `body` can never match there even though its custom properties do
-// cascade in, so the old wording ("the measurement describes an unstyled
-// render") was false for a design-token sheet. This states what was observed
-// and names both readings.
+// Names the file and what the reader would otherwise have to infer from a
+// styled-looking report: that the render was measured as if the stylesheet
+// were not there at all. The probe asks
+// `#root.querySelector(selectorText)`, which searches descendants of the
+// component's container only. A rule selecting `:root`, `html` or `body`
+// can never match there even though its custom properties do cascade in, so
+// the message names both readings instead of asserting the sheet had no
+// effect.
 export const STYLESHEET_MATCHED_NOTHING_WARNING = (file: string, rules: number): string =>
   `${file} was injected and none of its ${rules} rules matched an element inside the component's ` +
   "own tree. Either the sheet is scoped under an ancestor the harness does not render (a theme " +
@@ -58,26 +57,25 @@ export const STYLESHEET_MATCHED_NOTHING_WARNING = (file: string, rules: number):
   "which do cascade in and are not counted here.";
 
 // --no-css wins over an explicit --css, matching --no-wrap/--wrap. Explicit
-// paths resolve against process.cwd() and suppress detection. M71: detection
-// follows the project's own entry imports first and can return several files,
-// in import order; whatever it had to guess at travels in `warningsOut`.
-// M82: layer travels with the resolution so analyzeComponent can build a
-// CssReport unconditionally — layer is what makes "found nothing" and "found
-// nothing because --no-css" distinguishable in the disclosed report.
+// paths resolve against process.cwd() and suppress detection. Detection
+// follows the project's own entry imports first and can return several
+// files, in import order; whatever it had to guess at travels in
+// `warningsOut`. Layer travels with the resolution so analyzeComponent can
+// build a CssReport unconditionally: layer is what makes "found nothing"
+// and "found nothing because --no-css" distinguishable in the disclosed
+// report.
 export function resolveCssFiles(
   options: Pick<AnalyzeOptions, "cssFiles" | "noCss">,
   projectRoot: string,
   warningsOut?: string[],
-  // M102 / I6 (mantine-F1): the provider wrapper is a second entry into the
-  // project's own module graph, and the stylesheets a MantineProvider setup
-  // module imports are exactly the ones the measured render needs. Discovery
-  // walked the project entry only, so a wrapper's imports were invisible and
-  // the run measured unstyled while a `120fps.setup.tsx` sat right there
-  // importing `@mantine/core/styles.css`.
-  // M114 A2 review: `measuredFile` is the component file the run measures. It
-  // is the last read discovery has when no stylesheet and no declared engine
-  // exist, and it decides between "none found" and an engine the recogniser
-  // cannot name.
+  // `wrapPath` is a second entry into the project's own module graph: the
+  // stylesheets a wrapper's setup module imports are exactly the ones the
+  // measured render needs, so discovery must walk it alongside the project
+  // entry or it misses stylesheets a wrapper imports.
+  // `measuredFile` is the component file the run measures. It is the last
+  // read discovery has when no stylesheet and no declared engine exist, and
+  // it decides between "none found" and an engine the recogniser cannot
+  // name.
   opts?: { wrapPath?: string; measuredFile?: string },
 ): {
   files: string[];
@@ -116,11 +114,10 @@ export function resolveCssFiles(
       ? "entry-chain"
       : discovered.source === "candidate"
         ? "known-name"
-        // M102 (heroui-F1): a pick made from the measured package's own
-        // `style` / `exports["./styles"]` declaration is not a filename
-        // match. Recognized here so Lane A's discovery can emit the value
-        // without the ternary's `: "none"` tail turning a real pick into
-        // "none found"; until it does, this branch is simply never taken.
+        // A pick made from the measured package's own `style` /
+        // `exports["./styles"]` declaration is not a filename match; this
+        // arm keeps that layer name distinct from the ternary's `"none"`
+        // fallback.
         : (discovered.source as string) === "package-declared"
           ? "package-declared"
         : discovered.source === "fallback"
@@ -144,9 +141,9 @@ export function resolveCssFiles(
   };
 }
 
-// M76: chakra-ui-F2's finding is exactly that a wrapper placed at the natural
-// monorepo root produces total silence, identical to no wrapper existing at
-// all — a wrapper that loads from an unexpected level must say so.
+// A wrapper placed at the workspace root produces total silence, identical
+// to no wrapper existing at all; a wrapper that loads from an unexpected
+// level must say so.
 export function WRAPPER_FROM_WORKSPACE_ROOT_WARNING(wrapPath: string, projectRoot: string): string {
   return (
     `${wrapPath} was found at the workspace root, not in ${projectRoot}; the component's own package ` +
@@ -200,12 +197,12 @@ export function resolveProjectPaths(resolvedPath: string): {
 // project's package.json. A `.vue` file overrides both: no flag can make React
 // render an SFC, so the file's own type is the stronger evidence.
 //
-// M83 #4b (preact-app-F4): `rendererFor` (src/harness.ts) decides the mount
-// template purely by file extension and never reads --framework; the flag
-// only ever gates which *post-mount analysis* pass runs. An explicit,
-// non-"auto" request that disagrees with what will actually mount (by the
-// same extension check performed here) now says so instead of being
-// silently discarded in either direction.
+// `rendererFor` (harness/renderer.ts) decides the mount template purely by
+// file extension and never reads --framework; the flag only ever gates
+// which *post-mount analysis* pass runs. An explicit, non-"auto" request
+// that disagrees with what will actually mount (by the same extension check
+// performed here) surfaces a warning instead of being silently discarded in
+// either direction.
 export function resolveFramework(
   mode: "react" | "vue" | "vanilla" | "auto",
   projectRoot: string,

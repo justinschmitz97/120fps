@@ -23,8 +23,8 @@ function modeDisabledOrAbsent(mode: AnalyzeOptions["curveMode"]): boolean {
   return mode === undefined || mode === false;
 }
 
-// M39/M54: the option-only half of the verdict-reuse gate. The rest of it needs
-// the baseline file, the source fingerprint, and a machine probe.
+// The option-only half of the verdict-reuse gate. The rest of it needs the
+// baseline file, the source fingerprint, and a machine probe.
 export function optionsAllowVerdictReuse(
   options: Pick<
     AnalyzeOptions,
@@ -70,7 +70,7 @@ export async function collectMachineInfo(
   };
 }
 
-// M39: identical source in an identical environment redraws the same
+// Identical source in an identical environment redraws the same
 // distribution, so a check-mode run may reuse the stored verdict instead of
 // measuring. Explicit mode enables always measure: auto-activation is a
 // function of the fingerprinted source, flags are not. Returns the reused
@@ -93,8 +93,8 @@ export async function tryReuseStoredVerdict(args: {
   const { options, projectRoot } = args;
   if (!optionsAllowVerdictReuse(options)) return undefined;
 
-  // M45: only this environment's own slot can carry a reusable verdict.
-  // A cross-machine slot is informational and must never short-circuit a run.
+  // Only this environment's own slot can carry a reusable verdict. A
+  // cross-machine slot is informational and must never short-circuit a run.
   const baselineFile = loadBaseline(path.join(projectRoot, "120fps-baseline.json"));
   const slots = Object.entries(baselineFile?.entries ?? {}).filter(
     ([key]) => parseBaselineKey(key).componentPath === args.relativeComponent,
@@ -123,8 +123,8 @@ export async function tryReuseStoredVerdict(args: {
     samples: args.samples,
     mode: "combo",
     framework: args.framework,
-    // M82: cssReport is now always constructed, even for "none" — gate on
-    // files.length so a no-CSS project's fingerprint bytes stay unchanged.
+    // cssReport is always constructed, even for "none"; gate on files.length
+    // so a no-CSS project's fingerprint bytes stay unchanged.
     ...(args.cssReport && args.cssReport.files.length > 0 ? { css: args.cssReport.files } : {}),
     ...(args.wrapPath
       ? { wrapper: toPosix(path.relative(projectRoot, args.wrapPath)) }
@@ -159,7 +159,7 @@ export async function tryReuseStoredVerdict(args: {
       envMismatches: [],
     },
   };
-  // M40: a reused verdict repeats the disclosure that came with it.
+  // A reused verdict repeats the disclosure that came with it.
   if (entry.measuredState && entry.measuredState !== "settled") {
     report.warnings = [MEASURED_STATE_WARNING(entry.measuredState)];
   }
@@ -167,10 +167,10 @@ export async function tryReuseStoredVerdict(args: {
   return report;
 }
 
-// Tooling configs and lockfiles belong to the identity of a cached verdict. In
-// a workspace they sit at the root the member never mentions, so a root
-// lockfile bump used to leave every member's baseline valid. Member level
-// first: a name found there is the one that applies.
+// Tooling configs and lockfiles belong to the identity of a cached verdict.
+// In a workspace they sit at the root the member never mentions, so a root
+// lockfile bump could otherwise invalidate every member's baseline at once.
+// Member level first: a name found there is the one that applies.
 const PROJECT_CONFIG_FINGERPRINT_FILES = [
   "tailwind.config.js",
   "tailwind.config.ts",
