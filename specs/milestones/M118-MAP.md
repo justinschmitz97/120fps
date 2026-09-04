@@ -368,6 +368,30 @@ Curated surface for `src/index.ts`:
 A test that imports a name from `../../src/index.js` that is not in this table is repointed to the
 stage index.
 
+## Wave 3 progress (2026-09-04)
+
+- Tasks 1-4 and 7 done (a87a8b8 `report/metrics.ts`, d09dfb0 isolation thresholds in
+  `report/types.ts`, 12fac9e `project/compiler-options.ts`, 5bcd98d `shared/run-state.ts`, a6f9028
+  dynamic-import scan and comment-scanner fix). Boundary allowlist empty. All 28 relative
+  `import("…")` in `src/` are inline type queries; the four runtime dynamic imports use computed
+  or bare specifiers.
+- Task 5: `shared/stats.ts` (`computeMedian`, `computeP95`, `computeCV`, `computeCvPercent`),
+  `shared/regex.ts` (`escapeRegex`), `shared/git.ts` (`findGitRoot`, replacing the cli copy and
+  `findGitRootUpward`), `shared/fs.ts` (`toPosix`, `pathKey`, `isFile`, `isDirectory`; inline
+  backslash normalisations in `src/` 77 → 0), `props/serialize.ts` (one `serializeProps`).
+  `componentStem`, `resolvePackageDir`/`installedPackageDir`, the clone pair and `readJsonFile`
+  were settled by a follow-up worker (see below).
+- Task 6: `props/rank.ts` (271cabd); compatibility re-exports deleted (a7a97bf); budget types
+  renamed `BudgetComparison`/`BudgetRegression`/`BudgetImprovement` and `report/index.ts` uses
+  `export *` for `budget.js` (a9c8e8c).
+- The opus dedupe worker hung after its seventh commit with step 10 uncommitted; the coordinator
+  verified the uncommitted step (tsc, 27 touched test files green) and committed it.
+- Line-cap allowlist: `analysis/explorer.ts` 899, `analysis/react-profiler.ts` 890,
+  `browser/discovery.ts` 823, `props/values.ts` 822, `report/budget.ts` 809.
+- Remaining: task 8 (comments, per directory in worktrees), 9 (splits still over 800), 10
+  (`src/index.ts` curation), 11 (docs, e2e, spec approval), then an adversarial review of
+  d63537e..HEAD by a non-implementer.
+
 ## Ratchet and boundary tests (written in wave 1, allowlists emptied by wave 3)
 
 `test/unit/module-boundaries.test.ts`: reads every `.ts` under `src/` (not `shims/`), extracts
