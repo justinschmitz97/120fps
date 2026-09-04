@@ -25,7 +25,7 @@ export function resolveReportPaths(
   const prefix = explicitJsonPath?.replace(/\.json$/, "");
   const seen = new Map<string, number>();
   return componentPaths.map((p) => {
-    const base = prefix ? `${prefix}.${componentStem(p)}.json` : defaultJsonPathFor(p);
+    const base = prefix ? `${prefix}.${reportStem(p)}.json` : defaultJsonPathFor(p);
     // Case-folded key: NTFS/APFS cannot tell 120fps-report.Card.json apart
     // from 120fps-report.card.json, so a same-case-insensitive collision must
     // take the suffix branch too, even though `base` itself differs by case.
@@ -48,7 +48,7 @@ export function formatJsonSplitNotice(reportPaths: string[]): string {
   return `JSON: ${reportPaths.length} per-component reports: ${shown.join(", ")}${suffix}`;
 }
 
-function componentStem(componentPath: string): string {
+function reportStem(componentPath: string): string {
   const normalized = toPosix(componentPath);
   const base = normalized.slice(normalized.lastIndexOf("/") + 1);
   return base.replace(/\.[^.]+$/, "");

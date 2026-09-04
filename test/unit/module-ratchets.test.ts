@@ -86,9 +86,7 @@ const COMMENT_TOKENS: Record<string, number> = {
   "shared/run-state.ts": 1,
 };
 
-const DUPLICATE_FUNCTIONS: Record<string, string[]> = {
-  componentStem: ["cli/paths.ts", "props/candidates.ts"],
-};
+const DUPLICATE_FUNCTIONS: Record<string, string[]> = {};
 
 const HISTORY_TOKEN = /\bM\d{2,3}\b|used to|no longer|previously/g;
 const TOP_LEVEL_FUNCTION = /^(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)/gm;
