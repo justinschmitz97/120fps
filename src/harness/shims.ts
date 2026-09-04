@@ -20,7 +20,7 @@ export const SHIM_MODULES: ShimEntry[] = [
   { module: "next-video/player", shimFile: "next-video-player.js" },
 ];
 
-// M73: everything else under `next/` resolves from the project's own Next
+// Everything else under `next/` resolves from the project's own Next
 // install, where a module written for the server or for the compiler plugin can
 // fail to load in a plain browser. Named rather than blocked: it may work.
 // `next/font/google` is here permanently, not by omission: each font family is
@@ -63,15 +63,15 @@ export function buildShimAliases(
   });
 }
 
-// M96 (calcom-F2, deferred here by Lane C's spec: the failure happens at
-// esbuild's static ES-module resolution layer, before any shim code runs, so
-// only this bundler-error layer can catch and re-present it). esbuild's own
-// "No matching export" message names the shim's absolute dist/shims path --
-// a path inside 120fps's own installation, which M94's own MUST NOT already
-// forbids printing. Recognized by exact match against the shim file this
-// same process would have aliased to (buildShimAliases' own shimDir
-// computation), not by a loose basename guess, so an unrelated file in the
-// target repo that happens to share a shim's filename is never misattributed.
+// The failure happens at esbuild's static ES-module resolution layer, before
+// any shim code runs, so only this bundler-error layer can catch and
+// re-present it. esbuild's own "No matching export" message names the shim's
+// absolute dist/shims path -- a path inside 120fps's own installation, which
+// must never reach the user verbatim. Recognized by exact match against the
+// shim file this same process would have aliased to (buildShimAliases' own
+// shimDir computation), not by a loose basename guess, so an unrelated file
+// in the target repo that happens to share a shim's filename is never
+// misattributed.
 const ESBUILD_NO_MATCHING_EXPORT = /No matching export in "([^"]+)" for import "([^"]+)"/;
 
 export function SHIM_EXPORT_MISSING_ERROR(shimModule: string, missingExport: string): string {

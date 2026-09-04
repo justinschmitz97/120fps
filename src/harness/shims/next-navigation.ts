@@ -1,6 +1,6 @@
 const noop = () => {};
 
-// M96 (calcom-F2): a real (non-type-only) runtime export in Next.js — the
+// A real (non-type-only) runtime export in Next.js — the
 // class useSearchParams() returns. Mirrors real Next.js's own shape: a
 // URLSearchParams subclass whose mutating methods throw, so a component that
 // does `instanceof ReadonlyURLSearchParams` or attempts a mutation sees the

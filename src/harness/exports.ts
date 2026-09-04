@@ -89,9 +89,9 @@ function hasCallableDefaultExport(sourceText: string, fileName: string): boolean
 
 // @vitejs/plugin-vue emits `import _sfc_main from "<sfc>?vue&type=script"`
 // whenever an SFC has any <script> block, so a block that produces no default
-// export fails module evaluation in the browser: the Vue analogue of the
-// missing-default-export wrapper M26 fixed for React. An SFC with no <script>
-// at all is fine: the plugin synthesizes an empty component for it.
+// export fails module evaluation in the browser — the Vue analogue of a React
+// component with no callable default export. An SFC with no <script> at all
+// is fine: the plugin synthesizes an empty component for it.
 //
 // An empty `<script setup>` counts as absent to the compiler, which is the
 // shape that looks most correct and fails hardest.
@@ -157,7 +157,7 @@ export function resolveWrapper(wrapPath: string, projectRoot: string): string {
     throw new Error(`Wrapper module not found: ${wrapPath}`);
   }
   const relative = toPosix(path.relative(projectRoot, absolute));
-  // M73: the raw relative path decides, not its forward-slashed form: a wrapper
+  // The raw relative path decides, not its forward-slashed form: a wrapper
   // on another Windows drive has an absolute relative form and no "../" prefix.
   if (isOutsideRoot(absolute, projectRoot)) {
     throw new Error(
@@ -188,7 +188,7 @@ export function detectScaleExport(filePath: string): boolean {
   return /export\s+(?:function|const)\s+scale\b/.test(content);
 }
 
-// M65: named after the file, listed so the message is a menu rather than a
+// Named after the file, listed so the message is a menu rather than a
 // rejection.
 export function targetNotFoundMessage(
   filePath: string,
@@ -201,25 +201,26 @@ export function targetNotFoundMessage(
     : `Export "${target}" not found in ${where}, which exports no components.`;
 }
 
-// Selection order (M24 D2, M58/M65 normalization, M103/I9): explicit `#Export`
-// target > default export > file-stem match among named exports after dropping
-// non-alphanumerics > first PascalCase export in source order **that does not
-// end in `Provider`** > first PascalCase export in source order > filename
-// fallback. isDefaultOnly is true iff the chosen component is importable as a
-// default import.
+// Selection order: explicit `#Export` target > default export > file-stem
+// match among named exports after dropping non-alphanumerics > first
+// PascalCase export in source order **that does not end in `Provider`** >
+// first PascalCase export in source order > filename fallback.
+// isDefaultOnly is true iff the chosen component is importable as a default
+// import.
 //
-// I9 (chakra-ui-F2): a `*Provider` export is the controlled variant of the
-// component beside it — it takes an externally-managed `value` object its
-// uncontrolled sibling does not need, and for select/combobox that object is a
-// class instance nothing can synthesize. Chakra declares it first
-// (`tabs.ts:35` `TabsRootProvider` before `:52` `TabsRoot`), so source order
-// alone measured the harder variant on every multi-export file. The rule is
+// A `*Provider` export is the controlled variant of the component beside it
+// — it takes an externally-managed `value` object its uncontrolled sibling
+// does not need, and for select/combobox that object is a class instance
+// nothing can synthesize. Chakra declares it first (`tabs.ts:35`
+// `TabsRootProvider` before `:52` `TabsRoot`), so source order alone
+// measured the harder variant on every multi-export file. The rule is
 // narrow on purpose: it re-orders the last automatic step only. An explicit
 // `#Export`, a default export and a file-stem match are all the author's own
 // designation of what the file is, and none of them is second-guessed — a
 // `provider.tsx` whose only component is `Provider` still resolves to it.
-// The rule itself is `PROVIDER_EXPORT_SUFFIX` in src/prop-gen.ts, applied by
-// `selectMeasuredExport`, which this function delegates its ordering to.
+// The rule itself is `PROVIDER_EXPORT_SUFFIX` in src/props/candidates.ts,
+// applied by `selectMeasuredExport`, which this function delegates its
+// ordering to.
 export function detectComponentExport(
   filePath: string,
   target?: string,
@@ -239,10 +240,10 @@ export function detectComponentExport(
   const exports = scanExports(content, filePath);
 
   if (target) {
-    // The pick order itself lives in `selectMeasuredExport` (src/prop-gen.ts):
-    // review B-8 found two copies of it, each with its own `Provider` regex.
-    // This function keeps what is its own — the "export not found" message and
-    // the filename fallback — and delegates the ordering.
+    // The pick order itself lives in `selectMeasuredExport`
+    // (src/props/candidates.ts). This function keeps what is its own — the
+    // "export not found" message and the filename fallback — and delegates
+    // the ordering.
     if (!exports.some((e) => e.name === target)) {
       throw new Error(targetNotFoundMessage(filePath, target, exports.map((e) => e.name)));
     }

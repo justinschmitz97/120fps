@@ -10,7 +10,7 @@ import {
 import { isFile } from "../shared/index.js";
 
 // Probe order is significant: first hit wins, and detection returns at most one.
-// M71: the create-vite name and the Sass spellings are appended, so every path
+// The create-vite name and the Sass spellings are appended, so every path
 // that already won still wins.
 export const GLOBAL_CSS_CANDIDATES = [
   "app/globals.css",
@@ -22,7 +22,7 @@ export const GLOBAL_CSS_CANDIDATES = [
   "src/index.css",
   "src/global.css",
   "src/style.css",
-  // M102 (heroui-F1): the plural spelling, one character away from the line
+  // The plural spelling, one character away from the line
   // above and the name heroui's own `exports["./styles"]` points at.
   "src/styles.css",
   "app/globals.scss",
@@ -65,7 +65,7 @@ export function isCssModule(file: string): boolean {
   return /\.module\.[^.]+$/i.test(path.basename(file));
 }
 
-// M82: a reset/normalize library's own convention. Opt-in everywhere it
+// A reset/normalize library's own convention. Opt-in everywhere it
 // appears, so the name alone disqualifies it from the largest-stylesheet
 // fallback regardless of rule count.
 export const RESET_STYLESHEET_STEMS = ["reset", "normalize", "preflight", "sanitize"];
@@ -75,8 +75,8 @@ export function isOptInResetName(file: string): boolean {
   return RESET_STYLESHEET_STEMS.includes(stem);
 }
 
-// M82: text-only heuristic, matching the "text only, nothing executed"
-// invariant M71 set for readViteConfigData. Strips comments and
+// Text-only heuristic, matching the "text only, nothing executed" invariant
+// readViteConfigData follows. Strips comments and
 // @import/@charset/@use statements, then counts remaining `{` occurrences.
 // Zero means the file is a pure passthrough: nothing was ever built into it.
 const STYLESHEET_RULE_COUNT_MAX_BYTES = 2 * 1024 * 1024;
@@ -103,10 +103,10 @@ export function stylesheetRuleCount(file: string): number {
   return (stripped.match(/\{/g) ?? []).length;
 }
 
-// M102: a stylesheet's own `@import` statements, one hop, at the same text
+// A stylesheet's own `@import` statements, one hop, at the same text
 // level `stylesheetRuleCount` works at — comments stripped, `url()` and quotes
 // normalized, a media query or `layer()` suffix and a `?query` dropped. No CSS
-// parser (M82's non-goal), and no recursion: one hop answers every shape the
+// parser, and no recursion: one hop answers every shape the
 // corpus produced (a passthrough that re-exports a package's real stylesheet,
 // and an entry stylesheet importing an unbuilt package subpath).
 const STYLESHEET_IMPORT_STATEMENT = /@import\s+(url\(\s*)?("([^"]*)"|'([^']*)')/gi;
@@ -195,9 +195,8 @@ export function resolveStylesheetImportTarget(
     // missing, and the caller may say so (shadcn's `dist/tailwind.css`). An
     // extension-less one is the canonical Sass/Less partial form — ant-design's
     // `@import "../variables"`, primevue's `@import './_mixins'` — where the
-    // file on disk is spelled differently by design. Claiming it missing named
-    // a path that exists nowhere, which is the exact defect M102's third MUST
-    // was written to remove.
+    // file on disk is spelled differently by design. Claiming it missing would
+    // name a path that exists nowhere.
     if (isStylesheet(resolved)) return { declared: resolved };
     const partial = resolvePreprocessorPartial(resolved);
     return partial ? { file: partial } : undefined;
@@ -238,13 +237,13 @@ export function CSS_PREPROCESSOR_MISSING_WARNING(file: string, pkg: string): str
   );
 }
 
-// M92 (excalidraw-F6): the pick IS ranked (by size, stated in `scope` below),
-// so "no evidence behind it at all" overclaimed when this package has no
-// entry of its own -- excalidraw's own case landed on the file the profile
-// calls the correct design-token root, ranked there by size alone, not
+// The pick IS ranked (by size, stated in `scope` below), so "no evidence
+// behind it at all" would overclaim when this package has no entry of its
+// own: a fallback pick can land on the file a profile calls the correct
+// design-token root, ranked there by size alone, not
 // arbitrarily. What is actually missing is import-chain corroboration, not
 // evidence outright; the low-confidence framing lives in the `Stylesheets:`
-// summary line (formatStylesheetsLine, src/report.ts) this warning precedes.
+// summary line (formatStylesheetsLine, src/report/terminal.ts) this warning precedes.
 export function CSS_FALLBACK_WARNING(
   relative: string,
   opts: { onlyCandidate: boolean; noEntryInPackage: boolean },
@@ -262,14 +261,14 @@ export function CSS_FALLBACK_WARNING(
   );
 }
 
-// M82: a fallback candidate with rule count 0 was never built into anything
+// A fallback candidate with rule count 0 was never built into anything
 // the project would load as-is.
-// M92 (dub-F2): rule count 0 means no brace-delimited rule survives stripping
+// Rule count 0 means no brace-delimited rule survives stripping
 // comments and @import/@charset/@use -- it does not mean the file's only
 // content IS comments and imports. A pure `@tailwind base;`/`@tailwind
 // components;`/`@tailwind utilities;` passthrough (three at-rules, zero
-// comments, zero imports) also counts 0, so the old fixed claim was false for
-// exactly that shape; this names what the count actually proves instead.
+// comments, zero imports) also counts 0, so the message names what the
+// count actually proves instead of claiming the file is comments-only.
 export function CSS_PLACEHOLDER_SKIPPED_WARNING(relative: string): string {
   return (
     `${relative} contains no CSS rule with a body of its own (comments, imports, and bare at-rules ` +
@@ -278,7 +277,7 @@ export function CSS_PLACEHOLDER_SKIPPED_WARNING(relative: string): string {
   );
 }
 
-// M82: a reset/normalize stylesheet is conventionally opt-in; a project that
+// A reset/normalize stylesheet is conventionally opt-in; a project that
 // imports it deliberately reaches it through the entry layer and never falls
 // this far.
 export function CSS_RESET_SKIPPED_WARNING(relative: string): string {
@@ -295,7 +294,7 @@ export function CSS_DROPPED_WARNING(file: string): string {
   );
 }
 
-// M71: only --css validated its input, and a specifier that resolves to nothing
+// Only --css validated its input, and a specifier that resolves to nothing
 // takes the entry module down with it. Every auto-detected path passes here.
 export function validateCssFiles(files: string[], warningsOut?: string[]): string[] {
   const kept: string[] = [];
@@ -306,7 +305,7 @@ export function validateCssFiles(files: string[], warningsOut?: string[]): strin
   return kept;
 }
 
-// M92 (twenty-F3): a bare package specifier ("twenty-ui/theme-light.css") is a
+// A bare package specifier ("twenty-ui/theme-light.css") is a
 // real, resolvable stylesheet whenever the package's own exports map (or, in
 // its absence, a plain directory join) names that subpath -- exactly the
 // resolution a real bundler performs. A package can export some subpaths and
@@ -318,7 +317,7 @@ function resolveBareStylesheetSpecifier(specifier: string, fromDir: string): str
   return target && "file" in target ? target.file : undefined;
 }
 
-// M102: the same resolution, reporting a declared-but-absent target instead of
+// The same resolution, reporting a declared-but-absent target instead of
 // discarding it. shadcn's `shadcn/tailwind.css` resolves through the package's
 // own exports map to `dist/tailwind.css`, a directory that exists only after
 // that package is built: a user needs that path named, not the specifier

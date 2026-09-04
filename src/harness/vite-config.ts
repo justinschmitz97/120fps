@@ -33,27 +33,27 @@ const IGNORED_KEY_ORDER = [
 
 export interface ViteConfigData {
   configFile?: string;
-  // M114 A3 (vuetify-F1): the directory the config makes Vite's root, when a
+  // The directory the config makes Vite's root, when a
   // text read can fold it. Absent when the config declares none or computes
   // one, and then "root" is among `ignoredKeys`.
   root?: string;
-  // M114 A5: the html files `build.rollupOptions.input` names, folded and
+  // The html files `build.rollupOptions.input` names, folded and
   // confirmed on disk, in the config's own order.
   rollupInputs?: string[];
   publicDir?: string;
   aliases: Array<{ find: RegExp; replacement: string }>;
   ignoredKeys: string[];
-  // M117 A3 (I10): the plugins the config declares, in the config's own order,
+  // The plugins the config declares, in the config's own order,
   // named as the config writes them. Absent when it declares none.
   pluginNames?: string[];
-  // M76: resolve.conditions read from the member layer, or the workspace
+  // resolve.conditions read from the member layer, or the workspace
   // root's when the member declares none.
   conditions: string[];
-  // M76: workspace-root-sourced merges, disclosed eagerly at merge time (a
+  // Workspace-root-sourced merges, disclosed eagerly at merge time (a
   // hand-written resolve.alias/resolve.conditions object is a short,
   // deliberately curated list, unlike a generated tsconfig `paths` map).
   warnings: string[];
-  // M106 A3 (twenty-F2): the foldable half of css.preprocessorOptions, keyed by
+  // The foldable half of css.preprocessorOptions, keyed by
   // language, ready to hand to the harness server's own `css` option.
   preprocessorOptions?: PreprocessorOptions;
 }
@@ -68,7 +68,7 @@ export interface PreprocessorLangOptions {
 
 export type PreprocessorOptions = Record<string, PreprocessorLangOptions>;
 
-// M106 A3: an option the harness read and cannot replay, named as itself. The
+// An option the harness read and cannot replay, named as itself. The
 // blanket "additionalData is not replicated" line (VITE_CONFIG_IGNORED_WARNING)
 // stays for the case where additionalData really was unfoldable; a project
 // whose additionalData folds fine but whose `api` selects a Sass flavour gets
@@ -84,7 +84,7 @@ export function VITE_CONFIG_PREPROCESSOR_OPTION_WARNING(
   );
 }
 
-// M117 A3: a note that named the key `plugins` and none of the plugins left a
+// A note that named the key `plugins` and none of the plugins left a
 // reader unable to tell whether the harness dropped anything that mattered.
 // With the names in hand the note states what it dropped; without them (a
 // `plugins` value that is not an array literal) the key-only wording stands.
@@ -121,7 +121,7 @@ export function VITE_CONFIG_WORKSPACE_ROOT_ALIAS_WARNING(
   key: string,
   replacement: string,
   configFile: string,
-  // M105 (chakra-ui-F6): the disclosure said where the alias came from and
+  // The disclosure said where the alias came from and
   // never why it is load-bearing. When the aliased package's own manifest
   // points at an entry that has not been built, the alias is the only reason
   // anything resolves at all, and a user removing it gets a resolution failure.
@@ -194,7 +194,7 @@ export function stringLiteralValue(node: ts.Expression): string | undefined {
   return undefined;
 }
 
-// M93 (chakra-ui-F1): a resolve.alias value written as `resolve("packages/react/src")`
+// A resolve.alias value written as `resolve("packages/react/src")`
 // or `resolve(__dirname, "packages/react/src")` (bare `resolve`/`join`, or the
 // `path.resolve`/`path.join` member-expression form) is a call expression, not
 // a string literal -- the only shape the plain check above recognizes.
@@ -213,11 +213,11 @@ function calleeName(expr: ts.Expression): string | undefined {
   return undefined;
 }
 
-// M106 A3: a string a text read can prove, in the four shapes the corpus
+// A string a text read can prove, in the four shapes the corpus
 // writes: a literal, a template with nothing to substitute, `[...].join(sep)`
 // over such parts, and `+` concatenation of them. Anything else (a function, a
 // variable, an interpolation) is not folded — undefined, never a guess.
-// Review A5: what a user has to look at in their own config. Named after the
+// What a user has to look at in their own config. Named after the
 // shape, never the syntax-kind number.
 function expressionShape(node: ts.Expression): string {
   if (ts.isArrowFunction(node) || ts.isFunctionExpression(node)) return "function";
@@ -289,7 +289,7 @@ function resolveCallExpressionPath(node: ts.Expression, configDir: string): stri
   return path.resolve(configDir, ...literalArgs);
 }
 
-// M114 A5: `build.rollupOptions.input`, in the four shapes a config writes it
+// `build.rollupOptions.input`, in the four shapes a config writes it
 // — one path, an array of paths, an object map of them, each a string literal
 // or a `resolve(...)`/`join(...)` call. Only html files that exist survive: an
 // entry the run cannot open is not an entry. Relative paths fold against the
@@ -369,8 +369,8 @@ function findViteConfigObject(source: ts.SourceFile): ts.ObjectLiteralExpression
   return undefined;
 }
 
-// M117 A3: a call expression by its callee, an object literal by its `name`,
-// anything else by where it sits in the array. Text only: M71's invariant is
+// A call expression by its callee, an object literal by its `name`,
+// anything else by where it sits in the array. Text only: the invariant is
 // that a project's vite.config is read and never executed.
 function declaredPluginName(element: ts.Expression, index: number): string {
   const positional = `unnamed plugin #${index + 1}`;
@@ -400,23 +400,20 @@ function findViteConfigFile(dir: string): string | undefined {
 }
 
 interface ParsedViteConfig {
-  // M114 A3, A5
   root?: string;
   rollupInputs?: string[];
   publicDir?: string;
   aliasEntries: Array<{ find: string; replacement: string }>;
   conditions: string[];
   ignored: Set<string>;
-  // M117 A3
   pluginNames?: string[];
-  // M106 A3 (twenty-F2)
   preprocessorOptions?: PreprocessorOptions;
   unfoldablePreprocessor?: string[];
 }
 
 // One config file's text, read and parsed the same way regardless of which
-// layer (member or workspace root, M76) is asking. Never imported: this stays
-// inside M71's contract that a project's vite.config is never executed.
+// layer (member or workspace root) is asking. Never imported: this stays
+// inside the contract that a project's vite.config is never executed.
 function parseViteConfigFile(configFile: string): ParsedViteConfig | undefined {
   let text: string;
   try {
@@ -447,12 +444,12 @@ function parseViteConfigFile(configFile: string): ParsedViteConfig | undefined {
     if (!ts.isPropertyAssignment(property)) continue;
     const name = literalPropertyName(property);
 
-    // M114 A3 (vuetify-F1): vuetify's own `root: resolve('dev')` decides where
-    // its index.html is, and the loop had no branch for it, so the run
-    // asserted the package has no application entry.
+    // vuetify's own `root: resolve('dev')` decides where
+    // its index.html is; without a branch for it here, the run would assert
+    // the package has no application entry.
     if (name === "root") {
       const literal = stringLiteralValue(property.initializer);
-      // M114 A3 review: `resolve(process.env.APP_ROOT, "dev")` folds to
+      // `resolve(process.env.APP_ROOT, "dev")` folds to
       // <configDir>/dev once the non-literal argument is dropped, which would
       // name a root the config never declared. A call folds only when every
       // argument is readable from the config text.
@@ -473,7 +470,7 @@ function parseViteConfigFile(configFile: string): ParsedViteConfig | undefined {
       continue;
     }
 
-    // M114 A5: the html file the project builds from, when the path folds.
+    // The html file the project builds from, when the path folds.
     if (name === "build" && ts.isObjectLiteralExpression(property.initializer)) {
       const inputs = foldRollupInputs(property.initializer, configDir);
       if (inputs.length > 0) rollupInputs = inputs;
@@ -503,7 +500,7 @@ function parseViteConfigFile(configFile: string): ParsedViteConfig | undefined {
             const literalTarget = ts.isPropertyAssignment(entry)
               ? stringLiteralValue(entry.initializer)
               : undefined;
-            // M93: a string literal wins when present; otherwise try the
+            // A string literal wins when present; otherwise try the
             // resolve(...)/join(...) call-expression shape before giving up.
             const replacement =
               literalTarget !== undefined
@@ -547,7 +544,7 @@ function parseViteConfigFile(configFile: string): ParsedViteConfig | undefined {
         ignored.add("css.preprocessorOptions");
         continue;
       }
-      // M106 A3 (twenty-F2): twenty's own shape is
+      // twenty's own shape is
       // `additionalData: [`@use 'abstracts/functions' as *;`, ...].join(newline)`
       // with `loadPaths: [path.resolve(__dirname, 'src/styles')]` — a value a
       // text read can fold exactly, which is why the sass build failed with
@@ -608,12 +605,12 @@ function parseViteConfigFile(configFile: string): ParsedViteConfig | undefined {
         : undefined;
       if (elements && elements.length === 0) continue;
       ignored.add("plugins");
-      // M117 A3: what the note names, in the order the config declares them.
+      // What the note names, in the order the config declares them.
       if (elements) pluginNames = elements.map(declaredPluginName);
     }
   }
 
-  // Review A5: the blanket key's own text asserts that preprocessor globals
+  // The blanket key's own text asserts that preprocessor globals
   // are not replicated at all — true only when nothing under
   // preprocessorOptions folded. Otherwise each dropped option is named.
   if (unfoldable.length > 0 && Object.keys(preprocessorOptions).length === 0) {
@@ -638,11 +635,11 @@ function toAliasRegex(entry: { find: string; replacement: string }): { find: Reg
   return { find: new RegExp(`^${escapeRegex(entry.find)}(?=/|$)`), replacement: entry.replacement };
 }
 
-// M71: the config is read as text and parsed as a source file. It is never
+// The config is read as text and parsed as a source file. It is never
 // imported, so its plugins never load into this Vite and the invariant holds.
-// M76: a second, additive read of workspaceRoot's own vite.config.* — skipped
+// A second, additive read of workspaceRoot's own vite.config.* — skipped
 // entirely when workspaceRoot === projectRoot, so a single-package project's
-// output is byte-identical to before this milestone. Only resolve.alias and
+// output is unaffected. Only resolve.alias and
 // resolve.conditions are layered; publicDir and ignoredKeys stay member-only.
 export function readViteConfigData(
   projectRoot: string,
@@ -657,7 +654,7 @@ export function readViteConfigData(
     parsed = parseViteConfigFile(configFile);
     if (parsed) {
       if (parsed.publicDir) data.publicDir = parsed.publicDir;
-      // M114 A3, A5: member-only, like publicDir — a workspace root's entry
+      // Member-only, like publicDir — a workspace root's entry
       // is not this package's entry.
       if (parsed.root) data.root = parsed.root;
       if (parsed.rollupInputs) data.rollupInputs = parsed.rollupInputs;
@@ -665,7 +662,7 @@ export function readViteConfigData(
       data.conditions = parsed.conditions;
       data.ignoredKeys = IGNORED_KEY_ORDER.filter((key) => parsed!.ignored.has(key));
       if (parsed.pluginNames) data.pluginNames = parsed.pluginNames;
-      // M106 A3: the foldable half travels to the server; the rest is named.
+      // The foldable half travels to the server; the rest is named.
       if (parsed.preprocessorOptions) data.preprocessorOptions = parsed.preprocessorOptions;
       if (parsed.unfoldablePreprocessor) {
         data.warnings.push(

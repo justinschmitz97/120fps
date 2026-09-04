@@ -10,10 +10,10 @@ import {
 } from "../project/index.js";
 import { isFile, toPosix } from "../shared/index.js";
 
-// M76: true when an installed package's realpath sits inside workspaceRoot
-// with no node_modules segment between them — the standard signal that an
-// install is a symlink back into the monorepo's own source tree, not a
-// hoisted external copy.
+// True when an installed package's realpath sits inside workspaceRoot with
+// no node_modules segment between them — the standard signal that an install
+// is a symlink back into the monorepo's own source tree, not a hoisted
+// external copy.
 export function isWorkspaceSibling(pkgDir: string, workspaceRoot: string): boolean {
   let real: string;
   try {
@@ -42,8 +42,8 @@ export function declaresRuntimeEntry(manifest: Record<string, unknown> | undefin
   return ["source", "exports", "module", "main"].some((field) => manifest[field] !== undefined);
 }
 
-// M107: a declared entry names a build output, and the source it was built
-// from sits at the same path with the build directory dropped and a source
+// A declared entry names a build output, and the source it was built from
+// sits at the same path with the build directory dropped and a source
 // extension applied (`dist/shared/index.js` -> `shared/index.ts`).
 function sourceCandidatesFor(real: string, declared: string): string[] {
   const normalized = toPosix(declared).replace(/^\.\//, "");
@@ -81,9 +81,8 @@ type WorkspaceSourceEntry = {
   declaredExists: boolean;
 };
 
-// M107 (directus-F1, gutenberg-F1): the source an unbuilt workspace sibling
-// declares, whatever layout it uses. `<pkg>/src` is the last fallback, not the
-// only candidate.
+// The source an unbuilt workspace sibling declares, whatever layout it uses.
+// `<pkg>/src` is the last fallback, not the only candidate.
 export function resolveWorkspaceSourceEntry(
   real: string,
   manifest: Record<string, unknown> | undefined,
@@ -125,9 +124,9 @@ export function resolveWorkspaceSourceEntry(
   };
 }
 
-// M107 (directus-F1): an `exports` subpath key gets the same derivation as the
-// root entry. A key whose declared target already resolves needs no source
-// counterpart and keeps the resolution it has today.
+// An `exports` subpath key gets the same derivation as the root entry. A key
+// whose declared target already resolves needs no source counterpart and
+// keeps the resolution it has today.
 export function workspaceSubpathSourceEntries(
   real: string,
   manifest: Record<string, unknown> | undefined,

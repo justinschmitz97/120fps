@@ -26,9 +26,9 @@ const Image = forwardRef(function Image(
 
 export default Image;
 
-// M96 (audit-found gap): a real named export of next/image (14.1+) used to
-// pass Image's own prop transformation through to a caller-supplied element
-// (canvas, a themed <picture> source) instead of rendering <Image> itself.
+// A real named export of next/image (14.1+) passes Image's own prop
+// transformation through to a caller-supplied element (canvas, a themed
+// <picture> source) instead of rendering <Image> itself.
 export function getImageProps(
   props: Record<string, unknown>,
 ): { props: Record<string, unknown> } {

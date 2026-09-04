@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { toPosix } from "../shared/index.js";
 
-// M73: the harness dir is created inside the project root by design (Vite's
+// The harness dir is created inside the project root by design (Vite's
 // root is the project root, so the generated entry's root-absolute specifiers,
 // the project's aliases, and its node_modules walk all resolve the way the app
 // resolves them). A root that cannot be written to is therefore a refusal, and
@@ -17,24 +17,23 @@ export function HARNESS_DIR_UNWRITABLE(projectRoot: string, detail: string): str
   );
 }
 
-// M83 #7: harness directories created but not yet cleaned up. `cleanup`
+// Harness directories created but not yet cleaned up. `cleanup`
 // (the success path) and the bootServer catch's own rmSync (the common
 // caught-and-rethrown failure path) both remove their entry as soon as they
 // remove the directory. What is left in the set when the process actually
 // exits is exactly the leftover a crash produces: `sweepStaleHarnessDirs`
 // never removes a directory whose marker names a live process (and never one
 // this process itself owns), so it cannot cover a directory the current run
-// just abandoned, and a raw, unhandled exception (ant-design-F1's shape)
-// bypasses every try/catch in this file entirely — the `process.on("exit")`
-// handler below is the layer that still catches it, since Node's "exit"
-// event fires after an uncaught exception terminates the process, not only
-// on a graceful return.
+// just abandoned, and a raw, unhandled exception bypasses every try/catch in
+// this file entirely — the `process.on("exit")` handler below is the layer
+// that still catches it, since Node's "exit" event fires after an uncaught
+// exception terminates the process, not only on a graceful return.
 const activeHarnessDirs = new Set<string>();
 
-// M113 (base-ui-R1): on Windows a handle Chromium, the dev server or an
-// esbuild worker still holds makes a removal throw EBUSY/EPERM/ENOTEMPTY, and
-// that handle is gone milliseconds later. A single attempt turned a transient
-// lock into a directory the developer found in `git status`.
+// On Windows a handle Chromium, the dev server or an esbuild worker still
+// holds makes a removal throw EBUSY/EPERM/ENOTEMPTY, and that handle is gone
+// milliseconds later. A single attempt turns a transient lock into a
+// directory the developer finds in `git status`.
 export const HARNESS_DIR_REMOVAL_BUDGET_MS = 1000;
 export const HARNESS_DIR_REMOVAL_MIN_ATTEMPTS = 5;
 const HARNESS_DIR_REMOVAL_DELAY_MS = 200;
@@ -66,7 +65,7 @@ function removeHarnessDirOnce(dir: string): void {
   fs.rmSync(dir, { recursive: true, force: true, maxRetries: 2, retryDelay: 25 });
 }
 
-// M113 (final re-test): a removal that returns without throwing has not
+// A removal that returns without throwing has not
 // necessarily removed anything. On Windows a file another process opened with
 // FILE_SHARE_DELETE unlinks into a pending-delete state and the directory
 // survives the rmdir that reported success, so every caller crossed the
@@ -118,7 +117,7 @@ export function HARNESS_DIR_REMOVAL_FAILED_WARNING(dir: string, reason: string):
   );
 }
 
-// M113 (final re-test): the run's own removal sites (`cleanup()` and the
+// The run's own removal sites (`cleanup()` and the
 // bootServer catch) crossed the directory off the moment their rmSync
 // returned. On Windows that call returns on a directory that is still there,
 // and the crossed-off directory became invisible to every later sweep,
@@ -167,7 +166,7 @@ export function sweepActiveHarnessDirs(): void {
   removeActiveHarnessDirs();
 }
 
-// M113 (final re-test): the signal handler's last pass reads a set, and a
+// The signal handler's last pass reads a set, and a
 // harness directory the build creates a millisecond later is not in it. The
 // pass latches this flag instead of racing: createHarnessDir below removes
 // what it creates from that point on, under the same budget and with the same
@@ -179,8 +178,7 @@ export function beginHarnessDirTeardown(): void {
   harnessDirTeardownStarted = true;
 }
 
-// M113 (final re-test): the last exit any run can take, and until now the one
-// that spent a single attempt and said nothing. `abortRun`'s deadline timer
+// The last exit any run can take. `abortRun`'s deadline timer
 // and `closePoolsBounded`'s own are both unref'd, so a signalled run whose
 // `closeAll` never settles drains its loop and leaves through here, with the
 // signal's code already recorded and the pass that retries never reached: exit
@@ -202,7 +200,7 @@ function registerHarnessDirExitSweep(): void {
 }
 registerHarnessDirExitSweep();
 
-// M113: what a build reads when it asked for a harness directory after the
+// What a build reads when it asked for a harness directory after the
 // teardown sweep latched. The directory was created and removed again, so
 // there is no path to hand back.
 export const HARNESS_DIR_TEARDOWN_IN_PROGRESS =
@@ -226,12 +224,12 @@ export function createHarnessDir(projectRoot: string): string {
   let dir: string;
   try {
     dir = fs.mkdtempSync(path.join(projectRoot, ".120fps-harness-"));
-    // M83 #7: tracked from the moment it exists, regardless of what happens
+    // Tracked from the moment it exists, regardless of what happens
     // next — `cleanup()` and the bootServer catch's own rmSync both remove
     // it as soon as they remove the directory; anything left when the
     // process exits is a leftover the exit sweep above still has to catch.
     activeHarnessDirs.add(dir);
-    // M101: written before the teardown branch below, so a directory whose
+    // Written before the teardown branch below, so a directory whose
     // retry budget runs out down there carries its owner pid, and the next
     // run's stale sweep removes it on the dead-pid path instead of waiting
     // out the one-hour age gate the line below promises it will not wait out.
@@ -246,7 +244,7 @@ export function createHarnessDir(projectRoot: string): string {
   } catch (err) {
     return fail(err);
   }
-  // M113 (final re-test): the signal arrived while this directory was being
+  // The signal arrived while this directory was being
   // created, so the handler's sweep could not have seen it. The handler's
   // work happens here instead, on the same budget, rather than leaving the
   // directory for the next run to find.
@@ -266,7 +264,7 @@ export function createHarnessDir(projectRoot: string): string {
   return dir;
 }
 
-// M101 (V2 repro 5): the process that owns a harness directory, so a later run
+// The process that owns a harness directory, so a later run
 // can remove an abandoned one immediately instead of waiting out an age gate
 // that exists only because nothing knew whose directory it was.
 export const HARNESS_PID_FILE = ".pid";
@@ -280,7 +278,7 @@ function harnessDirOwnerPid(dir: string): number | undefined {
   }
 }
 
-// M101 (review A6): the directory's own mtime stops advancing the moment the
+// The directory's own mtime stops advancing the moment the
 // build finishes writing entry.tsx, so a run longer than the gate looks
 // abandoned while it is measuring. The marker is the heartbeat instead, and
 // the run refreshes it at every phase (see the CLI's onPhase).
@@ -317,21 +315,18 @@ export function isProcessAlive(pid: number): boolean {
 
 // A directory with no pid marker was created by a build that did not write one:
 // nothing here can tell whether it is in use, so it keeps the original,
-// conservative gate (M24 D8).
+// conservative gate.
 export const STALE_HARNESS_MAX_AGE_MS = 60 * 60 * 1000;
-// M101: a marked directory whose process is alive is in use — until it has been
+// A marked directory whose process is alive is in use — until it has been
 // sitting for this long, at which point the pid is more likely recycled than
 // still measuring.
 export const LIVE_PID_HARNESS_MAX_AGE_MS = 10 * 60 * 1000;
 
-// Best-effort removal of .120fps-harness-* leftovers. M101: a directory whose
-// marked owner is gone is removed at any age — that is exactly the leftover an
-// external kill produces (V2 repro 5), and waiting an hour for it served no
-// purpose once the owner is known.
-// M101 (dub leftover): a removal that cannot succeed used to be swallowed with
-// the same `catch` that covers "already gone", so a directory another process
-// still holds open looked identical to one nothing was wrong with. The reason
-// is now the run's own disclosure.
+// Best-effort removal of .120fps-harness-* leftovers. A directory whose
+// marked owner is gone is removed at any age — waiting an hour for it serves
+// no purpose once the owner is known. The failure reason is surfaced in the
+// warning, distinguishing an already-gone directory from one another
+// process still holds open.
 export function HARNESS_DIR_UNREMOVABLE_WARNING(dir: string, reason: string): string {
   return (
     `${dir} is a leftover harness directory this run could not remove (${reason}). It belongs to a ` +
@@ -340,8 +335,8 @@ export function HARNESS_DIR_UNREMOVABLE_WARNING(dir: string, reason: string): st
   );
 }
 
-// M113 A5: the run that removed a leftover said nothing, so the developer had
-// no evidence the previous run had left anything behind at all.
+// Surfaces removal of a stale leftover so the developer has evidence an
+// earlier run left something behind, instead of it disappearing silently.
 export function HARNESS_DIR_SWEPT_WARNING(dir: string, reason: string): string {
   return `Removed a stale harness directory from an earlier run: ${dir} (${reason}).`;
 }
@@ -355,7 +350,7 @@ export function sweepStaleHarnessDirs(
 ): void {
   try {
     const now = Date.now();
-    // M113 A6: the retries are bounded across the whole sweep, so a root full
+    // The retries are bounded across the whole sweep, so a root full
     // of locked leftovers cannot delay the start of a run.
     const deadline = now + HARNESS_SWEEP_BUDGET_MS;
     for (const entry of fs.readdirSync(projectRoot, { withFileTypes: true })) {
@@ -399,7 +394,7 @@ const TMP_SWEEP_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 // remainder is picked up on the next sweep.
 export const TMP_SWEEP_MAX_REMOVALS = 500;
 
-// M56: best-effort removal of this tool's own OS-tmp leftovers (e.g.
+// Best-effort removal of this tool's own OS-tmp leftovers (e.g.
 // `120fps-ctx-*`, `120fps-memo-*`) older than 24h. A directory belonging to a
 // live run is by construction younger than the cutoff, so no lockfile is
 // needed: prefix + location + age is a three-factor guard against deleting

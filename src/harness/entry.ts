@@ -36,7 +36,7 @@ export function compositionToJsx(tree: CompositionTree): string {
   return nodeToJsx(tree.structure[0]);
 }
 
-// M106 A4 (calcom `Icon.tsx`): the entry named its bindings in the import
+// The entry named its bindings in the import
 // statement, so one type re-exported as a value (`export { IconName, Icon }`)
 // made the whole module fail to link — "does not provide an export named
 // 'IconName'" — before a single line ran. A namespace import always links; the
@@ -100,7 +100,7 @@ export function strictBlock(): string {
 const __120fpsInStrict = (el: any) => __120fpsStrict ? createElement(StrictMode, null, el) : el;`;
 }
 
-// M44. Functions and JSX cannot cross the CDP boundary, so combo generation
+// Functions and JSX cannot cross the CDP boundary, so combo generation
 // carries their position instead and the entry substitutes the real value at
 // render time. Literal preset values never become refs: they travel as
 // themselves, so deltas and matrix cells compare real data.
@@ -133,7 +133,7 @@ export function presetResolveStatement(presetRelative?: string): string {
   return presetRelative ? "props = __120fpsResolveProps(props);" : "";
 }
 
-// M41. Bounded because an unbounded setup would surface as a bare readiness
+// Bounded because an unbounded setup would surface as a bare readiness
 // timeout 30s later, naming the harness instead of the wrapper.
 export const WRAPPER_SETUP_TIMEOUT_MS = 15000;
 
@@ -172,14 +172,15 @@ export function setupApiBlock(wrapRelative?: string): string {
 `;
 }
 
-// M102 (I7, excalidraw-F2). `Stylesheets: css/styles.scss` plus `Result: PASS`
-// read as "a styled button was measured" when every rule in that file is nested
-// under a `.excalidraw` ancestor the harness never renders, so not one of them
-// could match. Efficacy is a runtime question and CSSOM has already parsed the
-// answer: rules with a `selectorText`, tested against the rendered tree. No CSS
-// parser and no preprocessor (M82's non-goals), no network, and every sheet and
-// selector is guarded on its own — a cross-origin sheet throws on `cssRules`, an
-// exotic selector throws in `querySelector`, and neither may take the run down.
+// `Stylesheets: css/styles.scss` plus `Result: PASS` read as "a styled
+// button was measured" when every rule in that file is nested under an
+// ancestor selector the harness never renders, so not one of them could
+// match. Efficacy is a runtime question and CSSOM has already parsed the
+// answer: rules with a `selectorText`, tested against the rendered tree. No
+// CSS parser and no preprocessor, no network, and every sheet and selector
+// is guarded on its own — a cross-origin sheet throws on `cssRules`, an
+// exotic selector throws in `querySelector`, and neither may take the run
+// down.
 export const STYLESHEET_MATCH_STATS_SOURCE = `function __120fpsStylesheetMatchStats(specifiers, doc, root) {
   var countRules = function (list, stats) {
     for (var i = 0; i < list.length; i++) {
@@ -267,16 +268,16 @@ export interface EntryOptions {
   presetRelative?: string;
   // Defaults to React, so every existing caller produces the entry it did before.
   renderer?: Renderer;
-  // M87: true when the SFC's template root carries none of v-if/v-show/v-for
-  // (templateHasUnconditionalRoot, src/vue-sfc.ts). Only that shape is safe to
+  // True when the SFC's template root carries none of v-if/v-show/v-for
+  // (templateHasUnconditionalRoot, src/project/vue-sfc.ts). Only that shape is safe to
   // force into a stable wrapped render in the combo phase: a conditional root
   // must keep the ability to legitimately report zero DOM.
   vueUnconditionalRoot?: boolean;
 }
 
 // The renderer supplies four things: the import block, the mount body, the
-// unmount body, and `renderTree`. Everything around them: the M25 stylesheet
-// block, the M41 setup/teardown blocks, the M44 preset resolver, the M26
+// unmount body, and `renderTree`. Everything around them: the stylesheet
+// block, the setup/teardown blocks, the preset resolver, the
 // single-render-site rule: is renderer-independent and shared.
 export function generateEntry(opts: EntryOptions): string {
   return opts.renderer === "vue" ? generateVueEntry(opts) : generateReactEntry(opts);
@@ -299,7 +300,7 @@ export function generateVueEntry(opts: EntryOptions): string {
     vueUnconditionalRoot,
   } = opts;
 
-  // M106 A4: namespace import, runtime selection — see componentModuleImport.
+  // Namespace import, runtime selection — see componentModuleImport.
   // An SFC always exports its component as the default (detectComponentExport
   // returns isDefaultOnly for every .vue file), so the selected name is fixed.
   const importLine =
@@ -309,7 +310,7 @@ ${componentExportSelector()}
 const ${componentName} = __120fps_selectExport("default");` +
     scaleBinding(hasScale);
 
-  // Auto-scale fans N instances out inside one element, wrapped once (M26).
+  // Auto-scale fans N instances out inside one element, wrapped once.
   const scaleBranch = hasScale
     ? `  if (typeof props.__120fps_scaleN === "number" && typeof __120fps_scale === "function") {
     return __120fps_scale(props.__120fps_scaleN);
@@ -320,15 +321,16 @@ const ${componentName} = __120fps_selectExport("default");` +
       h(${componentName}, { ...rest, key: i })));
   }`;
 
-  // M87 (primevue's Accordion.vue): a component reading `this.$slots.default()`
-  // or `slots.default?.()` as a callable needs `$slots.default` to exist and be
-  // a function whether or not real children were composed in -- with no third
-  // h() argument at all, $slots.default is undefined, and calling it throws.
-  // An always-present, empty-returning default slot changes nothing for a
-  // component that never inspects $slots.
+  // A component reading `this.$slots.default()` or `slots.default?.()` as a
+  // callable (primevue's Accordion.vue, for instance) needs `$slots.default`
+  // to exist and be a function whether or not real children were composed in
+  // -- with no third h() argument at all, $slots.default is undefined, and
+  // calling it throws. An always-present, empty-returning default slot
+  // changes nothing for a component that never inspects $slots.
   const defaultSlotsArg = `, { default: () => [] }`;
-  // M87 (element-plus's button.vue): a template whose root has no v-if/v-show/
-  // v-for always produces a real root element once mounted for real. Wrapping
+  // A template whose root has no v-if/v-show/v-for (element-plus's
+  // button.vue, for instance) always produces a real root element once
+  // mounted for real. Wrapping
   // the bare render in the same stable container shape scale-probe already
   // uses (its own scale branch above) is what makes the combo phase agree
   // with scale-probe's already-correct nonzero count. A conditional root is
@@ -411,7 +413,7 @@ export function vueRenderTreeHelper(wrapRelative?: string): string {
 function generateReactEntry(opts: EntryOptions): string {
   const { componentRelative, componentName, isDefaultExport, hasScale, wrapRelative, cssImports, presetRelative } = opts;
 
-  // M106 A4: namespace import, runtime selection — see componentModuleImport.
+  // Namespace import, runtime selection — see componentModuleImport.
   const componentRef = isDefaultExport ? componentName : "Component";
   const importLine =
     componentModuleImport(componentRelative) +
@@ -501,7 +503,7 @@ export function generateComposedEntry(
   const namedImports = [...components].filter((n) => !defaultExports.has(n)).sort();
   const defaultImport = [...components].find((n) => defaultExports.has(n));
 
-  // M106 A4: one namespace import for the whole composed scene; every composed
+  // One namespace import for the whole composed scene; every composed
   // name keeps its own binding, selected by name at runtime.
   const bindings = [
     ...(defaultImport ? [`const ${defaultImport} = __120fps_selectExport("default");`] : []),
