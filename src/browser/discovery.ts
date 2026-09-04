@@ -7,7 +7,7 @@ export type InteractionType =
   | "focus"
   | "keyboard"
   | "hover"
-  // M43. A scroll container's whole cost model lives in its scroll handler.
+  // A scroll container's whole cost model lives in its scroll handler.
   | "scroll";
 
 export type ScrollAxis = "vertical" | "horizontal";
@@ -24,7 +24,7 @@ export interface InteractionDescriptor {
   ariaValueNow?: boolean;
   ariaOrientation?: string;
   cursor?: string;
-  // M43. Present on any overflowing scroll container, including ones whose
+  // Present on any overflowing scroll container, including ones whose
   // type stayed click/select because they are interactive in their own right.
   scrollAxis?: ScrollAxis;
 }
@@ -95,7 +95,7 @@ export async function discoverInteractions(
     const results: any[] = [];
     const seen = new Set<Element>();
 
-    // M43. Overflow style alone is not a scroll container: content has to
+    // Overflow style alone is not a scroll container: content has to
     // actually exceed the box, or every `overflow: auto` wrapper in the tree
     // would claim a wheel sweep it cannot answer. Vertical wins when both
     // axes scroll: that is the axis a wheel drives.
@@ -423,7 +423,7 @@ export async function discoverInteractions(
       walkTree(child, "", true);
     }
 
-    // M43. A plain list long enough to overflow the viewport scrolls the
+    // A plain list long enough to overflow the viewport scrolls the
     // document, not a container: that scrollport is the component's, so it
     // gets a descriptor of its own. `:root` is the selector the scroll step
     // recognises as "wheel over the viewport".

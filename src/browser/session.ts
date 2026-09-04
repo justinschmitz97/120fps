@@ -31,7 +31,7 @@ export async function tryCollectGarbage(cdp: CDPSession): Promise<boolean> {
   }
 }
 
-// M34: inter-sample bookkeeping (GC) produces no measured value, so it runs
+// Inter-sample bookkeeping (GC) produces no measured value, so it runs
 // unthrottled; the throttle is restored before the next traced window. Errors
 // propagate: call sites sit inside withContextRetry, whose re-entry re-engages
 // the throttle. Nothing may run at an unknown throttle state.
@@ -61,9 +61,9 @@ export interface HarnessSessionOptions {
   cpuThrottle?: number;
   // Appended to the harness URL, e.g. "?strict=1".
   search?: string;
-  // M35: "vsync" opts a pass out of begin-frame control (animated combos).
+  // "vsync" opts a pass out of begin-frame control (animated combos).
   pacing?: "driven" | "vsync";
-  // M37: reuse pooled browsers (fresh context per session).
+  // Reuse pooled browsers (fresh context per session).
   pool?: BrowserPool;
   onWarning?: (warning: string) => void;
 }
@@ -82,7 +82,7 @@ export async function enterHarness(
   await gotoWithErrorContext(page, url, errorCapture, options.label, {
     waitUntil: HARNESS_NAV_WAIT,
   });
-  // M79 gap 3b: races readiness against a fatal page error (a synchronous
+  // Races readiness against a fatal page error (a synchronous
   // throw during module evaluation, e.g. a next.config.mjs env-validation
   // failure). When the fatal signal wins, this throws immediately instead of
   // waiting out the remaining timeout, and leads with the page error instead
@@ -124,7 +124,7 @@ export async function refreshCdpSession(page: Page, holder: CdpHolder): Promise<
   holder.cdp = await page.context().newCDPSession(page);
 }
 
-// M41: the wrapper's session-scoped counterpart to setup, run once before the
+// The wrapper's session-scoped counterpart to setup, run once before the
 // session's page goes away. Best-effort: a completed measurement must not fail
 // because a teardown threw or the page was already gone.
 export async function runWrapperTeardown(page: Page): Promise<void> {
@@ -152,7 +152,7 @@ export async function openMeasurementSession(options: {
   driven: boolean;
   onWarning?: (warning: string) => void;
   pool?: BrowserPool;
-  // M83 #2: threaded into attachPageErrorCapture so a bare, extension-less
+  // Threaded into attachPageErrorCapture so a bare, extension-less
   // 404 landing directly under the harness's own serving root (a
   // synthesized-placeholder collision, not a component defect) is excluded
   // from attribution.
@@ -247,7 +247,7 @@ export async function runHarnessSession<T>(
     await ms.close();
   }
 }
-// M59: one phase's failure context, mutated as the pass advances. `run` is the
+// One phase's failure context, mutated as the pass advances. `run` is the
 // only way a phase body reaches the caller, so no escape route is left
 // unenriched.
 export interface PhaseTracker {

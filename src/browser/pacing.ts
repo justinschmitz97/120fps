@@ -1,6 +1,6 @@
 import { chromium, type Browser } from "playwright";
 
-// M35: headless Chromium paces rAF at 60 Hz no matter what, so every traced
+// Headless Chromium paces rAF at 60 Hz no matter what, so every traced
 // window paid ~33 ms of vsync idle per double-rAF fence. With begin-frame
 // control the compositor produces frames when told to; the pump tells it to,
 // back-to-back, so a fence costs one protocol round trip (~2 ms) instead of
@@ -79,7 +79,7 @@ export function createFramePump(
 
 export type MeasurementPacing = "driven" | "vsync";
 
-// M37: browser processes are project-agnostic; what a phase needs fresh is
+// Browser processes are project-agnostic; what a phase needs fresh is
 // page state, and a new context delivers that (its pages get their own
 // renderer process: V8 as cold as in a fresh browser). The pool holds at
 // most one driven and one vsync Chromium for its lifetime.
