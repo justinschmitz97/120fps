@@ -4,7 +4,7 @@ import type { HarnessResult } from "../harness/index.js";
 export const FONT_SETTLE_TIMEOUT_MS = 5000;
 export const FONT_SETTLE_WARNING = "font loading did not settle within 5s";
 
-// M74 (B10): document.fonts.ready resolves once every FontFace has *settled*
+// document.fonts.ready resolves once every FontFace has *settled*
 // (loaded or errored), not once every one has *loaded*: a 404'd or
 // decode-failed @font-face still lets `ready` resolve, so the fallback-font
 // metrics it produces need their own signal.

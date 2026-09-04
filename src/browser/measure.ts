@@ -87,25 +87,25 @@ export async function rafFence(page: Page): Promise<void> {
   );
 }
 
-// M116 end-game fix-up (midday-F1): `withFrameStarvationRetry` bounds one
-// combo; nothing bounded a pass. A renderer that wedges (an infinite render
+// `withFrameStarvationRetry` bounds one
+// combo; nothing bounds a pass. A renderer that wedges (an infinite render
 // loop from one combo's props, a crashed target that re-enters into the same
-// wedge) starves every combo that follows, so a delta pass of ~40 combos spent
-// three bounded retries each and made no progress for the twenty minutes the
-// run watchdog allows -- no report, no verdict. Three combos in a row that
+// wedge) starves every combo that follows, so a delta pass could spend its
+// bounded retries on every remaining combo and make no progress until the
+// run watchdog's timeout -- no report, no verdict. Three combos in a row that
 // measured nothing is the signal that the page, not the combo, is what failed:
 // the pass stops there and the run reports what it measured.
 export const MAX_CONSECUTIVE_DEGRADED_COMBOS = 3;
 
-// M116 end-game fix-up (midday-NEW1): both measurement passes keep one slot per
+// Both measurement passes keep one slot per
 // combo (`new Array(combos.length)`) and leave the slot of a combo that measured
 // nothing unset, so their result arrays are sparse. `for..of` yields `undefined`
-// for a hole -- which is how the delta pass read `.props` of undefined and ended
-// midday's run with a TypeError about the teardown instead of a report
-// (`animatedIndices` in analyze.ts had already met the same holes and guarded
-// with `m?.`). Positional consumers (`buildCurveReport`, report.ts) still need
-// the holes to line up with their scale points, so the arrays keep them and
-// every iterating consumer asks for the measured entries.
+// for a hole -- an unguarded read of `.props` off it throws a TypeError about
+// the teardown instead of producing a report (`animatedIndices` in
+// pipeline/modes/context.ts already meets the same holes and guards with
+// `m?.`). Positional consumers (`buildCurveReport`, report/stats.ts) still
+// need the holes to line up with their scale points, so the arrays keep them
+// and every iterating consumer asks for the measured entries.
 export function measuredOnly<T>(results: T[]): NonNullable<T>[] {
   return results.filter((r): r is NonNullable<T> => r !== undefined && r !== null);
 }
@@ -150,7 +150,7 @@ export function createDegradedPassBound(
 export interface WrapperOverhead {
   overheadMs: number;
   domNodes: number;
-  // M41: read from the page rather than parsed from the wrapper source: the
+  // Read from the page rather than parsed from the wrapper source: the
   // control API knows whether the export was actually a callable setup.
   hasSetup: boolean;
 }
@@ -234,8 +234,8 @@ export async function mountAndTrace(
 }
 
 // domNodeCount/hasAnimation/measuredState are read only when collectDomInfo is
-// set: their values are per-combo facts, and reading them per sample paid a
-// getComputedStyle sweep under the CPU throttle on every sample (M34). Every
+// set: their values are per-combo facts, and reading them per sample would pay
+// a getComputedStyle sweep under the CPU throttle on every sample. Every
 // probe runs between traced windows, never inside one.
 export async function runMountUnmount(
   page: Page,
@@ -246,9 +246,9 @@ export async function runMountUnmount(
   mountDur: number;
   unmountDur: number;
   domNodeCount: number;
-  // M106 B4: the portal half of `domNodeCount`.
+  // The portal half of `domNodeCount`.
   orphanNodes: number;
-  // M106 B5: same-document sprite ids nothing in the page defines.
+  // Same-document sprite ids nothing in the page defines.
   unresolvedSpriteRefs: string[];
   hasAnimation: boolean;
   measuredState: MeasuredState;
@@ -268,7 +268,7 @@ export async function runMountUnmount(
     : { rootNodes: 0, orphanNodes: 0 };
   const domNodeCount = totalComponentNodes(nodeCount);
 
-  // M106 B5 (calcom-F5): read in the same between-traces window as the node
+  // Read in the same between-traces window as the node
   // count, on the same `collectDomInfo` gate, so no traced sample pays for it.
   const unresolvedSpriteRefs = collectDomInfo ? await collectUnresolvedSpriteRefs(page) : [];
 
@@ -306,11 +306,11 @@ export async function runMountUnmount(
   };
 }
 
-// M99 (I4): the combo's own error window closes before any rerender into the
-// next combo's props opens the transition's window. One window over both made
-// an error the next combo's props raised read as this combo's own (V1: radix
-// Label combos #1 and #6 carried a Slot error with no `asChild` of their own).
-// The sequencing lives here so the attribution is verifiable without a browser.
+// The combo's own error window closes before any rerender into the
+// next combo's props opens the transition's window. One window over both
+// would make an error the next combo's props raised read as this combo's
+// own. The sequencing lives here so the attribution is verifiable without a
+// browser.
 export async function runWithSplitErrorWindows(
   capture: Pick<PageErrorCapture, "drain">,
   result: RerenderResult,
@@ -319,7 +319,7 @@ export async function runWithSplitErrorWindows(
   let own = capture.drain();
   if (hasPageErrors(own)) result.pageErrors = own;
   if (!transition) return result;
-  // M99: a transition body may close the combo's own window again when it can
+  // A transition body may close the combo's own window again when it can
   // prove a sub-step belongs to the combo itself. The rerender pass does not
   // call it -- see the spec's Design note -- but the seam is what makes the
   // window boundary testable at all.
@@ -411,7 +411,7 @@ export async function measureRerender(
     };
     await enter();
     const retryBudget = createRetryBudget();
-    // M116 end-game fix-up (midday-F1): the same pass-level bound the mount
+    // The same pass-level bound the mount
     // pass carries -- a wedged page starves every combo that follows.
     const passBound = createDegradedPassBound("rerender", indices.length, options.onWarning);
 
@@ -420,9 +420,9 @@ export async function measureRerender(
       const props = combos[ci];
 
       // Warmup on this combo's own props (results discarded, never recorded).
-      // M89 (2): guarded by withWarmupRetry the same way the sample loops
-      // below are — a starvation during warmup previously escaped retry
-      // entirely and failed the whole pass instead of omitting just this
+      // Guarded by withWarmupRetry the same way the sample loops
+      // below are — without this, a starvation during warmup would escape
+      // retry entirely and fail the whole pass instead of omitting just this
       // combo. An exhausted warmup omits the combo (its slot in `results`
       // stays unset) rather than propagating.
       const warmups = warmupsForPosition(position, warmupRuns);
@@ -447,10 +447,10 @@ export async function measureRerender(
       }
 
       // Stable rerender: mount with props, then rerender with same props N times.
-      // M89: a frame-starvation failure retries (bounded) against a freshly
+      // A frame-starvation failure retries (bounded) against a freshly
       // re-entered session; a sample that still starves after the bound is
       // omitted (not pushed), not thrown — the delta pass's extra rerender
-      // calls are exactly where this fires (taxonomy's control).
+      // calls are exactly where this fires.
       const stableSamples: number[] = [];
       for (let s = 0; s < sampleCount; s++) {
         const sample = await withFrameStarvationRetry(
@@ -477,10 +477,10 @@ export async function measureRerender(
       // misleading all-zero timing for a combo nothing was actually measured
       // on.
       if (stableSamples.length === 0) {
-        // M99 (review B-9): a combo nothing was measured on still opened an
+        // A combo nothing was measured on still opened an
         // error window. Leaving it undrained would attribute its errors to the
-        // next combo's own window, the exact mis-attribution I4 exists to
-        // prevent. The warmup path above already drains before its `continue`.
+        // next combo's own window, the exact mis-attribution this guards
+        // against. The warmup path above already drains before its `continue`.
         ms.errorCapture.drain();
         if (passBound.degraded(position)) break;
         continue;
@@ -518,7 +518,7 @@ export async function measureRerender(
                       enter,
                       async () => {
                         await suspendThrottle(ms.session.cdp, cpuThrottle, () => tryCollectGarbage(ms.session.cdp));
-                        // M99: no own-window claim here. This mount lands on
+                        // No own-window claim here. This mount lands on
                         // the page state the PREVIOUS sample's rerender left
                         // behind (combo ci+1's props), so an error it raises is
                         // a `ci+1 -> ci` transition artefact, not this combo's
@@ -542,7 +542,7 @@ export async function measureRerender(
         }
       }
 
-      // M99 (I4): two windows, not one — this combo's own renders, then the
+      // Two windows, not one — this combo's own renders, then the
       // rerender into `combos[ci+1]`'s props.
       await runWithSplitErrorWindows(ms.errorCapture, result, transition);
 
@@ -595,7 +595,7 @@ export async function measureMount(
   // window. They are re-measured entirely under vsync pacing.
   const vsyncQueue: number[] = [];
 
-  // M59: tracked rather than passed, so a failure in a pass preamble reports
+  // Tracked rather than passed, so a failure in a pass preamble reports
   // the phase alone and one inside a combo reports the combo too.
   const inFlight = createPhaseTracker("mount", harness);
   // Errors seen by a combo's driven attempt before it bailed to the vsync
@@ -617,7 +617,7 @@ export async function measureMount(
     };
     await enter();
     const retryBudget = createRetryBudget();
-    // M116 end-game fix-up (midday-F1): combos that measured nothing, back to
+    // Combos that measured nothing, back to
     // back. Reset by any combo that measures.
     const passBound = createDegradedPassBound("mount", indices.length, options.onWarning);
 
@@ -627,9 +627,9 @@ export async function measureMount(
 
       // Warmup: JIT + module cache stabilization, on this combo's own props
       // (results discarded, never recorded).
-      // M89 (2): guarded by withWarmupRetry the same way the sample loop
-      // below is — a starvation during warmup previously escaped retry
-      // entirely and failed the whole pass instead of omitting just this
+      // Guarded by withWarmupRetry the same way the sample loop
+      // below is — without this, a starvation during warmup would escape
+      // retry entirely and fail the whole pass instead of omitting just this
       // combo. An exhausted warmup omits the combo (its slot in `results`
       // stays unset) rather than propagating.
       const warmupCount = warmupsForPosition(position, warmupRuns);
@@ -668,7 +668,7 @@ export async function measureMount(
         heapBefore = pre.usedSize;
       } catch { /* CDP method may not be available */ }
 
-      // M89: a frame-starvation failure retries (bounded) against a freshly
+      // A frame-starvation failure retries (bounded) against a freshly
       // re-entered session; a sample that still starves after the bound is
       // skipped, not thrown — the delta pass's own extra mount calls are one
       // of the two places this fires.
@@ -704,7 +704,7 @@ export async function measureMount(
           measuredState = run.measuredState;
         }
       }
-      // M59: closes this combo's window over the page's error stream. A combo
+      // Closes this combo's window over the page's error stream. A combo
       // that bails to the vsync queue keeps what the driven attempt saw, so the
       // re-measurement adds to it rather than replacing it.
       const drained = ms.errorCapture.drain();
@@ -712,7 +712,7 @@ export async function measureMount(
         carriedErrors.set(ci, mergeDrains(carriedErrors.get(ci), drained));
         continue;
       }
-      // M89: every sample for this combo starved out even after retrying —
+      // Every sample for this combo starved out even after retrying —
       // omitted entirely (a disclosed partial result), not reported as an
       // all-zero mount that nothing was actually measured on.
       if (mountSamples.length === 0) {
@@ -740,7 +740,7 @@ export async function measureMount(
         mountTraces,
         pacing: ms.pacing,
         ...(hasPageErrors(pageErrors) ? { pageErrors: pageErrors! } : {}),
-        // M106 B4/B5: additive, and absent when there is nothing to say, so a
+        // Additive, and absent when there is nothing to say, so a
         // component with no portals and no broken sprites reports as before.
         ...(orphanNodes > 0 ? { orphanNodes } : {}),
         ...(unresolvedSpriteRefs.length > 0 ? { unresolvedSpriteRefs } : {}),

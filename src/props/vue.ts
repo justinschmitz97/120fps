@@ -17,7 +17,7 @@ import { detectPropPresets, literalValue } from "./presets.js";
 import { createCachedProgram } from "./program.js";
 import type { PropSchema, WarningRecorder } from "./schema.js";
 
-// M57: a `.vue` script block has no file of its own. It is served to the
+// A `.vue` script block has no file of its own. It is served to the
 // program from memory under a `<sfc>.ts` name in the SFC's own directory, so
 // relative imports, tsconfig `paths` and the checker resolve exactly as they do
 // for a real file: and so `./Child.vue` resolves too, because TS's bundler
@@ -29,7 +29,6 @@ export interface VirtualScripts {
 }
 
 
-// --- M57: Vue single-file components -----------------------------------------
 
 interface DefinePropsCall {
   typeNode?: ts.TypeNode;
@@ -110,7 +109,7 @@ export function applyWithDefaults(
   }
   if (byName.size === 0) return schemas;
 
-  // M103 (I8): the value was already moved to the front of the pool; it is now
+  // The value was already moved to the front of the pool; it is now
   // also named as the default it is.
   return applyDeclaredDefaults(schemas, byName, "withDefaults", true);
 }
@@ -152,11 +151,11 @@ export function createVueScripts(compiler: VueSfcCompiler): VirtualScripts {
 }
 
 
-// M80 scope 2: names the excluded declaration form so the warning states what
+// Names the excluded declaration form so the warning states what
 // IS true (props exist, in a form ADR 0002 deliberately does not read)
 // instead of implying extraction failed or the component is broken. Same
 // arrow-function shape and call convention as UNCOMPOSED_SIBLINGS_WARNING
-// (src/composition.ts): a pure `(args) => string`, pushed straight through
+// (composition.ts): a pure `(args) => string`, pushed straight through
 // `sink?.()`, not routed through `emit`/`warnOnce`'s stderr-dedup path.
 const OPTIONS_API_WARNING_MARK = "Vue's Options API";
 
@@ -178,14 +177,14 @@ export function isVueOptionsApiPropsWarning(message: string): boolean {
 }
 
 
-// M92 (element-plus-F3): the <script setup> sibling of the Options-API case
+// The <script setup> sibling of the Options-API case
 // above -- a runtime-object `defineProps({...})` call (element-plus's
 // split-bar.vue shape) is also an ADR 0002 scope exclusion, not a possible
-// extraction failure. Previously this shape produced no warning at all
-// (extractVueProps returned [] silently), so analyze.ts's generic "No props
-// extracted ... extraction may have failed" fallback fired instead and
-// implied a malfunction for a deliberate decision. Same register as
-// VUE_OPTIONS_API_PROPS_WARNING on purpose.
+// extraction failure. Without this warning, the shape would produce no
+// warning at all (extractVueProps returning [] silently), so the pipeline's
+// generic "No props extracted ... extraction may have failed" fallback
+// would fire instead and imply a malfunction for a deliberate decision.
+// Same register as VUE_OPTIONS_API_PROPS_WARNING on purpose.
 const RUNTIME_DEFINE_PROPS_WARNING_MARK = "a runtime defineProps({...}) call";
 
 
@@ -201,11 +200,12 @@ export function isVueRuntimeDefinePropsWarning(message: string): boolean {
 }
 
 
-// M98 (element-plus-F5): `defineComponent({ props: selectProps, setup(props, ...) })`
+// `defineComponent({ props: selectProps, setup(props, ...) })`
 // is Vue's Composition API with a runtime props object. Calling it "Vue's
-// Options API" named a mechanism the file does not use and pointed a user
-// fixing it at the wrong pattern. Same scope-exclusion register as the two
-// warnings above; the remedy is unchanged because it was already correct.
+// Options API" would name a mechanism the file does not use and would point
+// a user fixing it at the wrong pattern. Same scope-exclusion register as
+// the two warnings above; the remedy is unchanged because it is already
+// correct.
 const SETUP_RUNTIME_PROPS_WARNING_MARK = "a runtime props object read by setup()";
 
 
@@ -221,10 +221,10 @@ export function isVueSetupRuntimePropsWarning(message: string): boolean {
 }
 
 
-// M98 (nuxt-ui-F1): `defineProps<BadgeProps>()` on a name nothing in the
+// `defineProps<BadgeProps>()` on a name nothing in the
 // program declares yields TypeScript's error type, which `looksLikePropsType`
-// rejects -- and the rejection returned `[]` with no `sink?.()` call at all, so
-// the only text a user saw was analyze.ts's generic "extraction may have
+// rejects -- and the rejection returns `[]` with no `sink?.()` call at all, so
+// the only text a user sees is the pipeline's generic "extraction may have
 // failed". This is a resolution failure rather than an ADR 0002 scope
 // exclusion, so it deliberately stays out of
 // `isVuePropsScopeExclusionWarning`.
@@ -237,9 +237,9 @@ export const VUE_UNRESOLVED_PROPS_TYPE_WARNING = (
 ): string =>
   `Warning: ${UNRESOLVED_DEFINE_PROPS_MARK} "${typeText}" in ${absolutePath} could not be resolved: ` +
   `nothing the SFC's script blocks declare or import provides it.` +
-  // Review B-4: the one new resolution warning that did not branch on the
-  // preset already being on disk, so it claimed nothing was extracted while
-  // the preset's own props were being measured.
+  // This resolution warning also branches on whether a preset is already
+  // on disk, so it does not claim nothing was extracted while the preset's
+  // own props are being measured.
   (detectPropPresets(absolutePath)
     ? presetRemedyClause(absolutePath)
     : ` No props were extracted.${presetRemedyClause(absolutePath)}`) +
@@ -285,7 +285,7 @@ export async function extractVueProps(
 
   const call = findDefineProps(sourceFile);
   if (!call?.typeNode) {
-    // M80 scope 2 / M92 (element-plus-F3): this branch is reached three ways
+    // This branch is reached three ways
     // -- a `.vue` file with NO <script setup> at all (an empty virtual entry
     // parses to zero calls, `call` undefined), a <script setup> with no
     // `defineProps` call at all (genuinely propless, `call` also undefined),
@@ -301,7 +301,7 @@ export async function extractVueProps(
     const source = ts.sys.readFile(absolutePath);
     if (source !== undefined && parseSfcScript(source, absolutePath, compiler) === undefined) {
       const form = detectOptionsApiProps(source, absolutePath, compiler);
-      // M98 (element-plus-F5): `props:` alongside `setup()` is the Composition
+      // `props:` alongside `setup()` is the Composition
       // API's runtime form, and saying "Options API" for it named a mechanism
       // the file does not use.
       if (form === "setup-props") sink?.(VUE_SETUP_RUNTIME_PROPS_WARNING(absolutePath));
@@ -313,16 +313,16 @@ export async function extractVueProps(
   const checker = program.getTypeChecker();
   const propsType = checker.getTypeFromTypeNode(call.typeNode);
   if (!looksLikePropsType(propsType, checker)) {
-    // M98 (nuxt-ui-F1): the one zero-prop Vue path that used to say nothing.
+    // The one zero-prop Vue path that reports why, instead of staying silent.
     const unresolved = unresolvedPropsTypeText(call.typeNode, propsType);
     if (unresolved) sink?.(VUE_UNRESOLVED_PROPS_TYPE_WARNING(absolutePath, unresolved));
     return [];
   }
 
-  // M98: the sink reaches `typeToSchema` here the way it already does on the
+  // The sink reaches `typeToSchema` here the way it already does on the
   // React path, so a Vue prop's collapsed-union, cap and recursion
   // disclosures land in the same warnings list every other extraction
-  // warning does (element-plus-F3).
+  // warning does.
   const schemas = applyWithDefaults(
     typeToSchema(propsType, checker, absolutePath, sink, undefined, record),
     call.defaults,
@@ -332,7 +332,7 @@ export async function extractVueProps(
 }
 
 
-// M98: TypeScript's error type is `any`, and a props type that reaches this
+// TypeScript's error type is `any`, and a props type that reaches this
 // point as `any`/`unknown` resolved to nothing usable. That is what tells
 // `defineProps<BadgeProps>()` on a missing declaration apart from a genuinely
 // empty `defineProps<{}>()`, whose type is an object with no members: a fact

@@ -1,9 +1,9 @@
 import type { Page } from "playwright";
 
-// M64: animation is what the page is *doing*, never what its stylesheet
+// Animation is what the page is *doing*, never what its stylesheet
 // declares. A Tailwind `transition-all` on an idle button declares a transition
-// and animates nothing, and reading it as animation forced static toolbars into
-// T3. Every real case: a CSS animation, a running transition, a WAAPI
+// and animates nothing; reading it as animation would force static toolbars
+// into T3. Every real case: a CSS animation, a running transition, a WAAPI
 // animation: produces an `Animation` object here; a declared-but-untriggered
 // transition produces none.
 //
@@ -38,7 +38,7 @@ export async function detectAnimations(page: Page): Promise<boolean> {
 // actually rendered: everything inside #root, plus portal content, which lives
 // on document.body but belongs to the component.
 //
-// M106 B4 (dub-F6): the two halves are reported separately. The sum is what
+// The two halves are reported separately. The sum is what
 // every existing caller reads and is unchanged; the split is what lets a
 // report say "this component rendered only through a portal" instead of
 // leaving `domNodeCount` to carry both facts at once. Kept as a source string
@@ -90,8 +90,8 @@ export function totalComponentNodes(count: ComponentNodeCount): number {
   return count.rootNodes + count.orphanNodes;
 }
 
-// M106 B5 (calcom-F5): `<use href="#calendar">` is a same-document fragment
-// reference. Nothing is requested, so M70's network capture is blind to it, and
+// `<use href="#calendar">` is a same-document fragment
+// reference. Nothing is requested, so the network capture is blind to it, and
 // the `<svg>` plus the `<use>` count as two real nodes -- a component that
 // renders visibly nothing measures as a component that rendered. calcom's
 // sprite is injected by `apps/web/app/layout.tsx`, which the harness never
@@ -147,14 +147,14 @@ export async function collectUnresolvedSpriteRefs(page: Page): Promise<string[]>
   return refs.slice(0, MAX_UNRESOLVED_SPRITE_REFS);
 }
 
-// M40: what scene the numbers describe. A component that fetches, suspends, or
+// What scene the numbers describe. A component that fetches, suspends, or
 // defers work renders a fallback first, and a mount measurement over that scene
 // is a real number about the wrong thing.
 export type MeasuredState = "settled" | "pending-network" | "late-mutation";
 
 // Grace window held after the mount fence, in real time: long enough for a
 // promise-resolution or short-timer re-render to land, short enough that every
-// combo can pay it once. Timers run on wall clock under the M35 frame pump, and
+// combo can pay it once. Timers run on wall clock under the frame pump, and
 // the pump keeps driving frames throughout, so rAF-scheduled updates land too.
 export const MEASURED_STATE_HOLD_MS = 120;
 

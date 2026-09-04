@@ -13,7 +13,7 @@ export interface PageErrorDrain {
   dropped: number;
 }
 
-// M79 gap 3b: a fatal (uncaught page exception) is unambiguous evidence the
+// A fatal (uncaught page exception) is unambiguous evidence the
 // harness will never become ready — unlike a console.error, which stays
 // bucket-only and non-fatal. `stack` is captured here specifically, even
 // though `record()`'s bucket stays message-keyed (dedup/cap behavior at
@@ -33,12 +33,12 @@ export interface PageErrorCapture {
   // A caller races this against its own readiness wait; a healthy run simply
   // never resolves it.
   waitForFatal(): Promise<FatalPageError>;
-  // M108 A8 (documenso-F1): the first uncaught page exception of the current
+  // The first uncaught page exception of the current
   // segment, whether or not a waiter existed when it arrived. A module that
   // throws during evaluation throws before the readiness wait is even set up;
   // read on the failure path so that error, not the timeout, leads the report.
   capturedFatal(): FatalPageError | undefined;
-  // M108 review: a new document ends the old document's fatal. Without this,
+  // A new document ends the old document's fatal. Without this,
   // an error captured after the last drain leads the NEXT segment's readiness
   // timeout and suppresses the true "did not become ready" wording.
   resetCapturedFatal(): void;
@@ -88,14 +88,14 @@ function createBucket(): Bucket {
   };
 }
 
-// M83 #2 (element-plus-F3): a synthesized string placeholder ("test",
-// src/prop-gen-values.ts) landed in a plain `<img src>` relative-resolves
+// A synthesized string placeholder ("test",
+// props/synthesize.ts) landed in a plain `<img src>` relative-resolves
 // against the page's own URL, which *is* the harness's Vite-served root —
 // producing a same-origin, bare, extension-less 404 the harness caused, not
 // the component. Deliberately narrow: every legitimate asset the harness
 // serves (the component's own source, Vite's own paths, a real CSS/JS/image
 // import) carries either a file extension or a directory prefix, so a
-// genuine CSS-import 404 (what M70 added these listeners to catch) is never
+// genuine CSS-import 404 (what these listeners exist to catch) is never
 // excluded by this rule.
 export function isHarnessInternalNoise(url: string, harnessDirName: string): boolean {
   let pathname: string;
@@ -110,7 +110,7 @@ export function isHarnessInternalNoise(url: string, harnessDirName: string): boo
   return !match[1].includes(".");
 }
 
-// M114 A6 (supabase-F2): Playwright renders a console call as the format
+// Playwright renders a console call as the format
 // string followed by every argument's preview, joined by a space, and
 // substitutes nothing — so React's `Warning: %s is invalid` reached the report
 // with the `%s` intact and the value stranded at the end of the line. The same
@@ -169,7 +169,7 @@ export function attachPageErrorCapture(page: Page, harnessDirName?: string): Pag
   // Segment-scoped, reset by every drain: a combo never inherits the fatal a
   // previous combo already reported.
   let capturedFatal: FatalPageError | undefined;
-  // M79 gap 3b: fresh per `waitForFatal()` call, so a caller that already
+  // Fresh per `waitForFatal()` call, so a caller that already
   // missed one fatal event (e.g. from an earlier phase) only ever gets
   // notified of the NEXT one, never a stale replay.
   let fatalWaiters: Array<(fatal: FatalPageError) => void> = [];
@@ -293,7 +293,7 @@ export function renderDrain(drain: PageErrorDrain): string[] {
 // capture.summary() text under two different lead sentences, so a genuine
 // hang (nothing captured, timeout fires) and an early fatal throw (something
 // captured almost instantly) read as two different failures, which they are.
-// M106 A2 (excalidraw-F1): "Cannot access 'DropdownMenu' before initialization"
+// "Cannot access 'DropdownMenu' before initialization"
 // is an ESM temporal-dead-zone error, not a component defect and not a
 // timeout. The preflight import-cycle warning printed above says which cycle;
 // this says why the failure the user is looking at is that cycle.
@@ -320,7 +320,7 @@ function errorDetailBlock(capture: PageErrorCapture): string {
     : " No page errors were captured.";
 }
 
-// M108 A9 (documenso-F1): "Unable to determine current node version" was given
+// "Unable to determine current node version" was given
 // an environment-file remedy, a guess about an error that names no environment
 // variable. These three shapes are what that remedy answers for.
 const ENV_VARIABLE_PATTERNS = [
@@ -338,9 +338,9 @@ function envRemedyFor(capture: PageErrorCapture, remedyLine: string | undefined)
   return capture.errors.some(namesEnvironmentVariable) ? `\n${remedyLine}` : "";
 }
 
-// M105 (taxonomy-F3): `remedyLine` is the same line buildFatalPageErrorMessage
+// `remedyLine` is the same line buildFatalPageErrorMessage
 // already appends. It reaches this branch because the readiness wait's own
-// timeout usually beats the fatal signal (verify/V7's side finding), which left
+// timeout usually beats the fatal signal, which left
 // the refusal a user can act on with no next step at all. Appended only when
 // the capture actually holds a page error: with nothing captured, a suggestion
 // about environment files would be a guess about a silent hang.
@@ -355,7 +355,7 @@ export function enrichTimeoutError(
   if (!isTimeout) return base;
 
   const remedy = envRemedyFor(capture, remedyLine);
-  // M106 A2: a temporal-dead-zone error has a known cause, so it is attributed
+  // A temporal-dead-zone error has a known cause, so it is attributed
   // instead of speculated about; the env-file line would read as a guess next
   // to it and is dropped for that one shape.
   const cycle = tdzCycleNote(capture);
@@ -366,10 +366,10 @@ export function enrichTimeoutError(
   );
 }
 
-// M79 gap 3b: a file with a JS/TS/Vue extension, the first such frame in the
+// A file with a JS/TS/Vue extension, the first such frame in the
 // stack (the message line itself is skipped naturally: it does not carry a
 // `:line:col` suffix). Best-effort suspect-naming in the same spirit as
-// `detectLocalProviderModule` (preflight.ts) — "the point is to name a
+// `detectLocalProviderModule` (project/preflight.ts) — "the point is to name a
 // suspect, not to prove it": a minified or source-mapless stack yields no
 // module name, and the caller falls back to the page-error text alone.
 const SOURCE_FRAME_PATTERN = /([^\s()]+\.(?:tsx?|jsx?|mjs|cjs|vue))(?=:\d+(?::\d+)?|\)|$)/;
@@ -403,7 +403,7 @@ export function buildFatalPageErrorMessage(
   );
 }
 
-// M79 gap 3b (taxonomy-F1): races a caller's own readiness wait against the
+// Races a caller's own readiness wait against the
 // fatal signal. When the fatal signal wins, throws immediately instead of
 // waiting out the remaining timeout; when readiness itself rejects (a genuine
 // hang) with no fatal signal, falls back to enrichTimeoutError unchanged.
@@ -422,11 +422,12 @@ export async function waitForReadyOrFatal(
   try {
     await Promise.race([waitForReady(), fatalSignal]);
   } catch (err) {
-    // M105: the readiness wait rejecting first does not mean no fatal error
-    // arrived — on taxonomy it always arrives, seconds earlier, and the race is
-    // decided by whichever promise settles first. A fatal signal that is
-    // already here still leads; otherwise the timeout carries the remedy.
-    // M108 A8: the throw may instead have arrived before this call registered a
+    // The readiness wait rejecting first does not mean no fatal error
+    // arrived — in practice the fatal signal usually arrives first, seconds
+    // earlier, and the race is decided by whichever promise settles first. A
+    // fatal signal that is already here still leads; otherwise the timeout
+    // carries the remedy.
+    // The throw may instead have arrived before this call registered a
     // waiter (a module that fails during evaluation always does), in which case
     // the capture is holding it and it still leads the report.
     const delivered = fatal ?? capture.capturedFatal();
@@ -465,8 +466,8 @@ export async function gotoWithErrorContext(
   }
 }
 
-// M89 gap (taxonomy control failure): "delta" is the prop-delta pass's own
-// extra mount/rerender calls (src/analyze.ts's measureStandardPropDeltas) —
+// "delta" is the prop-delta pass's own
+// extra mount/rerender calls (pipeline/modes/matrix.ts's measureStandardPropDeltas) —
 // distinct from the ordinary "mount"/"rerender" phases those same
 // measure.ts functions tag themselves with, because the right remediation
 // flag differs (see stallHintForPhase below) even though the underlying
@@ -483,33 +484,32 @@ export const HARNESS_STALL_HINT =
   "A Worker, a long-lived timer or a running animation can keep the page busy so the trace " +
   "never completes; retry with --no-attribution, a shorter --explore-budget, or fewer --samples.";
 
-// M89 gap: --no-attribution only disables cost-attribution tracing, a pass
+// --no-attribution only disables cost-attribution tracing, a pass
 // the delta measurement never runs — it cannot be the remedy for a stall
 // inside the delta pass's own mount/rerender calls. --no-deltas is the flag
-// that actually skips that code path (taxonomy's control: --no-attribution
-// stalled identically, --no-deltas produced a clean PASS in 4m 8s).
+// that actually skips that code path.
 export const DELTA_PHASE_STALL_HINT =
   "A Worker, a long-lived timer or a running animation can keep the page busy so the trace " +
   "never completes; retry with --no-deltas, a shorter --explore-budget, or fewer --samples.";
 
-// M89 defect 2 (live taxonomy proof): the same false-remediation problem the
-// delta phase had reaches the rerender phase directly, not only through the
-// delta pass's retagging -- taxonomy's run failed with `rerender phase
-// failed on combo 1 of button.tsx: ... Target page, context or browser has
-// been closed` and still carried `retry with --no-attribution, ...`.
-// --no-attribution only disables react-profiler.ts's separate
+// The same false-remediation problem the delta phase had also reaches the
+// rerender phase directly, not only through the delta pass's retagging: a
+// stall there could still surface with the delta-phase hint, wrongly
+// suggesting `--no-attribution`.
+// --no-attribution only disables analysis/react-profiler.ts's separate
 // cost-attribution pass (the "attribution" phase); it does not touch
 // anything measureRerender does. --samples and --max-combos are the flags
 // that actually shrink the rerender pass's own workload (measure.ts).
 // --explore-budget is left out for the same reason --no-attribution is: it
-// governs explorer.ts's interaction exploration, not the rerender pass.
+// governs analysis/explorer.ts's interaction exploration, not the rerender
+// pass.
 export const RERENDER_PHASE_STALL_HINT =
   "A Worker, a long-lived timer or a running animation can keep the page busy so the trace " +
   "never completes; retry with fewer --samples or a lower --max-combos.";
 
-// M106 A1 (calcom-F3): the explore phase's `--no-attribution` advice was
-// measured against the failing component and produced an identical 124 s
-// failure — the stall is the exploration's own interaction budget (20 clicks
+// The explore phase's `--no-attribution` advice, measured against the
+// failing component, would produce an identical failure — the stall is the
+// exploration's own interaction budget (20 clicks
 // against a Radix portal whose `pointer-events: none` times each one out),
 // not the tracing pass. The two flags that really bound it are the budget and
 // the sample count.
@@ -554,7 +554,7 @@ export function enrichPhaseError(err: unknown, context: PhaseContext): Error {
   return enriched;
 }
 
-// M89 gap: a caller whose own context is more specific than the phase an
+// A caller whose own context is more specific than the phase an
 // inner measurement call already tagged (the delta pass's own extra
 // mount/rerender calls, tagged "mount"/"rerender" by measure.ts) cannot
 // just call enrichPhaseError again — its PHASE_TAGGED guard makes a second

@@ -20,9 +20,9 @@ import {
   warnSynthesizedRequiredObject,
 } from "./synthesize.js";
 
-// M98 (primevue-F1): the remedy half of every scope-exclusion warning. With
-// the preset file already on disk, "Add Badge.props.tsx" told a user to create
-// what the same run had just loaded and measured.
+// The remedy half of every scope-exclusion warning: with the preset file
+// already on disk, "Add Badge.props.tsx" would tell a user to create what
+// the same run just loaded and measured.
 export function presetRemedyClause(absolutePath: string): string {
   return detectPropPresets(absolutePath)
     ? ` ${presetFileName(absolutePath)} next to it already supplies the values measured.`
@@ -30,15 +30,15 @@ export function presetRemedyClause(absolutePath: string): string {
 }
 
 
-// M86 MUST 1: a prop the component's own source references by name outranks
-// an inherited prop it does not — a source-TEXT signal, not a type-flow one.
+// A prop the component's own source references by name outranks an
+// inherited prop it does not — a source-text signal, not a type-flow one.
 // ant-design's Button calls `props.onClick?.(...)` (Button.tsx:294) and wires
 // `onClick={handleClick}` while `onClick`'s type is purely inherited through
-// `MergedHTMLAttributes` with no local redeclaration; M81's tiers only ever
-// look at where a prop's TYPE is declared, so they cannot see this. Walks the
-// bound function's own body once for `<param>.name` member access and any
-// local `const { name } = <param>` destructuring, in addition to the
-// destructured-parameter names `destructuredParameterNames` already finds.
+// `MergedHTMLAttributes` with no local redeclaration; ranking by declared
+// type alone cannot see this. Walks the bound function's own body once for
+// `<param>.name` member access and any local `const { name } = <param>`
+// destructuring, in addition to the destructured-parameter names
+// `destructuredParameterNames` already finds.
 function sourceReferencedPropNames(fn: ts.SignatureDeclaration | undefined): Set<string> {
   const names = new Set(destructuredParameterNames(fn));
   const param = fn?.parameters[0];
@@ -74,10 +74,10 @@ function sourceReferencedPropNames(fn: ts.SignatureDeclaration | undefined): Set
 }
 
 
-// The M44 escape hatch, named for the file at hand so the message is a command.
-// M112 B2: the older name belongs to whatever already sits on disk under it, so
-// a remedy that would otherwise name a file the reader cannot create names the
-// preferred `<stem>.120fps.props.tsx` instead.
+// The preset-file escape hatch, named for the file at hand so the message
+// is a command. The older name belongs to whatever already sits on disk
+// under it, so a remedy that would otherwise name a file the reader cannot
+// create names the preferred `<stem>.120fps.props.tsx` instead.
 export function presetFileName(fileName: string): string {
   const sibling = describePresetSibling(fileName);
   if (sibling?.shape === "preset") return path.basename(sibling.path);
@@ -86,7 +86,7 @@ export function presetFileName(fileName: string): string {
 }
 
 
-// M112 B3 (logto-F4): the sink carries this warning the way it already carries
+// The sink carries this warning the way it already carries
 // the collapsed-union and degenerate ones, so a caller that applies a preset
 // afterwards can withhold the line and re-render it from the record.
 function warnPropCap(
@@ -103,7 +103,7 @@ function warnPropCap(
 }
 
 
-// M84: a union with more than one non-undefined member collapses to one
+// A union with more than one non-undefined member collapses to one
 // representative kind/value; a user reading only the schema cannot see what
 // the other branches were. Names every branch's printed type and which kind
 // the prop was measured as.
@@ -124,9 +124,9 @@ function warnCollapsedUnion(
 }
 
 
-// M60: the props the component is measured with are not the props it declares.
-// Silence here is what let four dogfooded projects report timings for renders
-// that never received usable data.
+// The props the component is measured with are not the props it declares.
+// Silence here would let a run report timings for renders that never
+// received usable data.
 export function warnDegenerateProps(
   fileName: string,
   schemas: PropSchema[],
@@ -151,7 +151,7 @@ export function warnDegenerateProps(
 }
 
 
-// M81 section 6: a self-referential generic member can make a single checker
+// A self-referential generic member can make a single checker
 // call recurse arbitrarily deep inside TypeScript's own instantiation
 // machinery. Named and excluded, the same register as an unenumerable
 // computed type, instead of a bare "Maximum call stack size exceeded"
@@ -205,9 +205,9 @@ export function typeToSchema(
 ): PropSchema[] {
   const kept = type.getProperties().filter((prop) => !isNoiseName(prop.getName()));
 
-  // M86: required props are never dropped by the cap — a missing required
+  // Required props are never dropped by the cap — a missing required
   // prop is not a degraded test case, it is a guaranteed crash (shadcn's
-  // `chart.tsx` loses its required `config: ChartConfig` this way today).
+  // `chart.tsx` loses its required `config: ChartConfig` this way).
   // They bypass ranking entirely; only the optional pool is ranked and
   // capped to whatever budget remains.
   const requiredProps = kept.filter((prop) => !(prop.flags & ts.SymbolFlags.Optional));
@@ -220,7 +220,7 @@ export function typeToSchema(
 
   // A single checker call (`getTypeOfSymbolAtLocation`) can recurse arbitrarily
   // deep inside TypeScript's own instantiation machinery for a self-referential
-  // generic member (M81 section 6); ranking runs this over every kept prop, not
+  // generic member; ranking runs this over every kept prop, not
   // just the 32 survivors, so it needs the same guard as classification below.
   const ranked: { prop: ts.Symbol; rank: PropRank }[] = [];
   for (const prop of optionalProps) {
@@ -255,7 +255,7 @@ export function typeToSchema(
 
       const schema = classifyType(prop.getName(), propType, required, checker);
       schemas.push(schema);
-      // M84: a genuine multi-branch union (mixed primitive+literal, or
+      // A genuine multi-branch union (mixed primitive+literal, or
       // structurally different shapes like `string | ReactElement`) collapses
       // to one representative value/kind above; disclose every branch it had
       // and which one won, on the same warnings channel every other
@@ -264,7 +264,7 @@ export function typeToSchema(
       if (branches && fileName) {
         warnCollapsedUnion(fileName, prop.getName(), branches, schema.kind, sink, record);
       }
-      // M103 (dub-F2): a required prop the synthesizer could only fill with a
+      // A required prop the synthesizer could only fill with a
       // stand-in object. `warnDegenerateProps` already covers the case where it
       // produced nothing at all.
       if (
@@ -296,7 +296,7 @@ export function typeToSchema(
 }
 
 
-// M84: a boolean whose name is a known contract convention (`asChild`, `as`,
+// A boolean whose name is a known contract convention (`asChild`, `as`,
 // `render`) always reports provenance:"contract", regardless of which kind
 // branch below actually classified it (boolean, function, a degenerate
 // object via `isElementOrCallableUnion`, or a string-literal union for a
@@ -333,14 +333,14 @@ function classifyTypeByShape(
 
   // ReactNode: only a member that IS ReactNode, or one provably assignable
   // from `string` (which ReactNode structurally is and ReactElement is not).
-  // A `ReactElement | JSX.Element` member alone no longer qualifies (M81 3b):
-  // a plain `ReactNode` renders a placeholder string fine; `ReactElement` does
-  // not, because callers run `React.isValidElement()` on it.
+  // A `ReactElement | JSX.Element` member alone does not qualify: a plain
+  // `ReactNode` renders a placeholder string fine; `ReactElement` does not,
+  // because callers run `React.isValidElement()` on it.
   if (isReactNodeMember(type, checker)) {
     return { name, kind: "reactnode", required, values: [], provenance: "placeholder" };
   }
 
-  // M81 3b: `ReactElement | (props) => ReactElement` (Base UI's `render`, and
+  // `ReactElement | (props) => ReactElement` (Base UI's `render`, and
   // the same "universal customization prop" idiom in other headless
   // libraries) is neither a plain function prop nor a ReactNode: it has no
   // synthesizable field-bag shape either, so it is routed to objectSchema's
@@ -390,12 +390,10 @@ function classifyTypeByShape(
     return { name, kind: "union", required, values, provenance: "declared" };
   }
 
-  // M98 (element-plus-F3): `string | number` is a genuine union of two
-  // primitive shapes -- element-plus declares `value`, `width`, `height` and
-  // `maxHeight` that way. It matched no branch above and fell through to the
-  // opaque path, printing `unknown` with no disclosure while every other
-  // multi-shape prop in the same run got one. One synthesized member per
-  // branch, so the pool actually exercises both.
+  // `string | number` is a genuine union of two primitive shapes --
+  // element-plus declares `value`, `width`, `height` and `maxHeight` that
+  // way. One synthesized member per branch, so the pool actually exercises
+  // both.
   if (isBarePrimitiveUnion(nonUndefinedTypes)) {
     const values = nonUndefinedTypes.map((member) =>
       member.flags & ts.TypeFlags.String ? (namedStringValue(name) ?? "test") : 1,
@@ -403,9 +401,9 @@ function classifyTypeByShape(
     return { name, kind: "union", required, values, provenance: "placeholder" };
   }
 
-  // Plain string. M81 3d: `classifyType` has no way to see that a runtime
+  // Plain string. `classifyType` has no way to see that a runtime
   // validator (`Intl.NumberFormat`'s `currency` option, a BCP 47 locale tag)
-  // will reject the generic placeholder; `namedStringValue` (M84: the single
+  // will reject the generic placeholder; `namedStringValue` (the single
   // shared definition with `synthesizeValue`'s nested branch) closes the
   // repeatedly-observed false-FAIL classes without claiming every
   // runtime-validated string is now safe.
@@ -427,7 +425,7 @@ function classifyTypeByShape(
     return tupleSchema(name, classifyTarget, required, checker);
   }
 
-  // Array. M84: when the element type cannot be resolved (commonly an
+  // Array. When the element type cannot be resolved (commonly an
   // unbound generic) and the name identifies an identity-keyed collection
   // (rows/items a component may key a WeakMap on), the fallback element is a
   // real object, not the generic bare string "item" — see
@@ -473,7 +471,7 @@ function classifyTypeByShape(
     return objectSchema(name, nonUndefinedTypes[0], required, checker);
   }
 
-  // M84: a union mixing a primitive type with a literal member (`boolean |
+  // A union mixing a primitive type with a literal member (`boolean |
   // 'trap-focus'`, `number | 'any'`) matches none of the pure-kind checks
   // above (not a pure literal union, not boolean-only, not reactnode,
   // element-or-callable, function, or object-like). Pick the first member
@@ -608,10 +606,10 @@ function objectSchema(
   const shaped = synthesizeValue(type, checker, 0, synth);
   if (isShapedObject(shaped)) {
     // A member the browser cannot receive makes the whole object a stand-in,
-    // however well the rest of it synthesized. M84: the outer object's
+    // however well the rest of it synthesized. The outer object's
     // provenance takes the riskiest thing any nested field used — heuristic
     // beats placeholder beats declared — so a consumer deciding whether a
-    // crash traces to a harness-supplied value (M85) can read one field on
+    // crash traces to a harness-supplied value can read one field on
     // this prop instead of walking the synthesized object itself.
     const provenance = synth.usedHeuristic ? "heuristic" : synth.usedPlaceholder ? "placeholder" : "declared";
     return {
@@ -642,7 +640,7 @@ function isShapedObject(value: unknown): boolean {
 }
 
 
-// M81 3b: a union carrying both a React-element-shaped member and a callable
+// A union carrying both a React-element-shaped member and a callable
 // member, with no primitive/ReactNode member to fall back to. `classifyType`
 // uses this to route the shape to `objectSchema` instead of `"function"`;
 // `opaqueReason` uses the same test to name it degenerate once there.
@@ -658,13 +656,13 @@ export function isElementOrCallableUnion(type: ts.Type, checker: ts.TypeChecker)
 }
 
 
-// M84: every printed branch of a union `classifyType` collapsed to one
+// Every printed branch of a union `classifyType` collapsed to one
 // representative kind/value, or `undefined` when the union is a case that is
 // already fully self-explanatory (a pure string- or number-literal union, a
-// boolean union, a plain `ReactNode`) or already disclosed by M81's own
+// boolean union, a plain `ReactNode`) or already disclosed by the
 // `degenerate` warning (an element-or-callable union routes through
 // `opaqueReason`, which `warnDegenerateProps` already names).
-// M98 (element-plus-F3): exactly `string | number` / `number | string`. Bare
+// Exactly `string | number` / `number | string`. Bare
 // primitives only -- a literal member routes to the literal-union branches, and
 // every other mixed shape keeps the behavior it had.
 function isBarePrimitiveUnion(members: ts.Type[]): boolean {
@@ -694,14 +692,13 @@ function collapsedUnionBranches(type: ts.Type, checker: ts.TypeChecker): string[
   if (nonUndefined.every((m) => m.isNumberLiteral() || !!(m.flags & ts.TypeFlags.NumberLiteral))) {
     return undefined;
   }
-  // M98: `string | number` now collapses to one representative member per
-  // branch, so it gets the disclosure every other union gets. Before M98 it
-  // stayed an opaque `unknown` and there was no collapse to describe.
+  // `string | number` collapses to one representative member per branch,
+  // so it gets the disclosure every other union gets.
   if (isBarePrimitiveUnion(nonUndefined)) return nonUndefined.map((m) => checker.typeToString(m));
   // A union of bare primitive types with no literal member anywhere has
   // nothing classifyType actually collapsed: the mixed-union fallback above
   // requires a literal to pick from and leaves this shape as the pre-existing
-  // "unknown"/degenerate value, unchanged by M84. Disclosing "branches" for a
+  // "unknown"/degenerate value. Disclosing "branches" for a
   // value that stayed empty would describe a collapse that never happened.
   const hasObjectMember = nonUndefined.some(isObjectLike);
   const hasLiteralMember = nonUndefined.some(
@@ -720,7 +717,7 @@ export function isBooleanUnion(types: ts.Type[]): boolean {
 }
 
 
-// M81 3b: narrower than a bare `ReactElement|JSX\.Element` text match. A
+// Narrower than a bare `ReactElement|JSX\.Element` text match. A
 // plain `ReactNode` renders a placeholder string fine (it structurally
 // includes `string`); a bare `ReactElement` does not, because callers run
 // `React.isValidElement()` on it, which a string fails.

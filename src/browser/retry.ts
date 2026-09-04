@@ -1,10 +1,11 @@
 export const CONTEXT_RETRY_WARNING =
   "the dev server reloaded the page mid-measurement; the affected sample was retried once";
 
-// M106 B2 (calcom-F3): `isContextLostError` matches three signatures and only
-// one of them is a dev-server reload. A tracing stall printed "the dev server
-// reloaded the page mid-measurement" for a reload that did not happen, and the
-// reader had no way to tell which of the two had occurred.
+// `isContextLostError` matches three signatures and only
+// one of them is a dev-server reload. A tracing stall would print "the dev
+// server reloaded the page mid-measurement" for a reload that did not
+// happen, and the reader would have no way to tell which of the two had
+// occurred.
 export const TRACING_STALL_RETRY_WARNING =
   "the cost-attribution trace stalled (Tracing.tracingComplete never arrived); the affected sample " +
   "was retried once against a fresh CDP session";
@@ -19,14 +20,14 @@ export function contextRetryWarningFor(err: unknown): string {
   return CONTEXT_RETRY_WARNING;
 }
 
-// Promoted to user-facing text (M56): the retry above absorbs one reload, but
+// Promoted to user-facing text: the retry above absorbs one reload, but
 // exhausting the shared budget means the pattern kept recurring across the
 // run: that points at the environment, not the component under test.
 export const RETRY_BUDGET_EXHAUSTED_NOTE =
   " The context-retry budget is exhausted: repeated dev-server reloads (environment), not the " +
   "component, are the likely cause.";
 
-// M106 B2: the same distinction on the exhaustion path. Naming reloads for a
+// The same distinction on the exhaustion path. Naming reloads for a
 // run that never reloaded sends a reader at the dev server instead of at the
 // trace pipeline.
 export const TRACING_BUDGET_EXHAUSTED_NOTE =
@@ -48,8 +49,8 @@ export function retryBudgetExhaustedNoteFor(err: unknown): string {
 // living on it disappear together.
 //
 // A tracing timeout leaves the CDP session wedged: the next `Tracing.start`
-// answers "already been started". It is retryable only because `enter` now
-// replaces the session rather than merely re-navigating (M33 E4).
+// answers "already been started". It is retryable only because `enter`
+// replaces the session rather than merely re-navigating.
 const CONTEXT_LOST = [
   /Execution context was destroyed/i,
   /Cannot read properties of undefined \(reading '(mount|unmount|rerender|mountWrapperOnly|getContainer)'\)/i,
@@ -59,9 +60,8 @@ const CONTEXT_LOST = [
 ];
 
 
-// M89: taxonomy's control — `button.tsx` dies in the delta pass with this
-// exact message, and the fence had no retry at all: one 10s timeout and the
-// whole pass threw, uncaught until the CLI's top-level handler. Matches
+// A frame-starvation failure with no retry kills the whole pass: one 10s
+// timeout throws, uncaught until the CLI's top-level handler. Matches
 // `rafFence`'s own thrown text.
 const FRAME_STARVATION_PATTERN = /frame starvation/i;
 
@@ -70,9 +70,7 @@ export function isFrameStarvationError(err: unknown): boolean {
   return FRAME_STARVATION_PATTERN.test(message);
 }
 
-// M89 defect 1 (live taxonomy proof): the same run that correctly degraded
-// two starved combos then still died with `browserContext.newCDPSession:
-// Target page, context or browser has been closed` -- a closed target is
+// A closed target is
 // exactly as recoverable as a starved fence (both are fixed by replacing the
 // CDP session via `enter`), but only frame starvation was guarded here.
 // `Tracing.tracingComplete timed out` fails the same way (a wedged CDP
@@ -150,8 +148,8 @@ function degradedWarningFor(kind: StallKind, comboIndex: number): string {
   return frameStarvationDegradedWarning(comboIndex);
 }
 
-// M89: a bounded, disclosed retry for failure signatures the fence itself
-// (and, per defect 1, a closed target or a wedged trace pipeline) has no
+// A bounded, disclosed retry for failure signatures the fence itself
+// (a closed target or a wedged trace pipeline, as above) has no
 // recovery from — orthogonal to `withContextRetry` (a disjoint signature
 // list, its own escalate-and-throw behavior on exhaustion, unchanged by
 // this). On exhaustion this does NOT throw: it discloses and returns
@@ -181,9 +179,9 @@ export async function withFrameStarvationRetry<T>(
       try {
         await enter();
       } catch (enterErr) {
-        // M92 (1.5a, regression): enter() re-runs enterHarness's own
+        // enter() re-runs enterHarness's own
         // independent style-settle fence (measure.ts's settleStyles). Left
-        // unguarded, a stall there escaped this function entirely -- the
+        // unguarded, a stall there would escape this function entirely -- the
         // exact failure this retry exists to prevent, relocated one frame
         // up. Counts against the same bounded budget as a body() stall
         // (this iteration already consumed one `attempt`) and falls through
@@ -202,21 +200,13 @@ export async function withFrameStarvationRetry<T>(
   }
 }
 
-// M89 (2, live taxonomy proof continued): combo 2 correctly degraded via its
-// sample loop's withFrameStarvationRetry composition; the very next combo
-// then still failed the whole run with a raw, unwrapped `frame starvation`
-// error -- and no preceding "retrying against a freshly re-entered harness
-// session" warning at all, which withFrameStarvationRetry can never omit on
-// a classified failure (it always warns before its first retry). That is
-// proof the failure never reached withFrameStarvationRetry: the cause is not
-// budget scoping (`withFrameStarvationRetry`'s own `attempt` counter is a
-// fresh local on every call, already isolated per invocation), it is a
-// coverage gap. `measureRerender`'s and `measureMount`'s warmup calls
+// `measureRerender`'s and `measureMount`'s warmup calls
 // (`mountAndWait`, `rerenderAndTrace`, `runMountUnmount`) touch the same
-// rafFence-guarded page as the sample loops but ran directly, outside any
-// retry wrapper -- whichever combo happened to starve during its warmup
-// (rather than during a sample) escaped retry/degrade entirely and took the
-// whole pass down. `withWarmupRetry` closes that gap with the identical
+// rafFence-guarded page as the sample loops but run directly, outside any
+// retry wrapper -- without this, whichever combo happens to starve during
+// its warmup (rather than during a sample) would escape retry/degrade
+// entirely and take the whole pass down. `withWarmupRetry` closes that gap
+// with the identical
 // composition the sample loops already use (`withFrameStarvationRetry`
 // around `withContextRetry`, sharing the pass's `retryBudget`), so a
 // warmup-time stall degrades the combo exactly like a sample-time one
@@ -280,7 +270,7 @@ export async function withContextRetry<T>(
       }
       budget.remaining--;
     }
-    // M106 B2: the warning names the signature that actually fired.
+    // The warning names the signature that actually fired.
     options?.onRetry?.(contextRetryWarningFor(err));
     await enter();
     return await body();

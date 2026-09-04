@@ -1,6 +1,6 @@
 import type { Page } from "playwright";
 
-// M52. Opt-in acquisition of what a browser can observe about an interaction
+// Opt-in acquisition of what a browser can observe about an interaction
 // from inside the page: Event Timing, Long Animation Frames, layout
 // instability. It reports latency the trace path cannot see, and cannot report
 // the per-step work the trace path exists to measure: Event Timing's floor is

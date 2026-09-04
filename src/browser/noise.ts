@@ -9,7 +9,7 @@ export interface NoiseSignals {
   probeMedianMs: number;
   // Share of measured metrics the CV rule already flagged unstable.
   unstableFraction: number;
-  // Page reloads survived mid-measurement (M30). A quiet machine has none.
+  // Page reloads survived mid-measurement. A quiet machine has none.
   contextRetries: number;
 }
 
@@ -50,7 +50,7 @@ export function classifyNoise(signals: NoiseSignals): NoiseLevel {
 
 // A fixed arithmetic loop, timed K times. Deliberately not calibration: that
 // measures a DOM insert plus forced layout and feeds normalization, and one
-// sample of it swings 20–40% (M39). This asks a narrower question: can this
+// sample of it swings 20–40%. This asks a narrower question: can this
 // machine repeat identical work identically right now: and answers it with
 // enough samples to mean something.
 export async function probeMachineNoise(
@@ -86,8 +86,8 @@ export function buildNoiseReport(input: {
   return { level: classifyNoise(signals), signals };
 }
 
-// M64: the fixed sentences claim nothing about a baseline. A run that never
-// asked for one was still told its baseline comparison had been skipped.
+// The fixed sentences claim nothing about a baseline. A run that never
+// asked for one would still be told its baseline comparison had been skipped.
 export const NOISY_RUN_WARNING =
   "The machine was noisy while this ran; treat these numbers as suspect and rerun to confirm.";
 

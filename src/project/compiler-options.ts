@@ -2,7 +2,7 @@ import path from "node:path";
 import ts from "typescript";
 import { findProjectRoot, findWorkspaceRoot, resolveGoverningTsconfig } from "./model.js";
 
-// One warning per tsconfig path per process (M24 D6).
+// One warning per tsconfig path per process.
 const warnedTsconfigPaths = new Set<string>();
 
 
@@ -31,9 +31,9 @@ function readFailureDetail(warnings: string[], configPath: string): string {
 
 
 // The reader surfaces only the diagnostics the run discloses (a broken extends
-// chain). An option declared with the wrong value type has warned here once per
-// config since M24 and still does, read from the governing config's own
-// compilerOptions without globbing the project's files a second time.
+// chain). An option declared with the wrong value type warns here once per
+// config, read from the governing config's own compilerOptions without
+// globbing the project's files a second time.
 function declaredOptionDiagnostic(configPath: string): string | undefined {
   const configFile = ts.readConfigFile(configPath, ts.sys.readFile);
   const raw = configFile.config as { compilerOptions?: unknown } | undefined;
@@ -63,10 +63,10 @@ function declaredOptionDiagnostic(configPath: string): string | undefined {
 
 
 export function createCompilerOptions(absolutePath: string): ts.CompilerOptions {
-  // M69: the same search the harness builds aliases from, so one config
+  // The same search the harness builds aliases from, so one config
   // governs both. The bound is the workspace root; a tree with no package.json
   // anywhere has no project model, and the walk keeps its old reach.
-  // M109 (I1): through the shared reader, so a references-only root hands
+  // Through the shared reader, so a references-only root hands
   // extraction the referenced config that covers this file, which is the
   // config the harness aliases and the dev server resolve from.
   const startDir = path.dirname(absolutePath);
@@ -90,7 +90,7 @@ export function createCompilerOptions(absolutePath: string): ts.CompilerOptions 
   };
 
   if (governing.nearestConfigPath && !tsconfigPath) {
-    // B2: a config that could not be read keeps its one warning, and
+    // A config that could not be read keeps its one warning, and
     // extraction continues on the defaults above.
     warnTsconfigOnce(
       governing.nearestConfigPath,

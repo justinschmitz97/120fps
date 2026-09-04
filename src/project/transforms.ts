@@ -3,12 +3,12 @@ import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { findWorkspaceRoot, isPackageAvailable, isPackageDeclared } from "./model.js";
 
-// M48. A curated passthrough, not `vite.config` wholesale: each entry is an
+// A curated passthrough, not `vite.config` wholesale: each entry is an
 // explicit integration resolved from the *project's* node_modules, following
-// the M27 React Compiler pattern.
+// the same pattern as the React Compiler integration.
 //
-// The support list is evidence-driven. `probeCandidates` are the ones the M48
-// spike verified end to end against a real project; anything else stays a
+// The support list is evidence-driven. `probeCandidates` are the ones
+// verified end to end against a real project; anything else stays a
 // recognizer-only diagnosis until a spike proves it loads.
 export interface TransformPlugin {
   // Matches a `TRANSFORM_RECOGNIZERS` code, so a diagnosis and a fix share a name.
@@ -27,13 +27,13 @@ export const SUPPORTED_TRANSFORM_PLUGINS: TransformPlugin[] = [
     packageName: "@vanilla-extract/vite-plugin",
     exportName: "vanillaExtractPlugin",
   },
-  // M57. Without it nothing mounts a `.vue` file at all, so this is the one
+  // Without it nothing mounts a `.vue` file at all, so this is the one
   // entry on the list a whole framework depends on. A project with `.vue` files
-  // and no plugin keeps the M48 recognizer warning.
+  // and no plugin keeps the recognizer warning.
   { code: "vue", packageName: "@vitejs/plugin-vue" },
 ];
 
-// Three shapes in the wild, all seen in the M48 spike: a real default export, a
+// Three shapes in the wild: a real default export, a
 // CJS package double-wrapped by interop (`mod.default.default`), and a package
 // whose factory is only a named export.
 export function resolvePluginFactory(
@@ -53,9 +53,9 @@ export function resolvePluginFactory(
     | undefined;
 }
 
-// M83 #8 (primevue-Probe1): resolution via the hoisted-transitive-copy
+// Resolution via the hoisted-transitive-copy
 // fallback (isInstalledOnResolutionChain, inside isPackageAvailable) is
-// correct and by design per M75 — only the disclosure was missing. A plugin
+// correct and by design — this only adds the disclosure. A plugin
 // found only that way, not declared in this project's own package.json, gets
 // named so a stricter installer (no hoisting) is not a surprise later.
 export function detectProjectTransforms(
@@ -79,7 +79,7 @@ export const HOISTED_TRANSFORM_WARNING = (packageName: string): string =>
   "package.json; a stricter installer (no hoisting) would not resolve it.";
 
 // Server and HMR hooks are stripped: the harness owns the server's lifecycle,
-// and a project plugin reaching into it is the class of failure M30 documented.
+// and a project plugin reaching into it is a class of failure this design avoids.
 // Build-time hooks: resolve/load/transform: are the whole point.
 const STRIPPED_PLUGIN_HOOKS = [
   "configureServer",
@@ -119,7 +119,7 @@ export async function loadProjectTransformPlugins(
       loaded.push(...list.map(stripServerHooks));
     } catch (err) {
       // Never fatal: a component that does not touch this transform still
-      // measures, and one that does gets M48's recognizer diagnosis anyway.
+      // measures, and one that does gets the recognizer diagnosis anyway.
       onWarning?.(TRANSFORM_LOAD_FAILED_WARNING(entry.code, err instanceof Error ? err.message : String(err)));
     }
   }

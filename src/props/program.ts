@@ -3,7 +3,7 @@ import ts from "typescript";
 import { resetWarnOnceCache } from "./extract.js";
 import type { VirtualScripts } from "./vue.js";
 
-// M36: a fresh ts.Program per extraction re-parses lib.d.ts and the project's
+// A fresh ts.Program per extraction re-parses lib.d.ts and the project's
 // node_modules type graph every time. Between calls only the component file
 // differs, so parsed source files are cached for the process lifetime (keyed
 // by options bucket + file stamp, mirroring the LanguageService document
@@ -67,7 +67,7 @@ export function createCachedProgram(
   rootFile: string,
   options: ts.CompilerOptions,
   virtual?: VirtualScripts,
-  // M97: a JS entry's sibling declaration, so the declaration's own symbols
+  // A JS entry's sibling declaration, so the declaration's own symbols
   // bind in the same program the entry is checked in.
   extraRoots?: string[],
 ): ts.Program {

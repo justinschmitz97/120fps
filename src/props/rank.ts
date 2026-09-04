@@ -8,7 +8,7 @@ const NODE_MODULES = /[\\/]node_modules[\\/]/;
 const NOISE_PROP_NAME = /^(aria-|data-)/;
 
 
-// M60: past this the props type is a DOM surface that slipped the filter, not a
+// Past this the props type is a DOM surface that slipped the filter, not a
 // component's own contract.
 export const MAX_PROPS = 32;
 
@@ -18,10 +18,10 @@ function isLocalDeclaration(decl: ts.Declaration): boolean {
 }
 
 
-// M81: `isNoiseProp` still fully filters ambient (default-lib/@types-react)
+// `isNoiseProp` still fully filters ambient (default-lib/@types-react)
 // declarations for NESTED object-value synthesis (`synthesizeValue`), where an
 // unbounded width would balloon a synthesized object with ~300 DOM/ARIA
-// members no one asked for. The top-level prop schema no longer uses it: an
+// members no one asked for. The top-level prop schema does not use it: an
 // ambient declaration site does not mean the member is noise (`onClick`,
 // `disabled`, `children` are declared there exactly like `aria-activedescendant`
 // is), so `typeToSchema` only applies the hard, silent `aria-`/`data-` filter
@@ -31,13 +31,13 @@ export function isNoiseName(name: string): boolean {
 }
 
 
-// M81 section 1: a prop named `/^on[A-Z]/` whose type carries a call
+// A prop named `/^on[A-Z]/` whose type carries a call
 // signature (an event handler), or named exactly `children`, is locally
 // meaningful regardless of where it is declared.
 const EVENT_HANDLER_NAME = /^on[A-Z]/;
 
 
-// M86: props the cap must never rank away — the target's own source
+// Props the cap must never rank away — the target's own source
 // referenced them by name, or a `<stem>.props.tsx` preset names them. Both
 // are read once per extraction and merged into one promoted-name set;
 // `propRank` checks it before any type-shape test.
@@ -49,7 +49,7 @@ export function presetPropNames(fileName: string): Set<string> {
 }
 
 
-// M81 section 1 (M86 adds Tier 0): four-tier rank computed over the props the
+// Four-tier rank computed over the props the
 // cap has to choose among, stable within each tier.
 // Tier 0 - promoted: the target's own source references this name, or a
 //          preset names it. Neither signal depends on how the prop's TYPE
@@ -64,16 +64,15 @@ export function presetPropNames(fileName: string): Set<string> {
 //          through an ambient declaration.
 // Tier 3 - everything else: declared exclusively in node_modules, not
 //          variant-shaped - today's tail behavior, unchanged.
-// M103 (chakra-ui-F1, heroui-F3, dub-F7): origin decides before shape. M81's
-// Tier 1 was shape only, so an inherited `translate?: "yes" | "no"` and an
-// inherited `hidden?: boolean` outranked every prop the component itself
-// declares whose type resolves to something less tidy -- chakra's Badge
-// measured 32 props of which none were Badge's. See M103 in
-// specs/overview/02-milestones.md.
+// Origin decides before shape: shape alone is not enough to rank a prop, so
+// an inherited `translate?: "yes" | "no"` and an inherited `hidden?:
+// boolean` would outrank every prop the component itself declares whose
+// type resolves to something less tidy -- chakra's Badge would measure 32
+// props of which none are Badge's own.
 export type PropRank = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
 
 
-// M103: how many members the interface or type literal that declares a prop
+// How many members the interface or type literal that declares a prop
 // declares. A component's own props interface is small (heroui's
 // `BadgeRootProps` has six members); a DOM attribute surface
 // (`HTMLAttributes`, ~250) and a style system's generated CSS-property surface
@@ -83,7 +82,7 @@ export type PropRank = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
 const WIDE_DECLARATION_MEMBERS = 40;
 
 
-// M103 (chakra-F1): the names design systems reserve for their own variant
+// The names design systems reserve for their own variant
 // axes. Deliberately short and closed -- each one is a name a user varies to
 // change how the component looks, and none of them is a DOM attribute.
 const KNOWN_VARIANT_AXIS_NAMES = new Set([
@@ -124,7 +123,7 @@ export function propRank(
   const nonUndefined = nonUndefinedMembers(type);
   const target = nonUndefined.length === 1 ? nonUndefined[0] : type;
 
-  // M103 (chakra-F1, corpus re-test): a design system declares its own variant
+  // A design system declares its own variant
   // surface inside the same generated interface as its three hundred style
   // props, so origin, width and shape cannot separate `colorPalette` from
   // `clipPath`. The name can: these are the names a component library reserves
@@ -165,15 +164,14 @@ export function propRank(
 
   if (isVariantSurface) return 6;
 
-  // M86 mechanism 1: an unresolved generic parameter can make
+  // An unresolved generic parameter can make
   // `getCallSignatures()` report zero for a genuinely callable type (a
   // handler prop typed through `IntrinsicElements[E]`-style indirection with
   // `E` unbound). Extensive probing against polymorphic-element and
   // conditional-type shapes did not reproduce a real function type losing its
-  // call signatures this way — see `m86-prop-selection-keeps-what-matters.md`
-  // `## open` — but the failure signature such a defeat would most plausibly
-  // produce (the type resolving to `any`/`unknown` rather than a concrete
-  // non-callable type) is cheap and low-risk to also promote: a
+  // call signatures this way, but the failure signature such a defeat would
+  // most plausibly produce (the type resolving to `any`/`unknown` rather than
+  // a concrete non-callable type) is cheap and low-risk to also promote: a
   // deliberately-non-function prop named `/^on[A-Z]/` resolves to a concrete
   // type, not `any`/`unknown`.
   const isHandlerOrChildren =

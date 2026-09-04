@@ -8,7 +8,7 @@ export const REACT_COMPILER_PACKAGE = "babel-plugin-react-compiler";
 export const REACT_COMPILER_DISABLED_WARNING =
   "React Compiler is installed but disabled for this run; rerender costs will be higher than production.";
 
-// M108 review: the plugin defaults its target to React 19 when none is passed,
+// The plugin defaults its target to React 19 when none is passed,
 // so an undetectable React major would compile against a runtime the project
 // may not have, undisclosed. An undisclosable target keeps the compiler off.
 export function reactCompilerTargetUnknownWarning(projectRoot: string): string {
@@ -28,7 +28,7 @@ export function reactCompilerResolutionWarning(projectRoot: string): string {
 // Package presence is the whole signal: next.config.* can be TypeScript and can
 // compute its own config, which is a large evaluation surface for one boolean.
 // Declared, never merely resolvable: the compiler rewrites the code that gets
-// measured, so a hoisted transitive copy must not switch it on (M27 H14). The
+// measured, so a hoisted transitive copy must not switch it on. The
 // workspace root counts as a declaration; a hoisted install does not.
 export function detectReactCompiler(projectRoot: string): boolean {
   return isPackageDeclared(REACT_COMPILER_PACKAGE, projectRoot);
@@ -78,7 +78,7 @@ export interface ReactCompilerState {
   version?: string;
   pluginPath?: string;
   warning?: string;
-  // M108 A3/A4: the React major the transform compiles for, and why it did not
+  // The React major the transform compiles for, and why it did not
   // run when the runtime that major needs is absent.
   target?: ReactCompilerTarget;
   skipped?: { target: string; missingModule: string };
@@ -170,7 +170,7 @@ export function reactCompilerRuntimeDeps(
   }
 }
 
-// M108 A3 (primer-react-F1): the compiler emits the runtime import its target
+// The compiler emits the runtime import its target
 // names, so the target has to be the React the project installs. React 19
 // ships the runtime inside react itself; 17 and 18 take it from the separate
 // react-compiler-runtime package the project installs beside them.
@@ -215,7 +215,7 @@ export function reactCompilerRuntime(target: ReactCompilerTarget): {
     : { module: "react-compiler-runtime", package: "react-compiler-runtime" };
 }
 
-// M92: an option the plugin defaults for us is an option this run cannot
+// An option the plugin defaults for us is an option this run cannot
 // disclose, so the target is always passed explicitly once it is known.
 export function reactCompilerBabelOptions(
   target: ReactCompilerTarget | undefined,
