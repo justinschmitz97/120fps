@@ -284,7 +284,7 @@ export const UNTYPED_JS_COMPONENT_WARNING = (
 };
 
 
-// Lets src/analyze.ts recognize this specific warning, so the generic
+// Lets src/pipeline/remedies.ts recognize this specific warning, so the generic
 // ZERO_PROPS_WARNING does not stack on top of a cause already stated.
 export function isUntypedJsComponentWarning(message: string): boolean {
   return message.includes(UNTYPED_JS_COMPONENT_MARK);

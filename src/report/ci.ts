@@ -26,7 +26,7 @@ function reportMode(report: Report): ReportMode {
 }
 
 function isolationWarnSignal(iso: IsolationReport): boolean {
-  // computeIsolationVerdict (src/isolation.ts) never fails a run on StrictMode
+  // computeIsolationVerdict (src/analysis/isolation.ts) never fails a run on StrictMode
   // overhead by design: it only warns. That is the one isolation-native warn
   // condition; anything else that flips `pass` is already a hard fail.
   return !!iso.strictMode && !iso.strictMode.doubleInvokeClean;
@@ -134,7 +134,7 @@ function curveFailureLines(cr: ScalingCurveReport, thresholds: Thresholds): stri
   return lines;
 }
 
-// Isolation's own fail conditions (src/isolation.ts computeIsolationVerdict):
+// Isolation's own fail conditions (src/analysis/isolation.ts computeIsolationVerdict):
 // leak suspected, churn degradation past the limit, or mount past its budget.
 // Leak and churn are checked with the exact constants the pipeline uses, so
 // they never drift from what actually failed the run. Mount has no stored

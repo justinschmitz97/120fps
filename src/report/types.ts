@@ -3,6 +3,9 @@ import type { ScalingCurve, CostAttribution } from "./metrics.js";
 import type { ReactOptimizations } from "../analysis/index.js";
 import type { HintId } from "./hints.js";
 import type { PhaseTimings } from "./phases.js";
+import type { PropProvenance } from "../props/index.js";
+
+export type { PropProvenance };
 
 export type { MeasuredState };
 
@@ -116,13 +119,6 @@ export interface InteractionReport {
   // the interaction the pattern's name describes.
   stepsPlanned?: number;
 }
-
-// How a synthesized prop value was chosen (`props/schema.ts`,
-// `PropSchema.provenance`). Declared again here because `report` may not
-// import `props` (ADR 0005 item 2); both sides read/write the identical
-// union, so a value built in `props` and reported here never disagrees with
-// `PropSchema`'s own field.
-export type PropProvenance = "declared" | "preset" | "heuristic" | "placeholder" | "contract";
 
 export interface ComboReport {
   comboIndex: number;

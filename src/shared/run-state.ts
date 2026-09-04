@@ -1,7 +1,7 @@
-// `runPreflight` sets this when it reports an import-cycle hit and clears it
-// when it walks a graph without one; a --no-preflight run leaves it unset.
-// `page-errors.ts` reads it to decide whether a page error can be blamed on
-// the cycle.
+// Reset at the top of every preflight walk and set when that walk finds an
+// import cycle; the walk runs regardless of --no-preflight, which only
+// changes whether a hard hit throws or becomes a warning. `page-errors.ts`
+// reads it to decide whether a later page error can be blamed on the cycle.
 let importCycleReported = false;
 
 export function setImportCycleReported(reported: boolean): void {

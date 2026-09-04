@@ -402,8 +402,8 @@ const NODE_BUILTIN_TEXT = (hit: PreflightHit): string =>
   "Vite may externalize it; if the run fails to boot, this is the first place to look.";
 
 // One formatter for every soft hit, dispatching on the hit's own kind. The
-// historical name is kept because it is what both call sites in src/analyze.ts
-// import; SOFT_HIT_WARNING is the name to migrate to.
+// historical name is kept because it is what both call sites, src/pipeline/phases.ts
+// and src/pipeline/explain-props.ts, import; SOFT_HIT_WARNING is the name to migrate to.
 export const SOFT_HIT_WARNING = (hit: PreflightHit): string =>
   hit.kind === "import-cycle" ? IMPORT_CYCLE_WARNING(hit) : NODE_BUILTIN_TEXT(hit);
 

@@ -307,7 +307,7 @@ function resolveVueImport(
 // The two `paths` shapes TypeScript itself supports: an exact key, or one `*`.
 function aliasCandidates(specifier: string, compilerOptions?: ts.CompilerOptions): string[] {
   const paths = compilerOptions?.paths;
-  // Same alias base as src/harness.ts:5804 and src/project-model.ts:326:
+  // Same alias base as src/project/tsconfig-aliases.ts and src/project/model.ts:
   // TypeScript 5 leaves `baseUrl` undefined for a tsconfig that declares only
   // `paths`, and records the declaring config through `pathsBasePath` /
   // `configFilePath` instead.

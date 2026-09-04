@@ -370,7 +370,9 @@ export async function analyze(
   // isDirectProviderHit (project/preflight.ts) and report/hints.ts's own
   // comment.
   let transitiveProviderCandidates: string[] = [];
-  // Kept outside the try so a failure on the way out can still name them.
+  // Declared before the try so attachHarnessContext can read them after the
+  // harness phase; a preflight hard rejection rethrows before any reader
+  // runs.
   let transformHits: import("../project/index.js").PreflightHit[] = [];
   let activeTransforms: string[] | undefined;
   // Applied to every harness build, so a rebuilt harness cannot bring back a

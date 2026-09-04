@@ -169,7 +169,7 @@ export const VUE_OPTIONS_API_PROPS_WARNING = (
   presetRemedyClause(absolutePath);
 
 
-// Lets extractSchemas (src/analyze.ts) recognize this specific warning among
+// Lets extractSchemas (src/pipeline/analyze.ts) recognize this specific warning among
 // everything else onWarning may report, without parsing prose or duplicating
 // the message text.
 export function isVueOptionsApiPropsWarning(message: string): boolean {
