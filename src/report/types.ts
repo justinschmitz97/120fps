@@ -41,6 +41,13 @@ export const TIER_BUDGETS: Record<ComponentTier, TierBudget> = {
   T4: { mountMs: 80, rerenderMs: 48, interactionMs: 400, interactionStepMs: 100 },
 };
 
+export const CHURN_DEGRADATION_LIMIT = 2.0;
+
+// Above the ~2.4 KB/cycle floor that survives warmup, with 3x headroom under it
+// and 24x under the smallest leak observed. A 1 KB/cycle threshold sits inside
+// the floor and calls every component a leak.
+export const LEAK_BYTES_PER_CYCLE = 8192;
+
 export interface MachineInfo {
   cpu: string;
   cores: number;

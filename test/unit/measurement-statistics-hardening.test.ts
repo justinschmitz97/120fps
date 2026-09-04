@@ -1,13 +1,12 @@
 import { describe, it, expect } from "vitest";
 import { computeP95, computeMedian, warmupsForPosition } from "../../src/browser/index.js";
 import { computeCV, buildTimingWithCV } from "../../src/report/index.js";
-import { computeScalingCurve } from "../../src/report/index.js";
+import { computeScalingCurve, CHURN_DEGRADATION_LIMIT } from "../../src/report/index.js";
 import {
   computeChurnDegradation,
   buildChurnTiming,
   buildRerenderIsolation,
   computeIsolationVerdict,
-  CHURN_DEGRADATION_LIMIT,
 } from "../../src/analysis/index.js";
 import { computeEffectiveSamples } from "../../src/pipeline/index.js";
 

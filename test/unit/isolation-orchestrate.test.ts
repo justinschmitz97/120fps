@@ -7,6 +7,8 @@ import { buildEnvFingerprint } from "../../src/report/index.js";
 import {
   buildTimingWithCV,
   formatTable,
+  CHURN_DEGRADATION_LIMIT,
+  LEAK_BYTES_PER_CYCLE,
   type EnvFingerprint,
   type MatrixReport,
   type Report,
@@ -67,10 +69,8 @@ const {
   isolationBaselineMetrics,
   buildMemoryReport,
   CHURN_CYCLES,
-  CHURN_DEGRADATION_LIMIT,
   ISOLATION_WARMUP_RUNS,
   MEMORY_WARMUP_CYCLES,
-  LEAK_BYTES_PER_CYCLE,
   DEGENERATE_COMBO_WARNING,
   MEMORY_SKIPPED_WARNING,
 } = await import("../../src/analysis/index.js");

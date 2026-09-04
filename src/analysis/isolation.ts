@@ -2,7 +2,13 @@ import type { CDPSession, Page } from "playwright";
 import type { HarnessResult } from "../harness/index.js";
 import type { PropCombination } from "../props/index.js";
 import type { BaselineMetrics } from "../report/index.js";
-import { buildTimingWithCV, type ComponentTier, type TimingWithCV } from "../report/index.js";
+import {
+  buildTimingWithCV,
+  type ComponentTier,
+  type TimingWithCV,
+  CHURN_DEGRADATION_LIMIT,
+  LEAK_BYTES_PER_CYCLE,
+} from "../report/index.js";
 import type { NoiseLevel } from "../browser/index.js";
 import { isVueFile } from "../project/index.js";
 import {
@@ -27,18 +33,12 @@ const ALL_PHASES: IsolationPhase[] = ["mount", "rerender", "unmount", "memory", 
 export const ISOLATION_WARMUP_RUNS = 3;
 export const CHURN_CYCLES = 10;
 export const DEFAULT_MEMORY_CYCLES = 20;
-export const CHURN_DEGRADATION_LIMIT = 2.0;
 
 // The memory phase warms up longer than the timing phases: its noise floor is
 // one-time allocation, not JIT. Measured over 20 cycles at 4x throttle, growth
 // for non-leaking components falls from ~14 KB/cycle at 3 warmup cycles to
 // ~2.4 KB/cycle at 10, while a real leak stays at ~200 KB/cycle.
 export const MEMORY_WARMUP_CYCLES = 10;
-
-// Above the ~2.4 KB/cycle floor that survives warmup, with 3x headroom under it
-// and 24x under the smallest leak observed. A 1 KB/cycle threshold sits inside
-// the floor and calls every component a leak.
-export const LEAK_BYTES_PER_CYCLE = 8192;
 
 export const DEGENERATE_COMBO_WARNING =
   "Only one prop combination available; prop-change and churn measure stable rerenders.";

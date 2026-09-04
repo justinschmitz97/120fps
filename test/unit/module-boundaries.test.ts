@@ -38,13 +38,6 @@ const ALLOWLIST: readonly { file: string; target: string; reason: string }[] = [
     target: "props",
     reason: "prop extraction reached from the preflight probe; wave 2 splits props/extract.ts",
   },
-  {
-    file: "report/ci.ts",
-    target: "analysis",
-    reason:
-      "CHURN_DEGRADATION_LIMIT, LEAK_BYTES_PER_CYCLE (isolation/isolation.ts constants read " +
-      "so the failure body never drifts from computeIsolationVerdict's own thresholds); not moved",
-  },
 ];
 
 interface Edge {

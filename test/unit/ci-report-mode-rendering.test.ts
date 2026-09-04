@@ -9,11 +9,8 @@ import {
   type TimingWithCV,
 } from "../../src/report/index.js";
 import type { ScalingCurve } from "../../src/report/index.js";
-import {
-  type IsolationReport,
-  LEAK_BYTES_PER_CYCLE,
-  CHURN_DEGRADATION_LIMIT,
-} from "../../src/analysis/index.js";
+import { LEAK_BYTES_PER_CYCLE, CHURN_DEGRADATION_LIMIT } from "../../src/report/index.js";
+import { type IsolationReport } from "../../src/analysis/index.js";
 
 // M55: curve, isolation, and cached reports ship `combos: []`; formatMarkdown
 // and formatJUnit must render their real data instead of "—ms" placeholders
