@@ -21,12 +21,10 @@ export interface RunCostEstimate {
   source: "baseline" | "defaults";
 }
 
-// M115 C6: the fallback per-phase numbers, from the 283 logged runs of field
-// test run 5 (`remediation/timing-profile.md`, section 4: a 4-combo x 5-sample
-// combo run has a median of 39 s). `fixedMs` covers preflight, build,
-// calibration and analysis; `perMountSampleMs` is one mount sample;
-// `perComboMs` covers the rerender, explore and attribution work a combo
-// carries beyond its mount samples.
+// Fallback per-phase numbers used when no baseline is recorded. `fixedMs`
+// covers preflight, build, calibration and analysis; `perMountSampleMs` is
+// one mount sample; `perComboMs` covers the rerender, explore and
+// attribution work a combo carries beyond its mount samples.
 export const DEFAULT_PHASE_ESTIMATE = {
   fixedMs: 15_000,
   perMountSampleMs: 700,
@@ -101,9 +99,10 @@ function estimateMeasuredUnits(
   return { combos, samples: computeEffectiveSamples(combos, requested) };
 }
 
-// The dry run's half of M115 C6: no server, no browser, no measurement. A
-// fixture or an auto-composed scene supplies one combo; otherwise the real
-// run's own combo generation, cap and sample throttle decide the units.
+// The dry run predicts costs without running anything: no server, no
+// browser, no measurement. A fixture or an auto-composed scene supplies one
+// combo; otherwise the real run's own combo generation, cap and sample
+// throttle decide the units.
 export function estimateExplainedRunCost(input: {
   schemas: PropSchema[];
   projectRoot: string;

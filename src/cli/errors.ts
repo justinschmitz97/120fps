@@ -22,40 +22,41 @@ export function formatCliError(err: unknown, debugEnv: string | undefined): stri
   return out;
 }
 
-// M79 (behavior 2). No process.on("unhandledRejection"/"uncaughtException")
-// handler exists anywhere in src/ today, so Vite's dependency-optimizer scan
-// — fire-and-forget by design, so it must not block server.listen() — can
-// reject after buildAndServe's own try/catch has already exited successfully;
-// Node's default --unhandled-rejections=throw then converts that into a
-// process-terminating uncaught exception with a raw esbuild stack, and exit
-// code 1, which cli.ts:744-747's own table documents as "a verdict failed" —
-// wrong for a setup/harness failure. This resolver is the pure decision the
-// process.on handlers below apply: same formatCliError text every other
-// error path already uses (a raw stack only under DEBUG), and the "harness or
-// browser failure" exit bucket (2), not Node's default. Exported so the
-// decision is unit-testable without touching real process.exit/process.on;
-// only the thin wrapper below performs those.
+// Vite's dependency-optimizer scan — fire-and-forget by design, so it must
+// not block server.listen() — can reject after buildAndServe's own
+// try/catch has already exited successfully; Node's default
+// --unhandled-rejections=throw then converts that into a
+// process-terminating uncaught exception with a raw esbuild stack, and
+// exit code 1, which cli/help.ts's own table documents as "a verdict
+// failed" — wrong for a setup/harness failure. This resolver is the pure
+// decision the process.on handlers in cli/main.ts apply: same
+// formatCliError text every other error path already uses (a raw stack
+// only under DEBUG), and the "harness or browser failure" exit bucket (2),
+// not Node's default. Exported so the decision is unit-testable without
+// touching real process.exit/process.on; only the thin wrapper in
+// cli/main.ts performs those.
 let fatalProcessErrorFired = false;
 
-// M92 (ant-design-F5/F7/F9): the project root of whichever component is
-// currently being measured, so a truly detached async rejection (surface 3
-// of the shared pipeline, src/harness.ts's presentBundlerFailure -- a
-// fire-and-forget Vite dependency-optimizer scan that rejects after
-// buildAndServe's own try/catch already exited successfully) can still be
-// diagnosed. Set by main()'s loop before each runOne call; undefined before
-// the first component starts or once none is in flight.
+// The project root of whichever component is currently being measured, so
+// a truly detached async rejection (surface 3 of the shared pipeline,
+// harness/bundler-failure.ts's presentBundlerFailure -- a fire-and-forget
+// Vite dependency-optimizer scan that rejects after buildAndServe's own
+// try/catch already exited successfully) can still be diagnosed. Set by
+// main()'s loop before each runOne call; undefined before the first
+// component starts or once none is in flight.
 let currentRunProjectRoot: string | undefined;
 
 export function setCurrentRunProjectRoot(root: string | undefined): void {
   currentRunProjectRoot = root;
 }
 
-// Item A (M90 follow-up): the same shape as currentRunProjectRoot above, for
+// The same shape as currentRunProjectRoot above, for
 // the same reason -- surface 3 (a detached async rejection reaching
 // process.on("unhandledRejection") directly) runs on a call stack with no
 // access to analyze()'s own `runWarnings`/`cssDecisionWarning` locals.
-// analyze() cannot report back through an import of this module (cli.ts
-// already imports analyze.ts; the reverse would be a cycle), so this is
+// analyze() cannot report back through an import of this module
+// (cli/main.ts already imports pipeline/analyze.ts; the reverse would be a
+// cycle), so this is
 // populated the same way onProgress already is: a callback threaded through
 // AnalyzeOptions, wired to this accumulator at the one call site
 // (runOne, below) and read here by ordinary closure, not by importing
@@ -82,12 +83,12 @@ function presentDiagnosedProcessError(err: unknown, projectRoot: string): unknow
   return new Error(diagnosed, { cause: err });
 }
 
-// Item A (M90 follow-up): appends the identical "Warnings recorded before
-// this failure:" block analyze()'s own local catch already builds for
-// surfaces 1 and 2 (src/analyze.ts) -- this is the same information, made
-// reachable here through currentRunWarnings instead of a closure this
-// function has no access to. Applied after diagnosis, not before: a
-// diagnosed message's own remedy text must stay the lead sentence.
+// Appends the identical "Warnings recorded before this failure:" block
+// analyze()'s own local catch already builds for surfaces 1 and 2
+// (pipeline/analyze.ts) -- this is the same information, made reachable
+// here through currentRunWarnings instead of a closure this function has
+// no access to. Applied after diagnosis, not before: a diagnosed message's
+// own remedy text must stay the lead sentence.
 function withAccumulatedWarnings(presented: unknown, warnings: readonly string[]): unknown {
   if (warnings.length === 0) return presented;
   const message = presented instanceof Error ? presented.message : String(presented);
@@ -105,7 +106,7 @@ export function resolveFatalProcessError(
   // print or decide again.
   if (fatalProcessErrorFired) return undefined;
   fatalProcessErrorFired = true;
-  // M92: surface 3 of the shared diagnosis pipeline -- see
+  // Surface 3 of the shared diagnosis pipeline -- see
   // currentRunProjectRoot's own comment above.
   const presented = projectRoot ? presentDiagnosedProcessError(err, projectRoot) : err;
   const withWarnings = withAccumulatedWarnings(presented, warnings);
@@ -114,13 +115,13 @@ export function resolveFatalProcessError(
 
 // Test-only escape hatch for the module-level guard above, matching this
 // codebase's existing process-lifetime-cache reset convention
-// (prop-gen.ts's resetExtractionCache).
+// (props/program.ts's resetExtractionCache).
 export function resetFatalProcessErrorGuard(): void {
   fatalProcessErrorFired = false;
 }
 
-// Wording kept identical to analyze.ts's resolveWrapPath/resolveCssFiles
-// re-checks (src/analyze.ts) so the CLI's early exit and the pipeline's
+// Wording kept identical to pipeline/resolve.ts's resolveWrapPath/resolveCssFiles
+// re-checks so the CLI's early exit and the pipeline's
 // later throw read as the same error either way a run reaches them.
 export function wrapperNotFoundMessage(wrapPath: string): string {
   return `Wrapper module not found: ${wrapPath}`;
@@ -130,8 +131,8 @@ export function stylesheetNotFoundMessage(cssPath: string): string {
   return `Stylesheet not found: ${cssPath}`;
 }
 
-// M72: engines: >=22 in package.json (see package.json) is declarative only
-// — npx only soft-warns below it. A hard gate at entry turns a confusing
+// engines: >=22 in package.json (see package.json) is declarative only —
+// npx only soft-warns below it. A hard gate at entry turns a confusing
 // syntax/runtime crash deep inside a dependency into one clear message.
 export const MIN_NODE_MAJOR = 22;
 

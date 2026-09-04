@@ -26,30 +26,10 @@ const COMMENT_TOKENS: Record<string, number> = {
   "browser/observers.ts": 1,
   "browser/pacing.ts": 2,
   "browser/page-errors.ts": 20,
-  "cli/args.ts": 3,
-  "cli/errors.ts": 6,
-  "cli/gitignore.ts": 3,
-  "cli/lifecycle.ts": 14,
-  "cli/main.ts": 35,
-  "cli/paths.ts": 3,
   "browser/retry.ts": 10,
   "browser/session.ts": 7,
   "browser/settle.ts": 1,
   "browser/trace.ts": 17,
-  "pipeline/analyze.ts": 46,
-  "pipeline/build-report.ts": 46,
-  "pipeline/estimate.ts": 2,
-  "pipeline/explain-props.ts": 71,
-  "pipeline/fixtures.ts": 5,
-  "pipeline/modes/combo.ts": 13,
-  "pipeline/modes/context.ts": 11,
-  "pipeline/modes/curve.ts": 16,
-  "pipeline/modes/isolation.ts": 9,
-  "pipeline/modes/matrix.ts": 22,
-  "pipeline/phases.ts": 47,
-  "pipeline/remedies.ts": 25,
-  "pipeline/resolve.ts": 9,
-  "pipeline/verdict-reuse.ts": 7,
   "project/compiler-options.ts": 4,
   "project/framework.ts": 7,
   "project/model.ts": 13,
@@ -74,9 +54,7 @@ const COMMENT_TOKENS: Record<string, number> = {
   "props/vue.ts": 14,
 };
 
-const DUPLICATE_FUNCTIONS: Record<string, string[]> = {
-  componentStem: ["cli/paths.ts", "props/candidates.ts"],
-};
+const DUPLICATE_FUNCTIONS: Record<string, string[]> = {};
 
 const HISTORY_TOKEN = /\bM\d{2,3}\b|used to|no longer|previously/g;
 const TOP_LEVEL_FUNCTION = /^(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)/gm;

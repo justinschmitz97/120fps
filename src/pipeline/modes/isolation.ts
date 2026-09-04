@@ -23,10 +23,10 @@ import { applyBaselineWorkflow } from "../build-report.js";
 import { type ModeContext, detectComponentName } from "../modes/context.js";
 import { NO_PROPS_MEASURED_WARNING } from "../remedies.js";
 
-// M83 #3 (element-plus-F4): per M46's precedent (a hostile run skips baseline
-// comparison entirely), a hostile run's leak signal does not unilaterally
-// fail the isolation run either — this is a coupling, not a retraction: the
-// raw `isolation.memory.leakSuspected: true` signal is untouched.
+// A hostile run's leak signal does not unilaterally fail the isolation run,
+// matching how a hostile run also skips baseline comparison: this is a
+// coupling, not a retraction, so the raw
+// `isolation.memory.leakSuspected: true` signal is untouched.
 export const LEAK_VERDICT_NOISE_QUALIFIED_WARNING = (cvPercent: number): string =>
   `leak suspected (heap growth crossed the per-cycle threshold), but this run's machine noise was ` +
   `hostile (probe CV ${Math.round(cvPercent)}%): the FAIL this would otherwise cause is withheld ` +
@@ -51,16 +51,15 @@ export async function runIsolationMode(
   }
 
   const isolationCombos =
-    // M100 (calcom-F4): getSchemas() is called on both branches. A fixture or
-    // a composed scene still does not build its combos from the schemas, but
-    // extraction's diagnostics are the same ones the dry run printed and were
-    // dropped here for exactly the runs that measure `{}`.
+    // getSchemas() runs on both branches so its extraction diagnostics reach
+    // ctx.runWarnings even when a fixture or a composed scene ignores the
+    // schemas it returns and measures `{}` instead.
     ctx.useFixture || ctx.composed
       ? (await ctx.getSchemas(), [{}])
       : generateCombinations(await ctx.getSchemas());
-  // M100 MUST 3 covers this path too (review gap 5): --isolate on a fixture or
-  // a composed target measures `{}` exactly as combo mode does, and used to
-  // say nothing about it.
+  // --isolate on a fixture or a composed target measures `{}` exactly as
+  // combo mode does; when the schema has real props to vary, the run says
+  // so instead of silently ignoring them.
   if (ctx.useFixture || ctx.composed) {
     const isolationSchemas = await ctx.getSchemas();
     if (isolationSchemas.length > 0) {
@@ -79,8 +78,8 @@ export async function runIsolationMode(
     cpuThrottle: ctx.cpuThrottle,
     memoryCycles: isolationOptions.memoryCycles ?? DEFAULT_MEMORY_CYCLES,
     pool: ctx.pool,
-    // M73: font-settle and session warnings raised inside a phase reach the
-    // same sink every other phase already uses.
+    // Font-settle and session warnings raised inside a phase reach the same
+    // sink every other phase already uses.
     onWarning: ctx.onWarning,
   });
 
@@ -97,8 +96,8 @@ export async function runIsolationMode(
     : resolveComponentBudget(loadBudgetConfig(ctx.projectRoot), ctx.relativeComponent, tier).mountMs;
 
   const componentName = detectComponentName(ctx.metadataPath, ctx.options.target);
-  // M83 #3 (element-plus-F4): `pass` is a placeholder here — isolation-mode
-  // reports always carry `combos: []`, so `attachHarnessContext`'s noise
+  // `pass` is a placeholder here: isolation-mode reports always carry
+  // `combos: []`, so `attachHarnessContext`'s noise
   // computation (unstableFraction) is structurally 0 for this mode, and only
   // `probeCv` can classify the run. Computing the real verdict before that
   // classification exists means a hostile run's leak signal has no noise
@@ -162,8 +161,9 @@ export async function runIsolationMode(
         samples: ctx.samples,
         mode: "isolation",
         framework: ctx.framework,
-        // M82: cssReport is now always constructed, even for "none" — gate on
-        // files.length so a no-CSS project's fingerprint bytes stay unchanged.
+        // cssReport is always constructed, even for "none"; gate on
+        // files.length so a no-CSS project's fingerprint bytes stay
+        // unchanged.
         ...(ctx.cssReport && ctx.cssReport.files.length > 0 ? { css: ctx.cssReport.files } : {}),
         ...(ctx.wrapper ? { wrapper: ctx.wrapper.path } : {}),
         ...(harness.reactCompiler?.active ? { reactCompiler: true } : {}),
@@ -173,7 +173,7 @@ export async function runIsolationMode(
     },
   );
 
-  // M115 C1: the run's own breakdown, on the report the run returns.
+  // The run's own timing breakdown travels on the report it returns.
   report.phaseTimings = ctx.phaseClock.timings();
   writeReportJson(report, options.jsonPath);
 

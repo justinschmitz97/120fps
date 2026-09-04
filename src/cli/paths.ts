@@ -25,7 +25,7 @@ export function resolveReportPaths(
   const prefix = explicitJsonPath?.replace(/\.json$/, "");
   const seen = new Map<string, number>();
   return componentPaths.map((p) => {
-    const base = prefix ? `${prefix}.${componentStem(p)}.json` : defaultJsonPathFor(p);
+    const base = prefix ? `${prefix}.${reportStem(p)}.json` : defaultJsonPathFor(p);
     // Case-folded key: NTFS/APFS cannot tell 120fps-report.Card.json apart
     // from 120fps-report.card.json, so a same-case-insensitive collision must
     // take the suffix branch too, even though `base` itself differs by case.
@@ -38,7 +38,7 @@ export function resolveReportPaths(
 
 const JSON_NOTICE_LIST_CAP = 8;
 
-// M64: a CI step that passed `--json out.json` and got `out.badge.json` had no
+// A CI step that passes `--json out.json` and gets `out.badge.json` needs a
 // way to learn that from the run. One line naming what was actually written.
 export function formatJsonSplitNotice(reportPaths: string[]): string {
   if (reportPaths.length < 2) return "";
@@ -48,13 +48,11 @@ export function formatJsonSplitNotice(reportPaths: string[]): string {
   return `JSON: ${reportPaths.length} per-component reports: ${shown.join(", ")}${suffix}`;
 }
 
-function componentStem(componentPath: string): string {
+function reportStem(componentPath: string): string {
   const normalized = toPosix(componentPath);
   const base = normalized.slice(normalized.lastIndexOf("/") + 1);
   return base.replace(/\.[^.]+$/, "");
 }
-
-// --- M32 D1: directory and glob expansion ---
 
 export interface PathReader {
   exists: (p: string) => boolean;
@@ -73,11 +71,11 @@ export function hasAcceptedComponentExtension(filePath: string): boolean {
   return /\.(tsx|jsx|vue|ts|js)$/.test(posix);
 }
 
-// M77: extension alone is not enough for `.ts`/`.js` — MUI's own .js-with-JSX
-// convention and Ark-UI-wrapper .ts-with-no-JSX shapes are both legitimate
-// components, but a `.js`/`.ts` utility file with only camelCase exports is
-// not. `.tsx`/`.jsx`/`.vue` short-circuit true with no content read: zero
-// behavior change for extensions already accepted before this milestone.
+// Extension alone is not enough for `.ts`/`.js` — a library's own
+// .js-with-JSX convention and a wrapper's .ts-with-no-JSX shapes are both
+// legitimate components, but a `.js`/`.ts` utility file with only
+// camelCase exports is not. `.tsx`/`.jsx`/`.vue` short-circuit true with no
+// content read.
 export function hasComponentShape(filePath: string): boolean {
   const posix = toPosix(filePath);
   if (/\.(tsx|jsx|vue)$/.test(posix)) return true;
@@ -150,8 +148,8 @@ export function expandComponentPaths(
       const re = globToRegExp(arg);
       // An absolute pattern (`C:/repo/src/**/*.tsx`, `/repo/src/**/*.tsx`) is
       // already anchored to the same frame nodePathReader().walk returns
-      // (path.resolve at cli.ts:1207), so it must be tested against the
-      // walked file's absolute form. A relative pattern (`src/**/*.tsx`) is
+      // (its own `path.resolve(root)` call below), so it must be tested
+      // against the walked file's absolute form. A relative pattern (`src/**/*.tsx`) is
       // written against cwd, so the walked file is relativized to cwd first —
       // a no-op for the relative-path test double, since path.relative
       // resolves a relative `to` against cwd too.

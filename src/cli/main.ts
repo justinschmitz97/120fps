@@ -42,11 +42,11 @@ import { gitignoreTipPatterns, formatGitignoreTip } from "./gitignore.js";
 import { findGitRoot, toPosix } from "../shared/index.js";
 import { printHelp } from "./help.js";
 
-// M101: the M88 watchdog bounds teardown *after* runOne returns; nothing
-// bounded a hang inside analyze() itself, so an interrupted run kept its
-// directory and its children alive indefinitely (V2: 11+ min, 20 s CPU).
-// Budget: an exploration the user asked for, plus a fixed margin for everything
-// around it, and never less than twenty minutes.
+// The exit watchdog bounds teardown *after* runOne returns; this run
+// watchdog instead bounds a hang inside analyze() itself, so an
+// interrupted run cannot keep its directory and its children alive
+// indefinitely. Budget: an exploration the user asked for, plus a fixed
+// margin for everything around it, and never less than twenty minutes.
 export const RUN_WATCHDOG_MARGIN_MS = 10 * 60_000;
 export const RUN_WATCHDOG_MIN_MS = 20 * 60_000;
 export const DEFAULT_EXPLORE_BUDGET_SECONDS = 300;
@@ -56,12 +56,11 @@ export function runWatchdogBudgetMs(exploreBudgetSeconds?: number): number {
   return Math.max(explore + RUN_WATCHDOG_MARGIN_MS, RUN_WATCHDOG_MIN_MS);
 }
 
-// M65: one line at the end of every terminal report, so a long run is a number
-// rather than a memory.
-// M104 (I11, commerce-F3/material-ui-F3): rounding the seconds *after*
-// splitting them off the minutes printed `2m 60s` for anything from 119.5s up,
-// a number no clock shows. Each branch rounds once, to the unit it prints, so
-// a carry lands in the minutes instead of overflowing the seconds.
+// One line at the end of every terminal report, so a long run is a number
+// rather than a memory. Each branch rounds once, to the unit it prints, so
+// a carry lands in the minutes instead of overflowing the seconds (naive
+// rounding after splitting seconds off minutes can print `2m 60s`, a
+// number no clock shows).
 export function formatWallClock(elapsedMs: number): string {
   const tenthsOfSecond = Math.round(elapsedMs / 100);
   if (tenthsOfSecond < 600) return `Total: ${(tenthsOfSecond / 10).toFixed(1)}s`;
@@ -70,9 +69,9 @@ export function formatWallClock(elapsedMs: number): string {
   return `Total: ${minutes}m ${wholeSeconds - minutes * 60}s`;
 }
 
-// M115 A1: the wait and where it went, on one line. A run whose report carries
-// no phase timings (a cached verdict, a report written before M115) prints the
-// line it printed before, so the breakdown is an addition and never a rewrite.
+// The wait and where it went, on one line. A run whose report carries no
+// phase timings (a cached verdict, an older report) prints the same line
+// it always did, so the breakdown is an addition and never a rewrite.
 export function formatTotalLine(
   elapsedMs: number,
   timings: PhaseTimings | undefined,
@@ -80,7 +79,7 @@ export function formatTotalLine(
   return formatWallClock(elapsedMs) + formatPhaseBreakdown(timings);
 }
 
-// M111 A4: one line per component, from the component path the user gave,
+// One line per component, from the component path the user gave,
 // resolved the way every other stage resolves it. The paths are absolute, so
 // the line reads the same from every shell directory.
 export function resolvedRootsLine(componentPath: string): string {
@@ -88,17 +87,17 @@ export function resolvedRootsLine(componentPath: string): string {
   return formatResolvedRoots(model.memberRoot, model.workspaceRoot);
 }
 
-// M111 A4: --ci output is read by a machine, so the line is written for a
+// --ci output is read by a machine, so the line is written for a
 // reader or not at all. One place decides that, for the dry run and for the
 // measured run.
 export function resolvedRootsOutput(componentPath: string, ci: boolean): string {
   return ci ? "" : resolvedRootsLine(componentPath) + "\n";
 }
 
-// I3a (element-plus-F2): every flag the dry run can honour, in one place a
-// test can read. `--framework` used to stop here: the real run forwards it and
-// discloses that it does not change how a file mounts, while the dry run
-// dropped it and was a silent no-op instead of a disclosed one.
+// Every flag the dry run can honour, in one place a test can read.
+// `--framework` is forwarded here too: the real run discloses that it does
+// not change how a file mounts, so the dry run must disclose the same
+// thing instead of silently dropping the flag.
 export function explainPropsOptions(
   args: CliArgs,
   componentPath: string,
@@ -116,7 +115,7 @@ export function explainPropsOptions(
   samples?: number;
   maxCombos?: number;
 } {
-  // C-5: the four flags below decide which mode the real run takes, and the
+  // The four flags below decide which mode the real run takes, and the
   // dry run's whole job is to predict that mode. They are resolved with the
   // same functions runOne uses, so the two paths cannot disagree about what a
   // flag combination means.
@@ -131,18 +130,17 @@ export function explainPropsOptions(
     ...(matrixMode !== undefined ? { matrixMode } : {}),
     ...(isolation !== undefined ? { isolation } : {}),
     ...(args.fixturePath ? { fixturePath: args.fixturePath } : {}),
-    // M110 C1, C4 (review): the dry run read both of these all along; the call
-    // site dropped them, so `--explain-props --no-auto-compose` predicted an
-    // auto-composed scene the real run does not build and
-    // `--explain-props --no-transforms` printed the transform lines the real
-    // run suppresses. Same two lines the real run forwards below.
+    // Forwarded here so `--explain-props --no-auto-compose` does not
+    // predict an auto-composed scene the real run does not build, and
+    // `--explain-props --no-transforms` does not print the transform lines
+    // the real run suppresses. Same two lines the real run forwards below.
     ...(args.noAutoCompose ? { skipAutoCompose: true } : {}),
     ...(args.noTransforms ? { noTransforms: true } : {}),
-    // M110 I2 (review): `noShims` changes the alias set the external-dependency
+    // `noShims` changes the alias set the external-dependency
     // scan resolves against, so the shared static pre-build only reports the
     // same unresolved externals in both modes when the dry run gets it too.
     ...(args.noShims ? { noShims: true } : {}),
-    // M115 A2, I12: the dry run prices the real run from the combo and sample
+    // The dry run prices the real run from the combo and sample
     // counts that run would measure, and both are flags. Same two names the
     // real run forwards to AnalyzeOptions, so the estimate is priced against
     // the command line the user typed rather than the defaults.
@@ -159,7 +157,7 @@ async function main(): Promise<void> {
   }
 
   const args = parseArgs(process.argv.slice(2));
-  // M105 (solid-ui-F1): a remedy must not advise the flag this run already
+  // A remedy must not advise the flag this run already
   // passed. Set once, before anything can fail.
   setPreflightBypassed(args.noPreflight === true);
 
@@ -195,14 +193,14 @@ async function main(): Promise<void> {
     process.stdout.write(`Measuring ${componentPaths.length} components\n`);
   }
 
-  // M65: a dry run: resolution only. Before every check that exists to protect
+  // A dry run: resolution only. Before every check that exists to protect
   // a measurement, because it never starts one.
   if (args.explainProps) {
     let failed = false;
     for (let idx = 0; idx < componentPaths.length; idx++) {
       const componentPath = componentPaths[idx];
       if (componentPaths.length > 1) process.stdout.write(`\n=== ${componentPath} ===\n`);
-      // M111 A4: the first line of this component's block, so a reader
+      // The first line of this component's block, so a reader
       // comparing two shell directories sees the roots both runs resolved
       // before anything those runs could disagree about.
       process.stdout.write(resolvedRootsOutput(componentPath, args.ci === true));
@@ -236,7 +234,7 @@ async function main(): Promise<void> {
     }
   }
 
-  // M49: its own mode: two sides, interleaved, no verdict. Budgets and
+  // Its own mode: two sides, interleaved, no verdict. Budgets and
   // baselines keep owning CI, so compare never sets a non-zero exit.
   if (args.compare) {
     const invalid = validateCompareOptions({
@@ -268,46 +266,45 @@ async function main(): Promise<void> {
     ? resolveReportPaths(componentPaths, args.jsonExplicit ? args.jsonPath : undefined)
     : [args.jsonPath];
   let anyFail = false;
-  // M50: collected across the sweep so both formats describe the whole run.
+  // Collected across the sweep so both formats describe the whole run.
   const ciReports: import("../report/index.js").Report[] = [];
-  // M117 A1: where this sweep's baselines and harness directories can be, one
+  // Where this sweep's baselines and harness directories can be, one
   // entry per distinct project the components belong to.
   const projectRoots = new Set<string>();
 
-  // M37: browsers are project-agnostic: one pool serves every component of
-  // the sweep (two Chromium processes total instead of ~5 launches each).
-  // M38: one dev server per project/config tuple serves every harness dir.
+  // Browsers are project-agnostic: one pool serves every component of
+  // the sweep (two Chromium processes total instead of one launch each).
+  // One dev server per project/config tuple serves every harness dir.
   const pool = createBrowserPool();
   const serverPool = createServerPool();
-  // M101: what a signal handler outside this function has to close. Published
+  // What a signal handler outside this function has to close. Published
   // as soon as both pools exist, so a kill arriving one millisecond later still
   // reaches them.
   setActivePools({ pool, serverPool });
-  // M88: a fatal error on a single-component run previously called
-  // process.exit(2) synchronously right here, which never runs a pending
-  // `finally` block -- pool/server teardown was skipped outright. It now
-  // attempts that same teardown, bounded (closePoolsBounded, armExitWatchdog):
-  // a hung Vite dev-server close can no longer keep either the teardown or
-  // the process itself from finishing within the documented exit code's
-  // 10-second budget.
+  // A fatal error on a single-component run must not call process.exit(2)
+  // synchronously here, which would skip any pending `finally` block and
+  // its pool/server teardown outright. Teardown is attempted here instead,
+  // bounded (closePoolsBounded, armExitWatchdog): a hung Vite dev-server
+  // close cannot keep either the teardown or the process itself from
+  // finishing within the documented exit code's 10-second budget.
   for (let idx = 0; idx < componentPaths.length; idx++) {
     const componentPath = componentPaths[idx];
     if (multi && !args.ci) {
       process.stdout.write(`\n=== ${componentPath} ===\n`);
     }
     const started = Date.now();
-    // M92: set before the harness build a fire-and-forget dep-optimizer
+    // Set before the harness build a fire-and-forget dep-optimizer
     // rejection (surface 3) could still fail on, cleared once this component
     // is done -- see resolveFatalProcessError's own comment.
     const componentProjectRoot = resolveProjectPaths(path.resolve(componentPath)).projectRoot;
     projectRoots.add(componentProjectRoot);
     setCurrentRunProjectRoot(componentProjectRoot);
-    // Item A: same lifecycle as the project root above -- reset before this
+    // Same lifecycle as the project root above -- reset before this
     // component's own run() populates it via AnalyzeOptions.onWarning, so a
     // surface-3 rejection on component 2 of a multi-component sweep never
     // reports component 1's warnings.
     resetCurrentRunWarnings();
-    // M101: armed before the run, re-armed by every phase line it prints, so a
+    // Armed before the run, re-armed by every phase line it prints, so a
     // phase that stops making progress cannot hold this directory and this
     // browser forever. Cleared in the same iteration's finally.
     const budgetMs = runWatchdogBudgetMs(args.exploreBudgetSeconds);
@@ -315,12 +312,12 @@ async function main(): Promise<void> {
     // every path, --ci included. The total-budget wording stays for a caller
     // that omits it.
     const bound = "stalled" as const;
-    // M116 end-game fix-up (midday-NEW1): the aborted run's own analyze() call
-    // keeps running until the pools close under it, and whatever it throws on
-    // the way down ("Cannot read properties of undefined (reading 'props')" on
-    // midday) used to print as a second, unrelated Error after the abort
-    // sentence -- two errors for one failure, the second of them noise. The
-    // abort owns the exit from here on.
+    // The aborted run's own analyze() call keeps running until the pools
+    // close under it, and whatever it throws on the way down (e.g.
+    // "Cannot read properties of undefined (reading 'props')") must not
+    // print as a second, unrelated Error after the abort sentence -- two
+    // errors for one failure, the second of them noise. The abort owns the
+    // exit from here on.
     let aborted = false;
     const runWatchdog = createRunWatchdog(budgetMs, () => {
       aborted = true;
@@ -338,17 +335,17 @@ async function main(): Promise<void> {
         serverPool,
         () => {
           runWatchdog.heartbeat();
-          // M101 (review A6): the marker is what tells another process this
+          // The marker is what tells another process this
           // directory is still in use; the directory's own mtime stopped
           // advancing when the build finished writing into it.
           refreshHarnessDirMarkers();
         },
       );
       if (!args.ci) {
-        // M111 A4: ahead of this component's table, once per component.
+        // Ahead of this component's table, once per component.
         process.stdout.write(resolvedRootsOutput(componentPath, false));
         process.stdout.write(formatTable(report) + "\n");
-        // M115 A1: the breakdown rides on the line that already prints the
+        // The breakdown rides on the line that already prints the
         // wait, under the same `!args.ci` guard -- `--ci` owns stdout for JSON
         // and reads `phaseTimings` from the report instead.
         process.stdout.write(
@@ -385,7 +382,7 @@ async function main(): Promise<void> {
   const jsonNotice = formatJsonSplitNotice(reportPaths);
   if (jsonNotice) process.stdout.write(jsonNotice + "\n");
 
-  // M74 (E5): one repo-hygiene hint for the whole run, suppressed under --ci
+  // One repo-hygiene hint for the whole run, suppressed under --ci
   // like every other terminal-only notice.
   if (!args.ci) {
     const gitRoot = findGitRoot(process.cwd());
@@ -421,15 +418,15 @@ async function runOne(
   args: CliArgs,
   browserPool?: import("../browser/index.js").BrowserPool,
   serverPool?: import("../harness/index.js").ServerPool,
-  // M101: every phase boundary is a liveness heartbeat for the run watchdog.
-  // Review A2 follow-up: it rides `onPhase`, which analyze fires before the
+  // Every phase boundary is a liveness heartbeat for the run watchdog.
+  // It rides `onPhase`, which analyze fires before the
   // --ci gate that silences console progress, so a CI run is bounded per phase
   // like any other instead of by a bare total.
   onPhase?: () => void,
 ): Promise<import("../report/index.js").Report> {
   return analyze(componentPath, {
       ...(onPhase ? { onPhase } : {}),
-      // Item A: threads this run's warnings out to the same accumulator
+      // Threads this run's warnings out to the same accumulator
       // resolveFatalProcessError reads, so a surface-3 async rejection can
       // disclose them -- see currentRunWarnings's own comment.
       onWarning: pushCurrentRunWarning,
@@ -487,12 +484,12 @@ const entryPath = toPosix(process.argv[1] ?? "");
 const isDirectRun = entryPath.endsWith("cli/main.js") || entryPath.endsWith("cli/main.ts");
 
 if (isDirectRun) {
-  // M79 (behavior 2). Registered only on the real CLI process, never when
-  // cli.ts is merely imported by a test: unit tests routinely trigger a real
+  // Registered only on the real CLI process, never when cli/main.ts is
+  // merely imported by a test: unit tests routinely trigger a real
   // unhandled rejection (the documented provider-wrapper.test.ts esbuild
-  // temp-dir flake, per specs/overview/00-tdd.md), and a global handler that
-  // called process.exit(2) on that would abort the whole suite rather than
-  // let vitest's own reporting handle it.
+  // temp-dir flake, per specs/overview/00-tdd.md), and a global handler
+  // that called process.exit(2) on that would abort the whole suite rather
+  // than let vitest's own reporting handle it.
   const handleFatalProcessError = (err: unknown): void => {
     const resolved = resolveFatalProcessError(err, process.env.DEBUG);
     if (!resolved) return;
@@ -501,7 +498,7 @@ if (isDirectRun) {
   };
   process.on("unhandledRejection", handleFatalProcessError);
   process.on("uncaughtException", handleFatalProcessError);
-  // M101: Node runs no "exit" listener for a signalled process, so without
+  // Node runs no "exit" listener for a signalled process, so without
   // these three the harness directory of every killed run stays on disk.
   registerTerminationHandlers();
   main();
