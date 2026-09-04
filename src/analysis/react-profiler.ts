@@ -6,7 +6,7 @@ import { renderTreeHelper, setupApiBlock, setupBlock, wrapImportLine, type Harne
 import type { PropCombination } from "../props/index.js";
 import { FUNCTION_MARKER, serializeProps } from "../props/index.js";
 import { applyWrapperViewport, collectTrace, createPhaseTracker, parseTraceDuration, settleStyles, reportFontSettle, tryCollectGarbage, HARNESS_NAV_WAIT } from "../browser/index.js";
-import { computeMedian } from "../shared/index.js";
+import { computeMedian, readJsonFile } from "../shared/index.js";
 import {
   attachPageErrorCapture,
   enrichTimeoutError,
@@ -541,11 +541,7 @@ function nearestPackageJson(fromPath: string): { name?: unknown; version?: unkno
   while (true) {
     const candidate = path.join(dir, "package.json");
     if (fs.existsSync(candidate)) {
-      try {
-        return JSON.parse(fs.readFileSync(candidate, "utf-8"));
-      } catch {
-        return undefined;
-      }
+      return readJsonFile(candidate) as { name?: unknown; version?: unknown } | undefined;
     }
     const parent = path.dirname(dir);
     if (parent === dir) return undefined;

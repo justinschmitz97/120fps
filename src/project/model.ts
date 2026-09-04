@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import ts from "typescript";
-import { pathKey, toPosix } from "../shared/index.js";
+import { pathKey, readJsonFile, toPosix } from "../shared/index.js";
 
 // M68. One directory used to answer every question about a project, which is
 // only right when the package and the install are the same directory. A
@@ -32,13 +32,9 @@ export function findProjectRoot(dir: string): string | undefined {
 // that is not an object. Callers that must fail closed need that distinction,
 // so it is not collapsed into an empty manifest.
 export function readProjectManifest(root: string): Record<string, unknown> | undefined {
-  try {
-    const parsed: unknown = JSON.parse(fs.readFileSync(path.join(root, MANIFEST), "utf-8"));
-    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return undefined;
-    return parsed as Record<string, unknown>;
-  } catch {
-    return undefined;
-  }
+  const parsed = readJsonFile(path.join(root, MANIFEST));
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return undefined;
+  return parsed as Record<string, unknown>;
 }
 
 function governsInstall(dir: string): boolean {

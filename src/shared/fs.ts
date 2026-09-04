@@ -29,3 +29,11 @@ export function isDirectory(candidate: string): boolean {
     return false;
   }
 }
+
+export function readJsonFile(candidate: string): unknown {
+  try {
+    return JSON.parse(fs.readFileSync(candidate, "utf-8"));
+  } catch {
+    return undefined;
+  }
+}

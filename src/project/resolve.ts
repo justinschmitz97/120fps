@@ -1,8 +1,7 @@
-import fs from "node:fs";
 import path from "node:path";
 import { findWorkspaceRoot, readProjectManifest, resolveGoverningTsconfig } from "./model.js";
 import type { WorkspaceRootAliasSource } from "./tsconfig-aliases.js";
-import { isFile, toPosix } from "../shared/index.js";
+import { isFile, readJsonFile, toPosix } from "../shared/index.js";
 
 export function RESOLVE_CONDITIONS_WARNING(
   conditions: string[],
@@ -50,12 +49,7 @@ const EXTENSIONS = [...SOURCE_EXTENSIONS, ".json"];
 // M69: a directory import answers through its manifest before its index file,
 // the way node and Vite resolve it.
 export function resolveDirectoryEntry(dir: string): string | undefined {
-  let manifest: unknown;
-  try {
-    manifest = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf-8"));
-  } catch {
-    return undefined;
-  }
+  const manifest = readJsonFile(path.join(dir, "package.json"));
   if (typeof manifest !== "object" || manifest === null || Array.isArray(manifest)) return undefined;
   const fields = manifest as Record<string, unknown>;
   const candidates = [
