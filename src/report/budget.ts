@@ -142,10 +142,10 @@ export interface ResolvedTolerance {
   unmount: number;
 }
 
-export interface BaselineComparison {
+export interface BudgetComparison {
   hasBaseline: boolean;
-  regressions: Regression[];
-  improvements: Improvement[];
+  regressions: BudgetRegression[];
+  improvements: BudgetImprovement[];
   missingInteractions: string[];
   envMatch: EnvMatch;
   envMismatches: string[];
@@ -160,7 +160,7 @@ export interface BaselineComparison {
   skippedNoisy?: boolean;
 }
 
-export interface Regression {
+export interface BudgetRegression {
   metric: string;
   baseline: number;
   current: number;
@@ -169,7 +169,7 @@ export interface Regression {
   normalized?: NormalizedDelta;
 }
 
-export interface Improvement {
+export interface BudgetImprovement {
   metric: string;
   baseline: number;
   current: number;
@@ -697,7 +697,7 @@ export function compareBaseline(
   tolerance: ResolvedTolerance,
   unstableMetrics?: Set<string>,
   currentEnv?: EnvFingerprint,
-): BaselineComparison {
+): BudgetComparison {
   const envMatch = currentEnv ? classifyEnv(entry.env, currentEnv) : "unknown";
   const envMismatches = currentEnv ? describeEnvDiff(entry.env, currentEnv) : [];
 
@@ -737,8 +737,8 @@ export function compareBaseline(
     if (!normalize) envMismatches.push(MISSING_CALIBRATION_NOTE);
   }
 
-  const regressions: Regression[] = [];
-  const improvements: Improvement[] = [];
+  const regressions: BudgetRegression[] = [];
+  const improvements: BudgetImprovement[] = [];
 
   const metrics: Array<{ name: string; baseline: number; current: number; tol: number }> = [
     { name: "mount", baseline: entry.mount, current: current.mount, tol: tolerance.mount },
