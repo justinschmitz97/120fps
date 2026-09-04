@@ -9,7 +9,7 @@ import {
   recognizeVirtualNamespace,
   SOURCE_EXTENSIONS,
 } from "../project/index.js";
-import { findGitRoot } from "../shared/index.js";
+import { findGitRoot, toPosix } from "../shared/index.js";
 import { diagnoseMissingShimExport } from "./shims.js";
 import { resolveWorkspaceSourceEntry } from "./workspace-entries.js";
 
@@ -77,7 +77,7 @@ export function diagnoseUnbuiltWorkspacePackage(
   // source is on disk — scanExternalDeps aliases it, and the run reaches a
   // verdict instead of aborting.
   if (resolveWorkspaceSourceEntry(real, manifest) !== undefined) return undefined;
-  return UNBUILT_WORKSPACE_PACKAGE_WARNING(pkg, path.relative(real, entryPath).replace(/\\/g, "/"));
+  return UNBUILT_WORKSPACE_PACKAGE_WARNING(pkg, toPosix(path.relative(real, entryPath)));
 }
 
 // M94: a caught Vite/PostCSS/esbuild error's own .message frequently embeds
@@ -94,7 +94,7 @@ export function diagnoseUnbuiltWorkspacePackage(
 // stack is real application debugging information, not bundler noise), so
 // removing every "at" line unconditionally is no longer correct.
 function installRoot(): string {
-  return path.resolve(import.meta.dirname ?? __dirname, "../..").replace(/\\/g, "/");
+  return toPosix(path.resolve(import.meta.dirname ?? __dirname, "../.."));
 }
 
 function stripBundlerStackFrames(message: string): string {
@@ -405,7 +405,7 @@ export function runDirectoryPrefix(root: string, startDir: string): string {
   const from = path.resolve(startDir);
   if (target === from) return "";
   const relative = path.relative(from, target);
-  const dir = relative === "" || path.isAbsolute(relative) ? target : relative.replace(/\\/g, "/");
+  const dir = relative === "" || path.isAbsolute(relative) ? target : toPosix(relative);
   // A directory whose name contains a space is not pasteable unquoted.
   return `cd ${/\s/.test(dir) ? `"${dir}"` : dir} && `;
 }
@@ -452,7 +452,7 @@ export function findLikelyGenerateCommand(
   );
 
   if (missingRelativePath) {
-    const posix = missingRelativePath.replace(/\\/g, "/");
+    const posix = toPosix(missingRelativePath);
     const named = commands.find(([, command]) => command.replace(/\\/g, "/").includes(posix));
     if (named) return packageManagerRunCommand(root, named[0], startDir);
 
@@ -477,7 +477,7 @@ export function findLikelyGenerateCommand(
 // instead of a bare filename, and to a bare-filename pattern (no "/") also
 // matching at any depth, the way git itself treats one.
 function gitignoreCoversPath(gitignoreContent: string, relativePath: string): boolean {
-  const posixPath = relativePath.replace(/\\/g, "/");
+  const posixPath = toPosix(relativePath);
   const base = posixPath.slice(posixPath.lastIndexOf("/") + 1);
   for (const rawLine of gitignoreContent.split("\n")) {
     const line = rawLine.trim();
@@ -534,7 +534,7 @@ function diagnoseGitignoredGeneratedFile(message: string, projectRoot: string): 
   } catch {
     return undefined;
   }
-  const relativeToGitRoot = path.relative(gitRoot, candidateBase).replace(/\\/g, "/");
+  const relativeToGitRoot = toPosix(path.relative(gitRoot, candidateBase));
   const relativeCandidates = [
     relativeToGitRoot,
     ...SOURCE_EXTENSIONS.map((ext) => relativeToGitRoot + ext),
@@ -542,7 +542,7 @@ function diagnoseGitignoredGeneratedFile(message: string, projectRoot: string): 
   const matchedRelative = relativeCandidates.find((rel) => gitignoreCoversPath(gitignoreContent, rel));
   if (matchedRelative === undefined) return undefined;
   const matchedAbsolute = path.resolve(gitRoot, matchedRelative);
-  const relativeToProject = path.relative(projectRoot, matchedAbsolute).replace(/\\/g, "/");
+  const relativeToProject = toPosix(path.relative(projectRoot, matchedAbsolute));
   return GITIGNORED_GENERATED_FILE_ERROR(
     relativeToProject,
     // M105 (ant-design-F1): the missing file is the evidence for which script

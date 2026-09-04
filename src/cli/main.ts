@@ -39,7 +39,7 @@ import {
 } from "./lifecycle.js";
 import { expandComponentPaths, nodePathReader, resolveReportPaths, formatJsonSplitNotice } from "./paths.js";
 import { gitignoreTipPatterns, formatGitignoreTip } from "./gitignore.js";
-import { findGitRoot } from "../shared/index.js";
+import { findGitRoot, toPosix } from "../shared/index.js";
 import { printHelp } from "./help.js";
 
 // M101: the M88 watchdog bounds teardown *after* runOne returns; nothing
@@ -483,7 +483,7 @@ async function runOne(
 
 // Invoked last: every module-level declaration above is initialized before
 // main() can run, so the direct-run path can never hit a temporal dead zone.
-const entryPath = (process.argv[1] ?? "").replace(/\\/g, "/");
+const entryPath = toPosix(process.argv[1] ?? "");
 const isDirectRun = entryPath.endsWith("cli/main.js") || entryPath.endsWith("cli/main.ts");
 
 if (isDirectRun) {

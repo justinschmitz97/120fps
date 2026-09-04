@@ -49,6 +49,7 @@ import {
   loadTailwind3PostcssPipeline,
   loadTailwindVitePlugin,
 } from "./style-tooling.js";
+import { toPosix } from "../shared/index.js";
 
 export { findProjectRoot };
 
@@ -156,7 +157,7 @@ export async function buildAndServe(
       for (const sfc of sfcs) {
         if (!isVueFile(sfc)) continue;
         if (!sfcProducesComponent(fs.readFileSync(sfc, "utf-8"), sfc, compiler)) {
-          throw new Error(SFC_NO_COMPONENT(path.relative(projectRoot, sfc).replace(/\\/g, "/")));
+          throw new Error(SFC_NO_COMPONENT(toPosix(path.relative(projectRoot, sfc))));
         }
       }
       if (isVueFile(absoluteComponentPath)) {
@@ -193,7 +194,7 @@ export async function buildAndServe(
   const cssImports = cssFiles.map((f) => cssImportSpecifier(f, projectRoot));
 
   const presetRelative = options?.presetPath
-    ? path.relative(projectRoot, path.resolve(options.presetPath)).replace(/\\/g, "/")
+    ? toPosix(path.relative(projectRoot, path.resolve(options.presetPath)))
     : undefined;
 
   let entryTsx: string;

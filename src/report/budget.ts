@@ -14,6 +14,7 @@ import {
   type TierBudget,
 } from "./types.js";
 import type { PhaseTimings } from "./phases.js";
+import { toPosix } from "../shared/index.js";
 
 export interface ComponentBudget {
   tier?: ComponentTier;
@@ -97,7 +98,7 @@ export function computeSourceFingerprint(
 ): string {
   const parts = files.map((file) => {
     const abs = path.resolve(file);
-    const rel = path.relative(projectRoot, abs).replace(/\\/g, "/");
+    const rel = toPosix(path.relative(projectRoot, abs));
     let contentHash: string;
     try {
       contentHash = crypto.createHash("sha1").update(fs.readFileSync(abs)).digest("hex");

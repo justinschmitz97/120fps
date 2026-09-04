@@ -1,5 +1,6 @@
 import path from "node:path";
 import { isPackageAvailable } from "../project/index.js";
+import { toPosix } from "../shared/index.js";
 
 export interface ShimEntry {
   module: string;
@@ -84,9 +85,9 @@ export function SHIM_EXPORT_MISSING_ERROR(shimModule: string, missingExport: str
 export function diagnoseMissingShimExport(message: string): string | undefined {
   const match = ESBUILD_NO_MATCHING_EXPORT.exec(message);
   if (!match) return undefined;
-  const filePath = match[1].replace(/\\/g, "/");
+  const filePath = toPosix(match[1]);
   const missingExport = match[2];
-  const shimDir = path.resolve(import.meta.dirname ?? __dirname, "shims").replace(/\\/g, "/");
+  const shimDir = toPosix(path.resolve(import.meta.dirname ?? __dirname, "shims"));
   const entry = SHIM_MODULES.find((s) => `${shimDir}/${s.shimFile}` === filePath);
   if (!entry) return undefined;
   return SHIM_EXPORT_MISSING_ERROR(entry.module, missingExport);

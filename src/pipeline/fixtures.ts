@@ -11,6 +11,7 @@ import {
   type ExportInfo,
 } from "../props/index.js";
 import { runPreflight, isVueFile, projectCompilerOptions } from "../project/index.js";
+import { toPosix } from "../shared/index.js";
 
 // M110 review: `--target` throws TARGET_WITH_FIXTURE_ERROR whenever the
 // fixture came from an explicit --fixture or from the input file itself, so
@@ -77,7 +78,7 @@ export function composedChildPreflightHits(
   const composed = scanJsxComposedLocalImports(sourceText, targetFile);
   if (composed.length === 0) return [];
 
-  const targetRel = path.relative(projectRoot, targetFile).replace(/\\/g, "/");
+  const targetRel = toPosix(path.relative(projectRoot, targetFile));
   const hits: import("../project/index.js").PreflightHit[] = [];
   for (const { specifier } of composed) {
     const resolved = resolveRelativeJsxChild(targetFile, specifier);

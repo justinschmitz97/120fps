@@ -19,6 +19,7 @@ import {
 } from "../props/index.js";
 import { isVueFile, loadVueCompiler, parseSfcScript } from "../project/index.js";
 import { type Report } from "../report/index.js";
+import { toPosix } from "../shared/index.js";
 
 // M112 C2 (radix-themes-F1, epic-stack-F3): the sibling that carries a preset's
 // name without its shape. One producer for both modes, so the dry run and the
@@ -29,7 +30,7 @@ export function presetShapeDisclosure(
 ): string | undefined {
   const sibling = describePresetSibling(componentPath);
   if (sibling === undefined || sibling.shape === "preset") return undefined;
-  return PRESET_SHAPE_WARNING(path.relative(projectRoot, sibling.path).replace(/\\/g, "/"));
+  return PRESET_SHAPE_WARNING(toPosix(path.relative(projectRoot, sibling.path)));
 }
 
 // M112 C1 (logto-F4): the extraction warnings a preset answers. A collapsed
@@ -129,7 +130,7 @@ export async function measuredSfcUsesInject(
   } catch (err) {
     onWarning?.(
       SFC_INJECT_READ_FAILED_WARNING(
-        path.relative(projectRoot, componentPath).replace(/\\/g, "/"),
+        toPosix(path.relative(projectRoot, componentPath)),
         err instanceof Error ? err.message : String(err),
       ),
     );

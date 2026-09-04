@@ -74,6 +74,7 @@ import { buildCssReport, buildReactCompilerReport } from "./build-report.js";
 import { buildNoiseReport, formatNoiseWarning } from "../browser/index.js";
 import { composedChildPreflightHits, trialMountComposition, writeFixtureScaffold } from "./fixtures.js";
 import { projectConfigFingerprintFiles } from "./verdict-reuse.js";
+import { toPosix } from "../shared/index.js";
 
 // Everything the run resolves from the filesystem before it builds anything:
 // where the project is, which framework renders it, which wrapper and
@@ -206,7 +207,7 @@ export function createSchemaExtractor(deps: {
     // dry run prints, in the same words, from the same extraction record. Both
     // are decided by the filesystem, so M100's parity rule covers them.
     const asProjectPath = (target: string): string =>
-      path.relative(projectRoot, target).replace(/\\/g, "/");
+      toPosix(path.relative(projectRoot, target));
     if (
       extracted.targetFile !== undefined &&
       path.resolve(extracted.targetFile) !== path.resolve(file)
@@ -292,7 +293,7 @@ export function createSourceFingerprint(deps: {
       // React Compiler does, so it belongs in the identity of a cached verdict.
       transforms: options.noTransforms ? [] : detectProjectTransforms(projectRoot).map((t) => t.code),
       css: cssReport?.files ?? [],
-      wrap: wrapPath ? path.relative(projectRoot, wrapPath).replace(/\\/g, "/") : null,
+      wrap: wrapPath ? toPosix(path.relative(projectRoot, wrapPath)) : null,
       reactCompiler: options.reactCompiler ?? "auto",
       // Only present when targeted, so an untargeted run's fingerprint: and
       // every baseline already stored against it: is byte-identical.
@@ -453,9 +454,7 @@ export function runPreflightPhase(input: {
   // providersFromEntry's own comment (src/preflight.ts) for why a hit
   // discovered only through the wrapper is excluded here rather than
   // mislabeled as something the component imports.
-  const componentEntryRelative = path
-    .relative(projectRoot, path.resolve(harnessPath))
-    .replace(/\\/g, "/");
+  const componentEntryRelative = toPosix(path.relative(projectRoot, path.resolve(harnessPath)));
   const componentOwnProviders = providersFromEntry(preflight.providers, componentEntryRelative);
   // M65: recorded now, published only if a combo actually fails to render.
   providerCandidates = providerCandidateLabels(componentOwnProviders);

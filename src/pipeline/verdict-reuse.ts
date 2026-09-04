@@ -17,6 +17,7 @@ import {
 import { type AnalyzeOptions, writeReportJson } from "./analyze.js";
 import { MEASURED_STATE_WARNING } from "./build-report.js";
 import { detectComponentName } from "./modes/context.js";
+import { toPosix } from "../shared/index.js";
 
 function modeDisabledOrAbsent(mode: AnalyzeOptions["curveMode"]): boolean {
   return mode === undefined || mode === false;
@@ -126,7 +127,7 @@ export async function tryReuseStoredVerdict(args: {
     // files.length so a no-CSS project's fingerprint bytes stay unchanged.
     ...(args.cssReport && args.cssReport.files.length > 0 ? { css: args.cssReport.files } : {}),
     ...(args.wrapPath
-      ? { wrapper: path.relative(projectRoot, args.wrapPath).replace(/\\/g, "/") }
+      ? { wrapper: toPosix(path.relative(projectRoot, args.wrapPath)) }
       : {}),
     ...(resolveReactCompilerState(projectRoot, options.reactCompiler).active
       ? { reactCompiler: true }

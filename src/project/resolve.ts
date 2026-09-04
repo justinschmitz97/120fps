@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { findWorkspaceRoot, readProjectManifest, resolveGoverningTsconfig } from "./model.js";
 import type { WorkspaceRootAliasSource } from "./tsconfig-aliases.js";
+import { isFile, toPosix } from "../shared/index.js";
 
 export function RESOLVE_CONDITIONS_WARNING(
   conditions: string[],
@@ -45,22 +46,6 @@ export function resolveServerConditions(
 // Files worth reading for further imports. A .json or an asset is a leaf.
 export const SOURCE_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".mts", ".cjs", ".cts", ".vue"];
 const EXTENSIONS = [...SOURCE_EXTENSIONS, ".json"];
-
-export function isFile(candidate: string): boolean {
-  try {
-    return fs.statSync(candidate).isFile();
-  } catch {
-    return false;
-  }
-}
-
-export function isDirectory(candidate: string): boolean {
-  try {
-    return fs.statSync(candidate).isDirectory();
-  } catch {
-    return false;
-  }
-}
 
 // M69: a directory import answers through its manifest before its index file,
 // the way node and Vite resolve it.
@@ -210,7 +195,7 @@ export function resolveLocalImport(
   if (!aliased) return { kind: "unaliased" };
   return {
     kind: "alias-miss",
-    target: target.replace(/\\/g, "/"),
+    target: toPosix(target),
     viaShimAlias,
     viaWorkspaceRootAlias,
   };

@@ -1,12 +1,13 @@
 import fs from "node:fs";
 import path from "node:path";
 import { scanExports } from "../props/index.js";
+import { toPosix } from "../shared/index.js";
 
 const SKIP_DIRS = ["node_modules", "dist", "build", ".next", ".120fps-harness-"];
 const SKIP_SUFFIX = [".test.", ".spec.", ".stories.", ".fixture."];
 
 export function defaultJsonPathFor(componentPath: string): string {
-  const normalized = componentPath.replace(/\\/g, "/");
+  const normalized = toPosix(componentPath);
   const base = normalized.slice(normalized.lastIndexOf("/") + 1);
   const stem = base.replace(/\.[^.]+$/, "");
   return `120fps-report.${stem}.json`;
@@ -48,7 +49,7 @@ export function formatJsonSplitNotice(reportPaths: string[]): string {
 }
 
 function componentStem(componentPath: string): string {
-  const normalized = componentPath.replace(/\\/g, "/");
+  const normalized = toPosix(componentPath);
   const base = normalized.slice(normalized.lastIndexOf("/") + 1);
   return base.replace(/\.[^.]+$/, "");
 }
@@ -67,7 +68,7 @@ const ACCEPTED_COMPONENT_EXTENSIONS = [".tsx", ".jsx", ".vue", ".ts", ".js"];
 // and test/story/fixture suffixes via isComponentFile below; a plain path
 // the user named explicitly should only be rejected for its extension.
 export function hasAcceptedComponentExtension(filePath: string): boolean {
-  const posix = filePath.replace(/\\/g, "/");
+  const posix = toPosix(filePath);
   if (posix.endsWith(".d.ts")) return false;
   return /\.(tsx|jsx|vue|ts|js)$/.test(posix);
 }
@@ -78,7 +79,7 @@ export function hasAcceptedComponentExtension(filePath: string): boolean {
 // not. `.tsx`/`.jsx`/`.vue` short-circuit true with no content read: zero
 // behavior change for extensions already accepted before this milestone.
 export function hasComponentShape(filePath: string): boolean {
-  const posix = filePath.replace(/\\/g, "/");
+  const posix = toPosix(filePath);
   if (/\.(tsx|jsx|vue)$/.test(posix)) return true;
   try {
     const content = fs.readFileSync(filePath, "utf-8");
@@ -93,7 +94,7 @@ export function NO_COMPONENT_EXPORT_ERROR(filePath: string): string {
 }
 
 export function isComponentFile(filePath: string): boolean {
-  const posix = filePath.replace(/\\/g, "/");
+  const posix = toPosix(filePath);
   if (!hasAcceptedComponentExtension(posix)) return false;
   for (const segment of posix.split("/")) {
     for (const skip of SKIP_DIRS) {
@@ -108,7 +109,7 @@ export function isComponentFile(filePath: string): boolean {
 // `*` stops at a separator, `**` does not. Nothing else is special, so a path
 // with regex characters cannot change the meaning of a pattern.
 function globToRegExp(pattern: string): RegExp {
-  const posix = pattern.replace(/\\/g, "/");
+  const posix = toPosix(pattern);
   let out = "";
   for (let i = 0; i < posix.length; i++) {
     const ch = posix[i];
@@ -128,7 +129,7 @@ function globToRegExp(pattern: string): RegExp {
 }
 
 function globRoot(pattern: string): string {
-  const posix = pattern.replace(/\\/g, "/");
+  const posix = toPosix(pattern);
   const star = posix.indexOf("*");
   const cut = posix.lastIndexOf("/", star === -1 ? posix.length : star);
   return cut <= 0 ? "." : posix.slice(0, cut);
@@ -154,11 +155,11 @@ export function expandComponentPaths(
       // written against cwd, so the walked file is relativized to cwd first —
       // a no-op for the relative-path test double, since path.relative
       // resolves a relative `to` against cwd too.
-      const patternIsAbsolute = path.isAbsolute(arg.replace(/\\/g, "/"));
+      const patternIsAbsolute = path.isAbsolute(toPosix(arg));
       for (const file of reader.walk(globRoot(arg))) {
         const target = patternIsAbsolute
-          ? file.replace(/\\/g, "/")
-          : path.relative(process.cwd(), file).replace(/\\/g, "/");
+          ? toPosix(file)
+          : toPosix(path.relative(process.cwd(), file));
         if (re.test(target) && isComponentFile(target)) matches.push(file);
       }
     } else if (reader.exists(arg) && reader.isDirectory(arg)) {

@@ -82,6 +82,7 @@ import { resolveCurveMatch, runCurveMode } from "./modes/curve.js";
 import { runComboMode } from "./modes/combo.js";
 import { runIsolationMode } from "./modes/isolation.js";
 import { suppressHonoredPluginNote } from "./remedies.js";
+import { toPosix } from "../shared/index.js";
 
 export {
   runPreflight,
@@ -628,7 +629,7 @@ export async function analyze(
     if (wrapPath) {
       const overhead = await measureWrapperOverhead(page, cdp, samples);
       wrapper = {
-        path: path.relative(projectRoot, wrapPath).replace(/\\/g, "/"),
+        path: toPosix(path.relative(projectRoot, wrapPath)),
         autoDetected: wrapAutoDetected,
         overheadMs: overhead.overheadMs,
         domNodes: overhead.domNodes,
@@ -739,7 +740,7 @@ export async function analyze(
       } else if (useFixture) {
         runWarnings.push(
           MATRIX_SUPPRESSED_BY_FIXTURE_WARNING(
-            path.relative(projectRoot, path.resolve(fixturePath!)).replace(/\\/g, "/"),
+            toPosix(path.relative(projectRoot, path.resolve(fixturePath!))),
             inputIsFixture ? "fixture-input" : fixtureAutoDetected ? "sibling" : "explicit-flag",
           ),
         );

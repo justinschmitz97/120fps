@@ -15,7 +15,7 @@ const LINE_CAPS: Record<string, number> = {
   "analysis/react-profiler.ts": 903,
   "browser/discovery.ts": 823,
   "props/values.ts": 822,
-  "report/budget.ts": 808,
+  "report/budget.ts": 809,
 };
 
 const COMMENT_TOKENS: Record<string, number> = {

@@ -5,6 +5,7 @@ import { detectFramework } from "../analysis/index.js";
 import { findWorkspaceRoot, isVueFile } from "../project/index.js";
 import { type CssReport } from "../report/index.js";
 import { type AnalyzeOptions } from "./analyze.js";
+import { toPosix } from "../shared/index.js";
 
 // M102 / I7 (excalidraw-F2): Lane A's generated entries expose
 // `window.__120fps.stylesheetMatchStats()` — per injected global stylesheet,
@@ -191,7 +192,7 @@ export function resolveProjectPaths(resolvedPath: string): {
   const componentDir = path.dirname(resolvedPath);
   const projectRoot = findProjectRoot(componentDir) ?? componentDir;
   const relativeComponent =
-    "./" + path.relative(projectRoot, resolvedPath).replace(/\\/g, "/");
+    "./" + toPosix(path.relative(projectRoot, resolvedPath));
   return { projectRoot, relativeComponent };
 }
 

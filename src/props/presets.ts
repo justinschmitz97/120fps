@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import ts from "typescript";
 import type { PropSchema } from "./schema.js";
+import { toPosix } from "../shared/index.js";
 
 // A value the entry resolves from the imported preset module at render time.
 // Functions and JSX cannot cross the CDP boundary; their position can.
@@ -184,7 +185,7 @@ export function loadPropPresets(presetPath: string, projectRoot: string): PropPr
   }
 
   return {
-    path: path.relative(projectRoot, absolutePath).replace(/\\/g, "/"),
+    path: toPosix(path.relative(projectRoot, absolutePath)),
     absolutePath,
     entries,
   };

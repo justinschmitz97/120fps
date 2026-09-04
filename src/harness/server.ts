@@ -4,6 +4,7 @@ import { type ViteDevServer } from "vite";
 import { findWorkspaceRoot } from "../project/index.js";
 import { sweepStaleTmpDirs } from "./dirs.js";
 import { resolveJsxImportSource } from "./renderer.js";
+import { resolvePosix } from "../shared/index.js";
 
 // M38: the dev server's root is projectRoot and every harness dir lives under
 // it, so one server per config tuple serves a whole sweep. Vite serves files
@@ -171,7 +172,7 @@ export function fsAllowDirs(
   aliases: Array<{ replacement: string }>,
   extraDirs: string[] = [],
 ): string[] | undefined {
-  const forward = (p: string) => path.resolve(p).replace(/\\/g, "/");
+  const forward = (p: string) => resolvePosix(p);
   const targets = aliases.map(({ replacement }) => {
     const trimmed = replacement.replace(/[\\/]+$/, "");
     if (!trimmed) return forward(replacement);

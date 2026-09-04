@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import ts from "typescript";
+import { pathKey, toPosix } from "../shared/index.js";
 
 // M68. One directory used to answer every question about a project, which is
 // only right when the package and the install are the same directory. A
@@ -94,7 +95,7 @@ export function findCompilerConfig(startDir: string, stopDir?: string): string |
   while (true) {
     for (const name of COMPILER_CONFIGS) {
       const candidate = path.join(current, name);
-      if (fs.existsSync(candidate)) return candidate.replace(/\\/g, "/");
+      if (fs.existsSync(candidate)) return toPosix(candidate);
     }
     if (current === stop) return undefined;
     const parent = path.dirname(current);
@@ -340,27 +341,22 @@ function readCompilerConfig(
   }
 }
 
-function normalisePath(file: string): string {
-  const forward = path.resolve(file).replace(/\\/g, "/");
-  return process.platform === "win32" ? forward.toLowerCase() : forward;
-}
-
 // A referenced `path` is a config file or the directory holding one, exactly as
 // `tsc --build` reads it.
 function resolveReferencePath(configDir: string, reference: string): string | undefined {
   const resolved = path.resolve(configDir, reference);
   try {
     if (fs.statSync(resolved).isDirectory()) {
-      return path.join(resolved, "tsconfig.json").replace(/\\/g, "/");
+      return toPosix(path.join(resolved, "tsconfig.json"));
     }
-    return resolved.replace(/\\/g, "/");
+    return toPosix(resolved);
   } catch {
     // A target that is not on disk is still named: a ".json" target reaches
     // readCompilerConfig as itself, a directory target as the "tsconfig.json"
     // `tsc --build` looks for inside it, so the tried list names both.
     return resolved.endsWith(".json")
-      ? resolved.replace(/\\/g, "/")
-      : path.join(resolved, "tsconfig.json").replace(/\\/g, "/");
+      ? toPosix(resolved)
+      : toPosix(path.join(resolved, "tsconfig.json"));
   }
 }
 
@@ -377,10 +373,10 @@ function referencePaths(raw: Record<string, unknown>): string[] {
 // `include`/`files` semantics, computed by TypeScript itself: fileNames is the
 // glob result. A directory is covered when any of its files is.
 function coversTarget(fileNames: readonly string[], target: string, targetIsFile: boolean): boolean {
-  const wanted = normalisePath(target);
+  const wanted = pathKey(target);
   const prefix = wanted.endsWith("/") ? wanted : wanted + "/";
   return fileNames.some((file) => {
-    const candidate = normalisePath(file);
+    const candidate = pathKey(file);
     return targetIsFile ? candidate === wanted : candidate.startsWith(prefix);
   });
 }
@@ -391,7 +387,7 @@ function coversTarget(fileNames: readonly string[], target: string, targetIsFile
 // reads as a bare "tsconfig.json".
 function describeNearestConfig(nearestConfigPath: string, stopDir?: string): string {
   if (!stopDir) return path.basename(nearestConfigPath);
-  const relative = path.relative(stopDir, nearestConfigPath).replace(/\\/g, "/");
+  const relative = toPosix(path.relative(stopDir, nearestConfigPath));
   return relative.length > 0 && !relative.startsWith("..")
     ? relative
     : path.basename(nearestConfigPath);
@@ -454,8 +450,8 @@ export function resolveGoverningTsconfig(fileOrDir: string, stopDir?: string): G
   const references = referencePaths(nearest.raw);
   if (declaresOwnOptions || references.length === 0) return nearestAnswer;
 
-  const subject = path.relative(path.dirname(nearestConfigPath), target).replace(/\\/g, "/") || ".";
-  const seen = new Set<string>([normalisePath(nearestConfigPath)]);
+  const subject = toPosix(path.relative(path.dirname(nearestConfigPath), target)) || ".";
+  const seen = new Set<string>([pathKey(nearestConfigPath)]);
   const tried: string[] = [];
   let queued = references.map((reference) =>
     resolveReferencePath(path.dirname(nearestConfigPath), reference),
@@ -466,11 +462,9 @@ export function resolveGoverningTsconfig(fileOrDir: string, stopDir?: string): G
   while (queued.length > 0) {
     const next: Array<string | undefined> = [];
     for (const candidate of queued) {
-      if (!candidate || seen.has(normalisePath(candidate))) continue;
-      seen.add(normalisePath(candidate));
-      const relativeCandidate = path
-        .relative(path.dirname(nearestConfigPath), candidate)
-        .replace(/\\/g, "/");
+      if (!candidate || seen.has(pathKey(candidate))) continue;
+      seen.add(pathKey(candidate));
+      const relativeCandidate = toPosix(path.relative(path.dirname(nearestConfigPath), candidate));
       // Named before it is read: a missing or malformed reference target is a
       // config this walk tried, and A2's no-match sentence names every one.
       const readFailures: string[] = [];

@@ -4,6 +4,7 @@ import ts from "typescript";
 import { scanExports, selectMeasuredExport } from "../props/index.js";
 import { isVueFile, type VueSfcCompiler } from "../project/index.js";
 import { isOutsideRoot } from "./renderer.js";
+import { isFile, toPosix } from "../shared/index.js";
 
 // An SFC's component is its default export and has no exported name, so the
 // entry's import binding is derived from the filename. Vue's own convention is
@@ -38,11 +39,7 @@ export function detectWrapper(projectRoot: string, framework?: string): string |
       : WRAPPER_CANDIDATES;
   for (const name of candidates) {
     const candidate = path.join(projectRoot, name);
-    try {
-      if (fs.statSync(candidate).isFile()) return candidate;
-    } catch {
-      // missing or unreadable: try the next candidate
-    }
+    if (isFile(candidate)) return candidate;
   }
   return undefined;
 }
@@ -159,7 +156,7 @@ export function resolveWrapper(wrapPath: string, projectRoot: string): string {
   if (!fs.existsSync(absolute)) {
     throw new Error(`Wrapper module not found: ${wrapPath}`);
   }
-  const relative = path.relative(projectRoot, absolute).replace(/\\/g, "/");
+  const relative = toPosix(path.relative(projectRoot, absolute));
   // M73: the raw relative path decides, not its forward-slashed form: a wrapper
   // on another Windows drive has an absolute relative form and no "../" prefix.
   if (isOutsideRoot(absolute, projectRoot)) {

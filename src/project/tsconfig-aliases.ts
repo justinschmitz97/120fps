@@ -9,8 +9,8 @@ import {
   TSCONFIG_EXTENDS_BROKEN_WARNING,
   TSCONFIG_REFERENCES_MARKER,
 } from "./model.js";
-import { isDirectory, resolveTarget, SOURCE_EXTENSIONS } from "./resolve.js";
-import { escapeRegex } from "../shared/index.js";
+import { resolveTarget, SOURCE_EXTENSIONS } from "./resolve.js";
+import { escapeRegex, toPosix } from "../shared/index.js";
 
 // M69: an entry whose two halves disagree about the wildcard produced a regex
 // that could never match, so the alias was absent and nothing said so.
@@ -59,9 +59,7 @@ function buildWildcardCaptureAlias(
   base: string,
 ): { find: RegExp; replacement: string } {
   const [patternPrefix, patternSuffix] = pattern.split("*");
-  const resolvedAbs = path
-    .resolve(base, target.replace("*", WILDCARD_ALIAS_PLACEHOLDER))
-    .replace(/\\/g, "/");
+  const resolvedAbs = toPosix(path.resolve(base, target.replace("*", WILDCARD_ALIAS_PLACEHOLDER)));
   const starIndex = resolvedAbs.indexOf(WILDCARD_ALIAS_PLACEHOLDER);
   const absPrefix = resolvedAbs.slice(0, starIndex);
   const absSuffix = resolvedAbs.slice(starIndex + WILDCARD_ALIAS_PLACEHOLDER.length);
@@ -103,7 +101,7 @@ function baseUrlAliases(
       // A directory also answers for everything under it; a file answers for
       // its own name alone.
       find: new RegExp(`^${escapeRegex(name)}${isDirectory ? "(?=/|$)" : "$"}`),
-      replacement: path.resolve(baseUrl, entry.name).replace(/\\/g, "/"),
+      replacement: toPosix(path.resolve(baseUrl, entry.name)),
     });
   }
   return aliases;
@@ -177,7 +175,7 @@ function buildPathAliasEntry(
   }
   if (pattern.endsWith("/*") && target.endsWith("/*")) {
     const prefix = pattern.slice(0, -2);
-    const dir = path.resolve(base, target.slice(0, -2)).replace(/\\/g, "/");
+    const dir = toPosix(path.resolve(base, target.slice(0, -2)));
     return { find: new RegExp(`^${escapeRegex(prefix)}/`), replacement: dir + "/" };
   }
   const patternStars = countStars(pattern);
@@ -195,7 +193,7 @@ function buildPathAliasEntry(
     }
     return buildWildcardCaptureAlias(pattern, target, base);
   }
-  const resolved = path.resolve(base, target).replace(/\\/g, "/");
+  const resolved = toPosix(path.resolve(base, target));
   // M77: TypeScript's own module graph includes @types/* stubs and .d.ts-only
   // packages that resolve fine for the type checker but have no runtime
   // entry a bundler can load. No separate @types/ substring check is needed:

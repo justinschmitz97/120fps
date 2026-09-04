@@ -1,13 +1,11 @@
 import fs from "node:fs";
 import path from "node:path";
 import ts from "typescript";
-import { escapeRegex } from "../shared/index.js";
+import { escapeRegex, isDirectory, isFile, toPosix } from "../shared/index.js";
 import {
   findProjectRoot,
   findWorkspaceRoot,
   installedPackageDir,
-  isDirectory,
-  isFile,
   readProjectManifest,
 } from "../project/index.js";
 import { resolveManifestEntry } from "./bundler-failure.js";
@@ -170,7 +168,7 @@ export function aliasedPackageMissingEntry(
   if (!entry) return undefined;
   const resolved = path.resolve(pkgDir, entry);
   if (isFile(resolved)) return undefined;
-  return resolved.replace(/\\/g, "/");
+  return toPosix(resolved);
 }
 
 export function VITE_CONFIG_WORKSPACE_ROOT_CONDITIONS_WARNING(
@@ -521,7 +519,7 @@ function parseViteConfigFile(configFile: string): ParsedViteConfig | undefined {
               ignored.add("resolve.alias");
               continue;
             }
-            aliasEntries.push({ find, replacement: replacement.replace(/\\/g, "/") });
+            aliasEntries.push({ find, replacement: toPosix(replacement) });
           }
           continue;
         }
@@ -685,7 +683,7 @@ export function readViteConfigData(
     if (rootConfigFile && rootConfigFile !== configFile) {
       const rootParsed = parseViteConfigFile(rootConfigFile);
       if (rootParsed) {
-        const forwardRootConfigFile = rootConfigFile.replace(/\\/g, "/");
+        const forwardRootConfigFile = toPosix(rootConfigFile);
         const memberKeys = new Set((parsed?.aliasEntries ?? []).map((e) => e.find));
         for (const entry of rootParsed.aliasEntries) {
           if (memberKeys.has(entry.find)) continue;

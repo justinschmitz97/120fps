@@ -2,7 +2,6 @@ import fs from "node:fs";
 import path from "node:path";
 import {
   findWorkspaceRoot,
-  isFile,
   loadTsconfigAliases,
   readProjectManifest,
 } from "../project/index.js";
@@ -24,6 +23,7 @@ import {
   validateCssFiles,
 } from "./stylesheets.js";
 import { readViteConfigData } from "./vite-config.js";
+import { isFile, toPosix } from "../shared/index.js";
 
 const NEXT_ENTRY_STEMS = ["app/layout", "src/app/layout", "pages/_app", "src/pages/_app"];
 const ENTRY_EXTENSIONS = [".tsx", ".jsx", ".ts", ".js"];
@@ -285,7 +285,7 @@ function expandPassthroughStylesheet(
 }
 
 export function relativeToRoot(file: string, projectRoot: string): string {
-  return path.relative(projectRoot, file).replace(/\\/g, "/");
+  return toPosix(path.relative(projectRoot, file));
 }
 
 // M102 (shadcn-ui-F1/F2): a stylesheet that resolves and reads fine can still
@@ -443,7 +443,7 @@ export function discoverGlobalCss(
   const ranked = rankedStylesheets(projectRoot);
   let survivor: { file: string; size: number } | undefined;
   for (const candidate of ranked) {
-    const relative = path.relative(projectRoot, candidate.file).replace(/\\/g, "/");
+    const relative = toPosix(path.relative(projectRoot, candidate.file));
     if (rejected.has(candidate.file)) continue;
     if (stylesheetRuleCount(candidate.file) === 0) {
       warningsOut?.push(CSS_PLACEHOLDER_SKIPPED_WARNING(relative));
@@ -463,7 +463,7 @@ export function discoverGlobalCss(
   }
 
   if (survivor) {
-    const relative = path.relative(projectRoot, survivor.file).replace(/\\/g, "/");
+    const relative = toPosix(path.relative(projectRoot, survivor.file));
     const onlyCandidate = ranked.length === 1;
     const noEntryInPackage = !entry;
     warningsOut?.push(CSS_FALLBACK_WARNING(relative, { onlyCandidate, noEntryInPackage }));

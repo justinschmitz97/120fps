@@ -9,12 +9,12 @@ import {
   detectPnP,
   findWorkspaceRoot,
   hardRemedyFor,
-  isFile,
   isPackageDeclared,
   isVueFile,
   resolveGoverningTsconfig,
 } from "../project/index.js";
 import { literalPropertyName, stringLiteralValue } from "./vite-config.js";
+import { isFile, toPosix } from "../shared/index.js";
 
 // M57. The measured file's own extension decides how it is mounted: a `.vue`
 // SFC cannot be rendered by React and a `.tsx` cannot be rendered by Vue, so
@@ -177,7 +177,7 @@ export function assertRendererSupported(componentPath: string, projectRoot: stri
   const workspaceRoot = findWorkspaceRoot(projectRoot);
   if (isPackageDeclared("react-dom", projectRoot, workspaceRoot)) return;
   if (detectFramework(projectRoot) !== "vue") return;
-  const relative = path.relative(projectRoot, path.resolve(componentPath)).replace(/\\/g, "/");
+  const relative = toPosix(path.relative(projectRoot, path.resolve(componentPath)));
   throw new Error(VUE_PROJECT_REACT_FILE_ERROR(relative === "" ? componentPath : relative));
 }
 
@@ -207,9 +207,9 @@ export function componentImportPath(
   platform: path.PlatformPath = path,
 ): string {
   if (isOutsideRoot(componentPath, projectRoot, platform)) {
-    return "@fs/" + componentPath.replace(/\\/g, "/").replace(/^\//, "");
+    return "@fs/" + toPosix(componentPath).replace(/^\//, "");
   }
-  return platform.relative(projectRoot, componentPath).replace(/\\/g, "/");
+  return toPosix(platform.relative(projectRoot, componentPath));
 }
 
 // M78 (preact-app-F3, the webpack/Next.js shape). A bare-specifier bundler

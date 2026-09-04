@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
-import { findWorkspaceRoot, isFile } from "../project/index.js";
+import { findWorkspaceRoot } from "../project/index.js";
+import { isFile } from "../shared/index.js";
 
 export const ENV_DEFINE_PREFIXES = ["NEXT_PUBLIC_", "VITE_"];
 const ENV_FILES = [".env", ".env.local"];

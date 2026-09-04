@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { toPosix } from "../shared/index.js";
 
 // M73: the harness dir is created inside the project root by design (Vite's
 // root is the project root, so the generated entry's root-absolute specifiers,
@@ -107,7 +108,7 @@ export function removeHarnessDirWithRetries(
 // the run from would print.
 function harnessDirDisplayPath(dir: string, cwd: string): string {
   const rel = path.relative(cwd, dir);
-  return rel && !rel.startsWith("..") && !path.isAbsolute(rel) ? rel.replace(/\\/g, "/") : dir;
+  return rel && !rel.startsWith("..") && !path.isAbsolute(rel) ? toPosix(rel) : dir;
 }
 
 export function HARNESS_DIR_REMOVAL_FAILED_WARNING(dir: string, reason: string): string {
@@ -376,7 +377,7 @@ export function sweepStaleHarnessDirs(
                 ? "its owner stopped heartbeating"
                 : undefined;
         if (staleBecause === undefined) continue;
-        const shown = path.relative(projectRoot, full).replace(/\\/g, "/") || entry.name;
+        const shown = toPosix(path.relative(projectRoot, full)) || entry.name;
         const failure = removeHarnessDirWithRetries(full, remove, deadline);
         warningsOut?.push(
           failure === undefined

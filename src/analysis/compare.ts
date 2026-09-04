@@ -14,7 +14,7 @@ import {
   type BrowserPool,
   type MeasurementSession,
 } from "../browser/index.js";
-import { computeMedian } from "../shared/index.js";
+import { computeMedian, toPosix } from "../shared/index.js";
 
 export interface CompareSideMetrics {
   mountSamples: number[];
@@ -208,7 +208,7 @@ export async function compareAgainstRef(
     throw new Error(`--compare ${ref}: no such commit in this repository.`);
   }
 
-  const relativeComponent = path.relative(repoRoot, resolved).replace(/\\/g, "/");
+  const relativeComponent = toPosix(path.relative(repoRoot, resolved));
   const dir = worktreeDir();
   const warnings: string[] = [];
   // Working and reference sides can each fail to settle fonts independently;

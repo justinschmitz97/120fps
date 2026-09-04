@@ -3,7 +3,7 @@ import path from "node:path";
 import { builtinModules } from "node:module";
 import ts from "typescript";
 import { projectCompilerOptions } from "./compiler-options.js";
-import { setImportCycleReported } from "../shared/index.js";
+import { setImportCycleReported, toPosix } from "../shared/index.js";
 import { isVueFile, parseSfcScript, type VueSfcCompiler } from "./vue-sfc.js";
 import { detectPnP, findWorkspaceRoot, isPackageDeclared } from "./model.js";
 import {
@@ -438,7 +438,7 @@ export function detectAsyncComponent(filePath: string, componentName: string): b
 }
 
 function relative(projectRoot: string, file: string): string {
-  return path.relative(projectRoot, file).replace(/\\/g, "/");
+  return toPosix(path.relative(projectRoot, file));
 }
 
 export interface PreflightOptions {

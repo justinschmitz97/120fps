@@ -5,11 +5,11 @@ import { pathToFileURL } from "node:url";
 import ts from "typescript";
 import {
   findWorkspaceRoot,
-  isFile,
   isPackageAvailable,
   readProjectManifest,
   workspaceLevels,
 } from "../project/index.js";
+import { isFile, toPosix } from "../shared/index.js";
 
 // M82: styling generated live in the browser, so no static stylesheet was
 // ever going to exist. Checked only once the fallback layer's ranked walk has
@@ -80,9 +80,9 @@ export function detectRuntimeStyleEngines(
 export function cssImportSpecifier(cssFile: string, projectRoot: string): string {
   const relative = path.relative(projectRoot, cssFile);
   if (relative.startsWith("..") || path.isAbsolute(relative)) {
-    return "/@fs/" + cssFile.replace(/\\/g, "/");
+    return "/@fs/" + toPosix(cssFile);
   }
-  return "/" + relative.replace(/\\/g, "/");
+  return "/" + toPosix(relative);
 }
 
 export function cssImportBlock(specifiers?: string[]): string {

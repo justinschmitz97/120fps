@@ -4,10 +4,10 @@ import ts from "typescript";
 import {
   findWorkspaceRoot,
   installedPackageDir,
-  isFile,
   isPackageAvailable,
   readProjectManifest,
 } from "../project/index.js";
+import { isFile } from "../shared/index.js";
 
 // Probe order is significant: first hit wins, and detection returns at most one.
 // M71: the create-vite name and the Sass spellings are appended, so every path
@@ -39,11 +39,7 @@ export const GLOBAL_CSS_CANDIDATES = [
 export function detectGlobalCss(projectRoot: string): string | undefined {
   for (const candidate of GLOBAL_CSS_CANDIDATES) {
     const full = path.join(projectRoot, candidate);
-    try {
-      if (fs.statSync(full).isFile()) return full;
-    } catch {
-      // missing or unreadable: try the next candidate
-    }
+    if (isFile(full)) return full;
   }
   return undefined;
 }

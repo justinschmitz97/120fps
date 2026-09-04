@@ -5,10 +5,10 @@ import {
   type DeclaredEntry,
   exportConditionTargets,
   exportsRootTargets,
-  isFile,
   resolveTarget,
   SOURCE_EXTENSIONS,
 } from "../project/index.js";
+import { isFile, toPosix } from "../shared/index.js";
 
 // M76: true when an installed package's realpath sits inside workspaceRoot
 // with no node_modules segment between them — the standard signal that an
@@ -21,7 +21,7 @@ export function isWorkspaceSibling(pkgDir: string, workspaceRoot: string): boole
   } catch {
     return false;
   }
-  const relative = path.relative(path.resolve(workspaceRoot), real).replace(/\\/g, "/");
+  const relative = toPosix(path.relative(path.resolve(workspaceRoot), real));
   if (relative === "" || relative.startsWith("..") || path.isAbsolute(relative)) return false;
   return !relative.split("/").includes("node_modules");
 }
@@ -46,7 +46,7 @@ export function declaresRuntimeEntry(manifest: Record<string, unknown> | undefin
 // from sits at the same path with the build directory dropped and a source
 // extension applied (`dist/shared/index.js` -> `shared/index.ts`).
 function sourceCandidatesFor(real: string, declared: string): string[] {
-  const normalized = declared.replace(/\\/g, "/").replace(/^\.\//, "");
+  const normalized = toPosix(declared).replace(/^\.\//, "");
   const withoutExtension = (value: string) => value.replace(/\.[^./]+$/, "");
   const relatives = [normalized, withoutExtension(normalized)];
   const segments = normalized.split("/").filter((segment) => segment.length > 0 && segment !== ".");
@@ -68,7 +68,7 @@ function resolveSourceCandidate(real: string, declared: string): string | undefi
   for (const candidate of sourceCandidatesFor(real, declared)) {
     const resolved = resolveTarget(candidate);
     if (resolved !== undefined && !DECLARATION_FILE.test(resolved)) {
-      return resolved.replace(/\\/g, "/");
+      return toPosix(resolved);
     }
   }
   return undefined;
@@ -104,11 +104,11 @@ export function resolveWorkspaceSourceEntry(
   const primary = declaredEntries[0];
   const types = manifest && typeof manifest.types === "string" ? manifest.types : undefined;
   if (types !== undefined && DECLARATION_FILE.test(types)) {
-    const stem = path.resolve(real, types.replace(/\\/g, "/").replace(DECLARATION_FILE, ""));
+    const stem = path.resolve(real, toPosix(types).replace(DECLARATION_FILE, ""));
     for (const extension of SOURCE_EXTENSIONS) {
       if (!isFile(stem + extension)) continue;
       return {
-        entry: (stem + extension).replace(/\\/g, "/"),
+        entry: toPosix(stem + extension),
         field: "types",
         declared: types,
         declaredExists: declaredExists(types),
@@ -118,7 +118,7 @@ export function resolveWorkspaceSourceEntry(
   const fallback = resolveTarget(path.join(real, "src"));
   if (fallback === undefined || DECLARATION_FILE.test(fallback)) return undefined;
   return {
-    entry: fallback.replace(/\\/g, "/"),
+    entry: toPosix(fallback),
     field: primary?.field ?? "src",
     declared: primary?.declared ?? "src",
     declaredExists: primary === undefined ? true : declaredExists(primary.declared),

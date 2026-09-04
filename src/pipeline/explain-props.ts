@@ -57,6 +57,7 @@ import {
   suppressHonoredPluginNote,
 } from "./remedies.js";
 import { resolveCssFiles, resolveFramework, resolveProjectPaths, resolveWrapPath } from "./resolve.js";
+import { toPosix } from "../shared/index.js";
 
 // --- M65 C1: --explain-props ---------------------------------------------
 
@@ -347,7 +348,7 @@ export async function explainProps(
   // explanation of the zero count, so it replaces the generic text rather than
   // preceding it.
   const projectRel = (file: string): string =>
-    path.relative(projectRoot, file).replace(/\\/g, "/");
+    toPosix(path.relative(projectRoot, file));
   if (detail.unresolvedReExport) {
     warnings.push(
       UNRESOLVED_RE_EXPORT_WARNING(
@@ -394,7 +395,7 @@ export async function explainProps(
     : presetShapeDisclosure(resolvedPath, projectRoot);
   if (shapeDisclosure) warnings.push(shapeDisclosure);
   const dryRunFixtureFile = dryRunFixturePath
-    ? path.relative(projectRoot, dryRunFixturePath).replace(/\\/g, "/")
+    ? toPosix(path.relative(projectRoot, dryRunFixturePath))
     : undefined;
   const dryRunFixtureProvenance: FixtureProvenance = options.fixturePath
     ? "explicit-flag"

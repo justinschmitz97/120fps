@@ -54,6 +54,7 @@ import {
 import { type AnalyzeOptions } from "./analyze.js";
 import { type resolveCssFiles } from "./resolve.js";
 import { legacyBaselineWarning } from "./verdict-reuse.js";
+import { toPosix } from "../shared/index.js";
 
 // M40: the numbers are real, but they describe a transient scene. Warn, never
 // fail: the defect would be presenting the skeleton's cost as the whole story.
@@ -690,7 +691,7 @@ export function buildCssReport(
   projectRoot: string,
 ): CssReport {
   return {
-    files: resolvedCss.files.map((f) => path.relative(projectRoot, f).replace(/\\/g, "/")),
+    files: resolvedCss.files.map((f) => toPosix(path.relative(projectRoot, f))),
     autoDetected: resolvedCss.autoDetected,
     layer: resolvedCss.layer,
     details: resolvedCss.files.map((f) => {
@@ -701,7 +702,7 @@ export function buildCssReport(
         bytes = 0;
       }
       return {
-        file: path.relative(projectRoot, f).replace(/\\/g, "/"),
+        file: toPosix(path.relative(projectRoot, f)),
         bytes,
         rules: stylesheetRuleCount(f),
       };
@@ -715,7 +716,7 @@ export function buildCssReport(
       // report of a project with no declaration is byte-identical.
       if (declared === undefined || declared.length === 0) return {};
       const rel = (f: string): string =>
-        (path.isAbsolute(f) ? path.relative(projectRoot, f) : f).replace(/\\/g, "/");
+        toPosix(path.isAbsolute(f) ? path.relative(projectRoot, f) : f);
       return {
         declaredMissing: declared.map((d) => rel(d.path)),
         declaredMissingFields: declared.map((d) => ({
