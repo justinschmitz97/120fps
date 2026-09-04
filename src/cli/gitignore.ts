@@ -21,20 +21,6 @@ export function formatGitignoreTip(patterns: string[]): string {
   );
 }
 
-// Nearest ancestor of startDir containing a .git entry (directory or, for a
-// worktree, file); undefined outside any repo. Independent of
-// project-model.ts's findWorkspaceRoot, which walks looking for install
-// artifacts (lockfiles, workspaces field), not a git repo specifically.
-export function findGitRoot(startDir: string): string | undefined {
-  let current = path.resolve(startDir);
-  while (true) {
-    if (fs.existsSync(path.join(current, ".git"))) return current;
-    const parent = path.dirname(current);
-    if (parent === current) return undefined;
-    current = parent;
-  }
-}
-
 // Literal match or a single `*` wildcard (prefix/suffix around it) only: no
 // gitignore glob engine (no `**`, character classes, negation, or
 // directory-scoped rules). One wildcard is the level a user actually writes

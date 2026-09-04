@@ -38,7 +38,8 @@ import {
   registerTerminationHandlers,
 } from "./lifecycle.js";
 import { expandComponentPaths, nodePathReader, resolveReportPaths, formatJsonSplitNotice } from "./paths.js";
-import { findGitRoot, gitignoreTipPatterns, formatGitignoreTip } from "./gitignore.js";
+import { gitignoreTipPatterns, formatGitignoreTip } from "./gitignore.js";
+import { findGitRoot } from "../shared/index.js";
 import { printHelp } from "./help.js";
 
 // M101: the M88 watchdog bounds teardown *after* runOne returns; nothing

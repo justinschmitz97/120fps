@@ -9,6 +9,7 @@ import {
   recognizeVirtualNamespace,
   SOURCE_EXTENSIONS,
 } from "../project/index.js";
+import { findGitRoot } from "../shared/index.js";
 import { diagnoseMissingShimExport } from "./shims.js";
 import { resolveWorkspaceSourceEntry } from "./workspace-entries.js";
 
@@ -471,16 +472,6 @@ export function findLikelyGenerateCommand(
   return undefined;
 }
 
-function findGitRootUpward(startDir: string): string | undefined {
-  let current = path.resolve(startDir);
-  while (true) {
-    if (fs.existsSync(path.join(current, ".git"))) return current;
-    const parent = path.dirname(current);
-    if (parent === current) return undefined;
-    current = parent;
-  }
-}
-
 // Exact match, or a single "*" wildcard prefix/suffix -- the same rule
 // cli.ts's gitignoreCoversFile applies, extended to a full relative path
 // instead of a bare filename, and to a bare-filename pattern (no "/") also
@@ -535,7 +526,7 @@ function diagnoseGitignoredGeneratedFile(message: string, projectRoot: string): 
   // Every candidate already existing means this is not "resolves to nothing"
   // at all; some other cause produced the esbuild error.
   if (candidates.every((c) => fs.existsSync(c))) return undefined;
-  const gitRoot = findGitRootUpward(importerDir);
+  const gitRoot = findGitRoot(importerDir);
   if (!gitRoot) return undefined;
   let gitignoreContent: string;
   try {
