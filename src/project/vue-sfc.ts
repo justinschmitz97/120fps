@@ -4,8 +4,8 @@ import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 
 // The compiler is never a 120fps dependency: the project's own Vue version is
-// the one that must compile its own components (M27's React Compiler
-// precedent). Under pnpm only `vue/compiler-sfc` resolves from a project that
+// the one that must compile its own components (the same precedent as the
+// React Compiler integration). Under pnpm only `vue/compiler-sfc` resolves from a project that
 // declares `vue`: `@vue/compiler-sfc` is a transitive dependency and is not
 // linked at the top level. The bare package name is the npm/yarn fallback.
 export const VUE_SFC_SPECIFIERS = ["vue/compiler-sfc", "@vue/compiler-sfc"];
@@ -30,7 +30,7 @@ export interface SfcScript {
   content: string;
   // "ts" | "tsx" | "js" | whatever the author wrote; "js" when unstated.
   lang: string;
-  // M114 B6 / I8 (ark-F2): the setup block calls `inject(`. A provide/inject
+  // The setup block calls `inject(`. A provide/inject
   // hint may name that cause only from evidence the run read.
   usesInject: boolean;
 }
@@ -39,7 +39,7 @@ export interface SfcScript {
 // keeps `useInject(` and `ctx.inject(` out: only Vue's own injector counts.
 const INJECT_CALL = /(?<![\w$.])inject\s*[<(]/;
 
-// M114 (review B-minor): a commented-out `inject(` is not read evidence. The
+// A commented-out `inject(` is not read evidence. The
 // hint may name provide/inject only from a call the block actually makes.
 const COMMENT = /\/\*[\s\S]*?\*\/|\/\/.*/g;
 
@@ -60,9 +60,9 @@ export function resetVueCompilerCache(): void {
   compilerFailures.clear();
 }
 
-// M114 (baseline): why each specifier failed, per lookup directory. The bare
-// `catch {}` here hid a fixture that resolved no compiler at all for weeks: two
-// test files were red and the loader said nothing about the cause.
+// Why each specifier failed, per lookup directory. A bare
+// `catch {}` here would hide a fixture that resolves no compiler at all:
+// tests would go red with the loader saying nothing about the cause.
 const compilerFailures = new Map<string, string[]>();
 
 export function vueCompilerLoadFailures(fromDir: string): string[] {
@@ -115,7 +115,7 @@ export function VUE_COMPILER_MISSING(projectRoot: string): string {
 function strongerLang(setupLang: string | undefined, companionLang: string | undefined): string {
   const langs = [setupLang, companionLang].filter((lang): lang is string => typeof lang === "string");
   if (langs.includes("tsx")) return "tsx";
-  // Review B-11: `<script setup lang="jsx">` beside `<script lang="ts">` needs
+  // `<script setup lang="jsx">` beside `<script lang="ts">` needs
   // a `.tsx` virtual file. Handing that JSX to a `.ts` one stops it parsing.
   if (langs.includes("jsx") && langs.includes("ts")) return "tsx";
   if (langs.includes("ts")) return "ts";
@@ -126,15 +126,15 @@ function strongerLang(setupLang: string | undefined, companionLang: string | und
 // and plain-`<script>` SFCs mount fine (the plugin compiles them) but carry no
 // `defineProps` type argument, so they extract no props, the same outcome as an
 // untyped React component. Returning `undefined` for them is load-bearing —
-// `extractVueProps` (src/prop-gen.ts) reads it as "this is an Options-API
+// `extractVueProps` (props/vue.ts) reads it as "this is an Options-API
 // candidate" and `preflight.ts` reads it as "contributes no module".
 //
-// M98 (nuxt-ui-F1): when a companion `<script>` block sits beside the setup
+// When a companion `<script>` block sits beside the setup
 // block, its content is prepended. That is the only place an SFC can
-// `export interface` its props type, and 122 of nuxt-ui's 124 components do
-// exactly that, so without it `defineProps<BadgeProps>()` named a type nothing
-// in the program declared. Companion first matches Vue's own `compileScript`
-// order.
+// `export interface` its props type, and nuxt-ui's own components rely on
+// exactly that pattern, so without it `defineProps<BadgeProps>()` would name
+// a type nothing in the program declared. Companion first matches Vue's own
+// `compileScript` order.
 export function parseSfcScript(
   source: string,
   filename: string,
@@ -154,7 +154,7 @@ export function parseSfcScript(
   const content = companionContent.trim() ? `${companionContent}\n${block.content}` : block.content;
   return {
     content,
-    // M114 B6 / I8: read once, here, so a hint about provide/inject rests on
+    // Read once, here, so a hint about provide/inject rests on
     // the same text the props extraction read.
     usesInject: callsInject(content),
     lang: strongerLang(
@@ -164,17 +164,17 @@ export function parseSfcScript(
   };
 }
 
-// M80 scope 2: distinguishes "genuinely no props" from "props declared in a
+// Distinguishes "genuinely no props" from "props declared in a
 // form ADR 0002 excludes" (Options-API `props: {}`, `extends: BaseX`,
 // `mixins: [...]`) for a `.vue` file with no `<script setup>` to serve.
 // Shallow by design: inspects only the top-level default-exported object
 // literal's own property names, not a full evaluation of the Options API
 // object -- an indirect `const X = {...}; export default X;` is out of reach,
-// same tradeoff `scanExports`/`scanRelativeTypeImports` (src/prop-gen.ts)
+// same tradeoff `scanExports`/`scanRelativeTypeImports` (props/exports.ts, props/composition.ts)
 // already accept for a same-file, parse-only scan. Priority props > extends >
 // mixins when more than one key is present: a component's own runtime props
 // object is the most direct evidence, inheritance the fallback signal.
-// M98 (element-plus-F5): `defineComponent({ props: selectProps, setup(props, ...) })`
+// `defineComponent({ props: selectProps, setup(props, ...) })`
 // is Vue's Composition API reading a runtime props object, not the classic
 // Options API. `"setup-props"` names that shape so the warning can. An
 // inheritance form stays `"extends"`/`"mixins"` whatever the body uses:
@@ -241,7 +241,7 @@ function defaultExportObjectLiteral(
   return undefined;
 }
 
-// M87: a component whose template root carries none of these directives
+// A component whose template root carries none of these directives
 // always produces a real root element once mounted -- an unconditional root
 // reporting zero DOM in the harness's combo phase is the harness's own
 // miscount (see generateVueEntry), not the component legitimately rendering

@@ -14,11 +14,11 @@ export function RESOLVE_CONDITIONS_WARNING(
   return `resolve.conditions [${conditions.join(", ")}] came from ${source}.`;
 }
 
-// M109 (A5, react-spectrum-F2): react-aria publishes its subpaths only under
-// the `source` condition the consuming tsconfig declares, with no dist/ to fall
-// back to, and the dev server answered 500 for every one of them; nothing here
-// ever read customConditions. The vite config's own list stays first, so every
-// export a project already resolved resolves the same way.
+// react-aria publishes its subpaths only under
+// the `source` condition the consuming tsconfig declares, with no dist/ to
+// fall back to, and the dev server would answer 500 for every one of them;
+// nothing here ever read customConditions. The vite config's own list stays
+// first, so every export a project already resolved resolves the same way.
 export function resolveServerConditions(
   projectRoot: string,
   viteConditions: string[],
@@ -46,7 +46,7 @@ export function resolveServerConditions(
 export const SOURCE_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".mts", ".cjs", ".cts", ".vue"];
 const EXTENSIONS = [...SOURCE_EXTENSIONS, ".json"];
 
-// M69: a directory import answers through its manifest before its index file,
+// A directory import answers through its manifest before its index file,
 // the way node and Vite resolve it.
 export function resolveDirectoryEntry(dir: string): string | undefined {
   const manifest = readJsonFile(path.join(dir, "package.json"));
@@ -105,14 +105,14 @@ export function resolveTarget(target: string): string | undefined {
   return undefined;
 }
 
-// M62: the alias that resolved a bare specifier matters for shim-usage
+// The alias that resolved a bare specifier matters for shim-usage
 // reporting, not just where it points: a shim alias redirects a real
 // package specifier to a local file, and that specifier is still "imported"
 // even though this function treats the result as local. Returning
 // viaShimAlias lets the caller record it without this function knowing
 // anything about SHIM_MODULES.
-// M69: "no alias matched" and "an alias matched and its target is gone" are
-// different facts. Collapsing them into null pushed a stale alias into
+// "no alias matched" and "an alias matched and its target is gone" are
+// different facts. Collapsing them into null would push a stale alias into
 // optimizeDeps.include as if a package by that name existed.
 type LocalResolution =
   | {
@@ -129,7 +129,7 @@ type LocalResolution =
     }
   | { kind: "unaliased" };
 
-// M107 (directus-F1): a package written for NodeNext resolution imports its
+// A package written for NodeNext resolution imports its
 // own modules with the extension of the build output (`./parse-now.js`), and
 // only the TypeScript source is on disk. Without this the walk stops at the
 // first file of an aliased sibling and never sees the siblings that file
@@ -195,7 +195,7 @@ export function resolveLocalImport(
   };
 }
 
-// M107: the manifest fields that can name a runtime entry, in the order the
+// The manifest fields that can name a runtime entry, in the order the
 // source derivation tries them.
 export type DeclaredEntry = { field: string; declared: string };
 
@@ -229,7 +229,7 @@ export function exportsRootTargets(exportsField: unknown): string[] {
   return exportConditionTargets(record);
 }
 
-// M108 A1 (epic-stack-F1): Node's subpath-imports map, the way Vite reads it.
+// Node's subpath-imports map, the way Vite reads it.
 // The conditions are the browser-development set Vite resolves a dev request
 // with; `types` and `node` deliberately absent, `require` last-resort only.
 const SUBPATH_IMPORT_CONDITIONS = [
@@ -323,7 +323,7 @@ export function resolveSubpathImport(
   return resolveTarget(target);
 }
 
-// M108 review: an `imports` entry may point at a dependency ("#dep":
+// An `imports` entry may point at a dependency ("#dep":
 // "lodash-es") instead of a file of the package's own. That edge is an
 // ordinary external import and belongs in the pre-bundle list; dropped, Vite
 // discovers it on the first page load and forces the full reload the

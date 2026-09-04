@@ -12,14 +12,14 @@ import {
 import { resolveTarget, SOURCE_EXTENSIONS } from "./resolve.js";
 import { escapeRegex, toPosix } from "../shared/index.js";
 
-// M69: an entry whose two halves disagree about the wildcard produced a regex
-// that could never match, so the alias was absent and nothing said so.
-// M93: fires only on a genuine wildcard-count mismatch (mantine's and
+// An entry whose two halves disagree about the wildcard produces a regex
+// that can never match, so the alias would be absent with nothing saying
+// so. Fires only on a genuine wildcard-count mismatch (mantine's and
 // material-ui's own shapes -- one wildcard on each side, just not both
 // trailing -- build a working alias instead; see buildWildcardCaptureAlias).
-// The text is generated from the two counts, not a fixed claim: the old text
-// ("one side has a * and the other does not") was false whenever both sides
-// had exactly one, which was the shape actually blocking every mantine run.
+// The text is generated from the two counts, not a fixed claim: "one side
+// has a * and the other does not" would be false whenever both sides have
+// exactly one.
 function countStars(s: string): number {
   return (s.match(/\*/g) ?? []).length;
 }
@@ -37,7 +37,7 @@ export function ALIAS_SHAPE_WARNING(pattern: string, target: string): string {
   );
 }
 
-// M93: both pattern and target carry exactly one `*`, just not both as the
+// Both pattern and target carry exactly one `*`, just not both as the
 // whole trailing segment (mantine: pattern trailing, target mid-path;
 // material-ui: pattern trailing, target extension-suffixed). Splits each on
 // its `*` and builds a RegExp `find` with a capture group; Vite's alias
@@ -69,7 +69,7 @@ function buildWildcardCaptureAlias(
   };
 }
 
-// M69: the CRA shape. With baseUrl set and no paths, a bare specifier resolves
+// The CRA shape. With baseUrl set and no paths, a bare specifier resolves
 // against baseUrl, so every top-level entry there is an alias. A name the
 // project declares or has installed is left alone: node resolution owns it.
 function baseUrlAliases(
@@ -107,7 +107,7 @@ function baseUrlAliases(
   return aliases;
 }
 
-// M76. Tags a tsconfig-`paths` alias built from the workspace root's own
+// Tags a tsconfig-`paths` alias built from the workspace root's own
 // config rather than the member's: the same "attributable, not just working"
 // contract WORKSPACE_ROOT_ALIAS_WARNING discloses on first use.
 export interface WorkspaceRootAliasSource {
@@ -128,10 +128,10 @@ export function WORKSPACE_ROOT_ALIAS_WARNING(
   );
 }
 
-// M77: a non-wildcard `paths` target that TypeScript resolves but that has no
-// runtime entry (an @types/* stub, a .d.ts-only package) previously became an
-// inert-but-present alias that crashed the harness the moment something
-// imported it.
+// A non-wildcard `paths` target that TypeScript resolves but that has no
+// runtime entry (an @types/* stub, a .d.ts-only package) would become an
+// inert-but-present alias that crashes the harness the moment something
+// imports it.
 export function TYPES_ONLY_ALIAS_WARNING(pattern: string, target: string): string {
   return (
     `tsconfig path alias "${pattern}" -> "${target}" resolves to a location with no runtime entry ` +
@@ -154,7 +154,7 @@ function capturesEveryRootAbsoluteUrl(pattern: string): boolean {
 }
 
 // The per-entry logic shared by the member's own `paths` and, additively, the
-// workspace root's (M76). M77 adds the loadable-entry check to the exact-match
+// workspace root's. The loadable-entry check applies to the exact-match
 // branch only: a `@/*`-style prefix aliases a directory Vite resolves per
 // request, never as a single module load, so there is nothing to check there.
 function buildPathAliasEntry(
@@ -167,7 +167,7 @@ function buildPathAliasEntry(
   if (!targets.length) return undefined;
   // First target only: Vite aliases support a single replacement.
   const target = targets[0];
-  // M109 (A4): a key with no prefix and no suffix of its own fires on every
+  // A key with no prefix and no suffix of its own fires on every
   // root-absolute URL, which is Vite's client, /@fs/ and the harness entry too.
   if (capturesEveryRootAbsoluteUrl(pattern)) {
     warningsOut?.push(ROOT_ABSOLUTE_ALIAS_WARNING(pattern, target, configFile));
@@ -181,7 +181,7 @@ function buildPathAliasEntry(
   const patternStars = countStars(pattern);
   const targetStars = countStars(target);
   if (patternStars > 0 || targetStars > 0) {
-    // M93: exactly one wildcard on each side builds a working alias via a
+    // Exactly one wildcard on each side builds a working alias via a
     // capture-group replacement, regardless of where in the target string the
     // `*` sits (mantine: mid-path; material-ui: extension-suffixed). Anything
     // else -- a genuine count mismatch, or more than one wildcard on a side
@@ -194,7 +194,7 @@ function buildPathAliasEntry(
     return buildWildcardCaptureAlias(pattern, target, base);
   }
   const resolved = toPosix(path.resolve(base, target));
-  // M77: TypeScript's own module graph includes @types/* stubs and .d.ts-only
+  // TypeScript's own module graph includes @types/* stubs and .d.ts-only
   // packages that resolve fine for the type checker but have no runtime
   // entry a bundler can load. No separate @types/ substring check is needed:
   // such a package declares none of exports/module/main and ships only
@@ -210,21 +210,21 @@ interface ParsedTsconfigPaths {
   paths?: ts.MapLike<string[]>;
   baseUrl?: string;
   base: string;
-  // M95: a broken `extends` chain (nuxt-ui's `./.nuxt/tsconfig.json`, absent
+  // A broken `extends` chain (nuxt-ui's `./.nuxt/tsconfig.json`, absent
   // pre-build) is a diagnostic parseJsonConfigFileContent already produces,
-  // previously discarded here — only .options was ever read.
+  // kept here alongside .options rather than discarded.
   configErrors?: string[];
 }
 
-// M95 (nuxt-ui-F1/F2). M109 moved the builder to `src/project-model.ts`, where
-// the one tsconfig reader produces it; every existing importer keeps this name.
+// Produced by the one tsconfig reader in `model.ts`; re-exported here so
+// every existing importer keeps this name.
 export { TSCONFIG_EXTENDS_BROKEN_WARNING };
 
-// M109 (A4, react-spectrum-F2): react-spectrum's root declares
+// react-spectrum's root declares
 // `paths: { "/*": ["./*"] }`. Vite merges user aliases ahead of its own client
-// alias, so the alias built from that key rewrote `/@vite/client` and the
-// harness entry into the workspace root: two 404s and exit 2 before anything
-// rendered. A key with no prefix of its own aliases every root-absolute URL the
+// alias, so the alias built from that key would rewrite `/@vite/client` and
+// the harness entry into the workspace root: two 404s and exit 2 before
+// anything renders. A key with no prefix of its own aliases every root-absolute URL the
 // dev server owns, so it builds no alias at all.
 export function ROOT_ABSOLUTE_ALIAS_WARNING(
   pattern: string,
@@ -240,7 +240,7 @@ export function ROOT_ABSOLUTE_ALIAS_WARNING(
 
 // Reads and resolves one tsconfig/jsconfig's `paths`/`baseUrl`, independent of
 // which layer (member or workspace root) is asking. Returns undefined on a
-// read/parse failure, after warning to stderr exactly as before M76.
+// read/parse failure, after warning to stderr.
 function parseTsconfigPathsConfig(tsconfigPath: string): ParsedTsconfigPaths | undefined {
   const configDir = path.dirname(tsconfigPath);
   try {
@@ -252,7 +252,7 @@ function parseTsconfigPathsConfig(tsconfigPath: string): ParsedTsconfigPaths | u
       return undefined;
     }
     // parseJsonConfigFileContent resolves extends (string and array), JSONC,
-    // and trailing commas; baseUrl comes back absolute. M95: the full result
+    // and trailing commas; baseUrl comes back absolute. The full result
     // is kept (not just .options) so a broken extends target's diagnostic
     // survives instead of being discarded.
     const parsedResult = ts.parseJsonConfigFileContent(
@@ -268,12 +268,12 @@ function parseTsconfigPathsConfig(tsconfigPath: string): ParsedTsconfigPaths | u
     // tsconfig's own directory.
     const base =
       options.baseUrl ?? (options as { pathsBasePath?: string }).pathsBasePath ?? configDir;
-    // M95: scoped to the two diagnostic codes TypeScript actually uses for an
+    // Scoped to the two diagnostic codes TypeScript actually uses for an
     // unresolvable extends target (5083 "Cannot find a base configuration
     // file", 6053 "File not found" — the latter covers an extends chain that
     // resolves one file but not a further one it itself extends). Every
-    // other parseJsonConfigFileContent diagnostic is unrelated noise this
-    // milestone is not about — 18003 "No inputs were found" fires for the
+    // other parseJsonConfigFileContent diagnostic is unrelated noise —
+    // 18003 "No inputs were found" fires for the
     // overwhelming majority of this file's own test fixtures (a tmpdir tsconfig
     // with no matching source files is a completely normal, working config),
     // and surfacing it here would be a false positive on nearly every existing
@@ -296,7 +296,7 @@ function parseTsconfigPathsConfig(tsconfigPath: string): ParsedTsconfigPaths | u
   }
 }
 
-// M109 (A2): the references handover describes the run, not the caller, so it
+// The references handover describes the run, not the caller, so it
 // is disclosed once per process per config — `loadTsconfigAliases` runs several
 // times in one run and the sentence is the same every time.
 const disclosedGoverningConfigs = new Set<string>();
@@ -313,27 +313,26 @@ export function loadTsconfigAliases(
   warningsOut?: string[],
   forFile?: string,
 ): Array<{ find: RegExp; replacement: string; fromWorkspaceRoot?: WorkspaceRootAliasSource }> {
-  // M69: upward from the member, bounded by the root that governs the install.
-  // A member inheriting the workspace tsconfig used to get no aliases at all.
-  // M109 (I1): through the reader, so a references-only root hands over to the
-  // referenced config that covers the file being measured.
+  // Upward from the member, bounded by the root that governs the install.
+  // Without this, a member inheriting the workspace tsconfig would get no
+  // aliases at all. Through the reader, so a references-only root hands over
+  // to the referenced config that covers the file being measured.
   const workspaceRoot = findWorkspaceRoot(projectRoot);
   const governing = resolveGoverningTsconfig(forFile ?? projectRoot, workspaceRoot);
   const tsconfigPath = governing.configPath;
 
   let memberAliases: Array<{ find: RegExp; replacement: string }> = [];
   let memberPatterns = new Set<string>();
-  // Correction: an empty memberPatterns set means two different things — "the
+  // An empty memberPatterns set means two different things — "the
   // member declared no usable config at all" (still gets the fallback) and
   // "the member declared baseUrl and deliberately no paths" (must not:
-  // baseUrl-only workspace-root fallback is explicitly out of scope, "Does
-  // NOT include" in the M76 spec — no finding is shaped this way, and
-  // extending it without evidence would be guessing). Only the second case
-  // sets this flag.
+  // baseUrl-only workspace-root fallback is explicitly out of scope — no
+  // finding is shaped this way, and extending it without evidence would be
+  // guessing). Only the second case sets this flag.
   let memberDeclaredBaseUrlOnly = false;
 
-  // A malformed member config gives up entirely, same as before M76, rather
-  // than guessing whether a root layer should still apply. The reader keeps
+  // A malformed member config gives up entirely rather than guessing
+  // whether a root layer should still apply. The reader keeps
   // quiet about it so this message is printed once, by whoever asked.
   if (governing.nearestConfigPath && !tsconfigPath) {
     process.stderr.write(`Warning: ${governing.warnings[0]}\n`);
@@ -341,10 +340,10 @@ export function loadTsconfigAliases(
   }
 
   if (tsconfigPath) {
-    // M95: a broken extends chain (parseJsonConfigFileContent's own
-    // diagnostics, previously discarded) is disclosed once per config file —
+    // A broken extends chain (parseJsonConfigFileContent's own
+    // diagnostics, otherwise discarded) is disclosed once per config file —
     // the rest of this function still runs on whatever paths/baseUrl it
-    // could parse despite the broken part of the chain. M109: the references
+    // could parse despite the broken part of the chain. The references
     // handover travels the same channel, once per process per config.
     for (const warning of governing.warnings) {
       if (!warningsOut) break;
@@ -374,7 +373,7 @@ export function loadTsconfigAliases(
     }
   }
 
-  // M76: a second, additive layer. A single-directory probe of workspaceRoot
+  // A second, additive layer. A single-directory probe of workspaceRoot
   // itself, not a walk (findCompilerConfig(workspaceRoot, workspaceRoot) stops
   // after one iteration either way), and only for patterns the member's own
   // config does not declare.

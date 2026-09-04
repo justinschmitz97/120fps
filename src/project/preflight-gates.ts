@@ -14,31 +14,31 @@ export type PreflightKind =
   | "use-server"
   | "async-component"
   | "node-builtin"
-  // M48: an import whose compilation depends on a project Vite plugin the
+  // An import whose compilation depends on a project Vite plugin the
   // harness deliberately does not load.
   | "project-transform"
-  // M72: the project declares solid-js and neither react nor react-dom, so
+  // The project declares solid-js and neither react nor react-dom, so
   // the measured tree cannot be a React tree.
   | "unsupported-framework"
-  // M72: the workspace installs via Yarn Plug'n'Play, which node_modules-
+  // The workspace installs via Yarn Plug'n'Play, which node_modules-
   // based resolution (this harness's, and Vite's) cannot read.
   | "yarn-pnp"
-  // M78: no level from the member up through the workspace root has ever
+  // No level from the member up through the workspace root has ever
   // been installed. Checked after the PnP check (a legitimate PnP project
   // never has node_modules by design) so the two are not confused.
   | "not-installed"
-  // M106 A2 (excalidraw-F1): the import graph returns to the measured module.
+  // The import graph returns to the measured module.
   // Soft: the cycle is the application's own and usually mounts; it only
   // fails when the entry enters it at a point the application never does.
   | "import-cycle"
-  // M110 A5 end-game (directus-NEW1): an import whose file type Vite parses as
+  // An import whose file type Vite parses as
   // JavaScript unless a plugin claims it, and that no transform 120fps loads
   // claims. Hard: the dev server answers that request with a 500 and the run
   // dies inside Vite's import analysis, so refusing before the browser starts
   // is the only outcome that names a cause.
   | "unloadable-file-type";
 
-// The harness never loads the project's vite.config (M30): its plugins target
+// The harness never loads the project's vite.config: its plugins target
 // its own Vite major and its server options are not measurement-safe. That is
 // the right architecture and the wrong error experience: a run would otherwise
 // fail deep inside Vite without ever naming the transform that was missing.
@@ -82,14 +82,14 @@ export const TRANSFORM_RECOGNIZERS: TransformRecognizer[] = [
     test: (s) => /\.mdx$/.test(s),
     owner: "@mdx-js/rollup",
   },
-  // M75: Vite core serves `.wasm?init` and `.wasm?url`; the bare specifier is
+  // Vite core serves `.wasm?init` and `.wasm?url`; the bare specifier is
   // the one that needs a plugin, so only that shape is claimed here.
   {
     code: "wasm",
     test: (s) => /\.wasm$/.test(s),
     owner: "vite-plugin-wasm",
   },
-  // M110 (A5, directus): Vite parses an imported file as JavaScript unless a
+  // Vite parses an imported file as JavaScript unless a
   // plugin claims it. A YAML, TOML or Markdown import therefore ends the run on
   // a parse error that never names the plugin the project itself declares for
   // that extension.
@@ -128,7 +128,7 @@ export const TRANSFORM_RECOGNIZERS: TransformRecognizer[] = [
     test: (s) => /\.svelte$/.test(s),
     owner: "@sveltejs/vite-plugin-svelte",
   },
-  // M108 A6 (documenso-F1): a Babel macro is compiled away by a plugin before
+  // A Babel macro is compiled away by a plugin before
   // any bundler sees it. Nothing is on disk behind the specifier, so the
   // extension-based recognizers above never match it.
   {
@@ -136,7 +136,7 @@ export const TRANSFORM_RECOGNIZERS: TransformRecognizer[] = [
     test: (s) => isMacroSpecifier(s),
     owner: "a Babel macro compiler the project configures in its vite.config",
   },
-  // M108 A7 (hoppscotch-F2): a virtual namespace is generated at request time
+  // A virtual namespace is generated at request time
   // by a plugin. Same shape: no file, no extension, no build that produces one.
   {
     code: "virtual-module",
@@ -145,7 +145,7 @@ export const TRANSFORM_RECOGNIZERS: TransformRecognizer[] = [
   },
 ];
 
-// M108 A6/A7. The namespace, and the packages that can own it: a specifier in
+// The namespace, and the packages that can own it: a specifier in
 // the `unplugin-` namespace names its own producer, and the two other
 // namespaces are owned by the plugins seen producing them.
 const VIRTUAL_NAMESPACE_PRODUCERS: Array<{ prefix: string; packages: string[] }> = [
@@ -163,7 +163,7 @@ export function recognizeVirtualNamespace(
 ): { namespace: string; candidates: string[] } | undefined {
   const entry = VIRTUAL_NAMESPACE_PRODUCERS.find((e) => specifier.startsWith(e.prefix));
   if (!entry) return undefined;
-  // M108 review: `~icons/` and `virtual:` name nothing that can be on disk, but
+  // `~icons/` and `virtual:` name nothing that can be on disk, but
   // the bare `unplugin-` prefix also starts ordinary package names
   // (`unplugin-icons/runtime` is a real file inside an installed package). An
   // installed package answers for the specifier, so it is not a virtual module.
@@ -179,7 +179,7 @@ export function recognizeVirtualNamespace(
 // `styled-components/macro` and `@lingui/react/macro` are the two shapes in the
 // corpus; `babel-plugin-macros` itself is imported directly by a few.
 export function isMacroSpecifier(specifier: string): boolean {
-  // M108 review: a relative `./macro` is a source file of this project, not a
+  // A relative `./macro` is a source file of this project, not a
   // macro package. Flagging it prints an untrue transform note and ends the
   // preflight walk at that edge, hiding whatever that file itself imports.
   if (specifier.startsWith(".") || specifier.startsWith("/")) return false;
@@ -190,7 +190,7 @@ export function isMacroSpecifier(specifier: string): boolean {
   );
 }
 
-// M110 (A5): the loader packages that claim each extension, most common first.
+// The loader packages that claim each extension, most common first.
 // The project declaring one of them is the project naming its own plugin
 // (directus declares `@rollup/plugin-yaml` and its vite.config loads
 // `src/lang/translations/en-US.yaml` with it).
@@ -215,7 +215,7 @@ function macroCompilerCandidates(specifier: string): string[] {
   return candidates;
 }
 
-// M108 A6/A7 MUST NOT: name only a package this repository declares. With none
+// Names only a package this repository declares. With none
 // declared the recognizer's own generic wording stands.
 export function declaredTransformOwner(
   code: string,
@@ -239,9 +239,9 @@ export function recognizeTransform(
   return TRANSFORM_RECOGNIZERS.find((entry) => entry.test(specifier, containingFile));
 }
 
-// M78: directory existence only, mirroring isInstalledAt's own fs.existsSync
-// style (project-model.ts) — an empty-but-present node_modules is out of
-// scope (no field-test evidence for that shape). The single source of truth
+// Directory existence only, mirroring isInstalledAt's own fs.existsSync
+// style (project/model.ts) — an empty-but-present node_modules is out of
+// scope. The single source of truth
 // runPreflight and assertReactDomClient's taxonomy both consult, so a run
 // says the same thing whether the rejection lands before the harness builds
 // or as buildAndServe's own backstop.
@@ -271,14 +271,14 @@ const HARD_CAUSE: Record<HardKind, string> = {
   "unloadable-file-type": "imports a file type Vite parses as JavaScript unless a plugin claims it",
 };
 
-// M72: the server-boundary remedy ("extract the client part") only makes
+// The server-boundary remedy ("extract the client part") only makes
 // sense for the three original kinds; Solid and PnP need their own next step.
 const EXTRACT_REMEDY = [
   "Extract the client part below that boundary, or point 120fps at the client",
   "child component. Pass --no-preflight to attempt the run anyway.",
 ].join("\n");
 
-// M78: exported so assertReactDomClient's own taxonomy (src/harness.ts) can
+// Exported so assertReactDomClient's own taxonomy (harness/renderer.ts) can
 // reuse the yarn-pnp/not-installed/unsupported-framework remedies verbatim —
 // a run says the same thing whether it dies here or as buildAndServe's own
 // backstop.
@@ -299,7 +299,7 @@ export const HARD_REMEDY: Record<HardKind, string> = {
   "not-installed":
     "Run your package manager's install (npm install, yarn install, or pnpm install), then " +
     "measure again.",
-  // M110 A5 end-game: the run cannot be rescued by installing anything -- the
+  // The run cannot be rescued by installing anything -- the
   // plugin exists and 120fps still will not load it -- so the remedy is to
   // measure a graph that does not reach the import.
   "unloadable-file-type":
@@ -308,7 +308,7 @@ export const HARD_REMEDY: Record<HardKind, string> = {
     "of importing the file. Pass --no-preflight to attempt the run anyway.",
 };
 
-// M105 (solid-ui-F1): the escape hatch every hard remedy offers is useless
+// The escape hatch every hard remedy offers is useless
 // advice to a run that already took it — the same output prints
 // "--no-preflight bypassed 1 ... finding" two lines above. Process-level
 // state, set once from the parsed flag, for the same reason
@@ -328,9 +328,9 @@ export function hardRemedyFor(kind: HardKind): string {
   return preflightBypassed ? remedy.replace(BYPASS_ADVICE, "").trim() : remedy;
 }
 
-// M78/M79 (excalidraw-F3's compounding note): marks a thrown error as a
+// Marks a thrown error as a
 // preflight hard-rejection — nothing has been built yet, so the diagnosis is
-// already complete. analyze.ts's outer catch checks for this marker and skips
+// already complete. pipeline/analyze.ts's outer catch checks for this marker and skips
 // appending accumulated warnings/transform notes, which would otherwise stack
 // an unrelated "needs a CSS preprocessor" note on top of a PnP/Solid/
 // not-installed rejection that already names the real, sufficient fix.
@@ -344,14 +344,14 @@ export class PreflightHardRejectionError extends Error {
 // The first hit is the one to fix: everything below it is unreachable until
 // that edge moves.
 export function preflightFailureMessage(hits: PreflightHit[]): string {
-  // M110: the unloadable-file-type promotion appends to `hard` after the walk,
-  // and both call sites append composed-child hits after that, so position no
-  // longer encodes precedence. Every other refusal names an edge that fails
+  // The unloadable-file-type promotion appends to `hard` after the walk,
+  // and both call sites append composed-child hits after that, so position
+  // does not encode precedence. Every other refusal names an edge that fails
   // before Vite reaches the data file, so it stays the one reported.
   const hit = hits.find((candidate) => candidate.kind !== "unloadable-file-type") ?? hits[0];
   const where = hit.chain[hit.chain.length - 1];
   const kind = hit.kind as HardKind;
-  // M94: a Vite failure is re-presented as a 120fps error naming target,
+  // A Vite failure is re-presented as a 120fps error naming target,
   // importer and remedy. This one is refused before Vite ever sees the file, so
   // the importer, the import and the plugin the project declares for it are all
   // still in hand.
@@ -381,7 +381,7 @@ export function preflightFailureMessage(hits: PreflightHit[]): string {
   ].join("\n");
 }
 
-// M106 A2: the remedy is the one shape that reliably re-enters a cycle where
+// The remedy is the one shape that reliably re-enters a cycle where
 // the application does — a wrapper module that imports the package's own root
 // first, which the generated entry emits before the component import.
 export const IMPORT_CYCLE_WARNING = (hit: PreflightHit): string => {
@@ -409,18 +409,19 @@ export const SOFT_HIT_WARNING = (hit: PreflightHit): string =>
 
 export const NODE_BUILTIN_WARNING = SOFT_HIT_WARNING;
 
-// M79 (twenty-F3, half 2). The css-preprocessor recognizer above performs no
+// The css-preprocessor recognizer above performs no
 // availability check by design (recognizeTransform's return shape is
 // test-locked, see project-transforms.test.ts:98-99): it fires for every
 // .scss/.sass/.less/.styl(us) import whether or not sass/less/stylus is
 // actually installed. Vite's own CSS pipeline resolves the preprocessor
 // directly — it is never loaded as a Vite plugin object, so it is
-// deliberately absent from harness.ts's SUPPORTED_TRANSFORM_PLUGINS — which
-// means the downstream consumer (analyze.ts) is the only place that can tell
-// "installed" apart from "declared but not installed" apart from "neither".
-// Mirrors harness.ts's own private PREPROCESSOR_PACKAGES table (CSS-discovery
-// region, owned elsewhere); duplicated here rather than importing across that
-// boundary, since it is four stable entries.
+// deliberately absent from transforms.ts's SUPPORTED_TRANSFORM_PLUGINS —
+// which means the downstream consumer (pipeline/analyze.ts) is the only
+// place that can tell "installed" apart from "declared but not installed"
+// apart from "neither". Mirrors harness/stylesheets.ts's own private
+// PREPROCESSOR_PACKAGES table (CSS-discovery region, owned elsewhere);
+// duplicated here rather than importing across that boundary, since it is
+// four stable entries.
 export const CSS_PREPROCESSOR_PACKAGES: Record<string, string[]> = {
   ".scss": ["sass", "sass-embedded"],
   ".sass": ["sass", "sass-embedded"],
@@ -448,10 +449,10 @@ export function classifyPreprocessorAvailability(
   return "neither";
 }
 
-// M110 (I3): one filter for both modes. The real run and `--explain-props` read
-// the same `preflight.transforms` list, and drifting filters were why a dry run
-// stayed silent about the 13 preprocessor imports the real run named a minute
-// later from the same files on disk.
+// One filter for both modes. The real run and `--explain-props` read
+// the same `preflight.transforms` list; drifting filters would let a dry
+// run stay silent about preprocessor imports the real run then names from
+// the same files on disk.
 //
 // Dropped here: a transform the run actually applies (the project's plugin is
 // installed and loadable), and a preprocessor Vite resolves on its own because
@@ -507,7 +508,7 @@ export const transformFailureNote = (hits: PreflightHit[]): string =>
     "The harness deliberately does not load your vite.config, so those plugins are absent.",
   ].join("\n");
 
-// M105 (pnp-app-F1): one template used to call every hard kind a
+// Without this, one template would call every hard kind a
 // "server-boundary finding", including the two this file's own HARD_CAUSE
 // table describes in completely different terms. Each kind is named as
 // itself; the three that really are one boundary keep sharing that name.

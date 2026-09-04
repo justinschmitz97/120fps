@@ -15,8 +15,8 @@ import {
 } from "./preflight-gates.js";
 
 // The marker package a server module imports to make the boundary explicit.
-// M72: "next/server-only" was never a real module (Next.js re-exports the
-// real "server-only" package unchanged); removed as a dead entry.
+// "next/server-only" was never a real module: Next.js re-exports the real
+// "server-only" package unchanged.
 const SERVER_ONLY_PACKAGES = new Set(["server-only"]);
 
 const NODE_BUILTINS = new Set(builtinModules);
@@ -27,12 +27,12 @@ export interface PreflightHit {
   chain: string[];
   // The offending module specifier, for import-edge hits.
   specifier?: string;
-  // M106 A2: every chain that returned to an entry module, first one first.
+  // Every chain that returned to an entry module, first one first.
   cycleChains?: string[][];
-  // M48: recognizer code and the plugin family that owns the transform.
+  // Recognizer code and the plugin family that owns the transform.
   transformCode?: string;
   transformOwner?: string;
-  // M110: true when `transformOwner` is a package this project declares, false
+  // True when `transformOwner` is a package this project declares, false
   // when it is the recognizer's generic wording. The refusal message may only
   // claim "this project compiles that with X" in the first case.
   transformOwnerDeclared?: boolean;
@@ -41,22 +41,22 @@ export interface PreflightHit {
 export interface PreflightResult {
   hard: PreflightHit[];
   soft: PreflightHit[];
-  // M48: imports the harness cannot compile because it does not load the
+  // Imports the harness cannot compile because it does not load the
   // project's Vite plugins. Reported, never fatal: some of these still build.
   transforms: PreflightHit[];
-  // M65: libraries and local modules whose hooks throw outside their provider.
+  // Libraries and local modules whose hooks throw outside their provider.
   // Evidence for a render error, never a finding on its own.
   providers: ProviderHit[];
 }
 
-// M65. A hook from one of these throws when its provider is missing, which is
+// A hook from one of these throws when its provider is missing, which is
 // the single most common reason a component that compiles renders nothing.
 export const PROVIDER_LIBRARIES: Record<string, string> = {
   "next-intl": "useTranslations",
   "react-i18next": "useTranslation",
   "react-redux": "useSelector",
   "@tanstack/react-query": "useQuery",
-  // M72: routing and meta-framework libraries whose hooks throw outside
+  // Routing and meta-framework libraries whose hooks throw outside
   // their router/route context, the same failure shape as the four above.
   "react-router": "useNavigate",
   "react-router-dom": "useNavigate",
@@ -66,14 +66,14 @@ export const PROVIDER_LIBRARIES: Record<string, string> = {
   "@tanstack/react-start": "useRouter",
 };
 
-// M92 gap 2 (dub tooltip.tsx, verified against real source): headless-UI
+// Headless-UI
 // kits ship many separate packages, each with its own `.Provider` component
 // rather than one shared hook (`@radix-ui/react-tooltip`,
 // `@radix-ui/react-dialog`, ...) -- PROVIDER_LIBRARIES's one-exact-name,
 // one-known-hook shape does not fit. Matched by scope prefix instead, with
 // no invented hook name (the label is the bare package name, same as any
-// PROVIDER_LIBRARIES entry would be without a configured hook). Only the
-// one scope actually evidenced in the corpus (dub's own
+// PROVIDER_LIBRARIES entry would be without a configured hook). Only a
+// scope actually observed in real usage (dub's own
 // `@radix-ui/react-tooltip` import) is listed here -- no other headless kit
 // is added without the same kind of evidence.
 const PROVIDER_LIBRARY_SCOPES = ["@radix-ui/"];
@@ -115,7 +115,7 @@ export function detectLocalProviderModule(
   return hook ? { hook } : {};
 }
 
-// M92 gap 2 (dub tooltip.tsx, verified against real source): the extremely
+// The extremely
 // common "thin wrapper around a headless-kit primitive" shape --
 // `export function TooltipProvider({ children }) { return
 // <TooltipPrimitive.Provider ...>{children}</TooltipPrimitive.Provider>; }`
@@ -172,8 +172,7 @@ export function detectWrapperProviderModule(
   return name ? { hook: name } : {};
 }
 
-// M92 gap 3 (dub tooltip.tsx -> rich-text-provider.tsx, verified against
-// real source): tooltip.tsx:12 imports PROSE_STYLES from ./rich-text-area,
+// tooltip.tsx:12 imports PROSE_STYLES from ./rich-text-area,
 // an unrelated named export -- rich-text-provider.tsx is genuinely
 // reachable from the component's own graph, two hops out, so
 // providersFromEntry correctly keeps it (it must NOT be filtered away: the
@@ -206,7 +205,7 @@ export function providerCandidateLabels(hits: ProviderHit[]): string[] {
   return labels;
 }
 
-// M92 (dub button.tsx): runPreflight's entries[] can name more than one seed
+// runPreflight's entries[] can name more than one seed
 // (the measured component plus an auto-detected or explicit --wrap file),
 // and its one combined walk does not otherwise distinguish which seed
 // discovered which provider hit. hints.ts's PROVIDER_HINT_LINE wording
@@ -227,12 +226,12 @@ function scriptKind(fileName: string): ts.ScriptKind {
   return ts.ScriptKind.TS;
 }
 
-// M116 A1: the same file is walked by the dry run, by every composed child and
+// The same file is walked by the dry run, by every composed child and
 // by every component of a sweep, and its parse cannot differ between them while
 // it sits unchanged on disk. Keyed by mtime and size, so an edit invalidates the
 // entry without a flag; a file with no stat (missing, unreadable) is never
 // cached, so a file that appears later is read then. Process-local by design:
-// nothing here survives the run (M116 MUST NOT).
+// nothing here survives the run.
 const parsedFiles = new Map<string, { signature: string; sourceFile: ts.SourceFile | undefined }>();
 
 function fileSignature(fileName: string): string | undefined {
@@ -244,7 +243,7 @@ function fileSignature(fileName: string): string | undefined {
   }
 }
 
-// M57: a `.vue` file is not TypeScript. Its `<script setup>` block is, and that
+// A `.vue` file is not TypeScript. Its `<script setup>` block is, and that
 // is where its imports live: without this the walk would stop at the measured
 // file and every guarantee below it would silently become a no-op.
 function parse(fileName: string, vueCompiler?: VueSfcCompiler): ts.SourceFile | undefined {
@@ -287,12 +286,12 @@ function resolveVueImport(
   specifier: string,
   compilerOptions?: ts.CompilerOptions,
 ): string | undefined {
-  // M110 (A5, directus): an SFC imported through a tsconfig path alias
+  // An SFC imported through a tsconfig path alias
   // (`@/components/v-menu.vue`) is the same graph edge as a relative one.
   // TypeScript's own resolver does not answer for a `.vue` file, so the alias
   // is substituted here and the result probed on disk, the way the relative
-  // form already is. Without it the walk stopped at the first aliased SFC and
-  // never reached the `.yaml` import four files deeper.
+  // form already is. Without it the walk would stop at the first aliased SFC
+  // and never reach the `.yaml` import four files deeper.
   const candidates =
     specifier.startsWith(".") || specifier.startsWith("/")
       ? [path.resolve(path.dirname(fromFile), specifier)]
@@ -447,8 +446,8 @@ export interface PreflightOptions {
   // is active: a server-only import reaches the browser through either.
   entries: string[];
   componentName?: string;
-  // M57: the project's own SFC parser. Absent, `.vue` files are unreadable and
-  // the walk stops at them, exactly as it did before this milestone.
+  // The project's own SFC parser. Absent, `.vue` files are unreadable and
+  // the walk stops at them.
   vueCompiler?: VueSfcCompiler;
 }
 
@@ -477,7 +476,7 @@ export function runPreflight(options: PreflightOptions): PreflightResult {
     queue.push(abs);
   }
 
-  // M72: environment-level rejections, checked once per run and independent
+  // Environment-level rejections, checked once per run and independent
   // of the import graph — a PnP install or a Solid-only project cannot be
   // fixed by walking further, so both fail before that walk starts.
   const entryChain = [relative(projectRoot, path.resolve(entries[0]))];
@@ -487,10 +486,10 @@ export function runPreflight(options: PreflightOptions): PreflightResult {
   } else if (detectMissingInstall(projectRoot, workspaceRoot)) {
     hard.push({ kind: "not-installed", chain: entryChain });
   }
-  // M72 (fixed post-review): isPackageAvailable also counts a transitive,
-  // hoisted node_modules/<pkg> nobody declared (M68's declared-vs-available
+  // isPackageAvailable also counts a transitive,
+  // hoisted node_modules/<pkg> nobody declared (the declared-vs-available
   // split). A hard rejection is consequential enough to key on declaration
-  // only (M27's rule) — both to avoid rejecting a Vue/vanilla project over a
+  // only — both to avoid rejecting a Vue/vanilla project over a
   // dependency's own transitive solid-js, and because the failure message
   // below asserts "declares solid-js", which must be literally true. The
   // react-also-declared exception uses the same, symmetric standard: a
@@ -521,9 +520,9 @@ export function runPreflight(options: PreflightOptions): PreflightResult {
       hard.push({ kind: "use-server", chain: chainTo(file) });
     }
 
-    // M65: only *imported* modules are provider candidates: a component that
+    // Only *imported* modules are provider candidates: a component that
     // creates its own context supplies it too.
-    // M92 gap 2: detectLocalProviderModule's own createContext+throw shape
+    // detectLocalProviderModule's own createContext+throw shape
     // tried first; detectWrapperProviderModule (a thin re-export/wrapper
     // around another package's Provider, no local context of its own) is
     // the fallback, not a second independent hit -- one file is one
@@ -562,7 +561,7 @@ export function runPreflight(options: PreflightOptions): PreflightResult {
 
       const recognizer = recognizeTransform(edge.specifier, file);
       if (recognizer) {
-        // M108 A6/A7: a macro or virtual-namespace hit names the plugin this
+        // A macro or virtual-namespace hit names the plugin this
         // repository declares for it; the recognizer's generic owner stands
         // when no candidate is declared.
         const declaredOwner = declaredTransformOwner(
@@ -606,17 +605,17 @@ export function runPreflight(options: PreflightOptions): PreflightResult {
       // the bundler's problem, and walking them would cost more than the check.
       if (resolved.isExternalLibraryImport || /[\\/]node_modules[\\/]/.test(target)) continue;
       if (target.endsWith(".d.ts")) continue;
-      // M106 A2: a back-edge to the measured module itself. The generated
+      // A back-edge to the measured module itself. The generated
       // entry is the graph's only root, so it enters this cycle from the
       // component's own file — backwards, compared with the application,
       // whose own root enters it somewhere else — and a module-scope read of
       // a binding that has not initialized yet throws.
       if (entryFiles.has(target) && target !== file && !cycleReported.has(file)) {
         cycleReported.add(file);
-        // Review A3: page-errors claims a cycle for a TDZ page error only
+        // page-errors claims a cycle for a TDZ page error only
         // when one was really found here.
         setImportCycleReported(true);
-        // Review A7: one hit per run. A barrel with several importers of the
+        // One hit per run. A barrel with several importers of the
         // measured module produced one ~500-character warning each, all
         // describing the same situation; the chains are what differ, so they
         // accumulate into the single hit's own list.
@@ -631,7 +630,7 @@ export function runPreflight(options: PreflightOptions): PreflightResult {
     }
   }
 
-  // Review A7: one `import-cycle` hit for the run, carrying every chain that
+  // One `import-cycle` hit for the run, carrying every chain that
   // returned to an entry. `chain` stays the first one so every existing
   // consumer (chainText, the report) reads the same shape as any other hit.
   if (cycleChains.length > 0) {
@@ -649,7 +648,7 @@ export function runPreflight(options: PreflightOptions): PreflightResult {
     hard.push({ kind: "async-component", chain: [relative(projectRoot, path.resolve(entries[0]))] });
   }
 
-  // M110 A5 end-game (directus-NEW1): last, so every refusal that already
+  // Last, so every refusal that already
   // existed stays the one the message names. A data-file import is only a
   // refusal when nothing 120fps loads claims that extension; the hit stays in
   // `transforms` as well, so --no-preflight still prints the plugin the
