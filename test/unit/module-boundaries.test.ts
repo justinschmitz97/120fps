@@ -27,13 +27,7 @@ const ALLOWED_EDGES: Record<string, readonly string[]> = {
 // The edges that exist after M118 wave 1. Wave 2 and wave 3 empty this list;
 // the assertions below fail both when a new violation appears and when an
 // entry here stops violating, so the list cannot lag behind the tree.
-const ALLOWLIST: readonly { file: string; target: string; reason: string }[] = [
-  {
-    file: "project/preflight.ts",
-    target: "browser",
-    reason: "page-error helpers; wave 2 moves the shared ones out of browser/",
-  },
-];
+const ALLOWLIST: readonly { file: string; target: string; reason: string }[] = [];
 
 interface Edge {
   file: string;

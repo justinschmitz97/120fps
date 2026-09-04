@@ -1,4 +1,5 @@
 import type { Page } from "playwright";
+import { wasImportCycleReported } from "../shared/index.js";
 
 const BUFFER_CAP = 20;
 
@@ -298,22 +299,12 @@ export function renderDrain(drain: PageErrorDrain): string[] {
 // this says why the failure the user is looking at is that cycle.
 const TDZ_PAGE_ERROR = /Cannot access '([^']+)' before initialization/;
 
-// Review A3: the note used to assert a cycle it never checked, and to
-// cross-reference a warning that need not have been printed (a --no-preflight
-// run prints none at all). `runPreflight` sets this when it actually reports an
-// import-cycle hit, and clears it when it walks a graph without one.
-let importCycleReported = false;
-
-export function setImportCycleReported(reported: boolean): void {
-  importCycleReported = reported;
-}
-
 export function tdzCycleNote(capture: PageErrorCapture): string | undefined {
   for (const error of capture.errors) {
     const match = TDZ_PAGE_ERROR.exec(error);
     if (!match) continue;
     const lead = `${match[1]} was read before its module finished initializing`;
-    return importCycleReported
+    return wasImportCycleReported()
       ? `${lead}: an import cycle the generated entry enters from the component's own file, ` +
           "rather than where the application enters it (see the import-cycle warning above). Add " +
           "a 120fps.setup.tsx, or pass --wrap, that imports this package's own root module first."

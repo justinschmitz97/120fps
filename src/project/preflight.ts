@@ -3,7 +3,7 @@ import path from "node:path";
 import { builtinModules } from "node:module";
 import ts from "typescript";
 import { projectCompilerOptions } from "./compiler-options.js";
-import { setImportCycleReported } from "../browser/index.js";
+import { setImportCycleReported } from "../shared/index.js";
 import { isVueFile, parseSfcScript, type VueSfcCompiler } from "./vue-sfc.js";
 import { detectPnP, findWorkspaceRoot, isPackageDeclared } from "./model.js";
 import {

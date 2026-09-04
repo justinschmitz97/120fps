@@ -8,9 +8,9 @@ import { runPreflight, IMPORT_CYCLE_WARNING, NODE_BUILTIN_WARNING } from "../../
 import {
   attachPageErrorCapture,
   enrichTimeoutError,
-  setImportCycleReported,
   tdzCycleNote,
 } from "../../src/browser/index.js";
+import { setImportCycleReported } from "../../src/shared/index.js";
 
 const roots: string[] = [];
 afterAll(() => {
