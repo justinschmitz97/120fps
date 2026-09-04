@@ -112,7 +112,15 @@ describe("a measurement pass that omitted combos", () => {
   });
 
   it("every delta-pass consumer of a result array asks for the measured entries", () => {
-    const analyzeSrc = fs.readFileSync(path.resolve("src", "pipeline/analyze.ts"), "utf-8");
+    // Every pass lives in the pipeline stage; the guard is about all of them.
+    const read = (dir: string): string =>
+      fs
+        .readdirSync(dir, { withFileTypes: true })
+        .map((e) =>
+          e.isDirectory() ? read(path.join(dir, e.name)) : fs.readFileSync(path.join(dir, e.name), "utf-8"),
+        )
+        .join("\n");
+    const analyzeSrc = read(path.resolve("src", "pipeline"));
     for (const raw of [
       "for (const m of mounts)",
       "for (const r of rerenders)",

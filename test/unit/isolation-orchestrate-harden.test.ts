@@ -107,7 +107,7 @@ describe("H6: --no-isolate overrides --isolate", () => {
 // H7: analyze rejects a zero-phase isolation option
 describe("H7: analyze with an empty phase list", () => {
   it("guards before any measurement runs", () => {
-    const analyzeSrc = src("pipeline/analyze.ts");
+    const analyzeSrc = src("pipeline/modes/isolation.ts");
     expect(analyzeSrc).toContain("--isolate requires at least one phase");
     const guardIdx = analyzeSrc.indexOf("--isolate requires at least one phase");
     const runIdx = analyzeSrc.indexOf("await runIsolationPhases(");
@@ -157,7 +157,7 @@ describe("H11: churn degradation at the limit", () => {
 // H12: the mount budget the verdict actually uses
 describe("H12: mount budget selection", () => {
   it("takes the flat threshold when --flat-thresholds or an explicit threshold is set", () => {
-    const analyzeSrc = src("pipeline/analyze.ts");
+    const analyzeSrc = src("pipeline/modes/isolation.ts");
     expect(analyzeSrc).toContain(
       "options.flatThresholds || options.thresholds?.mountMs !== undefined",
     );
@@ -175,11 +175,8 @@ describe("H13: no portal signal in isolation mode", () => {
   });
 
   it("passes hasPortal: false from the isolation branch", () => {
-    const analyzeSrc = src("pipeline/analyze.ts");
-    const branch = analyzeSrc.slice(
-      analyzeSrc.indexOf("async function runIsolationMode("),
-      analyzeSrc.indexOf("function writeReportJson("),
-    );
+    const isolationSrc = src("pipeline/modes/isolation.ts");
+    const branch = isolationSrc.slice(isolationSrc.indexOf("async function runIsolationMode("));
     expect(branch).toContain("hasPortal: false");
     expect(branch).toContain("Discovery does not run in isolation mode");
   });
@@ -188,10 +185,8 @@ describe("H13: no portal signal in isolation mode", () => {
 // H14: isolation mode never runs the standard pipeline stages
 describe("H14: isolation branch scope", () => {
   const analyzeSrc = src("pipeline/analyze.ts");
-  const branch = analyzeSrc.slice(
-    analyzeSrc.indexOf("async function runIsolationMode("),
-    analyzeSrc.indexOf("function writeReportJson("),
-  );
+  const isolationSrc = src("pipeline/modes/isolation.ts");
+  const branch = isolationSrc.slice(isolationSrc.indexOf("async function runIsolationMode("));
 
   it("does not explore, profile React, or compute deltas", () => {
     expect(branch).not.toContain("explore(");
@@ -364,11 +359,8 @@ describe("M83 #3: computeIsolationVerdict respects the noise classification", ()
 
 describe("M83 #3: runIsolationMode computes report.pass after report.noise exists", () => {
   it("calls attachHarnessContext before assigning report.pass from computeIsolationVerdict", () => {
-    const analyzeSrc = src("pipeline/analyze.ts");
-    const branch = analyzeSrc.slice(
-      analyzeSrc.indexOf("async function runIsolationMode("),
-      analyzeSrc.indexOf("function writeReportJson("),
-    );
+    const isolationSrc = src("pipeline/modes/isolation.ts");
+    const branch = isolationSrc.slice(isolationSrc.indexOf("async function runIsolationMode("));
     const attachIdx = branch.indexOf("ctx.attachHarnessContext(report)");
     const passIdx = branch.indexOf("report.pass = computeIsolationVerdict(");
     expect(attachIdx).toBeGreaterThan(-1);
@@ -377,20 +369,14 @@ describe("M83 #3: runIsolationMode computes report.pass after report.noise exist
   });
 
   it("passes report.noise?.level into computeIsolationVerdict", () => {
-    const analyzeSrc = src("pipeline/analyze.ts");
-    const branch = analyzeSrc.slice(
-      analyzeSrc.indexOf("async function runIsolationMode("),
-      analyzeSrc.indexOf("function writeReportJson("),
-    );
+    const isolationSrc = src("pipeline/modes/isolation.ts");
+    const branch = isolationSrc.slice(isolationSrc.indexOf("async function runIsolationMode("));
     expect(branch).toMatch(/report\.pass = computeIsolationVerdict\([^)]*report\.noise\?\.level/s);
   });
 
   it("names the noise-qualified suppression in report.warnings when it applies", () => {
-    const analyzeSrc = src("pipeline/analyze.ts");
-    const branch = analyzeSrc.slice(
-      analyzeSrc.indexOf("async function runIsolationMode("),
-      analyzeSrc.indexOf("function writeReportJson("),
-    );
+    const isolationSrc = src("pipeline/modes/isolation.ts");
+    const branch = isolationSrc.slice(isolationSrc.indexOf("async function runIsolationMode("));
     expect(branch).toContain("LEAK_VERDICT_NOISE_QUALIFIED_WARNING");
   });
 });

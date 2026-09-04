@@ -76,8 +76,16 @@ function listSources(dir: string, prefix = "", out: string[] = []): string[] {
   return out;
 }
 
-function directoryOf(rel: string): string {
+function parentOf(rel: string): string {
   const slash = rel.lastIndexOf("/");
+  return slash === -1 ? "" : rel.slice(0, slash);
+}
+
+// The stage a path belongs to. A stage may group files in a nested directory
+// (src/pipeline/modes); those files are part of their stage, so an import
+// between them is not a cross-directory edge and needs no index.js hop.
+function directoryOf(rel: string): string {
+  const slash = rel.indexOf("/");
   return slash === -1 ? "" : rel.slice(0, slash);
 }
 
@@ -87,6 +95,7 @@ const STATEMENT = /^[ \t]*(?:import|export)\b([\s\S]*?)from\s*"([^"]+)";?[ \t]*$
 function readEdges(): Edge[] {
   const edges: Edge[] = [];
   for (const rel of listSources(SRC)) {
+    const fromParent = parentOf(rel);
     const fromDir = directoryOf(rel);
     const lines = fs.readFileSync(path.join(SRC, rel), "utf8").split("\n");
     let buffer: string | null = null;
@@ -110,7 +119,7 @@ function readEdges(): Edge[] {
       // `import ... from "./${stem}"` inside a generated-entry template is
       // output text, not an edge of this package.
       if (!spec.startsWith(".") || spec.includes("${")) continue;
-      const target = path.posix.normalize(path.posix.join(fromDir, spec));
+      const target = path.posix.normalize(path.posix.join(fromParent, spec));
       edges.push({
         file: rel,
         line: startLine,

@@ -218,7 +218,8 @@ describe("the run path's own refusal", () => {
   const analyzeSrc = fs.readFileSync(path.resolve("src/pipeline/analyze.ts"), "utf-8");
 
   it("throws the shared preflight message for every hard hit", () => {
-    expect(analyzeSrc).toContain(
+    const phasesSrc = fs.readFileSync(path.resolve("src/pipeline/phases.ts"), "utf-8");
+    expect(phasesSrc).toContain(
       "throw new PreflightHardRejectionError(preflightFailureMessage(preflight.hard));",
     );
   });
@@ -228,9 +229,10 @@ describe("the run path's own refusal", () => {
   // run walked without one, stopped at the first `.vue` import and predicted a
   // clean run. Both call sites now load the same compiler.
   it("walks a Vue graph with the same compiler the dry run loads", () => {
-    const explain = analyzeSrc.slice(
-      analyzeSrc.indexOf("export async function explainProps"),
-      analyzeSrc.indexOf("preflight.hard.push(...composedChildPreflightHits(resolvedPath"),
+    const explainSrc = fs.readFileSync(path.resolve("src/pipeline/explain-props.ts"), "utf-8");
+    const explain = explainSrc.slice(
+      explainSrc.indexOf("export async function explainProps"),
+      explainSrc.indexOf("preflight.hard.push(...composedChildPreflightHits(resolvedPath"),
     );
     expect(explain).toContain(
       'const vueCompiler = framework === "vue" ? await loadVueCompiler(projectRoot) : undefined;',
