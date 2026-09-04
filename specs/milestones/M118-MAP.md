@@ -101,6 +101,20 @@ Remaining violations, each in the boundary test's allowlist with its owner:
 Type cycles to break by moving types: `props/composition.ts ↔ props/extract.ts` (`props/schema.ts`,
 2a props worker).
 
+Wave 2a report lane found two more value edges from `report` into `analysis` that a type import
+cannot fix: `report/stats.ts` calls `computeScalingCurve` and `attributeCost` from
+`analysis/metrics.ts`, and `report/ci.ts` reads `CHURN_DEGRADATION_LIMIT` and
+`LEAK_BYTES_PER_CYCLE` from `analysis/isolation.ts`. Decision: `analysis/metrics.ts` is trace math
+that only `pipeline` and `report` consume, so wave 3 moves it to `report/metrics.ts` (`git mv`,
+imports repointed); the two isolation thresholds are report policy like `TIER_BUDGETS`, so wave 3
+moves them to `report/types.ts` and `analysis/isolation.ts` imports them from `../report/index.js`.
+The two allowlist entries stay until then.
+
+Worktree artifact, verified 2026-09-04: `test/unit/prop-cap-ranking.test.ts › variant and size
+survive the 32-prop cap` fails only inside a worktree with the `node_modules` junction (expected 2
+to be 32; passes in the main checkout at the same commit). A wave 2 full-suite run in a worktree
+therefore shows two failures: that one and the baseline `vue-setup-inject-evidence` one.
+
 ## Wave 2 splits
 
 Every split: new sibling files created with the moved declarations verbatim (comments included;
