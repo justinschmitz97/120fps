@@ -19,7 +19,6 @@ const LINE_CAPS: Record<string, number> = {
   "harness/build.ts": 7215,
   "pipeline/analyze.ts": 4980,
   "project/preflight.ts": 1196,
-  "props/extract.ts": 3311,
   "props/values.ts": 822,
   "report/budget.ts": 808,
   "report/report.ts": 2203,
@@ -44,10 +43,17 @@ const COMMENT_TOKENS: Record<string, number> = {
   "project/model.ts": 13,
   "project/preflight.ts": 57,
   "project/vue-sfc.ts": 9,
+  "props/candidates.ts": 19,
+  "props/classify.ts": 32,
   "props/composition.ts": 9,
-  "props/extract.ts": 131,
+  "props/exports.ts": 12,
+  "props/extract.ts": 15,
   "props/presets.ts": 9,
+  "props/program.ts": 20,
+  "props/schema.ts": 6,
+  "props/synthesize.ts": 13,
   "props/values.ts": 22,
+  "props/vue.ts": 14,
   "report/budget.ts": 25,
   "report/ci.ts": 6,
   "report/hints.ts": 29,
@@ -55,7 +61,7 @@ const COMMENT_TOKENS: Record<string, number> = {
 };
 
 const DUPLICATE_FUNCTIONS: Record<string, string[]> = {
-  componentStem: ["cli/main.ts", "props/extract.ts"],
+  componentStem: ["cli/main.ts", "props/candidates.ts"],
   serializeProps: ["analysis/explorer.ts", "analysis/react-profiler.ts", "browser/measure.ts"],
 };
 
