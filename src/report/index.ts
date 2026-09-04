@@ -37,4 +37,5 @@ export {
 } from "./budget.js";
 export * from "./ci.js";
 export * from "./hints.js";
+export * from "./stats.js";
 export * from "./report.js";

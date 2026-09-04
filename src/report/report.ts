@@ -4,7 +4,6 @@ import type { InteractionType } from "../browser/index.js";
 import {
   computeScalingCurve,
   attributeCost,
-  isSuperlinearGrowth,
   type ScalingCurve,
   type CostAttribution,
 } from "../analysis/index.js";
@@ -20,6 +19,7 @@ import {
   type NoiseReport,
 } from "../browser/index.js";
 import { hintsForReport, formatHints, MEASUREMENT_BASIS_LINE, type HintId } from "./hints.js";
+import { isSuperlinearGrowth } from "./stats.js";
 // M104: the same value identity the matrix generator itself uses, so "how many
 // distinct values did this axis take" is counted the way the cells were built.
 import { comboKey } from "../props/index.js";

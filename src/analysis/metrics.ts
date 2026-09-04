@@ -507,12 +507,6 @@ export function growthExponent(points: { n: number; metric: number }[]): number 
   return Number.isFinite(exponent) ? exponent : 0;
 }
 
-// One predicate, so the growth column, the JSON and the hint can never disagree
-// about what "superlinear" means.
-export function isSuperlinearGrowth(curve: ScalingCurve | null | undefined): boolean {
-  return curve?.growthClass === "quadratic" || curve?.growthClass === "exponential";
-}
-
 export function computeScalingCurve(
   points: { n: number; metric: number }[],
 ): ScalingCurve {

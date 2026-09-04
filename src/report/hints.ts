@@ -1,5 +1,5 @@
-import { isSuperlinearGrowth } from "../analysis/index.js";
 import type { Report } from "./report.js";
+import { isSuperlinearGrowth } from "./stats.js";
 
 // A hint is documentation attached to a diagnosis, not advice generated from
 // inspecting the user's code. Each is derived from the finding class alone, and

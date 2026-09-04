@@ -51,17 +51,16 @@ const ALLOWLIST: readonly { file: string; target: string; reason: string }[] = [
   {
     file: "report/ci.ts",
     target: "analysis",
-    reason: "isolation report shape; wave 2 moves the shared types into report/types.ts",
-  },
-  {
-    file: "report/hints.ts",
-    target: "analysis",
-    reason: "metrics values; wave 3 moves them into report/ or shared/",
+    reason:
+      "CHURN_DEGRADATION_LIMIT, LEAK_BYTES_PER_CYCLE (isolation/isolation.ts constants read " +
+      "so the failure body never drifts from computeIsolationVerdict's own thresholds); not moved",
   },
   {
     file: "report/report.ts",
     target: "analysis",
-    reason: "metrics and react-profiler values; wave 3 moves them into report/ or shared/",
+    reason:
+      "computeScalingCurve, attributeCost (real analysis/metrics.ts values buildCurveReport " +
+      "calls); not moved. isSuperlinearGrowth moved to report/stats.ts",
   },
 ];
 

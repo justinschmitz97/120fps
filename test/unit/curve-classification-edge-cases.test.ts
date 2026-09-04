@@ -2,13 +2,13 @@ import { describe, it, expect } from "vitest";
 import {
   computeScalingCurve,
   growthExponent,
-  isSuperlinearGrowth,
   type ScalingCurve,
 } from "../../src/analysis/index.js";
 import {
   evaluateCurve,
   formatCurveViolation,
   formatTable,
+  isSuperlinearGrowth,
   type CalibrationResult,
   type Report,
   type ScalingCurveReport,

@@ -2,7 +2,6 @@ import { describe, it, expect } from "vitest";
 import {
   computeScalingCurve,
   growthExponent,
-  isSuperlinearGrowth,
   SUPERLINEAR_MIN_EXPONENT,
   SUPERLINEAR_RESIDUAL_SHARE,
 } from "../../src/analysis/index.js";
@@ -12,6 +11,7 @@ import {
   evaluateCurve,
   formatCurveViolation,
   formatTable,
+  isSuperlinearGrowth,
   CURVE_NOT_ACTIVATED_WARNING,
   type CalibrationResult,
   type Report,
