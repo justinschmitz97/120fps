@@ -10,9 +10,7 @@ import path from "node:path";
 const SRC = path.resolve("src");
 const LINE_LIMIT = 800;
 
-const LINE_CAPS: Record<string, number> = {
-  "report/budget.ts": 811,
-};
+const LINE_CAPS: Record<string, number> = {};
 
 const COMMENT_TOKENS: Record<string, number> = {
 };

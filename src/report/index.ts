@@ -1,3 +1,4 @@
+export * from "./baseline-io.js";
 export * from "./budget.js";
 export * from "./ci.js";
 export * from "./hints.js";
