@@ -16,9 +16,9 @@ const ALLOWED_EDGES: Record<string, readonly string[]> = {
   cli: ["shared", "project", "props", "report", "harness", "browser", "analysis", "pipeline"],
   pipeline: ["shared", "project", "props", "report", "harness", "browser", "analysis"],
   analysis: ["shared", "project", "props", "report", "harness", "browser"],
-  browser: ["shared", "project", "props", "report", "harness"],
-  harness: ["shared", "project", "props", "report"],
-  report: ["shared"],
+  browser: ["shared", "project", "props", "harness"],
+  harness: ["shared", "project", "props"],
+  report: ["shared", "project", "props", "browser"],
   props: ["shared", "project"],
   project: ["shared"],
   shared: [],
@@ -49,11 +49,6 @@ const ALLOWLIST: readonly { file: string; target: string; reason: string }[] = [
     reason: "prop extraction reached from the preflight probe; wave 2 splits props/extract.ts",
   },
   {
-    file: "report/budget.ts",
-    target: "project",
-    reason: "findWorkspaceRoot; wave 3 moves the path walk into shared/",
-  },
-  {
     file: "report/ci.ts",
     target: "analysis",
     reason: "isolation report shape; wave 2 moves the shared types into report/types.ts",
@@ -67,21 +62,6 @@ const ALLOWLIST: readonly { file: string; target: string; reason: string }[] = [
     file: "report/report.ts",
     target: "analysis",
     reason: "metrics and react-profiler values; wave 3 moves them into report/ or shared/",
-  },
-  {
-    file: "report/report.ts",
-    target: "browser",
-    reason: "measure, noise and discovery values; wave 3 moves them into report/ or shared/",
-  },
-  {
-    file: "report/report.ts",
-    target: "project",
-    reason: "vue-sfc values; wave 3 moves them into report/ or shared/",
-  },
-  {
-    file: "report/report.ts",
-    target: "props",
-    reason: "prop-combination values; wave 3 moves them into report/ or shared/",
   },
 ];
 

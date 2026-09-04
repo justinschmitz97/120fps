@@ -70,3 +70,13 @@ carries history that git and the archived milestone specs already hold.
   placing transform detection and module resolution under `src/project/`.
 - M118 executes this decision as a behaviour-preserving refactor: the unit suite before and after
   reports the same passing set.
+
+## Amendment 2026-09-04 (wave 1 evidence)
+
+The move commit (663d6db) exposed the real edges. `report` reads measurement values from
+`browser` (`computeMedian`, `computeP95`, noise constants, page-error drains), the combo key from
+`props`, and `isVueFile` and `findWorkspaceRoot` from `project`; nothing in `browser`, `harness`,
+`props` or `project` reads `report`. Item 2 therefore places `report` between `analysis` and
+`browser`: cli → pipeline → analysis → report → browser → harness → {props, project} → shared.
+`report` may not read `analysis`; the one value it did read, `isSuperlinearGrowth`, moves into
+`report/stats.ts` and `analysis` imports it from there. Everything else in this decision stands.

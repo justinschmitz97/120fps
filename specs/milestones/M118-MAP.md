@@ -71,29 +71,35 @@ Import rules after wave 1:
 
 ## Allowed value-import edges
 
-Rows import from columns. `report` is a leaf beside `harness`. Type-only imports are exempt except
-into `cli` and `pipeline`.
+Rows import from columns (amended after wave 1, see ADR 0005 amendment: `report` sits between
+`analysis` and `browser`). Type-only imports are exempt except into `cli` and `pipeline`.
 
-| from \ to | shared | project | props | report | harness | browser | analysis | pipeline |
+| from \ to | shared | project | props | harness | browser | report | analysis | pipeline |
 |---|---|---|---|---|---|---|---|---|
 | cli | yes | yes | yes | yes | yes | yes | yes | yes |
 | pipeline | yes | yes | yes | yes | yes | yes | yes | |
 | analysis | yes | yes | yes | yes | yes | yes | | |
-| browser | yes | yes | yes | yes | yes | | | |
-| harness | yes | yes | yes | yes | | | | |
-| report | yes | | | | | | | |
+| report | yes | yes | yes | | yes | | | |
+| browser | yes | yes | yes | yes | | | | |
+| harness | yes | yes | yes | | | | | |
 | props | yes | yes | | | | | | |
 | project | yes | | | | | | | |
 | shared | | | | | | | | |
 
-Wave 1 reports the observed edge list after the move. Edges outside this table are recorded in the
-boundary test's allowlist and removed by wave 2 or wave 3; the allowlist is empty on approval.
-Known offenders at d63537e: `preflight → harness` (`detectProjectTransforms`,
-`SUPPORTED_TRANSFORM_PLUGINS`; fixed by wave 2 moving transforms under `project/`),
-`report → metrics/measure/noise/discovery/react-profiler` (check whether each is type-only; move
-any value into `shared/` or `report/`), `hints → metrics` (same check), `harness → react-profiler`
-(fixed by wave 3 `project/framework.ts`), `props → composition ↔ extract` type cycle (fixed by
-`props/schema.ts`).
+Observed after wave 1 (663d6db): 123 cross-directory value imports, all through stage indexes.
+Remaining violations, each in the boundary test's allowlist with its owner:
+
+| Edge | Cause | Fix | Wave, owner |
+|---|---|---|---|
+| `harness/build.ts → analysis` | `detectFramework` | new `project/framework.ts` takes `detectFramework` and its warnings out of `analysis/react-profiler.ts` | 2a harness worker |
+| `project/preflight.ts → harness` | `detectProjectTransforms`, `SUPPORTED_TRANSFORM_PLUGINS` | `project/transforms.ts` | 2a harness worker |
+| `project/preflight.ts → props` | `projectCompilerOptions` | `project/compiler-options.ts` takes `projectCompilerOptions`, `createCompilerOptions`, `warnTsconfigOnce` out of `props/program.ts` | 3 |
+| `project/preflight.ts → browser` | `setImportCycleReported` (run-level dedup flag in `page-errors.ts`) | move the flag and its reader to `shared/run-state.ts` or `project/` | 3 |
+| `report/report.ts → analysis`, `report/hints.ts → analysis` | `isSuperlinearGrowth` value; the rest are types | `isSuperlinearGrowth` moves to `report/stats.ts`; `analysis/metrics.ts` imports it from `../report/index.js`; type imports become `import type` | 2a report worker |
+| `report/ci.ts → analysis` | isolation report types | `import type` | 2a report worker |
+
+Type cycles to break by moving types: `props/composition.ts ↔ props/extract.ts` (`props/schema.ts`,
+2a props worker).
 
 ## Wave 2 splits
 
@@ -101,6 +107,28 @@ Every split: new sibling files created with the moved declarations verbatim (com
 wave 3 cleans comments), the residual file keeps the orchestrator, the stage `index.ts` re-exports
 the new files, imports between the new siblings are direct. Constants move with the function that
 emits them. No file above 800 lines. Each split is one commit per directory.
+
+Wave 2 runs in git worktrees, one branch per worker (`m118-<stage>` from
+`feat/m118-module-layout`), with a `node_modules` junction to `C:\Projekte\120fps\node_modules`.
+A worker edits only its directories, the tests that exercise them, and its own entries in the two
+ratchet/boundary allowlists. The coordinator merges the branches.
+
+Additions from wave 1 evidence:
+
+- Harness worker also owns `project/`: it splits `project/preflight.ts` (1,196 lines) into the
+  import-graph walk and the environment gates/remedies, creates `project/framework.ts` from
+  `analysis/react-profiler.ts` (`detectFramework`, `FRAMEWORK_*`, `PREACT_*`, `SOLID_*` warnings
+  and their helpers; `analysis/react-profiler.ts` imports them from `../project/index.js`), and
+  creates `project/transforms.ts` so `preflight.ts` imports `./transforms.js`.
+- Report worker moves `isSuperlinearGrowth` into `report/stats.ts` (`analysis/metrics.ts` and
+  `report/hints.ts` import it from there), converts type-only imports from `analysis` in
+  `report/ci.ts` and `report/report.ts` to `import type`, and removes the matching allowlist
+  entries.
+- Props worker leaves `projectCompilerOptions`, `createCompilerOptions` and `warnTsconfigOnce` in
+  `props/program.ts`; wave 3 moves them to `project/compiler-options.ts`.
+- Files over 800 lines with no split table (`analysis/explorer.ts` 909, `browser/discovery.ts` 823,
+  `props/values.ts` 822, `report/budget.ts` 808): wave 3's comment cleanup is expected to bring them
+  under the cap; any that stays above gets a split in wave 3.
 
 ### harness/ (from `build.ts`, 7,215 lines, 25 clusters)
 
