@@ -8,14 +8,14 @@ import type { IsolationReport } from "../analysis/index.js";
 // Both formats derive from `Report` alone: no measurement state, no filesystem,
 // no network. 120fps emits what forges consume and never talks to a forge.
 
-// M55: curve, isolation, and cached reports ship `combos: []`: the mode's
+// Curve, isolation, and cached reports ship `combos: []`: the mode's
 // real data lives in a different field. One dispatch point per serializer
-// (per M55's design) keeps a future mode from silently rendering as "empty".
+// keeps a future mode from silently rendering as "empty".
 type ReportMode = "combo" | "cached" | "curve" | "isolation" | "empty";
 
 // Serializer dispatch is about which field carries the numbers, so the combo
 // and cached shapes are still checked here. The curve/isolation split comes
-// from the report's own mode discriminator (M64) rather than a second guess.
+// from the report's own mode discriminator rather than a second guess.
 function reportMode(report: Report): ReportMode {
   if (report.combos.length > 0) return "combo";
   if (report.cached) return "cached";
@@ -230,7 +230,7 @@ export function formatMarkdown(reports: Report[]): string {
   for (const report of reports) {
     const timings = modeTimings(report);
     const cached = report.cached ? " _(cached)_" : "";
-    // M115 C5: the terminal's own breakdown, per component. A report with no
+    // The terminal's own breakdown, per component. A report with no
     // phaseTimings -- an older JSON, a cached verdict -- is a dash: it did not
     // spend zero seconds, it did not record where its seconds went.
     const phases = describePhaseBreakdown(report.phaseTimings);
@@ -263,10 +263,10 @@ export function formatMarkdown(reports: Report[]): string {
   // Curve and isolation reports carry more than two numbers; the summary row
   // shows the headline value, this fold shows every scale point / phase, and
   // on failure the same lines the JUnit failure body carries. Unlike the
-  // regressions fold, this one is not gated on failure: the M55 contract
-  // treats these numbers as always-relevant, and both modes are typically run
-  // one component at a time, so it does not threaten comment size the way a
-  // thirty-component regression list would.
+  // regressions fold, this one is not gated on failure: these numbers are
+  // always-relevant, and both modes are typically run one component at a
+  // time, so it does not threaten comment size the way a thirty-component
+  // regression list would.
   const modeDetails = reports
     .map((report) => {
       const mode = reportMode(report);
@@ -290,10 +290,10 @@ export function formatMarkdown(reports: Report[]): string {
     lines.push("</details>");
   }
 
-  // M117 C2: README.md promises the markdown output carries the run's
-  // warnings, and this serializer never read `report.warnings` at all. One fold
-  // per component that has any, deduped and counted exactly as the terminal
-  // prints them, so the two channels cannot disagree about what the run said.
+  // README.md promises the markdown output carries the run's warnings. One
+  // fold per component that has any, deduped and counted exactly as the
+  // terminal prints them, so the two channels cannot disagree about what the
+  // run said.
   for (const report of reports) {
     const warnings = presentWarnings(report);
     if (warnings.length === 0) continue;
@@ -342,7 +342,7 @@ function failureBody(report: Report): string {
     case "combo":
       for (const combo of report.combos) {
         if (combo.verdict !== "fail") continue;
-        // M59: a render error fails without any budget being exceeded, so
+        // A render error fails without any budget being exceeded, so
         // naming a tier here would send the reader after the wrong number.
         if (combo.renderHealth === "error") {
           lines.push(

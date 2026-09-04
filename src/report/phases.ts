@@ -1,4 +1,4 @@
-// M115 C1: wall clock around phases, never inside a traced window. The ten
+// Wall clock around phases, never inside a traced window. The ten
 // phase keys are disjoint intervals over one run and sum to `total` exactly,
 // so a printed breakdown is checkable against the number beside it.
 export interface PhaseTimings {
@@ -18,7 +18,7 @@ export interface PhaseTimings {
 export type PhaseName = Exclude<keyof PhaseTimings, "total">;
 
 // The phase a progress label can open. `attribution` is not one of them: no
-// progress line names it (M115 C2), and its window is handed to the clock by
+// progress line names it, and its window is handed to the clock by
 // the pass that runs it.
 type BoundaryPhase = Exclude<PhaseName, "attribution">;
 
@@ -36,7 +36,7 @@ export const PHASE_NAMES: readonly PhaseName[] = [
   "analysis",
 ];
 
-// M115 C2: a boundary line is classified by its label alone, so combo, matrix,
+// A boundary line is classified by its label alone, so combo, matrix,
 // curve and isolation runs are all charged by the same rule. A label matching
 // none of them keeps the phase that is already open.
 export function classifyPhaseLabel(line: string): BoundaryPhase | "report" | undefined {
@@ -145,7 +145,7 @@ export function formatPhaseDuration(ms: number): string {
   return `${minutes}m ${wholeSeconds - minutes * 60}s`;
 }
 
-// M115 C4: the run clock beside every progress line.
+// The run clock beside every progress line.
 export function formatElapsedClock(ms: number): string {
   const wholeSeconds = Math.floor(Math.max(0, ms) / 1000);
   const minutes = Math.floor(wholeSeconds / 60);
@@ -162,7 +162,7 @@ export function describePhaseBreakdown(timings: PhaseTimings | undefined): strin
     .join(", ");
 }
 
-// I11: appended to the terminal's `Total:` line by the CLI.
+// Appended to the terminal's `Total:` line by the CLI.
 export function formatPhaseBreakdown(timings: PhaseTimings | undefined): string {
   const described = describePhaseBreakdown(timings);
   return described === "" ? "" : `  (${described})`;

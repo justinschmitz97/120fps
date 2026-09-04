@@ -68,8 +68,8 @@ export type EnvMatch = "identical" | "normalizable" | "incompatible" | "unknown"
 // of the baseline file's own version, so new fields never invalidate a file.
 export interface EnvFingerprint {
   shape: 1;
-  // Measurement revision: absent or 1 predates M31's component-scoped DOM
-  // count. A mismatch makes a baseline incomparable, not merely different.
+  // Measurement revision: absent or 1 means the DOM count was not yet
+  // component-scoped. A mismatch makes a baseline incomparable, not merely different.
   metrics?: number;
   cpu: string;
   cores: number;
@@ -84,9 +84,9 @@ export interface EnvFingerprint {
   css?: string[];
   wrapper?: string;
   reactCompiler?: boolean;
-  // M57. Omitted for React, which every pre-M57 baseline implicitly was, so
-  // those entries keep comparing. A different framework is a different renderer
-  // and a different measurement, never a regression.
+  // Omitted for React, which every baseline without this field implicitly
+  // was, so those entries keep comparing. A different framework is a different
+  // renderer and a different measurement, never a regression.
   framework?: "vue" | "vanilla";
 }
 
@@ -108,7 +108,7 @@ export interface InteractionReport {
   stressPattern?: string;
   // Steps in the stress pattern behind `timing`. `timing.median` is the cost
   // of all of them; the budget is per step.
-  // M106 C2 (C-2): the steps that ran, so the per-step cost printed beside it
+  // The steps that ran, so the per-step cost printed beside it
   // divides by what was actually measured.
   steps?: number;
   // Set when the explore wall clock cut the pattern short: how many steps the
@@ -117,12 +117,11 @@ export interface InteractionReport {
   stepsPlanned?: number;
 }
 
-// M84/M85 cross-lane interface: how a synthesized prop value was chosen
-// (`src/prop-gen.ts`, Lane B, `PropSchema.provenance`). Declared here, on
-// Lane C's side, because M85 is the first consumer and the field may not
-// exist on `PropSchema` yet; both sides read/write the identical union so a
-// later real `provenance?: PropProvenance` on `PropSchema` is a structural
-// no-op merge, not a breaking change.
+// How a synthesized prop value was chosen (`props/schema.ts`,
+// `PropSchema.provenance`). Declared again here because `report` may not
+// import `props` (ADR 0005 item 2); both sides read/write the identical
+// union, so a value built in `props` and reported here never disagrees with
+// `PropSchema`'s own field.
 export type PropProvenance = "declared" | "preset" | "heuristic" | "placeholder" | "contract";
 
 export interface ComboReport {
@@ -139,26 +138,25 @@ export interface ComboReport {
   rerenderScalingCurve?: ScalingCurve | null;
   relativeMount: number;
   verdict: "pass" | "warn" | "fail";
-  // M115 C3: the wall clock the state graph already measured for this combo's
+  // The wall clock the state graph already measured for this combo's
   // exploration. Absent when this combo was never explored. The run-level
   // `phaseTimings.explore` stays the phase interval and is never a sum of
   // these.
   exploreWallClockMs?: number;
   tier?: ComponentTier;
   hasAnimation?: boolean;
-  // M40: whether these numbers describe the settled component or a transient
+  // Whether these numbers describe the settled component or a transient
   // scene (skeleton, fallback, pre-response render).
   measuredState?: MeasuredState;
   costAttribution?: CostAttribution;
   reactOptimizations?: ReactOptimizations;
-  // M59: uncaught exceptions and console.error output captured while this
+  // Uncaught exceptions and console.error output captured while this
   // combo was measured, deduped with a (×N) repeat suffix. Absent when the
-  // page stayed quiet.
-  // M99: this list is now this combo's own windows only (mount, stable
+  // page stayed quiet. Scoped to this combo's own windows (mount, stable
   // rerender); what the prop-delta sub-probe's rerender into the next combo's
   // props raised lives in `transitionPageErrors` instead.
   pageErrors?: string[];
-  // M99 (radix-primitives-F1, base-ui-F1): errors raised while the rerender
+  // Errors raised while the rerender
   // pass drove this combo's props into `combos[toComboIndex]`'s props to price
   // the prop delta. Reported on this row because this row's measurement is
   // what observed them, excluded from this combo's `renderHealth`,
@@ -166,11 +164,11 @@ export interface ComboReport {
   // was rendering. The window also spans the re-mount that precedes each
   // delta rerender, so this names a window, never a cause.
   transitionPageErrors?: { toComboIndex: number; errors: string[] };
-  // M59: "error" = nothing rendered and the page threw, which can never be a
+  // "error" = nothing rendered and the page threw, which can never be a
   // pass. "empty" = nothing rendered and nothing threw, which is legal.
   // Absent whenever the combo rendered at least one node.
   renderHealth?: "error" | "empty";
-  // M80: the combo rendered something, but not the whole component: either a
+  // The combo rendered something, but not the whole component: either a
   // compound Root's declared sibling parts never composed in ("uncomposed"),
   // or a Vue SFC's props were excluded by ADR 0002's TypeScript-only scope
   // ("propsExcluded"). Absent whenever renderHealth already fully discloses
@@ -180,24 +178,24 @@ export interface ComboReport {
   // this combo's explored interactions. Absent when exploration produced no
   // interaction traces for the combo.
   inp?: number;
-  // M61: set when this combo is the auto-scale sibling-copies probe (N whole
+  // Set when this combo is the auto-scale sibling-copies probe (N whole
   // extra trees mounted side by side), never a real prop variation. `props`
   // never carries the `__120fps_scaleN` marker that produced it: this field
   // is where that identity now lives.
   scaleProbe?: number;
-  // M100 (calcom-F4): the run applied none of the component's own props,
+  // The run applied none of the component's own props,
   // because a fixture or an auto-composed scene supplied the render instead.
   // `props: {}` on its own is ambiguous — a component with no props at all
   // measures the same way — so the fact is stated rather than left to be
   // inferred from an empty object.
   measuredWithoutProps?: boolean;
-  // M106 C4 (calcom-F5): `<use href="#id">` targets this combo's render
+  // `<use href="#id">` targets this combo's render
   // referenced and the document never defined. A same-document fragment
-  // reference issues no request, so the M70 network capture is blind to it,
+  // reference issues no request, so the network capture is blind to it,
   // and `<svg>` + `<use>` count as two real nodes — the render measured a
   // graphic that drew nothing.
   unresolvedSpriteRefs?: string[];
-  // M85: set when this combo's fatal render crash is attributable to a value
+  // Set when this combo's fatal render crash is attributable to a value
   // the harness synthesized (a risky `provenance`), not to the component.
   // The underlying facts (`renderHealth: "error"`, `pageErrors`) stay on the
   // combo unchanged; only the verdict is demoted (never left at "fail"), and
@@ -227,7 +225,7 @@ export interface ScalingPoint {
   heapDelta: number;
   interactions: InteractionReport[];
   costAttribution?: CostAttribution;
-  // M104 (commerce-F2) / M106 C3 (dub-F6): the same two-way split combo mode
+  // The same two-way split combo mode
   // draws — "error" = nothing rendered and the page threw, "empty" = nothing
   // rendered and nothing threw (a legal short-circuit, e.g. a component's own
   // `if (options.length <= 1) return null`). Absent whenever the point
@@ -236,7 +234,7 @@ export interface ScalingPoint {
   // What the page raised while this point was measured, deduped exactly like
   // a combo's. Absent when the page stayed quiet.
   pageErrors?: string[];
-  // M104: this point's React profiler snapshot, when the pass ran.
+  // This point's React profiler snapshot, when the pass ran.
   reactOptimizations?: ReactOptimizations;
 }
 
@@ -257,14 +255,14 @@ export interface ScalingCurveReport {
   // Present exactly when the curve verdict is `fail`: what was violated and
   // where, so the reader does not diff each N row against the budget by hand.
   violation?: CurveViolation;
-  // M79 gap (chakra-ui-F1): a structural counterpart to
+  // A structural counterpart to
   // CURVE_RENDER_ERROR_WARNING's formatted string in report.warnings, so a
   // consumer (hintsForReport, formatCurveOutput) can detect a broken scale
   // point without matching a "scale point N=" prose convention. Populated in
   // runCurveMode at the same point the warning is pushed, so the two never
   // drift. Absent when every scale point rendered.
   renderErrorPoints?: CurveRenderErrorPoint[];
-  // M104 (commerce-F2): the N values left out of every curve fit because they
+  // The N values left out of every curve fit because they
   // rendered nothing. A fit over a zero-DOM point describes a render that did
   // not happen. Absent when every measured point rendered, and absent when
   // excluding them would leave fewer than two points to fit at all.
@@ -295,7 +293,7 @@ export interface CurveViolation {
 export interface MatrixAxis {
   propName: string;
   values: unknown[];
-  // M104 fix-up: an over-wide union (>8 values) becomes an axis over a
+  // An over-wide union (>8 values) becomes an axis over a
   // truncated value set, so `values.length` is what the matrix offered and
   // this is what the component declares. Absent when nothing was truncated.
   declaredValueCount?: number;
@@ -311,9 +309,9 @@ export interface MatrixCell {
   tier: ComponentTier;
   verdict: "pass" | "warn" | "fail";
   // Slowest interaction measured on this cell, or null when interactions were
-  // not explored for it (M21 explores only the hottest cells).
+  // not explored for it (only the hottest cells are explored).
   worstInteractionMs: number | null;
-  // M91: copied from the combo this cell projects — combo mode already
+  // Copied from the combo this cell projects — combo mode already
   // carries this mark and JSON field for the identical underlying combo, and
   // a matrix run over the same component must not silently drop it.
   disclosureReason?: "uncomposed" | "propsExcluded";
@@ -327,7 +325,7 @@ export interface CompoundEffect {
   significance: "high" | "medium" | "low";
 }
 
-// M104 (twenty-F3): what each declared axis was actually measured at, once the
+// What each declared axis was actually measured at, once the
 // cell cap has taken its slice. `measuredValues < declaredValues` means the
 // header's `a × b` overstates the run; `measuredValues === 1` means the axis
 // was held, and `heldValue` is what it was held at.
@@ -341,7 +339,7 @@ export interface MatrixAxisCoverage {
 export interface MatrixReport {
   axes: MatrixAxis[];
   axisCoverage: MatrixAxisCoverage[];
-  // M104 / I10 (Lane B `matrixHeldAbsentProps`): non-axis props that no cell
+  // (Lane B `matrixHeldAbsentProps`): non-axis props that no cell
   // carries at all. A cell that silently lost a prop reads as a cell the
   // component rendered without it, which is a different measurement.
   heldAbsentProps?: string[];
@@ -384,11 +382,11 @@ export interface BaselineComparison {
   missingInteractions?: string[];
   envMatch?: EnvMatch;
   envMismatches?: string[];
-  // M40: baseline and current run measured different scenes; comparison skipped.
+  // Baseline and current run measured different scenes; comparison skipped.
   measuredStateMismatch?: { baseline: MeasuredState; current: MeasuredState };
-  // M45: the entry came from another environment's slot. Informational only.
+  // The entry came from another environment's slot. Informational only.
   crossEnvironment?: boolean;
-  // M46: the machine was too busy to compare against.
+  // The machine was too busy to compare against.
   skippedNoisy?: boolean;
 }
 
@@ -397,7 +395,7 @@ export interface WrapperReport {
   autoDetected: boolean;
   overheadMs: number;
   domNodes: number;
-  // M41: the wrapper exported a callable `setup` that ran before first render.
+  // The wrapper exported a callable `setup` that ran before first render.
   hasSetup?: boolean;
 }
 
@@ -405,13 +403,13 @@ export interface WrapperReport {
 export interface CssReport {
   files: string[];
   autoDetected: boolean;
-  // M82: which discovery layer decided, so the outcome (including "none") is
+  // Which discovery layer decided, so the outcome (including "none") is
   // always disclosed, never just implied by an omitted key.
   layer:
     | "explicit"
     | "entry-chain"
     | "known-name"
-    // M102 (heroui-F1): the measured package's own package.json named the
+    // The measured package's own package.json named the
     // stylesheet (`style`, `exports["./styles"]`, `exports[*].style`), and a
     // 0-rule passthrough among them had its `@import` targets resolved one
     // hop. "matched a conventional filename" is false for that pick — the
@@ -421,7 +419,7 @@ export interface CssReport {
     | "runtime"
     | "disabled"
     | "none"
-    // M89 defect 3: a stylesheet was discovered and looked resolvable, but
+    // A stylesheet was discovered and looked resolvable, but
     // something it references internally could not be read (Vite's real
     // PostCSS pipeline is the only thing that ever sees that nested chain);
     // it was dropped and the run measured unstyled instead of aborting.
@@ -431,11 +429,11 @@ export interface CssReport {
   // One entry per file in `files`, same order. Computed regardless of layer,
   // so a near-empty stylesheet is distinguishable from a real one even when
   // named explicitly via --css.
-  // M102: populated whenever `layer` is set, including the `unreadable` layer
+  // Populated whenever `layer` is set, including the `unreadable` layer
   // — an entry there names the file that was dropped and why, so the JSON
   // says which stylesheet the run measured without instead of carrying an
   // empty list that reads like "there were none".
-  // M102 / I7: `matchedRules` is how many of this sheet's own rules matched at
+  // `matchedRules` is how many of this sheet's own rules matched at
   // least one element under `#root` in the measured render. Absent when the
   // probe did not run (no healthy mount to measure against).
   details?: Array<{
@@ -445,24 +443,25 @@ export interface CssReport {
     unreadable?: string;
     matchedRules?: number;
   }>;
-  // M112 C4 / I5 (radix-themes-F2): the stylesheets the measured package's own
+  // The stylesheets the measured package's own
   // package.json declares (`style`, `exports[...].style`) whose target is not
   // on disk yet, as projectRoot-relative posix paths. Present whenever the
   // manifest declared one, so `layer: "none"` can say "declared, not built"
   // instead of asserting nothing was declared.
   declaredMissing?: string[];
-  // M112 C4 / I5: the same declarations with the manifest field that named
+  // The same declarations with the manifest field that named
   // each one and the package's own build command, when lane A's producer
   // supplied them. The `none` branch names the field, the path and the
   // command; without them it names the paths alone.
   declaredMissingFields?: Array<{ field: string; path: string; buildCommand?: string }>;
   // present only when layer === "runtime"
   runtimeEngines?: string[];
-  // M114 C4 / I5 (fluentui-F3): whether the engines above are ones the
+  // Whether the engines above are ones the
   // recogniser names. `false` is a read of a `makeStyles`/`styled` import from
   // a package the list does not carry, which is weaker evidence than a
   // declared dependency and says so in its own wording. Absent reads as
-  // recognised: every producer before M114 resolved from the closed list.
+  // recognised, matching every producer that only ever resolved from the
+  // closed list.
   runtimeEnginesRecognised?: boolean;
   // present only when layer === "largest-fallback"
   onlyCandidate?: boolean;
@@ -475,7 +474,7 @@ export interface ReactCompilerReport {
   active: boolean;
   detected: boolean;
   version?: string;
-  // M108 A4: the React major the transform compiled for, and the runtime that
+  // The React major the transform compiled for, and the runtime that
   // major needs when its absence is what kept the transform from running.
   target?: "17" | "18" | "19";
   skipped?: { target: string; missingModule: string };
@@ -513,21 +512,21 @@ export interface Report {
   baseline?: BaselineComparison;
   isolation?: import("../analysis/index.js").IsolationReport;
   wrapper?: WrapperReport;
-  // M44: the preset module that supplied prop values, and which props it fed.
+  // The preset module that supplied prop values, and which props it fed.
   propPresets?: { path: string; props: string[] };
-  // M46: how trustworthy the machine was while this ran.
+  // How trustworthy the machine was while this ran.
   noise?: NoiseReport;
-  // M48: recognizer codes of the project's own Vite transforms that compiled
+  // Recognizer codes of the project's own Vite transforms that compiled
   // this run.
   projectTransforms?: string[];
-  // M51: finding classes this run triggered. Ids, never prose: hints can be
+  // Finding classes this run triggered. Ids, never prose: hints can be
   // reworded without a schema change.
   hints?: HintId[];
-  // M65: provider-dependent imports the preflight walk found, attached only
+  // Provider-dependent imports the preflight walk found, attached only
   // when a combo actually failed to render: evidence for the render-error
   // hint, never a finding on a healthy run.
   providerCandidates?: string[];
-  // M92 gap 3: the subset of providerCandidates reached only transitively
+  // The subset of providerCandidates reached only transitively
   // (an intermediate file the component imports is what actually reaches
   // the candidate, not the component itself) -- additive and backward
   // compatible, so providerCandidates keeps naming every real candidate
@@ -538,10 +537,10 @@ export interface Report {
   css?: CssReport;
   reactCompiler?: ReactCompilerReport;
   warnings?: string[];
-  // M39: verdict reused from a fingerprinted baseline entry: source
+  // Verdict reused from a fingerprinted baseline entry: source
   // unchanged, environment identical, nothing was measured.
   cached?: boolean;
-  // M115 C1: where this run's minutes went. Absent on a cached verdict and on
-  // every report written before this milestone.
+  // Where this run's minutes went. Absent on a cached verdict and on
+  // any report written before this field existed.
   phaseTimings?: PhaseTimings;
 }

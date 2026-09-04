@@ -97,7 +97,7 @@ export function parseIsolationPhases(raw: string): IsolationPhase[] {
   return ALL_PHASES.filter((p) => seen.has(p));
 }
 
-// M57. StrictMode is a React development-mode double-invoke; Vue has no
+// StrictMode is a React development-mode double-invoke; Vue has no
 // equivalent, so a Vue "strict" pass would re-measure the identical page and
 // report 0% overhead and a clean double-invoke: a false clean bill of health,
 // which is worse than refusing the phase.
@@ -238,13 +238,13 @@ export interface PhaseOptions {
   samples?: number;
   cpuThrottle?: number;
   warmupRuns?: number;
-  // M35: "vsync" when the measured combo animates: driven frames would
+  // "vsync" when the measured combo animates: driven frames would
   // change how much animation work lands in the traced windows.
   pacing?: MeasurementPacing;
-  // M37: reuse pooled browsers (fresh context per phase session).
+  // Reuse pooled browsers (fresh context per phase session).
   pool?: BrowserPool;
-  // M73: the run's warning sink. Without it every warning a phase session
-  // raises (M70's font settle, the context retry, the frame pump) was dropped.
+  // The run's warning sink; every warning a phase session raises (font-settle
+  // retries, the context retry, the frame pump) flows through here.
   onWarning?: (warning: string) => void;
 }
 
@@ -392,9 +392,9 @@ export interface IsolationRunOptions {
   samples: number;
   cpuThrottle: number;
   memoryCycles: number;
-  // M37: reuse pooled browsers across all phase sessions.
+  // Reuse pooled browsers across all phase sessions.
   pool?: BrowserPool;
-  // M73: the run's warning sink, shared by every phase session.
+  // The run's warning sink, shared by every phase session.
   onWarning?: (warning: string) => void;
 }
 
@@ -432,7 +432,7 @@ export async function runIsolationPhases(
     }
   }
 
-  // M35: animation status comes from the mount pass; when it did not run, the
+  // Animation status comes from the mount pass; when it did not run, the
   // status is unknown and phases default to driven pacing.
   const rerenderCombos = options.degenerate ? [comboA] : [comboA, comboB];
   const animatedPhase: Pick<PhaseOptions, "pacing" | "pool" | "onWarning"> = {
@@ -480,13 +480,11 @@ export async function runIsolationPhases(
 // StrictMode double-invoke overhead is a development-mode property, so it warns
 // through `doubleInvokeClean` and never fails the run.
 //
-// M83 #3 (element-plus-F4): `noiseLevel` lets a caller withhold the memory
-// branch's FAIL when the run's own noise sentinel already called the machine
-// hostile — mirroring M46's precedent that a hostile run skips baseline
-// comparison entirely. Only "hostile" suppresses the flip: "noisy" still
-// fails, matching M46's two-tier split (noisy warns and still compares; only
-// hostile skips outright). The mount-budget and churn-degradation checks are
-// unaffected by noise: they are unconditional and unchanged.
+// `noiseLevel` lets a caller withhold the memory branch's FAIL when the run's
+// own noise sentinel already called the machine hostile. Only "hostile"
+// suppresses the flip: "noisy" still fails and still compares against
+// baseline. The mount-budget and churn-degradation checks are unaffected by
+// noise: they are unconditional.
 export function computeIsolationVerdict(
   isolation: IsolationReport,
   mountBudgetMs: number | undefined,

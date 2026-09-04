@@ -11,19 +11,14 @@ const SRC = path.resolve("src");
 const LINE_LIMIT = 800;
 
 const LINE_CAPS: Record<string, number> = {
-  "analysis/explorer.ts": 899,
-  "analysis/react-profiler.ts": 890,
+  "analysis/explorer.ts": 891,
+  "analysis/react-profiler.ts": 877,
   "browser/discovery.ts": 823,
   "props/values.ts": 822,
-  "report/budget.ts": 809,
+  "report/budget.ts": 811,
 };
 
 const COMMENT_TOKENS: Record<string, number> = {
-  "analysis/compare.ts": 2,
-  "analysis/explorer.ts": 21,
-  "analysis/isolation.ts": 11,
-  "analysis/react-profiler.ts": 10,
-  "analysis/stress-patterns.ts": 4,
   "browser/discovery.ts": 4,
   "browser/dom.ts": 6,
   "browser/measure.ts": 24,
@@ -93,15 +88,6 @@ const COMMENT_TOKENS: Record<string, number> = {
   "props/synthesize.ts": 13,
   "props/values.ts": 22,
   "props/vue.ts": 14,
-  "report/budget.ts": 25,
-  "report/ci.ts": 7,
-  "report/hints.ts": 29,
-  "report/metrics.ts": 3,
-  "report/phases.ts": 4,
-  "report/stats.ts": 13,
-  "report/terminal-modes.ts": 20,
-  "report/terminal.ts": 19,
-  "report/types.ts": 51,
   "shared/run-state.ts": 1,
 };
 

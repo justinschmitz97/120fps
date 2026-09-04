@@ -46,7 +46,7 @@ export interface CostBucket {
 export interface CostAttribution {
   buckets: CostBucket[];
   unattributed: number;
-  // M66: how many mount windows the buckets were folded from, and what they
+  // How many mount windows the buckets were folded from, and what they
   // summed to before the fold. Without them a reader cannot tell a per-mount
   // breakdown from a total across every measured mount.
   sampleCount: number;
@@ -198,10 +198,10 @@ function accumulateWindow(events: TraceEvent[], into: SourceDurations): void {
   }
 }
 
-// M66: a combo's mount is measured N times, so N windows arrive. Summing them
-// produced a breakdown N× the Mount column it sits next to. Buckets are the mean
-// scripting time inside one mount; `totalScriptingMs` and `sampleCount` keep the
-// raw sum and the window count recoverable.
+// A combo's mount is measured N times, so N windows arrive. Summing them
+// would produce a breakdown N× the Mount column it sits next to. Buckets are
+// the mean scripting time inside one mount; `totalScriptingMs` and
+// `sampleCount` keep the raw sum and the window count recoverable.
 export function attributeCost(
   traces: TraceEvent[] | TraceEvent[][],
 ): CostAttribution {
@@ -584,7 +584,8 @@ export function computeScalingCurve(
   ].filter((c) => 1 - c.r2 <= SUPERLINEAR_RESIDUAL_SHARE * leftover);
   if (admitted.length === 0) return linear;
 
-  // M53's ranking, applied to the survivors: raw-y R² decides.
+  // Ranking the survivors: raw-y R² decides, comparable now that
+  // exponential's fit was re-measured on raw y above.
   admitted.sort((a, b) => b.r2 - a.r2);
 
   return { ...linear, growthClass: admitted[0].growthClass };
