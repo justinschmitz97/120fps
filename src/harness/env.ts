@@ -65,14 +65,13 @@ export function readEnvDefines(
   return defines;
 }
 
-// M79 gap 3b: readEnvDefines reads .env/.env.local at the workspace and
-// member levels and forwards only NEXT_PUBLIC_*/VITE_*-prefixed keys as Vite
-// defines — process.env itself is defined as `{}`, so nothing from the
-// invoking shell's own environment ever reaches the page. A fatal page error
-// whose real cause is a missing env var (taxonomy-F1's env-validation throw)
-// needs to know whether that remedy even applies here: this answers "does
-// any env file exist at all", independent of whether it defined a
-// page-visible key.
+// readEnvDefines reads .env/.env.local at the workspace and member levels and
+// forwards only NEXT_PUBLIC_*/VITE_*-prefixed keys as Vite defines —
+// process.env itself is defined as `{}`, so nothing from the invoking
+// shell's own environment ever reaches the page. A fatal page error whose
+// real cause is a missing env var needs to know whether that remedy even
+// applies here: this answers "does any env file exist at all", independent
+// of whether it defined a page-visible key.
 export function hasAnyEnvFile(
   memberRoot: string,
   workspaceRoot: string = findWorkspaceRoot(memberRoot),

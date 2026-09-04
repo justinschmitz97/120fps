@@ -40,7 +40,7 @@ export const UNBUILT_WORKSPACE_PACKAGE_WARNING = (pkg: string, entryRelative: st
   "exist on disk: it needs a build step (that build output was never produced), not a " +
   "package.json fix. Run this workspace's build for that package, then measure again.";
 
-// M79 (3a). Vite's own "Failed to resolve entry for package" message blames a
+// Vite's own "Failed to resolve entry for package" message blames a
 // workspace-internal package's package.json fields when those fields are
 // correct and the real problem is that the package was never built (its
 // dist/ is gitignored and produced by a target this harness never runs).
@@ -73,26 +73,26 @@ export function diagnoseUnbuiltWorkspacePackage(
   if (entry === undefined) return undefined;
   const entryPath = path.resolve(real, entry);
   if (fs.existsSync(entryPath)) return undefined;
-  // M107 (gutenberg-F1): a build is not what this package needs when its own
+  // A build is not what this package needs when its own
   // source is on disk — scanExternalDeps aliases it, and the run reaches a
   // verdict instead of aborting.
   if (resolveWorkspaceSourceEntry(real, manifest) !== undefined) return undefined;
   return UNBUILT_WORKSPACE_PACKAGE_WARNING(pkg, toPosix(path.relative(real, entryPath)));
 }
 
-// M94: a caught Vite/PostCSS/esbuild error's own .message frequently embeds
+// A caught Vite/PostCSS/esbuild error's own .message frequently embeds
 // raw stack frames -- shadcn-ui's PostCSS ENOENT (10 frames) and Vite import
 // failure (8 frames) shapes both do -- referencing paths inside 120fps's own
 // node_modules install. This is the fallback that makes "no raw bundler stack
 // trace" hold even for a shape diagnoseBundlerFailure below does not
 // specifically recognize.
-// M92: conservative, not blanket -- only a frame whose own path sits inside
+// Conservative, not blanket -- only a frame whose own path sits inside
 // 120fps's OWN installation is ever useless to a user and must go. A frame
 // pointing into the target repository (its own node_modules, its own source)
 // can be exactly what a user debugging their own component needs, and this
-// function now runs on the page-error surface too (a post-boot render crash's
+// function also runs on the page-error surface (a post-boot render crash's
 // stack is real application debugging information, not bundler noise), so
-// removing every "at" line unconditionally is no longer correct.
+// removing every "at" line unconditionally would strip real information.
 function installRoot(): string {
   return toPosix(path.resolve(import.meta.dirname ?? __dirname, "../.."));
 }
@@ -104,9 +104,9 @@ function stripBundlerStackFrames(message: string): string {
     if (!/^\s*at\s/.test(line)) return true;
     return !line.replace(/\\/g, "/").includes(root);
   });
-  // M92: this is now the universal fallback step of presentBundlerFailure,
-  // reached by every throw on the page-error surface (analyze.ts's catch),
-  // not only a recognized bundler shape. An ordinary message with no
+  // This is the universal fallback step of presentBundlerFailure,
+  // reached by every throw on the page-error surface (pipeline/analyze.ts's
+  // catch), not only a recognized bundler shape. An ordinary message with no
   // 120fps-installation frame to strip must come back byte-identical --
   // reformatting (trim, blank-line collapse) an unrelated error's message is
   // its own kind of false statement about what the run printed.
@@ -114,16 +114,16 @@ function stripBundlerStackFrames(message: string): string {
   return kept.join("\n").replace(/\n{2,}/g, "\n").trim();
 }
 
-// M92: the one diagnosis-and-disclosure pipeline every failure-arrival
+// The one diagnosis-and-disclosure pipeline every failure-arrival
 // surface routes through, instead of each duplicating the chain:
 //   1. buildAndServe's own synchronous boot catch (below) -- the dev server
 //      itself never started.
-//   2. The page-error channel (analyze.ts's harness-ready wait) -- the dev
-//      server booted fine and a transform failed afterwards on a real
-//      request (twenty's sass "Undefined mixin", shadcn-ui's postcss ENOENT
-//      and Vite import-resolve, both arriving as page-error text with
+//   2. The page-error channel (pipeline/analyze.ts's harness-ready wait) --
+//      the dev server booted fine and a transform failed afterwards on a
+//      real request (twenty's sass "Undefined mixin", shadcn-ui's postcss
+//      ENOENT and Vite import-resolve, both arriving as page-error text with
 //      120fps's own node_modules frames inside it).
-//   3. The async unhandled-rejection surface (cli.ts) -- a fire-and-forget
+//   3. The async unhandled-rejection surface (cli/main.ts) -- a fire-and-forget
 //      Vite dependency-optimizer scan can still reject after buildAndServe's
 //      own try/catch already exited successfully (ant-design's `./version`),
 //      reaching neither of the above.
@@ -157,7 +157,7 @@ export function BUNDLER_IMPORT_UNRESOLVED_ERROR(target: string, importer: string
   );
 }
 
-// M108 A5: names the layer that produces the specifier (a Vite plugin this
+// Names the layer that produces the specifier (a Vite plugin this
 // harness never loads), and the package this repository declares for it. No
 // build command: nothing on disk is missing, so no build produces it.
 export function VIRTUAL_NAMESPACE_IMPORT_ERROR(
@@ -184,11 +184,11 @@ export function BUNDLER_STYLESHEET_MISSING_ERROR(target: string): string {
   );
 }
 
-// M89 defect 3 (shadcn-ui, live proof): lets a caller detect this exact
+// Lets a caller detect this exact
 // shape *before* presentBundlerFailure ever converts it into a fatal error,
 // so a stylesheet that cannot be resolved/read can be dropped and the run
-// continued unstyled instead -- the governing policy (M95 in
-// specs/overview/02-milestones.md): skip unresolvable build artifacts and measure anyway wherever
+// continued unstyled instead -- the governing policy: skip unresolvable
+// build artifacts and measure anyway wherever
 // possible. Deliberately scoped to ENOENT alone: a stylesheet that resolves
 // and then fails to *compile* (a real syntax/PostCSS/sass error in a file
 // that genuinely exists, e.g. twenty's sass "Undefined mixin") does not
@@ -219,7 +219,7 @@ export function CSS_UNREADABLE_DROPPED_WARNING(
   );
 }
 
-// M94 (the shadcn-ui repro pair). Tried after diagnoseUnbuiltWorkspacePackage
+// Tried after diagnoseUnbuiltWorkspacePackage
 // so the more specific "unbuilt workspace package" diagnosis still wins when
 // both patterns could match the same message; returns undefined for any
 // shape neither recognizes, so the caller's own stripBundlerStackFrames still
@@ -227,7 +227,7 @@ export function CSS_UNREADABLE_DROPPED_WARNING(
 function diagnoseBundlerFailure(message: string, projectRoot: string): string | undefined {
   const importMatch = VITE_IMPORT_RESOLVE_FAILURE.exec(message);
   if (importMatch) {
-    // M108 A5 (hoppscotch-F2): a virtual namespace has no file behind it and no
+    // A virtual namespace has no file behind it and no
     // build that produces one, so the unbuilt-workspace clause is false here.
     const virtual = recognizeVirtualNamespace(importMatch[1]);
     if (virtual) {
@@ -245,7 +245,7 @@ function diagnoseBundlerFailure(message: string, projectRoot: string): string | 
   return undefined;
 }
 
-// M95 gap 1 (nuxt-ui-F2/F3): a Nuxt build-time virtual module ("#build/...")
+// A Nuxt build-time virtual module ("#build/...")
 // cannot resolve before `nuxi prepare` generates .nuxt/. Node's own package-
 // imports resolver is what actually throws here (Vite delegates to it for a
 // "#"-prefixed specifier), producing this exact shape rather than either of
@@ -256,7 +256,7 @@ function diagnoseBundlerFailure(message: string, projectRoot: string): string | 
 // .nuxt/ -- a user must not have to connect that themselves).
 const NUXT_BUILD_MODULE_MISSING = /Missing "([^"]+)" specifier in "([^"]+)" package/;
 
-// M92 (nuxt-ui, verified post-fix): `nuxi prepare` at the repo root can exit
+// `nuxi prepare` at the repo root can exit
 // 0 and create .nuxt/ without producing THIS module's own generated
 // templates -- nuxt-ui's root has no nuxt.config.ts of its own, so a
 // root-level prepare never runs @nuxt/ui's module hooks and .nuxt/ui/ stays
@@ -294,7 +294,7 @@ export function NUXT_BUILD_MODULE_MISSING_ERROR(
     : base;
 }
 
-// M108 A2 (epic-stack-F1, primer-react-F1): the Nuxt mechanism is `#build`,
+// The Nuxt mechanism is `#build`,
 // `#imports` and `#app`, and only in a repository that declares nuxt. Every
 // other package-imports/exports miss is Node's own resolver reporting a map
 // that lacks a subpath, and that is what the message says.
@@ -321,7 +321,7 @@ function diagnoseNuxtBuildModule(
 ): string | undefined {
   const match = NUXT_BUILD_MODULE_MISSING.exec(message);
   if (!match) return undefined;
-  // M108 review: on a segment boundary. `#appsettings/x` is an ordinary
+  // On a segment boundary. `#appsettings/x` is an ordinary
   // imports-map miss, and `nuxi prepare` is no remedy for it.
   const isNuxtVirtual = NUXT_VIRTUAL_PREFIXES.some(
     (prefix) => match[1] === prefix || match[1].startsWith(prefix + "/"),
@@ -340,18 +340,18 @@ function diagnoseNuxtBuildModule(
   );
 }
 
-// M95 gap 2 (ant-design-F7): a relative import resolving to nothing, where
+// A relative import resolving to nothing, where
 // the resolved target is gitignored, is a generated-file-not-yet-produced
 // shape -- the repository's own build/codegen step produces it, a plain
 // install does not -- not a typo or a genuine broken import to surface as a
-// raw esbuild error. Path-aware (unlike cli.ts's gitignoreCoversFile, built
-// for a single bare filename at the advisory-hint's own call site): reads
+// raw esbuild error. Path-aware (unlike cli/gitignore.ts's gitignoreCoversFile,
+// built for a single bare filename at the advisory-hint's own call site): reads
 // git-root-relative path patterns.
 const ESBUILD_COULD_NOT_RESOLVE = /([^\r\n]+?):(\d+):(\d+):\s*ERROR:\s*Could not resolve "([^"]+)"/;
 
 const CODEGEN_SCRIPT_PRIORITY = ["codegen", "generate", "prepare", "postinstall", "build"];
 
-// M105 (nuxt-ui-F2): `npm run build` in a repository that declares
+// `npm run build` in a repository that declares
 // `packageManager: pnpm@11.22.0`, ships only a pnpm lockfile and calls
 // `pnpm build` from its own scripts is a command that repository does not
 // have. The field wins over the lockfile, and the member's own lockfile over
@@ -365,10 +365,11 @@ const LOCKFILE_MANAGER: Array<[string, PackageManager]> = [
 ];
 
 export function detectPackageManager(root: string): PackageManager {
-  // Review A11: a declaration beats an artifact, at every level. A stray
-  // package-lock.json inside a pnpm workspace member used to win over the
-  // root's own `packageManager: pnpm@...` and print a command that repository
-  // does not have — and it also makes `findWorkspaceRoot` stop at the member,
+  // A declaration beats an artifact, at every level. A stray
+  // package-lock.json inside a pnpm workspace member would otherwise win over
+  // the root's own `packageManager: pnpm@...` and print a command that
+  // repository does not have — and it also makes `findWorkspaceRoot` stop at
+  // the member,
   // so the declaration walk goes up on its own, bounded by the repository.
   const levels: string[] = [];
   let cursor = path.resolve(root);
@@ -395,7 +396,7 @@ export function detectPackageManager(root: string): PackageManager {
   return "npm";
 }
 
-// M111 A5: a command the reader can paste. `<dir>` is the package's directory
+// A command the reader can paste. `<dir>` is the package's directory
 // relative to the directory the run started in, posix-separated; the absolute
 // path when no relative path exists (a different drive); nothing when the two
 // are the same directory. `startDir` is a parameter rather than a read of
@@ -418,7 +419,7 @@ export function packageManagerRunCommand(root: string, script: string, startDir?
   return startDir === undefined ? run : runDirectoryPrefix(root, startDir) + run;
 }
 
-// M111 A5: the one place a remedy turns a package's script into a command. A
+// The one place a remedy turns a package's script into a command. A
 // script the manifest does not declare has no command, and a script *body* is
 // never printed: it belongs to another package's build, not to the reader's
 // shell.
@@ -432,7 +433,7 @@ export function packageScriptCommand(
   return packageManagerRunCommand(root, script, startDir);
 }
 
-// M105 (ant-design-F1): the script *name* list alone chose `prepare`
+// The script *name* list alone chose `prepare`
 // (`is-ci || husky && dumi setup`) for a missing `components/version/version.ts`
 // that `version` (`tsx scripts/generate-version.ts`) writes. A script's command
 // text is the evidence: it either names the missing path or names a generator
@@ -545,7 +546,7 @@ function diagnoseGitignoredGeneratedFile(message: string, projectRoot: string): 
   const relativeToProject = toPosix(path.relative(projectRoot, matchedAbsolute));
   return GITIGNORED_GENERATED_FILE_ERROR(
     relativeToProject,
-    // M105 (ant-design-F1): the missing file is the evidence for which script
+    // The missing file is the evidence for which script
     // produces it, so it is passed rather than left to a name list.
     findLikelyGenerateCommand(projectRoot, relativeToProject, process.cwd()),
   );

@@ -27,11 +27,11 @@ import {
 // Static imports and re-exports, dynamic import(), and require(). String
 // literals only: a template literal or a computed specifier is unknowable
 // without running the code.
-// M77: the negative lookahead excludes a whole-clause `import type`/`export
+// The negative lookahead excludes a whole-clause `import type`/`export
 // type` from-specifier: type-space, never loaded at runtime. A mixed clause
 // (`import { type A, b } from "x"`) still matches, because `b` is a real
 // value import and "x" genuinely needs runtime resolution.
-// M110 (A4, gutenberg): a clause written over several lines
+// A clause written over several lines
 // (`import {`, `  escapeHTML,`, `} from "@wordpress/escape-html"`) is the same
 // import. `[\w$*,{}\s]*?` spans newlines where `.` did not, and stops at the
 // first character an import clause cannot contain — a `;`, a quote, a `(`, a
@@ -57,9 +57,9 @@ function readSpecifiers(content: string): string[] {
   return specifiers;
 }
 
-// M110 (A1, epic-stack-F2): the scan used to `continue` past a specifier that
-// resolved to nothing, so `--explain-props` and the real run both stayed silent
-// until the dev server died on it at dep-optimization.
+// A specifier that resolves to nothing is disclosed here rather than passed
+// over silently, so `--explain-props` and the real run agree instead of
+// staying silent until the dev server dies on it at dep-optimization.
 export function UNRESOLVED_PREBUNDLE_ENTRY_WARNING(specifier: string, importer: string): string {
   return (
     `"${specifier}" (imported by ${importer}) resolves to no installed package, no alias and no ` +
@@ -75,7 +75,7 @@ export function BROKEN_ALIAS_WARNING(specifier: string, target: string): string 
   );
 }
 
-// M77: proven, not guessed — the package resolves to an installed directory
+// Proven, not guessed — the package resolves to an installed directory
 // whose own package.json has no main/module/exports and no index file, the
 // same "no loadable entry" primitive the types-only paths-alias check (1)
 // uses.
@@ -87,11 +87,11 @@ export function TYPE_ONLY_PACKAGE_WARNING(pkg: string): string {
   );
 }
 
-// M94 (dub-F1): a workspace sibling's own source, not its declared (unbuilt)
-// dist/, now answers for the bare specifier — the alias applies to Vite's
+// A workspace sibling's own source, not its declared (unbuilt)
+// dist/, answers for the bare specifier — the alias applies to Vite's
 // real per-request resolution, not only optimizeDeps, so this import
 // resolves rather than merely avoiding one particular crash site.
-// M107: the message names the manifest field the derivation followed, the
+// The message names the manifest field the derivation followed, the
 // path that field declared and whether that path is on disk, so no message
 // claims a `dist/` the package never named.
 export function UNBUILT_WORKSPACE_SOURCE_ALIAS_WARNING(
@@ -113,7 +113,7 @@ export function UNBUILT_WORKSPACE_SOURCE_ALIAS_WARNING(
   );
 }
 
-// M107 (react-spectrum-F1): a workspace sibling that declares no runtime entry
+// A workspace sibling that declares no runtime entry
 // at all ships declarations only. It is not an unbuilt package, nothing about
 // it can fail when the browser loads it, and no build command helps.
 export function TYPES_ONLY_WORKSPACE_PACKAGE_WARNING(
@@ -127,7 +127,7 @@ export function TYPES_ONLY_WORKSPACE_PACKAGE_WARNING(
   );
 }
 
-// M94 (dub-F2): the honest replacement for TYPE_ONLY_PACKAGE_WARNING when the
+// The honest replacement for TYPE_ONLY_PACKAGE_WARNING when the
 // package is a workspace sibling, not a genuinely external dependency: this
 // import is not proven type-only, and excluding it from the pre-bundle does
 // not stop Vite's own per-request resolution from hitting the identical
@@ -157,7 +157,7 @@ export function UNBUILT_WORKSPACE_PACKAGE_NO_SOURCE_WARNING(
   );
 }
 
-// M107 (review): a subpath specifier of a sibling whose root was aliased is
+// A subpath specifier of a sibling whose root was aliased is
 // removed from the pre-bundle by that root decision alone. Nothing aliased the
 // subpath itself, so the removal is disclosed instead of silent.
 export function UNALIASED_WORKSPACE_SUBPATH_WARNING(specifier: string, pkg: string): string {
@@ -187,7 +187,7 @@ interface ExternalDepsWalkRecord {
   files: Array<[string, string | undefined]>;
 }
 
-// M116 A2: the component walk and the wrapper walk run per build, and a sweep
+// The component walk and the wrapper walk run per build, and a sweep
 // builds per component; the same entry over the same files, alias set and roots
 // cannot produce a different list. The key carries every input the walk reads,
 // including the dedupe set it was handed, and the entry is served again only
@@ -311,20 +311,20 @@ function walkExternalDeps(
   specifiersOut?: Set<string>,
   warningsOut?: string[],
   workspaceRoot: string = findWorkspaceRoot(projectRoot),
-  // M94: a workspace-sibling package rescued by aliasing to its own source
-  // (see the M77 exclusion loop below) pushes its alias here; the one caller
+  // A workspace-sibling package rescued by aliasing to its own source
+  // (see the exclusion loop below) pushes its alias here; the one caller
   // (buildAndServe) passes the same array it is already assembling `alias`
   // from, so the rescue applies to Vite's real per-request resolution too,
   // not only to optimizeDeps.
   extraAliasesOut?: Array<{ find: RegExp; replacement: string }>,
-  // M110 (A2/I2): the specifiers this walk could not resolve, in the order it
+  // The specifiers this walk could not resolve, in the order it
   // read them, for the caller that publishes them on `StaticPreBuild`.
   unresolvedOut?: Array<{ specifier: string; importer: string }>,
-  // M110 (A1, review): a caller that walks twice into one `unresolvedOut`
+  // A caller that walks twice into one `unresolvedOut`
   // (component and wrapper) shares the dedupe set, so a specifier unresolved in
   // both walks is still reported once.
   reportedUnresolvedOut?: Set<string>,
-  // M116 (A2): every file this walk read, with the mtime and size it had, for
+  // Every file this walk read, with the mtime and size it had, for
   // the memo that decides whether the result still stands.
   filesReadOut?: Map<string, string | undefined>,
 ): string[] {
@@ -332,24 +332,24 @@ function walkExternalDeps(
   const visited = new Set<string>();
   const reportedBrokenAliases = new Set<string>();
   const reportedWorkspaceRootAliases = new Set<string>();
-  // M110 (A1): one report per specifier, however many files import it.
+  // One report per specifier, however many files import it.
   const reportedUnresolved = reportedUnresolvedOut ?? new Set<string>();
   const queue = [componentPath];
   const pkgNameOf = (spec: string) =>
     spec.startsWith("@") ? spec.split("/").slice(0, 2).join("/") : spec.split("/")[0];
-  // M107: a sibling rescued in a later round is imported from inside another
+  // A sibling rescued in a later round is imported from inside another
   // package, where a pnpm install links dependencies the entry project's own
   // node_modules chain never carries. The directory the specifier was first
   // read from answers for it; projectRoot stays the first probe.
   const firstImporterDir = new Map<string, string>();
-  // M110 (A1, review): the same bookkeeping at file granularity, so a specifier
+  // The same bookkeeping at file granularity, so a specifier
   // that resolves nowhere can name the file that imported it.
   const firstImporterFile = new Map<string, string>();
-  // M107 (review): a specifier whose package directory no importer has yet
+  // A specifier whose package directory no importer has yet
   // produced re-reads its importer from the newest file that imported it.
   const unresolvedImporters = new Set<string>();
 
-  // M107 (gutenberg-F1): the walk runs again from every source an unbuilt
+  // The walk runs again from every source an unbuilt
   // sibling was aliased to, so a sibling first reached through an import the
   // scanner could not resolve is rescued in the same pass.
   const walk = () => {
@@ -359,7 +359,7 @@ function walkExternalDeps(
     if (visited.has(normalizedFile)) continue;
     visited.add(normalizedFile);
 
-    // M116 A2: what the memo above this function has to re-check before it
+    // What the memo above this function has to re-check before it
     // serves this walk again. A file the walk could not read is recorded too,
     // so one that appears later invalidates the entry.
     filesReadOut?.set(normalizedFile, sourceSignature(normalizedFile));
@@ -372,7 +372,7 @@ function walkExternalDeps(
     }
 
     for (const raw of readSpecifiers(content)) {
-      // M69: `./icon.svg?url` and `pkg/style.css?inline` never resolved with
+      // `./icon.svg?url` and `pkg/style.css?inline` never resolved with
       // the query attached. A "#" survives: it opens a Node subpath import and
       // a legitimate alias pattern.
       const spec = raw.split("?")[0];
@@ -384,11 +384,11 @@ function walkExternalDeps(
         if (SOURCE_EXTENSIONS.includes(path.extname(localResolved.path))) {
           queue.push(localResolved.path);
         }
-        // M62: a shim alias redirects the specifier to a local file, but the
+        // A shim alias redirects the specifier to a local file, but the
         // specifier itself was still imported and must be reported: the
         // resolution stays local (queued above), only the bookkeeping changes.
         if (isBareSpecifier && localResolved.viaShimAlias) specifiersOut?.add(spec);
-        // M76: same idea for a workspace-root-sourced alias — usage-triggered
+        // Same idea for a workspace-root-sourced alias — usage-triggered
         // and deduped per specifier, so a root config with many patterns for
         // packages this component never touches does not bury the one that
         // actually mattered.
@@ -403,7 +403,7 @@ function walkExternalDeps(
         }
       } else if (localResolved.kind === "alias-miss") {
         // A shim alias whose file is not built yet is this tool's own state,
-        // and the specifier was still imported: M62's report needs it either
+        // and the specifier was still imported: this warning's report needs it either
         // way. A project alias pointing nowhere is the project's to fix, and
         // it is never a package.
         if (localResolved.viaShimAlias) {
@@ -413,11 +413,11 @@ function walkExternalDeps(
           warningsOut?.push(BROKEN_ALIAS_WARNING(spec, localResolved.target));
         }
       } else if (spec.startsWith("#")) {
-        // M108 A1: a subpath import is the importer's own package talking to
+        // A subpath import is the importer's own package talking to
         // itself. Resolved, it is an ordinary graph edge; unresolved, it is a
         // map that lacks the key — never a package to pre-bundle, and never a
-        // truncation of one ("#app/utils/misc" collapsed to "#app" is what
-        // manufactured epic-stack's failure).
+        // truncation of one (collapsing "#app/utils/misc" to "#app" would be
+        // wrong).
         const viaImports = resolveSubpathImport(normalizedFile, spec);
         if (viaImports && SOURCE_EXTENSIONS.includes(path.extname(viaImports))) {
           queue.push(viaImports);
@@ -429,8 +429,8 @@ function walkExternalDeps(
             specifiersOut?.add(viaPackage);
             externalPkgs.add(pkgNameOf(viaPackage));
           } else if (!reportedUnresolved.has(spec)) {
-            // M110 (A1): no file, no package, no alias. Nothing can pre-bundle
-            // it, and the specifier stays out of the include list (M108) — the
+            // No file, no package, no alias. Nothing can pre-bundle
+            // it, and the specifier stays out of the include list — the
             // report is the only thing that was missing.
             reportedUnresolved.add(spec);
             const importer = relativeToRoot(normalizedFile, projectRoot);
@@ -459,11 +459,11 @@ function walkExternalDeps(
           // ordinary dependency including subpath-only ones like swiper.
           externalPkgs.add(pkg);
         } else {
-          // M76: a subpath specifier. Collapsing it to `pkg` unconditionally
+          // A subpath specifier. Collapsing it to `pkg` unconditionally
           // manufactures an optimizeDeps entry nothing in the source wrote
           // when `pkg` is a workspace sibling whose own root has no
           // resolvable entry (an `exports` map with only subpath keys, no
-          // `main`) — calcom-F1. Substitute the literal subpath instead, once
+          // `main`). Substitute the literal subpath instead, once
           // per distinct subpath; every other package keeps collapsing.
           const pkgDir = installedPackageDir(pkg, path.dirname(normalizedFile));
           if (
@@ -491,7 +491,7 @@ function walkExternalDeps(
     "sass", "less", "stylus", "lightningcss", "sugarss",
   ]);
 
-  // M76: an entry may now be a subpath string rather than a bare name, so the
+  // An entry may be a subpath string rather than a bare name, so the
   // blocklist's membership and prefix checks apply to the package-name
   // portion re-derived from each entry, not to the raw entry text.
   const dropIgnored = () => {
@@ -505,7 +505,7 @@ function walkExternalDeps(
     }
   };
 
-  // M77: a bare specifier that resolves to an installed package with no
+  // A bare specifier that resolves to an installed package with no
   // runtime entry (no package.json main/module/exports, no index file) is
   // almost certainly type-only — the regex scanner cannot see that an import
   // is structurally type-only (`import * as CSS from 'csstype'`), so
@@ -513,19 +513,18 @@ function walkExternalDeps(
   // cannot find at all is left alone: this only skips packages it has
   // proven lack a runtime entry, never ones it merely failed to locate.
   //
-  // M94 (dub-F1/F2): that inference is wrong for a workspace sibling — its
+  // That inference is wrong for a workspace sibling — its
   // "no runtime entry" only proves its *declared* dist/ is unbuilt, not that
   // the import is type-only, and excluding a genuinely value-imported bare
   // specifier from optimizeDeps does not stop Vite's own per-request
   // resolution from failing on the identical specifier the moment the
-  // browser loads the file that imports it (dub's exact crash, right after
-  // the "excluded from the pre-bundle" warning printed). A workspace sibling
+  // browser loads the file that imports it. A workspace sibling
   // with a resolvable src/ entry is aliased to it instead of excluded, so
   // both the optimizer and Vite's real resolver succeed; one with no
   // resolvable source anywhere is still excluded (nothing else is safe), but
   // the warning stops promising a crash it cannot actually prevent.
   //
-  // M107: each sibling is decided once per pass; a sibling aliased to its own
+  // Each sibling is decided once per pass; a sibling aliased to its own
   // source hands that source back to the walk, so the pass reaches a fixed
   // point instead of stopping at the first ring of imports.
   type SiblingDecision = { aliasedRoot: boolean; aliasedSpecifiers: Set<string> };
@@ -565,7 +564,7 @@ function walkExternalDeps(
         installedPackageDir(pkg, projectRoot) ??
         (importerDir === undefined ? undefined : installedPackageDir(pkg, importerDir));
       if (dir === undefined) {
-        // M107 (review): the importer this specifier was first read from may be
+        // The importer this specifier was first read from may be
         // a file where the package is not installed; a later round can reach the
         // same specifier from a directory where it is, so the entry is left
         // undecided rather than kept for good.
@@ -575,7 +574,7 @@ function walkExternalDeps(
       }
       if (!isWorkspaceSibling(dir, workspaceRoot)) {
         // A subpath of a package that is not a workspace sibling keeps the
-        // resolution it has today (M76, calcom-F1).
+        // resolution it has today.
         if (entry !== pkg || resolveTarget(dir) !== undefined) {
           keptEntries.add(entry);
           continue;
@@ -596,9 +595,9 @@ function walkExternalDeps(
         real = dir;
       }
       const manifest = readProjectManifest(real);
-      // M107: a sibling that declares a runtime entry is unbuilt when that
+      // A sibling that declares a runtime entry is unbuilt when that
       // entry does not resolve, whatever else happens to sit in its root; one
-      // that declares none keeps M94's probe.
+      // that declares none keeps the type-only probe above.
       const declaresEntry = declaresRuntimeEntry(manifest);
       if (
         resolveDirectoryEntry(dir) !== undefined ||
@@ -644,7 +643,7 @@ function walkExternalDeps(
           const types = typeof manifest?.types === "string" ? manifest.types : undefined;
           warningsOut?.push(TYPES_ONLY_WORKSPACE_PACKAGE_WARNING(pkg, types));
         } else {
-          // M111 A5: the package manager invocation of the script name, with the
+          // The package manager invocation of the script name, with the
           // directory to run it in, never the script body.
           const buildCommand = packageScriptCommand(real, "build", process.cwd());
           const declaredEntry = manifest ? declaredRuntimeEntries(manifest)[0] : undefined;
@@ -674,11 +673,11 @@ function walkExternalDeps(
     if (!resolvePackages()) break;
   }
 
-  // M110 (A1, review): the `#`-specifier branch above covers only what M108
-  // already keeps out of the include list. The root cause is here: a bare
+  // The `#`-specifier branch above covers only what is
+  // already kept out of the include list. The root cause is here: a bare
   // package that resolves to no installed directory in any round survives the
   // fixed point, reaches optimizeDeps.include and kills the run at
-  // dep-optimization. The entry itself stays (M77/M94: an entry excluded on a
+  // dep-optimization. The entry itself stays (an entry excluded on a
   // resolution this scanner cannot see is worse than one Vite resolves per
   // request); the report is what was missing.
   for (const entry of externalPkgs) {

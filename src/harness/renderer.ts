@@ -16,7 +16,7 @@ import {
 import { literalPropertyName, stringLiteralValue } from "./vite-config.js";
 import { isFile, toPosix } from "../shared/index.js";
 
-// M57. The measured file's own extension decides how it is mounted: a `.vue`
+// The measured file's own extension decides how it is mounted: a `.vue`
 // SFC cannot be rendered by React and a `.tsx` cannot be rendered by Vue, so
 // this is stronger evidence than anything in package.json.
 export type Renderer = "react" | "vue";
@@ -25,9 +25,9 @@ export function rendererFor(filePath: string): Renderer {
   return isVueFile(filePath) ? "vue" : "react";
 }
 
-// M73: the version is read from the project's own react-dom rather than
-// resolveReactDomIdentity in src/react-profiler.ts, which imports values from
-// this module: the reverse import would close a cycle.
+// The version is read from the project's own react-dom rather than
+// resolveReactDomIdentity in src/analysis/react-profiler.ts, which imports
+// values from this module: the reverse import would close a cycle.
 function readReactDomVersion(projectRoot: string): string | undefined {
   try {
     const pkgPath = createRequire(path.join(projectRoot, "/")).resolve("react-dom/package.json");
@@ -47,13 +47,11 @@ export function REACT_DOM_CLIENT_MISSING(projectRoot: string, version: string | 
   );
 }
 
-// M78: four field-tested repos hit this catch for four different real
-// causes, and the old bare catch treated every one of them as "version too
-// old" because readReactDomVersion fails the same way for all of them. The
-// order matters: a package that genuinely resolves on disk with a real (too
-// old) version is a version problem regardless of whether the project's own
-// package.json happens to list it, so readReactDomVersion is checked before
-// isPackageDeclared, not after.
+// readReactDomVersion fails the same way regardless of the underlying cause,
+// so the order matters: a package that genuinely resolves on disk with a
+// real (too old) version is a version problem regardless of whether the
+// project's own package.json happens to list it, so readReactDomVersion is
+// checked before isPackageDeclared, not after.
 type ReactDomResolutionCause =
   | "pnp"
   | "not-installed"
@@ -150,12 +148,10 @@ export function assertReactDomClient(projectRoot: string): void {
   }
 }
 
-// M98 (I2, element-plus-F1). The refusal was right and its reason was wrong: a
-// Vue project's render-function `.tsx` was reported as "react-dom is not a
-// dependency of this project", which reads as an install problem and invites
-// `npm i react-dom` — a remedy that cannot help, since `rendererFor` keys the
-// mount on the file extension alone (`harness.ts:36`) and no Vue-JSX transform
-// is loaded (`SUPPORTED_TRANSFORM_PLUGINS` carries `@vitejs/plugin-vue`, never
+// `npm i react-dom` cannot fix a Vue project's render-function `.tsx`:
+// `rendererFor` keys the mount on the file extension alone, and no Vue-JSX
+// transform is loaded (`SUPPORTED_TRANSFORM_PLUGINS` in
+// src/project/transforms.ts carries `@vitejs/plugin-vue`, never
 // `@vitejs/plugin-vue-jsx`).
 export function VUE_PROJECT_REACT_FILE_ERROR(relativePath: string): string {
   return (
@@ -181,7 +177,7 @@ export function assertRendererSupported(componentPath: string, projectRoot: stri
   throw new Error(VUE_PROJECT_REACT_FILE_ERROR(relative === "" ? componentPath : relative));
 }
 
-// M73: path.win32.relative("C:\\proj", "D:\\x") returns "D:\\x" — two drives
+// path.win32.relative("C:\\proj", "D:\\x") returns "D:\\x" — two drives
 // have no common ancestor to walk up to, so the result is absolute and carries
 // no "..". A caller reading only the "../" prefix takes another drive for an
 // in-root path. The platform parameter makes the drive-letter behavior
@@ -212,13 +208,13 @@ export function componentImportPath(
   return toPosix(platform.relative(projectRoot, componentPath));
 }
 
-// M78 (preact-app-F3, the webpack/Next.js shape). A bare-specifier bundler
-// alias ("react-dom": "preact/compat") is dropped by readViteConfigData's own
+// A bare-specifier bundler alias ("react-dom": "preact/compat", the
+// webpack/Next.js shape) is dropped by readViteConfigData's own
 // fs.existsSync requirement above, and no reader exists at all for
-// next.config/webpack.config: 120fps applies neither shape to its own mount
-// (see the milestone's "Does NOT include"), so this is a disclosure gap, not
-// a silent-wrong-analysis risk the way the Vite literal-alias shape is. Same
-// invariant as readViteConfigData: text-parsed, never imported, never run.
+// next.config/webpack.config: 120fps applies neither shape to its own mount,
+// so this is a disclosure gap, not a silent-wrong-analysis risk the way the
+// Vite literal-alias shape is. Same invariant as readViteConfigData:
+// text-parsed, never imported, never run.
 const BUNDLER_CONFIG_FILES = [
   "next.config.js",
   "next.config.mjs",
@@ -281,7 +277,7 @@ export function BUNDLER_PREACT_ALIAS_WARNING(configFile: string, target: string)
   );
 }
 
-// M77: Vite's own esbuild transform plugin (`vite:esbuild`) applies ONE
+// Vite's own esbuild transform plugin (`vite:esbuild`) applies ONE
 // loader to every file its filter matches; its default filter excludes plain
 // `.js`, so a `.js` file with literal JSX (MUI's own authoring convention)
 // fails Vite's transform even once the CLI gate accepts it. Widening that
@@ -299,7 +295,7 @@ export function BUNDLER_PREACT_ALIAS_WARNING(configFile: string, target: string)
 export const DEFAULT_JSX_IMPORT_SOURCE = "react";
 
 //
-// M97 (I1, material-ui-F2): the loader alone is not the whole transform.
+// The loader alone is not the whole transform.
 // Vite's `transformWithEsbuild` reads the project tsconfig's JSX settings only
 // for the "ts"/"tsx" loaders (vite 6.4.2, dep chunk :9086), so `loader: "jsx"`
 // left `compilerOptions.jsx` undefined and esbuild fell back to its classic
@@ -343,7 +339,7 @@ export function resolveJsxImportSource(
   forFile?: string,
 ): string {
   try {
-    // M109 (I1): the governing config, so a references-only root reaches the
+    // The governing config, so a references-only root reaches the
     // referenced config that declares jsxImportSource. The file decides which
     // referenced config that is: a directory query matches whichever config
     // covers any file under the root, which is the first `references` entry,

@@ -20,23 +20,22 @@ import {
   readViteConfigData,
 } from "./vite-config.js";
 
-// M100 (I5): every pre-build fact `buildAndServe` derives from the filesystem
-// alone — no bundler, no dev server, no browser. `--explain-props` refused to
-// start a server and therefore never saw any of it (V6's rows 5, 17-21), so a
-// dry run was silent about a broken vite.config alias, an unbuilt workspace
-// dist/, a type-only package, an unsupported Next module and a missing style
-// engine, all of which the real run reported seconds later.
+// Every pre-build fact `buildAndServe` derives from the filesystem alone —
+// no bundler, no dev server, no browser — so `--explain-props` can report a
+// broken vite.config alias, an unbuilt workspace dist/, a type-only package,
+// an unsupported Next module or a missing style engine without starting a
+// server.
 export interface StaticPreBuild {
   warnings: string[];
   viteConfig: ViteConfigData;
-  // M109 (A5): the conditions the dev server resolves exports under — the vite
+  // The conditions the dev server resolves exports under — the vite
   // config's own list, then the governing tsconfig's customConditions.
   resolveConditions: string[];
   externalDeps: string[];
   styleTooling: StyleTooling;
   nextModules: { detected: boolean; activeShims?: string[]; unsupported: string[] };
   // Consumed by buildAndServe, which must not rebuild them: `scanExternalDeps`
-  // appends its workspace-source rescue aliases (M94) to this same array.
+  // appends its workspace-source rescue aliases to this same array.
   aliases: Array<{
     find: RegExp;
     replacement: string;
@@ -44,9 +43,9 @@ export interface StaticPreBuild {
     fromWorkspaceRoot?: WorkspaceRootAliasSource;
   }>;
   importedSpecifiers: Set<string>;
-  // M110 (A2/I2, epic-stack-F2): every specifier the scan could not resolve to
-  // a package, an alias or an `imports` entry, so both modes report the same
-  // set without walking the graph again.
+  // Every specifier the scan could not resolve to a package, an alias or an
+  // `imports` entry, so both modes report the same set without walking the
+  // graph again.
   unresolvedExternals: Array<{ specifier: string; importer: string }>;
   workspaceRoot: string;
 }
@@ -67,13 +66,13 @@ export function collectStaticPreBuildWarnings(
   },
 ): StaticPreBuild {
   const workspaceRoot = opts.workspaceRoot ?? findWorkspaceRoot(projectRoot);
-  // M69: alias construction and the scan both report what they could not
+  // Alias construction and the scan both report what they could not
   // resolve, and both feed the same run warnings.
   const warnings: string[] = [];
   const tsconfigAliases = loadTsconfigAliases(projectRoot, warnings, opts.componentPath);
   const detected = !opts.noShims && detectNextJs(projectRoot);
   const shimAliases = buildShimAliases(detected);
-  // M71: what the project's own vite.config says, read as text. Its aliases sit
+  // What the project's own vite.config says, read as text. Its aliases sit
   // below the tsconfig paths, which is the precedence a TypeScript project
   // already assumes, and above the shims, which answer for one module each.
   const viteConfig = readViteConfigData(projectRoot, workspaceRoot);
@@ -87,8 +86,8 @@ export function collectStaticPreBuildWarnings(
     );
   }
   warnings.push(...viteConfig.warnings);
-  // M109 (A5): decided here, so the dry run discloses the list the real run
-  // resolves with.
+  // Decided here, so the dry run discloses the list the real run resolves
+  // with.
   const serverConditions = resolveServerConditions(projectRoot, viteConfig.conditions, {
     forFile: opts.componentPath,
     workspaceRoot,
@@ -104,8 +103,8 @@ export function collectStaticPreBuildWarnings(
   // The wrapper is imported by the entry, so its packages must be pre-bundled
   // too: otherwise the first mount pays Vite's on-demand optimize cost.
   const importedSpecifiers = new Set<string>();
-  // M110 (A2/I2): filled by the same walk that produces the include list, so
-  // the dry run reports what the real run's optimizer would have choked on.
+  // Filled by the same walk that produces the include list, so the dry run
+  // reports what the real run's optimizer would have choked on.
   const unresolvedExternals: Array<{ specifier: string; importer: string }> = [];
   const reportedUnresolvedSpecifiers = new Set<string>();
   const externalDeps = [
@@ -151,7 +150,7 @@ export function collectStaticPreBuildWarnings(
     if (unsupported.length > 0) warnings.push(UNSUPPORTED_NEXT_MODULE_WARNING(unsupported));
   }
 
-  // M71: the Tailwind plugin is decided by the project's dependency alone. A
+  // The Tailwind plugin is decided by the project's dependency alone. A
   // component using utility classes needs it whether or not a global stylesheet
   // was found, and the styling engines nothing here can replicate say so once.
   const styleTooling = resolveStyleTooling(projectRoot, workspaceRoot, externalDeps);

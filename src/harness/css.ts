@@ -31,7 +31,7 @@ const MODULE_SCRIPT_TAG = /<script\b[^>]*>/gi;
 
 // The module one html file loads. `rootDir` is the directory a root-absolute
 // `src="/x.js"` is resolved against — Vite's own `root`, which is the package
-// root only when the config declares no other one (M114 A3).
+// root only when the config declares no other one.
 function entryFromHtml(html: string, rootDir: string): string | undefined {
   let markup: string;
   try {
@@ -54,7 +54,7 @@ function entryFromHtml(html: string, rootDir: string): string | undefined {
 
 // The module the project's own toolchain starts from: what index.html loads, or
 // the module Next.js renders every route through.
-// M114 A3, A5 (vuetify-F1): the package root's own index.html still decides
+// The package root's own index.html still decides
 // first; a `root` the vite config declares and a foldable
 // `build.rollupOptions.input` are two more places one can be, and vuetify has
 // its only entry under the first of them.
@@ -144,7 +144,7 @@ export function largestStylesheet(projectRoot: string): string | undefined {
 
 export interface CssDiscovery {
   files: string[];
-  // M102: "package-declared" is a pick made from the measured package's own
+  // "package-declared" is a pick made from the measured package's own
   // manifest (`style`, `exports["./styles"]`, `exports[*].style`) — evidence
   // the package itself published, distinct from a conventional filename.
   source: "entry" | "package-declared" | "candidate" | "fallback" | "runtime" | "none";
@@ -152,28 +152,28 @@ export interface CssDiscovery {
   onlyCandidate?: boolean;
   noEntryInPackage?: boolean;
   // present when source === "runtime", and on the "none" of a declared-but-
-  // unbuilt stylesheet whose package also styles at runtime (M112 review).
+  // unbuilt stylesheet whose package also styles at runtime.
   runtimeEngines?: string[];
-  // M114 A1, A2 / I5 (fluentui-F3): whether the engines above are ones
+  // Whether the engines above are ones
   // RUNTIME_STYLE_ENGINES names. `false` means the measured file imported a
   // `makeStyles`/`createUseStyles`/`styled` binding from a package the list
   // does not carry — an observation about one file, not a fact about the
   // package's dependencies. Present whenever `runtimeEngines` is.
   runtimeEnginesRecognised?: boolean;
-  // M112 A1, A2 / I5 (radix-themes-F2): the measured package's own declarations
+  // The measured package's own declarations
   // whose target is not on disk, as projectRoot-relative posix paths beside the
   // manifest field that named them. Present only when `source` is "none"
   // because the declaration is what stopped the size-ranked fallback.
   declaredMissing?: Array<{ field: string; path: string; buildCommand?: string }>;
 }
 
-// M102 (heroui-F1): the fields a package uses to tell a bundler where its own
+// The fields a package uses to tell a bundler where its own
 // stylesheet is. Read in the order a "style" condition would be looked up, and
 // only for the measured package itself — never an ancestor application's
-// manifest (M82).
-// M112 A1 / I5 (radix-themes-F2): a declaration whose target is absent used to
-// leave no trace, so a package that names its own stylesheet and has not built
-// it read exactly like a package that names none. The two answers are kept
+// manifest.
+// A declaration whose target is absent must not
+// leave no trace: a package that names its own stylesheet and has not built
+// it reads differently from a package that names none. The two answers are kept
 // apart in the `StylesheetImportTarget` shape this file already uses, and the
 // declared arm carries the manifest field that named it so a remedy can quote
 // it back.
@@ -215,15 +215,15 @@ export function packageStylesheetCandidates(projectRoot: string): PackageStylesh
   return targets;
 }
 
-// M112 A1 (radix-themes-F2): the package said where its stylesheet is; the
+// The package said where its stylesheet is; the
 // build that writes it has not run. Named by the field that declared it, the
-// path it points at and the package's own build script, on the M95 rule that a
+// path it points at and the package's own build script, on the rule that a
 // remedy quotes a script the manifest declares or none at all.
 export function CSS_DECLARED_UNBUILT_WARNING(
   declarations: Array<{ field: string; path: string }>,
   buildCommand?: string,
-  // M112 review: a package that declares an unbuilt stylesheet and also styles
-  // at runtime is not measured unstyled — M82's outcome stands, so the clause
+  // A package that declares an unbuilt stylesheet and also styles
+  // at runtime is not measured unstyled — that outcome stands, so the clause
   // asserting it names the engines that do the styling instead.
   runtimeEngines: string[] = [],
 ): string {
@@ -288,11 +288,10 @@ export function relativeToRoot(file: string, projectRoot: string): string {
   return toPosix(path.relative(projectRoot, file));
 }
 
-// M102 (shadcn-ui-F1/F2): a stylesheet that resolves and reads fine can still
-// fail to compile because something it imports does not exist — the condition
-// the bundler used to discover, fatally for two of four components and
-// recoverably for the other two depending on which surface its rejection
-// reached. Decidable here, from the filesystem, before any server starts.
+// A stylesheet that resolves and reads fine can still fail to compile
+// because something it imports does not exist, depending on which surface
+// the failure reaches. Decidable here, from the filesystem, before any
+// server starts.
 function brokenNestedImport(
   file: string,
   projectRoot: string,
@@ -305,15 +304,15 @@ function brokenNestedImport(
   return undefined;
 }
 
-// M71: evidence before convention. What the project's own entry imports is what
+// Evidence before convention. What the project's own entry imports is what
 // the project loads; a filename list is a guess, and the largest stylesheet in
 // the tree is a guess that says so.
-// M82: the largest-stylesheet fallback distrusts itself before it fires (an
+// The largest-stylesheet fallback distrusts itself before it fires (an
 // unbuilt placeholder or an opt-in reset by name is skipped and warned about),
 // and when nothing survives that walk, runtime CSS-in-JS is checked as a
 // first-class "no static stylesheet was ever going to exist" outcome before
 // falling all the way to "none".
-// M102 (I6, mantine-F1): `extraEntryFiles` are files the harness itself mounts
+// `extraEntryFiles` are files the harness itself mounts
 // through (the resolved `--wrap`/`120fps.setup.*` module), read for their own
 // side-effect stylesheet imports exactly as the project entry is. A wrapper is
 // not an application entry, so it never changes `noEntryInPackage`: what it
@@ -321,14 +320,14 @@ function brokenNestedImport(
 export function discoverGlobalCss(
   projectRoot: string,
   warningsOut?: string[],
-  // M114 A2 (fluentui-F3 review): the file the run measures, read only for the
+  // The file the run measures, read only for the
   // styling binding it imports. Absent means the unrecognised-engine branch is
   // never taken, so the line stays "none found".
   opts?: { extraEntryFiles?: string[]; measuredFile?: string },
 ): CssDiscovery {
   const workspaceRoot = findWorkspaceRoot(projectRoot);
   const aliases = loadTsconfigAliases(projectRoot);
-  // M102: a file rejected by one layer stays rejected for every later one —
+  // A file rejected by one layer stays rejected for every later one —
   // shadcn's `app/globals.css` is both the entry's own import and a
   // conventional filename, and re-picking it one layer down would undo the
   // rejection the layer above just disclosed.
@@ -348,7 +347,7 @@ export function discoverGlobalCss(
     return false;
   };
 
-  // M114 A3, A5 (vuetify-F1): the entry chain is what the project's own config
+  // The entry chain is what the project's own config
   // says it is. A `root` the config declares moves index.html out of the
   // package root, and a foldable `build.rollupOptions.input` names an html
   // file that is nowhere near either.
@@ -375,7 +374,7 @@ export function discoverGlobalCss(
     if (usable.length > 0) return { files: usable, source: "entry" };
   }
 
-  // M102 (heroui-F1): what the package says about itself, above a filename
+  // What the package says about itself, above a filename
   // convention and above the size-ranked guess.
   const packageDeclared = packageStylesheetCandidates(projectRoot);
   const declaredCandidates: Array<{ file: string; source: "package-declared" | "candidate" }> = [
@@ -409,7 +408,7 @@ export function discoverGlobalCss(
     return { files, source };
   }
 
-  // M112 A1, A2 (radix-themes-F2): a package that declares its own stylesheet
+  // A package that declares its own stylesheet
   // and has not built it yet is not a package without one. The size-ranked
   // walk below would inject an unrelated file and call it the global sheet,
   // so the declaration is disclosed and the walk never starts.
@@ -423,7 +422,7 @@ export function discoverGlobalCss(
       path: relativeToRoot(target.declared, projectRoot),
       ...(buildCommand !== undefined ? { buildCommand } : {}),
     }));
-    // The runtime layer (M82) sits below the ranked walk this return skips, so
+    // The runtime layer sits below the ranked walk this return skips, so
     // it is asked here: an unbuilt declaration plus emotion or styled-components
     // is a package whose styling never needed a static stylesheet.
     const declaredRuntimeEngines = detectRuntimeStyleEngines(projectRoot, workspaceRoot);
@@ -454,8 +453,7 @@ export function discoverGlobalCss(
       continue;
     }
     // Preprocessor-missing is not one of the two disqualification checks: it
-    // stops the walk (matching the pre-M82 single-candidate behavior) rather
-    // than skipping to the next-ranked candidate.
+    // stops the walk rather than skipping to the next-ranked candidate.
     if (!preprocessorFor(candidate.file, projectRoot, workspaceRoot) && injectable(candidate.file)) {
       survivor = candidate;
     }
@@ -475,7 +473,7 @@ export function discoverGlobalCss(
     return { files: [], source: "runtime", runtimeEngines, runtimeEnginesRecognised: true };
   }
 
-  // M114 A2: no declared engine and no stylesheet anywhere. What the measured
+  // No declared engine and no stylesheet anywhere. What the measured
   // file imports is the last read left, and it decides between "none found"
   // and an engine this recogniser cannot name.
   const unlisted = opts?.measuredFile

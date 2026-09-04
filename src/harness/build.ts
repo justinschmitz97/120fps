@@ -71,12 +71,12 @@ export interface HarnessResult {
   wrapRelative?: string;
   cssFiles?: string[];
   reactCompiler?: ReactCompilerState;
-  // M78: the project's own vite.config resolve.alias entries, already merged
-  // into this harness's own alias list (M71/M76) — so an alias that matches
+  // The project's own vite.config resolve.alias entries, already merged
+  // into this harness's own alias list — so an alias that matches
   // "react-dom" genuinely changes what this server mounts, not just what a
   // manifest claims. resolveReactDomIdentity's second parameter reads this.
   viteAliases?: Array<{ find: RegExp; replacement: string }>;
-  // M38: build-time advisories (e.g. a shared server whose frozen dep list
+  // Build-time advisories (e.g. a shared server whose frozen dep list
   // misses this component's scan). analyze() forwards them to the report.
   warnings?: string[];
 }
@@ -88,7 +88,7 @@ export function SWEEP_DEP_WARNING(missing: string[]): string {
   );
 }
 
-// M56: names both the cause (whatever Vite or the address check reported) and
+// Names both the cause (whatever Vite or the address check reported) and
 // where: the one detail that turns "something failed" into something a user
 // can act on (check the harness dir, or the underlying message, for why).
 export function VITE_START_FAILED(harnessDir: string, detail: string): string {
@@ -102,15 +102,15 @@ export interface BuildHarnessOptions {
   wrapPath?: string;
   cssFiles?: string[];
   reactCompiler?: boolean;
-  // M38: reuse one dev server per config tuple across a sweep.
+  // Reuse one dev server per config tuple across a sweep.
   serverPool?: ServerPool;
-  // M44: absolute path to a `<stem>.props.tsx` preset module, imported by the
+  // Absolute path to a `<stem>.props.tsx` preset module, imported by the
   // entry so non-serializable preset values resolve in the page.
   presetPath?: string;
-  // M48: skip the project's own Vite transforms (measure what the harness can
+  // Skip the project's own Vite transforms (measure what the harness can
   // compile on its own).
   noTransforms?: boolean;
-  // M65: the export named by `<file>#Export`, imported instead of the one the
+  // The export named by `<file>#Export`, imported instead of the one the
   // selection order would pick.
   target?: string;
 }
@@ -139,11 +139,11 @@ export async function buildAndServe(
     process.stderr.write(`Warning: ${reactCompiler.warning}\n`);
   }
 
-  // M57: an SFC that compiles to no component would otherwise surface as a 30s
+  // An SFC that compiles to no component would otherwise surface as a 30s
   // readiness timeout with a module-resolution message attached, naming the
   // harness instead of the file to fix. Checked here so nothing is left behind.
   const renderer = rendererFor(absoluteComponentPath);
-  // M87: computed once, ahead of entry generation, so a bare (non-composed)
+  // Computed once, ahead of entry generation, so a bare (non-composed)
   // Vue mount can wrap its render only when the template root is safe to
   // force non-zero -- see templateHasUnconditionalRoot.
   let vueUnconditionalRoot = false;
@@ -170,7 +170,7 @@ export async function buildAndServe(
     }
   }
 
-  // M73: react-dom/client is forced into optimizeDeps.include below, and an
+  // react-dom/client is forced into optimizeDeps.include below, and an
   // unresolvable include aborts Vite's optimizer with an esbuild path dump.
   if (renderer === "react") {
     // I2: the Vue-project question first — otherwise a Vue `.tsx` fails as a
@@ -179,7 +179,7 @@ export async function buildAndServe(
     assertReactDomClient(projectRoot);
   }
 
-  // Crash leftovers from previous runs: best-effort removal (M24 D8)
+  // Crash leftovers from previous runs: best-effort removal.
   const sweepWarnings: string[] = [];
   sweepStaleHarnessDirs(projectRoot, sweepWarnings);
 
@@ -249,10 +249,9 @@ export async function buildAndServe(
   fs.writeFileSync(path.join(harnessDir, entryFile), entryTsx);
   fs.writeFileSync(path.join(harnessDir, "index.html"), indexHtml);
 
-  // M100 (I5): the single computation of every pre-build fact this run needs.
-  // `explainProps` calls the same function for a dry run (M100 records the
-  // decision to keep one computation per invocation rather than hand one
-  // across), so both paths produce the same warnings in the same order.
+  // The single computation of every pre-build fact this run needs.
+  // `explainProps` calls the same function for a dry run, so both paths
+  // produce the same warnings in the same order.
   const workspaceRoot = findWorkspaceRoot(projectRoot);
   const preBuild = collectStaticPreBuildWarnings(projectRoot, {
     componentPath: absoluteComponentPath,
@@ -287,7 +286,7 @@ export async function buildAndServe(
   const plugins: unknown[] = styleTooling.tailwind
     ? await loadTailwindVitePlugin(projectRoot)
     : [];
-  // M111 A1 (midday-F1): Tailwind 3 enters through PostCSS and resolves its own
+  // Tailwind 3 enters through PostCSS and resolves its own
   // config against `process.cwd()`, so the shell directory decided whether the
   // member's CSS built at all. Rebuilding the member's declared pipeline with
   // the config path resolved from the member takes that decision away from the
@@ -302,7 +301,7 @@ export async function buildAndServe(
           (warning) => configWarnings.push(warning),
         )
       : undefined;
-  // M77: unconditional and cheap (a no-op for every file outside a
+  // Unconditional and cheap (a no-op for every file outside a
   // non-node_modules `.js`); array position does not matter for ordering
   // relative to Vite's own esbuild plugin, since `enforce: "pre"` alone
   // decides that.
@@ -321,7 +320,7 @@ export async function buildAndServe(
     plugins.push(...(await loadReactCompilerPlugin(reactCompiler.pluginPath!, reactCompiler.target)));
   }
 
-  // M48: the project's own transforms, resolved from its own node_modules with
+  // The project's own transforms, resolved from its own node_modules with
   // server hooks stripped. Load failure warns and continues.
   const transformWarnings: string[] = [];
   const transformEntries = options?.noTransforms
@@ -335,12 +334,12 @@ export async function buildAndServe(
     );
   }
 
-  // M69: Vite refuses to serve a file outside its allow list. Undefined for a
+  // Vite refuses to serve a file outside its allow list. Undefined for a
   // project whose alias targets are all inside its own root, which keeps
   // Vite's defaults everywhere they already worked.
   // Vite's own default is the one root it searches for; widening never narrows
   // it, so its answer joins the list whenever the list exists at all.
-  // M73: Vite serves nothing outside its allow list, so a component reached
+  // Vite serves nothing outside its allow list, so a component reached
   // through /@fs/ needs its own directory named.
   const aliasAllow = fsAllowDirs(
     projectRoot,
@@ -350,7 +349,7 @@ export async function buildAndServe(
   );
   const fsAllow = aliasAllow && [...new Set([...aliasAllow, searchForWorkspaceRoot(projectRoot)])];
 
-  // M71: without these the page has no `process` at all, and a component
+  // Without these the page has no `process` at all, and a component
   // reading process.env throws before it renders.
   const define = readEnvDefines(projectRoot, workspaceRoot);
 
@@ -377,7 +376,7 @@ export async function buildAndServe(
       // Vite searches from its root up to its own idea of the workspace root,
       // which a lockfile-only monorepo root does not satisfy; naming the
       // directory is a no-op wherever its own walk already reaches.
-      // M106 A3: postcss and the folded preprocessor options share one `css`
+      // postcss and the folded preprocessor options share one `css`
       // object — twenty declares both, and passing either alone dropped the
       // other.
       ...(postcssOption || viteConfig.preprocessorOptions
@@ -397,22 +396,22 @@ export async function buildAndServe(
         // and logs nothing; with it off the client console.errors the full
         // message, which the page-error capture turns into a usable diagnosis.
         hmr: { overlay: false },
-        // M34: nothing edits files during a measurement run, so file watching is
+        // Nothing edits files during a measurement run, so file watching is
         // pure cost: chokidar's initial scan of a real repo (a Next.js .next/
         // dir has thousands of files) saturates the fs threadpool exactly when
         // the first module loads, and a watcher-triggered reload mid-measurement
-        // is the failure M30's context retry exists for.
+        // is the failure the context retry in browser/retry.ts exists for.
         watch: null,
         ...(fsAllow ? { fs: { allow: fsAllow } } : {}),
       },
-      // M109 (A3): what the project's tsconfig says about `jsx` never decides
-      // how the harness compiles its .ts/.tsx/.jsx. M109 (A5): resolve
+      // What the project's tsconfig says about `jsx` never decides
+      // how the harness compiles its .ts/.tsx/.jsx. Resolve
       // conditions carry the governing tsconfig's customConditions.
       ...(compileOptions.esbuild ? { esbuild: compileOptions.esbuild } : {}),
       resolve: {
         alias,
         dedupe: renderer === "vue" ? ["vue"] : ["react", "react-dom"],
-        // M76: a pass-through to Vite's own condition-aware exports resolver.
+        // A pass-through to Vite's own condition-aware exports resolver.
         ...(compileOptions.conditions ? { conditions: compileOptions.conditions } : {}),
       },
       optimizeDeps: {
@@ -453,20 +452,19 @@ export async function buildAndServe(
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    // M92: surface 1 of the shared pipeline (presentBundlerFailure) -- the
-    // dev server itself never started. M79 (3a)'s own case (Vite/esbuild's
-    // message blaming a workspace-internal package's package.json fields when
-    // the real problem is that the package was never built) is the first
+    // Surface 1 of the shared pipeline (presentBundlerFailure) -- the
+    // dev server itself never started. Vite/esbuild's message blaming a
+    // workspace-internal package's package.json fields when
+    // the real problem is that the package was never built is the first
     // diagnoser this chain tries; every other shape falls through in turn,
     // stripBundlerStackFrames as the universal last resort.
     const detail = presentBundlerFailure(message, projectRoot, buildWarnings);
-    // M83 #7: the common, caught-and-rethrown failure shape (nuxt-ui F1/F2,
-    // mantine F1, dub F1, chakra-ui F3/F4). cleanup() is only ever
+    // The common, caught-and-rethrown failure shape. cleanup() is only ever
     // constructed on the success path, so this catch is the one place the
     // directory would otherwise leak on every one of these.
     fs.rmSync(harnessDir, { recursive: true, force: true });
     forgetHarnessDirIfRemoved(harnessDir);
-    // M79 (1a): everything buildWarnings would have carried on the success
+    // Everything buildWarnings would have carried on the success
     // path travels with the thrown error too, so a crash after a computed
     // warning (VITE_CONFIG_IGNORED_WARNING, an unreplicated style engine, a
     // transform-load failure) does not silently drop it.
