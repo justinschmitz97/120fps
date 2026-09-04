@@ -15,7 +15,6 @@ const LINE_CAPS: Record<string, number> = {
   "analysis/react-profiler.ts": 902,
   "browser/discovery.ts": 823,
   "browser/measure.ts": 2099,
-  "cli/main.ts": 1979,
   "pipeline/analyze.ts": 4980,
   "props/values.ts": 822,
   "report/budget.ts": 808,
@@ -33,7 +32,12 @@ const COMMENT_TOKENS: Record<string, number> = {
   "browser/noise.ts": 3,
   "browser/observers.ts": 1,
   "browser/page-errors.ts": 18,
-  "cli/main.ts": 63,
+  "cli/args.ts": 3,
+  "cli/errors.ts": 5,
+  "cli/gitignore.ts": 3,
+  "cli/lifecycle.ts": 14,
+  "cli/main.ts": 35,
+  "cli/paths.ts": 3,
   "harness/build.ts": 31,
   "harness/bundler-failure.ts": 13,
   "harness/css.ts": 27,
@@ -83,7 +87,7 @@ const COMMENT_TOKENS: Record<string, number> = {
 };
 
 const DUPLICATE_FUNCTIONS: Record<string, string[]> = {
-  componentStem: ["cli/main.ts", "props/candidates.ts"],
+  componentStem: ["cli/paths.ts", "props/candidates.ts"],
   serializeProps: ["analysis/explorer.ts", "analysis/react-profiler.ts", "browser/measure.ts"],
 };
 
