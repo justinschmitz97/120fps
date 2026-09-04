@@ -1,15 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
-import {
-  generateEntry,
-  detectComponentExport,
-  detectProjectTransforms,
-  scanExternalDeps,
-  sfcProducesComponent,
-  vueComponentName,
-  SFC_NO_COMPONENT,
-} from "../../src/harness/index.js";
+import { generateEntry, detectComponentExport, scanExternalDeps, sfcProducesComponent, vueComponentName, SFC_NO_COMPONENT } from "../../src/harness/index.js";
+import { detectProjectTransforms } from "../../src/project/index.js";
 import {
   loadVueCompiler,
   parseSfcScript,

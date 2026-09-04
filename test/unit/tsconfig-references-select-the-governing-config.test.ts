@@ -3,11 +3,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { resolveGoverningTsconfig } from "../../src/project/index.js";
-import {
-  collectStaticPreBuildWarnings,
-  loadTsconfigAliases,
-  resetGoverningDisclosures,
-} from "../../src/harness/index.js";
+import { collectStaticPreBuildWarnings } from "../../src/harness/index.js";
+import { loadTsconfigAliases, resetGoverningDisclosures } from "../../src/project/index.js";
 
 const REFERENCES = path.resolve("fixtures/tsconfig-shapes/project-references");
 const JSX_PRESERVE = path.resolve("fixtures/tsconfig-shapes/jsx-preserve");

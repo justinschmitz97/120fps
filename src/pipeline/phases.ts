@@ -1,16 +1,7 @@
 import path from "node:path";
 import { type AnalyzeOptions } from "./analyze.js";
-import {
-  BUNDLER_PREACT_ALIAS_WARNING,
-  type BuildHarnessOptions,
-  CSS_UNREADABLE_DROPPED_WARNING,
-  type HarnessResult,
-  detectBundlerReactDomAlias,
-  detectComponentExport,
-  detectProjectTransforms,
-  presentBundlerFailure,
-  stylesheetReadFailureTarget,
-} from "../harness/index.js";
+import { BUNDLER_PREACT_ALIAS_WARNING, type BuildHarnessOptions, CSS_UNREADABLE_DROPPED_WARNING, type HarnessResult, detectBundlerReactDomAlias, detectComponentExport, presentBundlerFailure, stylesheetReadFailureTarget } from "../harness/index.js";
+import { detectProjectTransforms } from "../project/index.js";
 import {
   COMPOSITION_EMPTY_WARNING,
   type CompositionTree,

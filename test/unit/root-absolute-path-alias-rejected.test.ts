@@ -2,7 +2,7 @@ import { describe, it, expect, afterAll } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { loadTsconfigAliases, ROOT_ABSOLUTE_ALIAS_WARNING } from "../../src/harness/index.js";
+import { loadTsconfigAliases, ROOT_ABSOLUTE_ALIAS_WARNING } from "../../src/project/index.js";
 
 const ROOT_SLASH = path.resolve("fixtures/tsconfig-shapes/root-slash-alias");
 

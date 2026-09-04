@@ -4,11 +4,8 @@ import { describe, it, expect, vi, afterEach, afterAll } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import {
-  loadTsconfigAliases,
-  detectComponentExport,
-  sweepStaleHarnessDirs,
-} from "../../src/harness/index.js";
+import { detectComponentExport, sweepStaleHarnessDirs } from "../../src/harness/index.js";
+import { loadTsconfigAliases } from "../../src/project/index.js";
 import { extractProps, extractExports } from "../../src/props/index.js";
 
 const cleanupDirs: string[] = [];

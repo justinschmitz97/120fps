@@ -2,16 +2,8 @@ import { describe, it, expect, beforeEach, afterEach, afterAll, vi } from "vites
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import {
-  buildAndServe,
-  VITE_START_FAILED,
-  REACT_COMPILER_PACKAGE,
-  resolveReactCompilerState,
-  sweepStaleTmpDirs,
-  TMP_SWEEP_MAX_REMOVALS,
-  createServerPool,
-  type ServerPool,
-} from "../../src/harness/index.js";
+import { buildAndServe, VITE_START_FAILED, sweepStaleTmpDirs, TMP_SWEEP_MAX_REMOVALS, createServerPool, type ServerPool } from "../../src/harness/index.js";
+import { REACT_COMPILER_PACKAGE, resolveReactCompilerState } from "../../src/project/index.js";
 import {
   withContextRetry,
   createRetryBudget,

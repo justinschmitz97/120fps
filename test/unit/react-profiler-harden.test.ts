@@ -2,19 +2,8 @@ import { describe, it, expect, afterEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import {
-  detectFramework,
-  detectDurationsUnavailable,
-  diffSnapshots,
-  detectMemoBailouts,
-  detectContextFanOut,
-  computeRenderAttribution,
-  hasReactWarning,
-  type ProfilerSnapshot,
-  type ProfilerDiff,
-  type ReactOptimizations,
-  type FiberInfo,
-} from "../../src/analysis/index.js";
+import { detectDurationsUnavailable, diffSnapshots, detectMemoBailouts, detectContextFanOut, computeRenderAttribution, hasReactWarning, type ProfilerSnapshot, type ProfilerDiff, type ReactOptimizations, type FiberInfo } from "../../src/analysis/index.js";
+import { detectFramework } from "../../src/project/index.js";
 import {
   formatTable,
   DEFAULT_THRESHOLDS,

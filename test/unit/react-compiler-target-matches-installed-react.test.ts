@@ -2,13 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import {
-  detectReactMajor,
-  reactCompilerBabelOptions,
-  reactCompilerRuntimeDeps,
-  resolveReactCompilerState,
-  REACT_COMPILER_PACKAGE,
-} from "../../src/harness/index.js";
+import { detectReactMajor, reactCompilerBabelOptions, reactCompilerRuntimeDeps, resolveReactCompilerState, REACT_COMPILER_PACKAGE } from "../../src/project/index.js";
 
 // primer-react-F1: the compiler ran with an empty options object, defaulted to
 // React 19, emitted `import { c } from "react/compiler-runtime"`, and the

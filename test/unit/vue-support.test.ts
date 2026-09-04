@@ -8,14 +8,8 @@ import {
   parseArgs,
   type PathReader,
 } from "../../src/cli/index.js";
-import {
-  detectProjectTransforms,
-  detectWrapper,
-  generateEntry,
-  rendererFor,
-  SUPPORTED_TRANSFORM_PLUGINS,
-  WRAPPER_CANDIDATES,
-} from "../../src/harness/index.js";
+import { detectWrapper, generateEntry, rendererFor, WRAPPER_CANDIDATES } from "../../src/harness/index.js";
+import { detectProjectTransforms, SUPPORTED_TRANSFORM_PLUGINS } from "../../src/project/index.js";
 import {
   isVueFile,
   loadVueCompiler,
@@ -35,7 +29,7 @@ import {
   isVueRuntimeDefinePropsWarning,
   isVuePropsScopeExclusionWarning,
 } from "../../src/props/index.js";
-import { detectFramework } from "../../src/analysis/index.js";
+import { detectFramework } from "../../src/project/index.js";
 import {
   resolveFramework,
   isFixturePath,

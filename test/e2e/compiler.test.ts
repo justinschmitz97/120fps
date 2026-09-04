@@ -3,12 +3,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import http from "node:http";
-import {
-  buildAndServe,
-  reactCompilerResolutionWarning,
-  REACT_COMPILER_DISABLED_WARNING,
-  type HarnessResult,
-} from "../../src/harness/index.js";
+import { buildAndServe, type HarnessResult } from "../../src/harness/index.js";
+import { reactCompilerResolutionWarning, REACT_COMPILER_DISABLED_WARNING } from "../../src/project/index.js";
 import { generateProbeEntry, hasReactWarning } from "../../src/analysis/index.js";
 import { sharedAnalyze as analyze } from "./shared-analyze.js";
 import { chromium, type Browser, type Page } from "playwright";

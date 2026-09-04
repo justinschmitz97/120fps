@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
-import { stylesheetRuleCount, type ReactCompilerState } from "../harness/index.js";
+import { stylesheetRuleCount } from "../harness/index.js";
+import { type ReactCompilerState } from "../project/index.js";
 import {
   hasPageErrors,
   mergeDrains,

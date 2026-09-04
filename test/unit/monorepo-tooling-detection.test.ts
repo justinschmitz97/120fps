@@ -2,13 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import {
-  detectNextJs,
-  detectTailwindVite,
-  detectReactCompiler,
-  detectProjectTransforms,
-  HOISTED_TRANSFORM_WARNING,
-} from "../../src/harness/index.js";
+import { detectNextJs, detectTailwindVite } from "../../src/harness/index.js";
+import { detectReactCompiler, detectProjectTransforms, HOISTED_TRANSFORM_WARNING } from "../../src/project/index.js";
 
 let tmpDir: string;
 

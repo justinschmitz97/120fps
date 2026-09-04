@@ -13,64 +13,8 @@ export {
   type PropCombination,
   type DeltaPair,
 } from "./props/index.js";
-export {
-  buildAndServe,
-  compositionToJsx,
-  detectNextJs,
-  buildShimAliases,
-  detectWrapper,
-  detectGlobalCss,
-  discoverGlobalCss,
-  findProjectEntry,
-  entryStylesheetImports,
-  largestStylesheet,
-  validateCssFiles,
-  detectTailwindVite,
-  loadTailwindVitePlugin,
-  resolveStyleTooling,
-  detectUnsupportedStyleEngines,
-  findPostcssConfigAbove,
-  readViteConfigData,
-  readEnvDefines,
-  parseEnvFile,
-  CSS_DROPPED_WARNING,
-  CSS_FALLBACK_WARNING,
-  CSS_IMPORT_SKIPPED_WARNING,
-  CSS_PREPROCESSOR_MISSING_WARNING,
-  UNSUPPORTED_STYLE_ENGINES,
-  UNSUPPORTED_STYLE_ENGINE_WARNING,
-  VITE_CONFIG_IGNORED_WARNING,
-  ENV_DEFINE_PREFIXES,
-  STYLESHEET_EXTENSIONS,
-  type CssDiscovery,
-  type StyleTooling,
-  type ViteConfigData,
-  detectReactCompiler,
-  resolveReactCompiler,
-  resolveReactCompilerState,
-  loadReactCompilerPlugin,
-  reactCompilerResolutionWarning,
-  REACT_COMPILER_PACKAGE,
-  REACT_COMPILER_DISABLED_WARNING,
-  cssImportSpecifier,
-  cssImportBlock,
-  generateEntry,
-  generateComposedEntry,
-  scanExternalDeps,
-  GLOBAL_CSS_CANDIDATES,
-  SHIM_MODULES,
-  unshimmedNextModules,
-  UNSUPPORTED_NEXT_MODULE_WARNING,
-  WRAPPER_CANDIDATES,
-  type HarnessResult,
-  type BuildHarnessOptions,
-  type ComponentIdentity,
-  type EntryOptions,
-  reactJsxRuntimeDeps,
-  type ShimEntry,
-  type ReactCompilerResolution,
-  type ReactCompilerState,
-} from "./harness/index.js";
+export { buildAndServe, compositionToJsx, detectNextJs, buildShimAliases, detectWrapper, detectGlobalCss, discoverGlobalCss, findProjectEntry, entryStylesheetImports, largestStylesheet, validateCssFiles, detectTailwindVite, loadTailwindVitePlugin, resolveStyleTooling, detectUnsupportedStyleEngines, findPostcssConfigAbove, readViteConfigData, readEnvDefines, parseEnvFile, CSS_DROPPED_WARNING, CSS_FALLBACK_WARNING, CSS_IMPORT_SKIPPED_WARNING, CSS_PREPROCESSOR_MISSING_WARNING, UNSUPPORTED_STYLE_ENGINES, UNSUPPORTED_STYLE_ENGINE_WARNING, VITE_CONFIG_IGNORED_WARNING, ENV_DEFINE_PREFIXES, STYLESHEET_EXTENSIONS, type CssDiscovery, type StyleTooling, type ViteConfigData, cssImportSpecifier, cssImportBlock, generateEntry, generateComposedEntry, scanExternalDeps, GLOBAL_CSS_CANDIDATES, SHIM_MODULES, unshimmedNextModules, UNSUPPORTED_NEXT_MODULE_WARNING, WRAPPER_CANDIDATES, type HarnessResult, type BuildHarnessOptions, type ComponentIdentity, type EntryOptions, type ShimEntry } from "./harness/index.js";
+export { detectReactCompiler, resolveReactCompiler, resolveReactCompilerState, loadReactCompilerPlugin, reactCompilerResolutionWarning, REACT_COMPILER_PACKAGE, REACT_COMPILER_DISABLED_WARNING, reactJsxRuntimeDeps, type ReactCompilerResolution, type ReactCompilerState } from "./project/index.js";
 export {
   measureMount,
   measureRerender,
@@ -208,7 +152,8 @@ export {
 export { targetNotFoundMessage } from "./harness/index.js";
 export { collectStaticPreBuildWarnings, assertRendererSupported, VUE_PROJECT_REACT_FILE_ERROR, resolveJsxImportSource, type StaticPreBuild } from "./harness/index.js";
 export { PROVIDER_HINT_LINE } from "./report/index.js";
-export { detectScaleExport, loadTsconfigAliases, findProjectRoot, sweepStaleHarnessDirs, detectComponentExport, createServerPool, SWEEP_DEP_WARNING, ALIAS_SHAPE_WARNING, BROKEN_ALIAS_WARNING, fsAllowDirs, type ServerPool } from "./harness/index.js";
+export { detectScaleExport, findProjectRoot, sweepStaleHarnessDirs, detectComponentExport, createServerPool, SWEEP_DEP_WARNING, BROKEN_ALIAS_WARNING, fsAllowDirs, type ServerPool } from "./harness/index.js";
+export { loadTsconfigAliases, ALIAS_SHAPE_WARNING } from "./project/index.js";
 export {
   createHarnessDir,
   HARNESS_DIR_UNWRITABLE,
@@ -255,31 +200,8 @@ export {
 // M106 C1/C2
 export { type StressPatternRun } from "./analysis/index.js";
 export { EXPLORE_STALLED_WARNING } from "./analysis/index.js";
-export {
-  detectFramework,
-  diffSnapshots,
-  detectMemoBailouts,
-  detectContextFanOut,
-  computeRenderAttribution,
-  computePortalOrphans,
-  hasReactWarning,
-  injectProfilerHook,
-  collectProfilerData,
-  resetProfilerData,
-  countBodyOrphans,
-  generateProbeEntry,
-  generateProbeHtml,
-  runReactAnalysis,
-  PROFILER_HOOK_SCRIPT,
-  type ReactOptimizations,
-  type ProfilerSnapshot,
-  type ProfilerDiff,
-  type FiberInfo,
-  type RenderAttribution,
-  type CallbackIdentityDelta,
-  type ProbeEntryOptions,
-  type ReactAnalysisOptions,
-} from "./analysis/index.js";
+export { diffSnapshots, detectMemoBailouts, detectContextFanOut, computeRenderAttribution, computePortalOrphans, hasReactWarning, injectProfilerHook, collectProfilerData, resetProfilerData, countBodyOrphans, generateProbeEntry, generateProbeHtml, runReactAnalysis, PROFILER_HOOK_SCRIPT, type ReactOptimizations, type ProfilerSnapshot, type ProfilerDiff, type FiberInfo, type RenderAttribution, type CallbackIdentityDelta, type ProbeEntryOptions, type ReactAnalysisOptions } from "./analysis/index.js";
+export { detectFramework } from "./project/index.js";
 export { parseArgs, resolveReactCompilerFlag, type CliArgs } from "./cli/index.js";
 export {
   parseIsolationPhases,

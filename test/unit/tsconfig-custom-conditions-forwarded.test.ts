@@ -1,10 +1,7 @@
 import { describe, it, expect } from "vitest";
 import path from "node:path";
-import {
-  collectStaticPreBuildWarnings,
-  harnessServerCompileOptions,
-  resolveServerConditions,
-} from "../../src/harness/index.js";
+import { collectStaticPreBuildWarnings, harnessServerCompileOptions } from "../../src/harness/index.js";
+import { resolveServerConditions } from "../../src/project/index.js";
 
 const REFERENCES = path.resolve("fixtures/tsconfig-shapes/project-references");
 const BUTTON = path.join(REFERENCES, "src", "components", "Button.tsx");

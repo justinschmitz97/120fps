@@ -20,7 +20,7 @@ import {
   type Thresholds,
 } from "../../src/report/index.js";
 import { compareBaseline, buildEnvFingerprint, type BaselineEntry } from "../../src/report/index.js";
-import { reactJsxRuntimeDeps } from "../../src/harness/index.js";
+import { reactJsxRuntimeDeps } from "../../src/project/index.js";
 
 const THRESHOLDS: Thresholds = { mountMs: 50, interactionMs: 400, relativeMount: 2, rerenderMs: 16 };
 

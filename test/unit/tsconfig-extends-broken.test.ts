@@ -2,7 +2,7 @@ import { describe, it, expect, afterAll } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { loadTsconfigAliases, TSCONFIG_EXTENDS_BROKEN_WARNING } from "../../src/harness/index.js";
+import { loadTsconfigAliases, TSCONFIG_EXTENDS_BROKEN_WARNING } from "../../src/project/index.js";
 import { explainProps } from "../../src/pipeline/index.js";
 
 const cleanupDirs: string[] = [];

@@ -1,7 +1,7 @@
 import os from "node:os";
 import fs from "node:fs";
 import path from "node:path";
-import { resolveReactCompilerState } from "../harness/index.js";
+import { resolveReactCompilerState } from "../project/index.js";
 import { findWorkspaceRoot } from "../project/index.js";
 import { type BrowserPool } from "../browser/index.js";
 import {

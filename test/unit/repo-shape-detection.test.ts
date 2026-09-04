@@ -7,7 +7,7 @@ import {
   findWorkspaceRoot,
   isPackageDeclared,
 } from "../../src/project/index.js";
-import { loadTsconfigAliases } from "../../src/harness/index.js";
+import { loadTsconfigAliases } from "../../src/project/index.js";
 
 const SOLID = path.resolve("fixtures/solid-project");
 const PREACT = path.resolve("fixtures/preact-project");

@@ -2,31 +2,8 @@ import { describe, it, expect, afterEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import {
-  detectFramework,
-  detectDurationsUnavailable,
-  diffSnapshots,
-  detectMemoBailouts,
-  detectContextFanOut,
-  computeRenderAttribution,
-  computePortalOrphans,
-  hasReactWarning,
-  PROFILER_HOOK_SCRIPT,
-  generateProbeEntry,
-  generateProbeHtml,
-  resolveReactDomIdentity,
-  isSupportedReactDomVersion,
-  REACT_DOM_NOT_REACT_WARNING,
-  REACT_DOM_VERSION_RANGE_WARNING,
-  SOLID_AND_REACT_DECLARED,
-  PREACT_UNSUPPORTED_WARNING,
-  type ProfilerSnapshot,
-  type ProfilerDiff,
-  type ReactOptimizations,
-  type FiberInfo,
-  type RenderAttribution,
-  type CallbackIdentityDelta,
-} from "../../src/analysis/index.js";
+import { detectDurationsUnavailable, diffSnapshots, detectMemoBailouts, detectContextFanOut, computeRenderAttribution, computePortalOrphans, hasReactWarning, PROFILER_HOOK_SCRIPT, generateProbeEntry, generateProbeHtml, resolveReactDomIdentity, isSupportedReactDomVersion, REACT_DOM_NOT_REACT_WARNING, REACT_DOM_VERSION_RANGE_WARNING, type ProfilerSnapshot, type ProfilerDiff, type ReactOptimizations, type FiberInfo, type RenderAttribution, type CallbackIdentityDelta } from "../../src/analysis/index.js";
+import { detectFramework, SOLID_AND_REACT_DECLARED, PREACT_UNSUPPORTED_WARNING } from "../../src/project/index.js";
 import { parseArgs } from "../../src/cli/index.js";
 
 // --- helpers ---

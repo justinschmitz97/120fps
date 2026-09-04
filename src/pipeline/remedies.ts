@@ -1,12 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
-import {
-  detectProjectTransforms,
-  SUPPORTED_TRANSFORM_PLUGINS,
-  VITE_CONFIG_IGNORED_WARNING,
-  readViteConfigData,
-  type ViteConfigData,
-} from "../harness/index.js";
+import { VITE_CONFIG_IGNORED_WARNING, readViteConfigData, type ViteConfigData } from "../harness/index.js";
+import { detectProjectTransforms, SUPPORTED_TRANSFORM_PLUGINS } from "../project/index.js";
 import {
   extractProps,
   extractExports,

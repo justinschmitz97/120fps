@@ -3,14 +3,6 @@ import path from "node:path";
 import { createRequire } from "node:module";
 import { chromium, type Browser, type CDPSession, type Page } from "playwright";
 import { renderTreeHelper, setupApiBlock, setupBlock, wrapImportLine, type HarnessResult } from "../harness/index.js";
-// Which framework a project is written in is a project fact; the React
-// analysis reads it and passes it on to callers that reach this stage.
-export {
-  detectFramework,
-  FRAMEWORK_MANIFEST_UNREADABLE,
-  PREACT_UNSUPPORTED_WARNING,
-  SOLID_AND_REACT_DECLARED,
-} from "../project/index.js";
 import type { PropCombination } from "../props/index.js";
 import { FUNCTION_MARKER, serializeProps } from "../props/index.js";
 import { applyWrapperViewport, collectTrace, createPhaseTracker, parseTraceDuration, settleStyles, reportFontSettle, tryCollectGarbage, HARNESS_NAV_WAIT } from "../browser/index.js";

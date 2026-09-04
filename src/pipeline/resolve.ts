@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { discoverGlobalCss, detectWrapper, findProjectRoot } from "../harness/index.js";
-import { detectFramework } from "../analysis/index.js";
+import { detectFramework } from "../project/index.js";
 import { findWorkspaceRoot, isVueFile } from "../project/index.js";
 import { type CssReport } from "../report/index.js";
 import { type AnalyzeOptions } from "./analyze.js";

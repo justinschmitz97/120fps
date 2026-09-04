@@ -2,7 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { buildAndServe, loadTsconfigAliases, type ServerPool } from "../../src/harness/index.js";
+import { buildAndServe, type ServerPool } from "../../src/harness/index.js";
+import { loadTsconfigAliases } from "../../src/project/index.js";
 
 function poolThatThrows(err: unknown): ServerPool {
   return {

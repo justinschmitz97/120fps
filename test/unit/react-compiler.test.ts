@@ -2,15 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import {
-  detectReactCompiler,
-  loadReactCompilerPlugin,
-  reactCompilerResolutionWarning,
-  resolveReactCompiler,
-  resolveReactCompilerState,
-  REACT_COMPILER_DISABLED_WARNING,
-  REACT_COMPILER_PACKAGE,
-} from "../../src/harness/index.js";
+import { detectReactCompiler, loadReactCompilerPlugin, reactCompilerResolutionWarning, resolveReactCompiler, resolveReactCompilerState, REACT_COMPILER_DISABLED_WARNING, REACT_COMPILER_PACKAGE } from "../../src/project/index.js";
 import { hasReactWarning, type ReactOptimizations } from "../../src/analysis/index.js";
 import { buildEnvFingerprint, classifyEnv } from "../../src/report/index.js";
 import {

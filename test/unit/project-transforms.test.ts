@@ -7,11 +7,7 @@ import {
   PROJECT_TRANSFORM_WARNING,
   transformFailureNote,
 } from "../../src/project/index.js";
-import {
-  detectProjectTransforms,
-  stripServerHooks,
-  SUPPORTED_TRANSFORM_PLUGINS,
-} from "../../src/harness/index.js";
+import { detectProjectTransforms, stripServerHooks, SUPPORTED_TRANSFORM_PLUGINS } from "../../src/project/index.js";
 
 const ROOT = path.resolve("fixtures/m42-server");
 const PROJECT = path.resolve("fixtures/transform-project");
