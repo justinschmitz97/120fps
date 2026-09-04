@@ -275,8 +275,20 @@ allowlist fails the test so the allowlist cannot lag behind.
 - Report with the template in the brief: changed, verified (commands and verbatim results), facts
   (`file:line`), assumptions, open.
 
-## Baseline (wave 0, d63537e)
+## Baseline (wave 0, d63537e, recorded 2026-09-04)
 
-Filled by the coordinator from the baseline worker's report.
+- `tsc --noEmit`: exit 0, no diagnostics.
+- `tsc` build: exit 0; `dist/` holds one `.js`+`.d.ts` pair per source file plus `dist/shims/`
+  (ten Next shims); `node dist/cli.js --help` exit 0.
+- `vitest run test/unit --maxWorkers=2`: Test Files 1 failed | 326 passed (327); Tests 1 failed |
+  4795 passed | 1 skipped (4797); 277 s.
+  Pre-existing failure, deterministic in isolation: `test/unit/vue-setup-inject-evidence.test.ts`
+  › "a project the Vue compiler does not resolve from › records why each specifier failed":
+  `AssertionError: expected { __esModule: true, …(25) } to be undefined` at line 51
+  (`loadVueCompiler(dir)` resolves through vitest's hoisted `NODE_PATH`; see `00-tdd.md` Tests).
+- `vitest run test/e2e/cli.test.ts test/e2e/shim-detect.test.ts --maxWorkers=1`: 2 files, 15
+  tests passed, 77 s.
+- Wave 0 commits: c2455b8 (ADR, spec, map), c8db8be (`.gitattributes`, 42 files renormalised to
+  LF; every `src/` and `test/` file is now `i/lf w/lf`).
 
 ## Verification (filled on approval)
