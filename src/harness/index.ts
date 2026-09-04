@@ -1,4 +1,19 @@
 export * from "./build.js";
+export * from "./bundler-failure.js";
+export * from "./css.js";
+export * from "./deps-scan.js";
+export * from "./dirs.js";
+export * from "./entry.js";
+export * from "./env.js";
+export * from "./exports.js";
+export * from "./prebuild.js";
+export * from "./renderer.js";
+export * from "./server.js";
+export * from "./shims.js";
+export * from "./stylesheets.js";
+export * from "./style-tooling.js";
+export * from "./vite-config.js";
+export * from "./workspace-entries.js";
 // Project-stage declarations the harness surface still names: tsconfig aliases,
 // the React Compiler resolution, transform plugins and module resolution are
 // project facts, and callers reach them through the stage that reads them.

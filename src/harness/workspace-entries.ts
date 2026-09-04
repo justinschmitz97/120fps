@@ -1,0 +1,150 @@
+import fs from "node:fs";
+import path from "node:path";
+import {
+  DECLARATION_FILE,
+  type DeclaredEntry,
+  exportConditionTargets,
+  exportsRootTargets,
+  isFile,
+  resolveTarget,
+  SOURCE_EXTENSIONS,
+} from "../project/index.js";
+
+// M76: true when an installed package's realpath sits inside workspaceRoot
+// with no node_modules segment between them — the standard signal that an
+// install is a symlink back into the monorepo's own source tree, not a
+// hoisted external copy.
+export function isWorkspaceSibling(pkgDir: string, workspaceRoot: string): boolean {
+  let real: string;
+  try {
+    real = fs.realpathSync(pkgDir);
+  } catch {
+    return false;
+  }
+  const relative = path.relative(path.resolve(workspaceRoot), real).replace(/\\/g, "/");
+  if (relative === "" || relative.startsWith("..") || path.isAbsolute(relative)) return false;
+  return !relative.split("/").includes("node_modules");
+}
+
+export function declaredRuntimeEntries(manifest: Record<string, unknown>): DeclaredEntry[] {
+  const entries: DeclaredEntry[] = [];
+  if (typeof manifest.source === "string") entries.push({ field: "source", declared: manifest.source });
+  for (const declared of exportsRootTargets(manifest.exports)) {
+    entries.push({ field: 'exports["."]', declared });
+  }
+  if (typeof manifest.module === "string") entries.push({ field: "module", declared: manifest.module });
+  if (typeof manifest.main === "string") entries.push({ field: "main", declared: manifest.main });
+  return entries;
+}
+
+export function declaresRuntimeEntry(manifest: Record<string, unknown> | undefined): boolean {
+  if (!manifest) return false;
+  return ["source", "exports", "module", "main"].some((field) => manifest[field] !== undefined);
+}
+
+// M107: a declared entry names a build output, and the source it was built
+// from sits at the same path with the build directory dropped and a source
+// extension applied (`dist/shared/index.js` -> `shared/index.ts`).
+function sourceCandidatesFor(real: string, declared: string): string[] {
+  const normalized = declared.replace(/\\/g, "/").replace(/^\.\//, "");
+  const withoutExtension = (value: string) => value.replace(/\.[^./]+$/, "");
+  const relatives = [normalized, withoutExtension(normalized)];
+  const segments = normalized.split("/").filter((segment) => segment.length > 0 && segment !== ".");
+  if (segments.length > 1) {
+    const tail = segments.slice(1).join("/");
+    relatives.push(withoutExtension(tail), tail);
+  }
+  const seen = new Set<string>();
+  const candidates: string[] = [];
+  for (const relative of relatives) {
+    if (relative.length === 0 || relative === ".." || seen.has(relative)) continue;
+    seen.add(relative);
+    candidates.push(path.resolve(real, relative));
+  }
+  return candidates;
+}
+
+function resolveSourceCandidate(real: string, declared: string): string | undefined {
+  for (const candidate of sourceCandidatesFor(real, declared)) {
+    const resolved = resolveTarget(candidate);
+    if (resolved !== undefined && !DECLARATION_FILE.test(resolved)) {
+      return resolved.replace(/\\/g, "/");
+    }
+  }
+  return undefined;
+}
+
+type WorkspaceSourceEntry = {
+  entry: string;
+  field: string;
+  declared: string;
+  declaredExists: boolean;
+};
+
+// M107 (directus-F1, gutenberg-F1): the source an unbuilt workspace sibling
+// declares, whatever layout it uses. `<pkg>/src` is the last fallback, not the
+// only candidate.
+export function resolveWorkspaceSourceEntry(
+  real: string,
+  manifest: Record<string, unknown> | undefined,
+): WorkspaceSourceEntry | undefined {
+  const declaredEntries = manifest ? declaredRuntimeEntries(manifest) : [];
+  const declaredExists = (declared: string) => fs.existsSync(path.resolve(real, declared));
+  for (const candidate of declaredEntries) {
+    const resolved = resolveSourceCandidate(real, candidate.declared);
+    if (resolved !== undefined) {
+      return {
+        entry: resolved,
+        field: candidate.field,
+        declared: candidate.declared,
+        declaredExists: declaredExists(candidate.declared),
+      };
+    }
+  }
+  const primary = declaredEntries[0];
+  const types = manifest && typeof manifest.types === "string" ? manifest.types : undefined;
+  if (types !== undefined && DECLARATION_FILE.test(types)) {
+    const stem = path.resolve(real, types.replace(/\\/g, "/").replace(DECLARATION_FILE, ""));
+    for (const extension of SOURCE_EXTENSIONS) {
+      if (!isFile(stem + extension)) continue;
+      return {
+        entry: (stem + extension).replace(/\\/g, "/"),
+        field: "types",
+        declared: types,
+        declaredExists: declaredExists(types),
+      };
+    }
+  }
+  const fallback = resolveTarget(path.join(real, "src"));
+  if (fallback === undefined || DECLARATION_FILE.test(fallback)) return undefined;
+  return {
+    entry: fallback.replace(/\\/g, "/"),
+    field: primary?.field ?? "src",
+    declared: primary?.declared ?? "src",
+    declaredExists: primary === undefined ? true : declaredExists(primary.declared),
+  };
+}
+
+// M107 (directus-F1): an `exports` subpath key gets the same derivation as the
+// root entry. A key whose declared target already resolves needs no source
+// counterpart and keeps the resolution it has today.
+export function workspaceSubpathSourceEntries(
+  real: string,
+  manifest: Record<string, unknown> | undefined,
+): Array<{ subpath: string; entry: string }> {
+  const exportsField = manifest?.exports;
+  if (!exportsField || typeof exportsField !== "object" || Array.isArray(exportsField)) return [];
+  const rescued: Array<{ subpath: string; entry: string }> = [];
+  for (const [key, value] of Object.entries(exportsField as Record<string, unknown>)) {
+    if (!key.startsWith("./") || key === "./package.json" || key.includes("*")) continue;
+    for (const declared of exportConditionTargets(value)) {
+      const literal = resolveTarget(path.resolve(real, declared.replace(/^\.\//, "")));
+      if (literal !== undefined) break;
+      const resolved = resolveSourceCandidate(real, declared);
+      if (resolved === undefined || !SOURCE_EXTENSIONS.includes(path.extname(resolved))) continue;
+      rescued.push({ subpath: key.slice(2), entry: resolved });
+      break;
+    }
+  }
+  return rescued;
+}
