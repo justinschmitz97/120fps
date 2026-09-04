@@ -3,7 +3,7 @@ import ts from "typescript";
 import { componentStem, destructuredParameterNames } from "./candidates.js";
 import { emit } from "./extract.js";
 import { describePresetSibling, detectPropPresets } from "./presets.js";
-import { isNoiseName, MAX_PROPS, presetPropNames, propRank, type PropRank } from "./program.js";
+import { isNoiseName, MAX_PROPS, presetPropNames, propRank, type PropRank } from "./rank.js";
 import type { PropSchema, PropWarningRecord, WarningRecorder } from "./schema.js";
 import {
   collectionValue,

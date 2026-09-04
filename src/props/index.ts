@@ -5,6 +5,7 @@ export * from "./exports.js";
 export * from "./extract.js";
 export * from "./presets.js";
 export * from "./program.js";
+export * from "./rank.js";
 export * from "./schema.js";
 export * from "./serialize.js";
 export * from "./synthesize.js";

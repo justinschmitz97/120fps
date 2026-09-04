@@ -2,7 +2,7 @@ import path from "node:path";
 import ts from "typescript";
 import { isElementOrCallableUnion, isObjectLike, MAX_TUPLE_ARITY, presetRemedyClause } from "./classify.js";
 import { emit } from "./extract.js";
-import { isNoiseName } from "./program.js";
+import { isNoiseName } from "./rank.js";
 
 // M103 (dub-F2, corpus re-test): a REQUIRED prop typed as a class or an
 // interface with methods gets a placeholder object -- dub's Table declares
