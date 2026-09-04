@@ -1,6 +1,6 @@
 ---
 kind: milestone
-status: draft
+status: approved
 ---
 
 # M118 map: module layout by pipeline stage
@@ -504,4 +504,16 @@ allowlist fails the test so the allowlist cannot lag behind.
 - Wave 0 commits: c2455b8 (ADR, spec, map), c8db8be (`.gitattributes`, 42 files renormalised to
   LF; every `src/` and `test/` file is now `i/lf w/lf`).
 
-## Verification (filled on approval)
+## Verification (approved 2026-09-04 at 9ee7058)
+
+Recorded in `m118-module-layout.md` "Verification": tsc clean; unit `1 failed | 4803 passed | 1
+skipped (4805)` with the baseline failure only; e2e `cli`, `shim-detect`, `baseline-env` 24
+passed; build layout mirrors `src/`; `--help` and `--explain-props` unchanged; 35 renames in the
+move commit; 12 runtime exports; all four allowlists empty; 116 files, largest 783 lines.
+
+Process notes for the next map: worktrees with a `node_modules` junction work for parallel lanes,
+with the `prop-cap-ranking` artifact as the one known false failure; the only merge conflicts were
+allowlist entries in `module-ratchets.test.ts`, resolved by deleting both sides; two opus workers
+hung silently after finishing their edits (no process, no file change for over an hour) and were
+stopped, their uncommitted work verified and committed by the coordinator; the unit suite needs
+`dist/` built first.

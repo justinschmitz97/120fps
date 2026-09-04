@@ -1,6 +1,6 @@
 ---
 kind: milestone
-status: draft
+status: approved
 tests:
   - test/unit/module-boundaries.test.ts
   - test/unit/module-ratchets.test.ts
@@ -74,13 +74,40 @@ there is one. A comment describes the code beside it, not the milestone that wro
 
 ## Verification
 
-Recorded verbatim on approval:
+Recorded at 9ee7058 on 2026-09-04 (67 commits since d63537e, 9 of them merges), in the main
+checkout:
 
-1. `node node_modules/typescript/bin/tsc --noEmit` clean.
-2. `npx vitest run test/unit --maxWorkers=2`: totals, compared with the baseline in the map.
-3. `npx vitest run test/e2e/cli.test.ts test/e2e/shim-detect.test.ts test/e2e/baseline-env.test.ts --maxWorkers=1` green.
-4. `rm -rf dist && node node_modules/typescript/bin/tsc && node dist/cli/main.js --help` exit 0.
-5. `git log --stat` shows the move commit as renames (similarity ≥ 90% per file).
+1. `node node_modules/typescript/bin/tsc --noEmit` → exit 0, no diagnostics.
+2. `npx vitest run test/unit --maxWorkers=2 --reporter=dot` → `Test Files 1 failed | 328 passed
+   (329)`, `Tests 1 failed | 4803 passed | 1 skipped (4805)`, `Duration 255.72s`. The failure is the
+   baseline one, `test/unit/vue-setup-inject-evidence.test.ts › a project the Vue compiler does not
+   resolve from › records why each specifier failed`, `AssertionError: expected { __esModule: true,
+   …(25) } to be undefined`. Baseline at d63537e: `1 failed | 4795 passed | 1 skipped`; the eight
+   added tests are the two enforcing files. The suite needs `dist/` built first: eleven shim tests
+   read `dist/harness/shims`.
+3. `npx vitest run test/e2e/cli.test.ts test/e2e/shim-detect.test.ts test/e2e/baseline-env.test.ts
+   --maxWorkers=1 --reporter=dot` → `Test Files 3 passed (3)`, `Tests 24 passed (24)`, `Duration
+   133.22s`. Earlier at e094cf8 with `cli-path-expansion.test.ts` added: 4 files, 27 passed.
+4. `rm -rf dist && node node_modules/typescript/bin/tsc` → exit 0; `dist/` holds
+   `analysis browser cli harness pipeline project props report shared index.js index.d.ts`,
+   `dist/harness/shims` 20 files; `node dist/cli/main.js --help | head -1` → `Usage: 120fps
+   <component.tsx>[#ExportName] [more.tsx ...] [options]`, exit 0.
+5. `git show --stat -M90% 663d6db | grep -c "=>"` → 35 (every moved file a rename);
+   `git show --stat -M90% a87a8b8` → `src/{analysis => report}/metrics.ts | 0`.
+6. `node dist/cli/main.js fixtures/button.tsx --explain-props` → exit 0, `Props (5)` table
+   identical to the wave 2 snapshot in the map (label `"test"`; variant `"primary", "secondary",
+   "ghost"`; disabled `true, false`; onClick and children `(no values)`).
+7. `node -e "import('./dist/index.js')…"` → 12 runtime exports: `DEFAULT_THRESHOLDS HINTS
+   TIER_BUDGETS analyze buildReport formatHints formatJUnit formatMarkdown hintsForReport
+   loadBudgetConfig parseArgs validateBudgetConfig`.
+8. `test/unit/module-boundaries.test.ts` and `test/unit/module-ratchets.test.ts`: 8 tests passed
+   with every allowlist empty (`ALLOWLIST`, `LINE_CAPS`, `COMMENT_TOKENS`, `DUPLICATE_FUNCTIONS`).
+   Structure: 116 `.ts` files under `src/` (analysis 8, browser 13, cli 8, harness 27 incl. 10
+   shims, pipeline 15, project 11, props 15, report 11, shared 7, `index.ts`), 34,166 lines,
+   largest file `pipeline/analyze.ts` 783.
+9. Adversarial review by a non-implementer at e094cf8 (map, "Wave 4: review findings"): no
+   runtime-reachable behaviour change; two false comment rewrites, one now-false comment and six
+   stale path citations corrected in 9ee7058; one duplicate type removed there.
 
 ## Deferred
 
