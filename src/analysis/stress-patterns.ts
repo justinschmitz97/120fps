@@ -14,13 +14,13 @@ export interface StressStep {
 export interface StressPattern {
   name: string;
   steps: StressStep[];
-  // M43. The explorer records this edge's cost but does not let the resulting
+  // The explorer records this edge's cost but does not let the resulting
   // DOM define a state: a virtualized list rewrites its rows on every wheel
   // step, and one node per scroll offset would drown the graph.
   stateInvariant?: boolean;
 }
 
-// Ten steps each way. Fixed, because the M33 per-event budget has to be known
+// Ten steps each way. Fixed, because the per-event budget has to be known
 // before the sweep runs; the distance per step is what adapts to the container.
 export const SCROLL_SWEEP_STEPS = 10;
 
@@ -165,16 +165,16 @@ function mapTypeToAction(type: InteractionDescriptor["type"]): StressStep["actio
   }
 }
 
-// M106 C2 (calcom-F3): `open-close-10` is 20 clicks, each with a 3 s
-// `page.click` timeout. Radix's `modal` variant sets `body { pointer-events:
-// none }` while the portal is open, so 19 of those 20 clicks time out and one
-// pattern alone spends 57 s — inside a 60 s tracing window, on a phase whose
-// own `--explore-budget` was already exceeded. The remaining budget bounds the
-// step loop, and how many steps ran is returned so the caller can say so.
+// `open-close-10` is 20 clicks, each with a 3 s `page.click` timeout. Radix's
+// `modal` variant sets `body { pointer-events: none }` while the portal is
+// open, so 19 of those 20 clicks time out and one pattern alone spends 57 s —
+// inside a 60 s tracing window, on a phase whose own `--explore-budget` was
+// already exceeded. The remaining budget bounds the step loop, and how many
+// steps ran is returned so the caller can say so.
 export interface StressPatternRun {
   stepsRun: number;
   stepsPlanned: number;
-  // M116 C4b fix-up: a step whose action throws is swallowed below, so
+  // A step whose action throws is swallowed below, so
   // `stepsRun === stepsPlanned` alone cannot tell the caller the pattern ended
   // where it started. A failed step leaves the page at an arbitrary state.
   stepsFailed: number;

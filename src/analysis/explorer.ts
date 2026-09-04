@@ -71,9 +71,9 @@ export interface StateEdge {
   p95: number;
   traces: TraceEvent[][];
   stressPattern?: string;
-  // M106 C2 fix-up (C-2): the steps that actually ran, not the pattern's
-  // planned count. A truncated `open-close-10` used to report 20 and a
-  // per-step cost understated by up to 6.7x.
+  // The steps that actually ran, not the pattern's planned count: a
+  // truncated `open-close-10` reporting 20 would understate its per-step
+  // cost by up to 6.7x.
   stressSteps?: number;
   // Set when the wall-clock budget cut the pattern short; carries the planned
   // count so the row can say how much of the cycle ran.
@@ -85,7 +85,7 @@ export interface StateGraph {
   edges: StateEdge[];
   initialNodeId: string;
   wallClockMs: number;
-  // M47: paths whose content moved on its own, excluded from state hashes.
+  // Paths whose content moved on its own, excluded from state hashes.
   volatilePaths?: string[];
 }
 
@@ -100,12 +100,13 @@ export interface ExploreOptions {
   combos?: PropCombination[];
   totalWallClockMs?: number;
   maxCombos?: number;
-  // M37: reuse the pooled vsync browser (fresh context per pass). Explore
+  // Reuse the pooled vsync browser (fresh context per pass). Explore
   // always paces at vsync: its metrics depend on real frame scheduling.
   pool?: import("../browser/index.js").BrowserPool;
   onWarning?: (warning: string) => void;
-  // M52: time interactions with in-page observers instead of a per-sample CDP
-  // trace. Opt-in until the A/B acceptance in the milestone spec is met.
+  // Time interactions with in-page observers instead of a per-sample CDP
+  // trace, which is what dominates explore's wall clock. Opt-in until an A/B
+  // comparison against the trace path clears the accuracy bar.
   observerTiming?: boolean;
 }
 
@@ -128,7 +129,7 @@ export interface ExploreResult {
   graph: StateGraph;
   comboIndex: number;
   props: PropCombination;
-  // M47: how many DOM regions changed on their own between two idle probes.
+  // How many DOM regions changed on their own between two idle probes.
   // Non-zero is a finding in itself: the component renders non-deterministically.
   volatileRegions?: number;
 }
@@ -211,7 +212,7 @@ async function waitForRender(page: Page): Promise<void> {
   );
 }
 
-// M47: the gap has to outlast a frame and a short timer without costing more
+// The gap has to outlast a frame and a short timer without costing more
 // than a combo can afford. A once-per-second clock beats it; that miss is
 // documented rather than paid for on every combo.
 export const VOLATILITY_PROBE_GAP_MS = 250;
@@ -404,11 +405,11 @@ async function navigateToState(
   }
 }
 
-// M116 C4b: a pattern the budget cut short, or one of whose steps threw, did
-// not end where it started, so the state-invariance proof no longer covers the
-// state it left. The next sample replays the path instead of measuring from
-// that state. `executeStressPattern` swallows a throwing step and still counts
-// it as run, so `stepsFailed` is the only signal for that case.
+// A pattern the budget cut short, or one of whose steps threw, does not end
+// where it started, so the state-invariance proof does not cover the state
+// it left. The next sample replays the path instead of measuring from that
+// state. `executeStressPattern` swallows a throwing step and still counts it
+// as run, so `stepsFailed` is the only signal for that case.
 function patternRanShort(run: StressPatternRun | undefined): boolean {
   if (!run) return false;
   return run.budgetExhausted || run.stepsRun < run.stepsPlanned || run.stepsFailed > 0;
@@ -496,7 +497,7 @@ export async function explore(
     // One entry path, used for the first entry and for every recovery: the
     // extra CDP session at startup is cheaper than a second copy of the
     // preamble drifting out of sync with this one.
-    // M59: a harness crash mid-exploration escapes here; the phase and the
+    // A harness crash mid-exploration escapes here; the phase and the
     // combo in flight are what make it diagnosable.
     const inFlight = createPhaseTracker("explore", harness);
     await inFlight.run(enter);
@@ -556,22 +557,16 @@ interface InternalOptions {
   seed: number;
   cpuThrottle: number;
   observerTiming: boolean;
-  // M106 C1: only for the degrade warning's wording — a reader needs to know
+  // Only for the degrade warning's wording — a reader needs to know
   // which combo stopped exploring.
   comboIndex: number;
 }
 
-// M106 C1 (calcom-F3): the explore phase had no degrade path at all.
-// `withFrameStarvationRetry` already classifies a `tracing-timeout`, and its
-// only call sites were in measure.ts, so a second stall inside explore's
-// `withContextRetry` body threw raw and ended the run at exit 2 with no
-// report — after 124 s on a Radix Popover whose `open-close-10` pattern spent
-// 57 s of it in click timeouts. The combo keeps whatever it explored.
-// C-7: thrown by the retried body when the explore budget runs out mid-retry.
-// `withFrameStarvationRetry` does not classify it as a stall, so it propagates
-// out of the retry loop unretried; the call site catches this type and only
-// this type, which is what turns "budget gone" into a degrade instead of a
-// crash.
+// Thrown by the retried body when the explore budget runs out mid-retry.
+// `withFrameStarvationRetry` does not classify it as a stall, so it
+// propagates out of the retry loop unretried; the call site catches this
+// type and only this type, which is what turns "budget gone" into a degrade
+// instead of a crash. The combo keeps whatever it explored.
 class ExploreBudgetSpent extends Error {
   constructor() {
     super("explore wall-clock budget spent");
@@ -609,7 +604,7 @@ async function exploreCombo(
       }
 
       await mountComponent(page, props);
-      // M47: measure the DOM's own noise floor before attributing any change to
+      // Measure the DOM's own noise floor before attributing any change to
       // an interaction. Runs before discovery so every hash in this combo,
       // including the initial one, speaks the same language.
       const volatile = await probeVolatileRegions(page);
@@ -639,9 +634,9 @@ async function exploreCombo(
     normalQueue.push({ stateId: initialHash, interaction, depth: 0 });
   }
 
-  // M106 C1/C2: one clock for the whole combo. The stress pattern reads what
+  // One clock for the whole combo. The stress pattern reads what
   // is left of it so a pattern whose every click times out cannot outlive the
-  // budget that was supposed to bound it.
+  // budget that bounds it.
   const remainingWallClock = (): number =>
     Math.max(0, opts.maxWallClockMs - (Date.now() - startTime));
   let stalled = false;
@@ -676,24 +671,24 @@ async function exploreCombo(
     const samples: number[] = [];
     const traces: TraceEvent[][] = [];
     let targetHash: string | null = null;
-    // M106 C2 (C-2): what the pattern actually did on the last sample. Both
+    // What the pattern actually did on the last sample. Both
     // bodies below write it, so a truncated run reaches the edge instead of
     // being discarded at the call site.
     let patternRun: StressPatternRun | undefined;
 
-    // M116 C1: a state-invariant pattern ends where it started (the same proof
-    // that makes this edge a self-loop below), so samples 2..N already stand in
-    // the state the path leads to. Replaying it per sample cost (depth+1)
-    // double-rAF fences on the vsync context for a state nothing had changed.
-    // The flag is per pattern, so an edge whose pattern is not state-invariant
-    // keeps replaying per sample.
+    // A state-invariant pattern ends where it started (the same proof that
+    // makes this edge a self-loop below), so samples 2..N already stand in
+    // the state the path leads to. Replaying it per sample would cost
+    // (depth+1) double-rAF fences on the vsync context for a state that did
+    // not change. The flag is per pattern, so an edge whose pattern is not
+    // state-invariant keeps replaying per sample.
     let pathIsCurrent = false;
     const replayPath = async (): Promise<void> => {
       if (pattern.stateInvariant && pathIsCurrent) return;
       await navigateToState(page, props, sourceNode.pathFromRoot);
       pathIsCurrent = true;
     };
-    // M116 C4: both retry layers re-enter the harness before they run the body
+    // Both retry layers re-enter the harness before they run the body
     // again, which unmounts whatever the previous sample left. The next sample
     // is measured from a replayed path, never from what a retry destroyed.
     const enterAndInvalidatePath = async (): Promise<void> => {
@@ -704,13 +699,13 @@ async function exploreCombo(
     for (let s = 0; s < opts.sampleCount; s++) {
       if (Date.now() - startTime >= opts.maxWallClockMs) break;
 
-      // M52: the same exercise, timed two ways. The observer path skips the
+      // The same exercise, timed two ways. The observer path skips the
       // per-sample trace lifecycle, which is what dominates explore's wall
       // clock; the trace path stays the default until the A/B says otherwise.
       if (opts.observerTiming) {
-        // C-12: the same degrade the trace path gets. This path cannot stall on
-        // tracing (it starts none), but a `Target closed` still classifies as a
-        // stall, and without this it threw raw out of the whole run.
+        // The same degrade the trace path gets. This path cannot stall on
+        // tracing (it starts none), but a `Target closed` still classifies as
+        // a stall, so it is caught here rather than ending the whole run.
         let observed: Awaited<ReturnType<typeof readObservedWindow>> | undefined;
         if (remainingWallClock() > 0) {
           try {
@@ -753,20 +748,17 @@ async function exploreCombo(
         continue;
       }
 
-      // M106 C1 (calcom-F3): the same bounded retry the mount and rerender
-      // sample loops already compose around their own bodies. A
-      // `tracing-timeout` is one of the stalls it classifies, and explore was
-      // the one phase with no call site — so a second stall threw raw out of
-      // the whole run instead of degrading this combo.
-      // M106 C1 fix-up (C-7): the two retry layers are not disjoint --
-      // `CONTEXT_LOST` (src/measure.ts) matches the same `tracing-timeout` and
-      // `Target closed` signatures `classifyStall` recovers from, so nesting
-      // them multiplied the attempts (5 traced actions per stalled sample,
-      // each bounded only by the 60 s trace flush timeout, roughly five
-      // minutes past `--explore-budget`). The inner layer gets no budget on
-      // this path: the outer one owns the retry, and the wall clock is
-      // re-checked before every attempt so the phase cannot outlive the budget
-      // it printed.
+      // The same bounded retry the mount and rerender sample loops already
+      // compose around their own bodies. A `tracing-timeout` is one of the
+      // stalls it classifies, catching a stall here degrades this combo
+      // instead of ending the whole run.
+      // The two retry layers are not disjoint -- `CONTEXT_LOST` matches the
+      // same `tracing-timeout` and `Target closed` signatures `classifyStall`
+      // recovers from, so nesting them would multiply the attempts (5 traced
+      // actions per stalled sample, each bounded only by the 60 s trace
+      // flush timeout). The inner layer gets no budget on this path: the
+      // outer one owns the retry, and the wall clock is re-checked before
+      // every attempt so the phase cannot outlive the budget it printed.
       let traceEvents: TraceEvent[] | undefined;
       if (remainingWallClock() > 0) {
         try {
@@ -784,7 +776,7 @@ async function exploreCombo(
                     patternRun = await executeStressPattern(page, pattern, remainingWallClock());
                   });
                 },
-                // C-7: zero inner retries. The outer layer owns the retry for
+                // Zero inner retries. The outer layer owns the retry for
                 // the two signatures both layers recognize, so the attempt
                 // count is `MAX_FRAME_STARVATION_RETRIES + 1`, not its square.
                 { onRetry: onWarning, budget: createRetryBudget(0) },
@@ -797,7 +789,7 @@ async function exploreCombo(
         }
       }
       if (traceEvents === undefined) {
-        // C-11: the partially sampled edge below is still pushed whenever any
+        // The partially sampled edge below is still pushed whenever any
         // sample survived, so the count has to include it.
         const kept = edges.length + (samples.length > 0 ? 1 : 0);
         onWarning?.(EXPLORE_STALLED_WARNING(opts.comboIndex, kept));
@@ -811,7 +803,7 @@ async function exploreCombo(
       traces.push(traceEvents);
 
       if (s === 0) {
-        // M43: a state-invariant pattern ends where it started, so the edge is
+        // A state-invariant pattern ends where it started, so the edge is
         // a self-loop. Hashing the DOM here would mint one node per scroll
         // offset as virtualized windowing rewrites the rows.
         targetHash = pattern.stateInvariant ? item.stateId : await computeDomHash(page, volatile);

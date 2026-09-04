@@ -34,7 +34,7 @@ export interface ProfilerDiff {
 export interface CallbackIdentityDelta {
   propName: string;
   deltaMs: number;
-  // M66: the two medians the delta came from. A difference alone hides whether
+  // The two medians the delta came from. A difference alone hides whether
   // it is 6ms of 8ms or 6ms of 300ms.
   stableMs?: number;
   freshMs?: number;
@@ -185,10 +185,10 @@ export function hasReactWarning(opts: ReactOptimizations): boolean {
 // Profiler hook injection script
 // ====================================================================
 
-// M64: `React.memo(X)` reaches the fiber as `{$$typeof, type: X}` and
+// `React.memo(X)` reaches the fiber as `{$$typeof, type: X}` and
 // `forwardRef(X)` as `{$$typeof, render: X}`: neither wrapper carries a name,
-// so reading displayName/name off the fiber type attributed every memoized
-// export to "Anonymous". Unwrap first, in either nesting order.
+// so reading displayName/name off the fiber type would attribute every
+// memoized export to "Anonymous". Unwrap first, in either nesting order.
 //
 // Source rather than a closure: the profiler hook is injected as text, and this
 // keeps one definition that unit tests can evaluate directly.
@@ -508,9 +508,9 @@ export interface ReactAnalysisOptions {
   cpuThrottle?: number;
   warmupRuns?: number;
   fnPropNames?: string[];
-  // M37: reuse the pooled vsync browser (fresh context per pass).
+  // Reuse the pooled vsync browser (fresh context per pass).
   pool?: import("../browser/index.js").BrowserPool;
-  // M70: this pass settles fonts on its own probe page, independently of the
+  // This pass settles fonts on its own probe page, independently of the
   // mount/rerender passes; a timeout here needs its own way out.
   onWarning?: (warning: string) => void;
 }
@@ -518,19 +518,18 @@ export interface ReactAnalysisOptions {
 export interface ReactDomIdentity {
   name: string;
   version: string;
-  // M78: set when the identity came from a Vite resolve.alias match rather
+  // Set when the identity came from a Vite resolve.alias match rather
   // than react-dom's own installed package.json, so REACT_DOM_NOT_REACT_WARNING
   // can name the right mechanism (and the right, different remedy).
   source?: "vite-alias";
 }
 
-// M78 (preact-app-F3, the Vite-config shape). readViteConfigData's
-// resolve.alias output is already merged into the harness's own Vite alias
-// list, so a literal-path alias targeting react-dom is genuinely what this
-// server mounts — the real react-dom package on disk is never touched and
-// stays irrelevant. Resolves the aliased file's nearest ancestor
-// package.json, the same identity signal already trusted for the npm-alias
-// case below, fed through a second path.
+// readViteConfigData's resolve.alias output is already merged into the
+// harness's own Vite alias list, so a literal-path alias targeting react-dom
+// is genuinely what this server mounts — the real react-dom package on disk
+// is never touched and stays irrelevant. Resolves the aliased file's nearest
+// ancestor package.json, the same identity signal already trusted for the
+// npm-alias case below, fed through a second path.
 function nearestPackageJson(fromPath: string): { name?: unknown; version?: unknown } | undefined {
   let dir: string;
   try {
@@ -562,16 +561,16 @@ function resolveViaBundlerAlias(
   return undefined;
 }
 
-// M72: an npm/pnpm alias (`"react-dom": "npm:preact/compat"`) keeps the
+// An npm/pnpm alias (`"react-dom": "npm:preact/compat"`) keeps the
 // `react-dom` folder name on disk, but the package.json inside it belongs to
 // the aliased package. Reading that package.json's own `name` is the only
 // reliable way to tell React and an aliased Preact apart; the specifier
 // alone cannot. `fromDir` is normally `harness.harnessDir`, which
-// `mkdtempSync` creates directly under the project root (`src/harness.ts`),
+// `mkdtempSync` creates directly under the project root (`harness/dirs.ts`),
 // so Node's own upward resolution walk reaches the project's real install.
-// M78: `bundlerAliases` (normally `harness.viteAliases`) is checked first —
-// when one matches, it is what this server actually mounts, overriding
-// whatever the real react-dom's own manifest says.
+// `bundlerAliases` (normally `harness.viteAliases`) is checked first — when
+// one matches, it is what this server actually mounts, overriding whatever
+// the real react-dom's own manifest says.
 export function resolveReactDomIdentity(
   fromDir: string,
   bundlerAliases: Array<{ find: RegExp; replacement: string }> = [],
@@ -687,13 +686,13 @@ export async function runReactAnalysis(
 ): Promise<Map<number, ReactOptimizations>> {
   const { combos, samples = 3, cpuThrottle = 4, warmupRuns = 1, fnPropNames = [] } = options;
 
-  // M72: the framework was detected as "react" from declared/available
-  // packages (src/react-profiler.ts detectFramework), which an npm alias
+  // The framework was detected as "react" from declared/available
+  // packages (project/framework.ts detectFramework), which an npm alias
   // (`"react-dom": "npm:preact/compat"`) satisfies without being React. This
   // pass's every measurement reads React DevTools fiber internals, so a
   // wrong or unconfirmed identity is skipped entirely rather than reporting
-  // fiction. Mounting itself is unaffected: it happens in harness.ts via
-  // createRoot, which preact/compat implements too.
+  // fiction. Mounting itself is unaffected: it happens in harness/renderer.ts
+  // via createRoot, which preact/compat implements too.
   const reactDomIdentity = resolveReactDomIdentity(harness.harnessDir, harness.viteAliases ?? []);
   if (!reactDomIdentity || reactDomIdentity.name !== "react-dom") {
     options.onWarning?.(REACT_DOM_NOT_REACT_WARNING(reactDomIdentity));
@@ -721,7 +720,7 @@ export async function runReactAnalysis(
   const results = new Map<number, ReactOptimizations>();
   let browser: Browser | undefined;
   let context: import("playwright").BrowserContext | undefined;
-  // M59: this pass owns the probe page and its own tracing windows, so a
+  // This pass owns the probe page and its own tracing windows, so a
   // harness crash here escapes with no phase of its own otherwise.
   const inFlight = createPhaseTracker("attribution", harness);
 

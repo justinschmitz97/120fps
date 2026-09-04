@@ -66,7 +66,7 @@ function lockfileHash(root: string): string {
     try {
       parts.push(name + ":" + crypto.createHash("sha1").update(fs.readFileSync(candidate)).digest("hex"));
     } catch {
-      // Absent lockfiles are part of the identity, like M39's missing files.
+      // Absent lockfiles are part of the identity.
       parts.push(name + ":absent");
     }
   }
@@ -97,9 +97,9 @@ function worktreeDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), ".120fps-compare-"));
 }
 
-// M68. Every level from the repository root down to the member that has an
+// Every level from the repository root down to the member that has an
 // install of its own, root first. Under pnpm workspaces the member's own
-// node_modules is where react or vue lives, so linking the repo root alone left
+// node_modules is where react or vue lives, so linking the repo root alone leaves
 // the reference side unable to resolve the renderer.
 export function nodeModulesLinkDirs(repoRoot: string, memberRoot: string): string[] {
   const relative = path.relative(repoRoot, memberRoot);

@@ -11,19 +11,14 @@ const SRC = path.resolve("src");
 const LINE_LIMIT = 800;
 
 const LINE_CAPS: Record<string, number> = {
-  "analysis/explorer.ts": 899,
-  "analysis/react-profiler.ts": 890,
+  "analysis/explorer.ts": 891,
+  "analysis/react-profiler.ts": 877,
   "browser/discovery.ts": 823,
   "props/values.ts": 822,
   "report/budget.ts": 809,
 };
 
 const COMMENT_TOKENS: Record<string, number> = {
-  "analysis/compare.ts": 2,
-  "analysis/explorer.ts": 21,
-  "analysis/isolation.ts": 11,
-  "analysis/react-profiler.ts": 10,
-  "analysis/stress-patterns.ts": 4,
   "browser/discovery.ts": 4,
   "browser/dom.ts": 6,
   "browser/measure.ts": 24,
