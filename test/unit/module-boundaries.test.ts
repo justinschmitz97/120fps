@@ -40,11 +40,6 @@ const ALLOWLIST: readonly { file: string; target: string; reason: string }[] = [
   },
   {
     file: "project/preflight.ts",
-    target: "harness",
-    reason: "detectProjectTransforms and SUPPORTED_TRANSFORM_PLUGINS; wave 2 moves transforms under project/",
-  },
-  {
-    file: "project/preflight.ts",
     target: "props",
     reason: "prop extraction reached from the preflight probe; wave 2 splits props/extract.ts",
   },
