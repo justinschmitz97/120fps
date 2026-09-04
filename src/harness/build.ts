@@ -60,11 +60,7 @@ import {
   type ReactCompilerState,
   type WorkspaceRootAliasSource,
 } from "../project/index.js";
-// Import cycle (harness -> react-profiler -> measure -> harness), safe by
-// construction: every cross-module binding on all three edges is read inside a
-// function body, never during module evaluation, so no partially-initialized
-// namespace is ever observed.
-import { detectFramework } from "../analysis/index.js";
+import { detectFramework } from "../project/index.js";
 
 export { findProjectRoot };
 

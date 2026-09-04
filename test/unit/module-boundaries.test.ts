@@ -29,11 +29,6 @@ const ALLOWED_EDGES: Record<string, readonly string[]> = {
 // entry here stops violating, so the list cannot lag behind the tree.
 const ALLOWLIST: readonly { file: string; target: string; reason: string }[] = [
   {
-    file: "harness/build.ts",
-    target: "analysis",
-    reason: "detectFramework lives in analysis/react-profiler.ts; wave 3 moves it to project/framework.ts",
-  },
-  {
     file: "project/preflight.ts",
     target: "browser",
     reason: "page-error helpers; wave 2 moves the shared ones out of browser/",
