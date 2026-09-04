@@ -201,22 +201,6 @@ export function resolveLocalImport(
   };
 }
 
-// M76: resolvePackageDir walks the node_modules resolution chain the same way
-// isInstalledOnResolutionChain (project-model.ts) does, but returns where a
-// package lives instead of whether it does.
-export function resolvePackageDir(pkg: string, fromDir: string): string | undefined {
-  let current = path.resolve(fromDir);
-  while (true) {
-    if (path.basename(current) !== "node_modules") {
-      const candidate = path.join(current, "node_modules", ...pkg.split("/"));
-      if (isFile(path.join(candidate, "package.json"))) return candidate;
-    }
-    const parent = path.dirname(current);
-    if (parent === current) return undefined;
-    current = parent;
-  }
-}
-
 // M107: the manifest fields that can name a runtime entry, in the order the
 // source derivation tries them.
 export type DeclaredEntry = { field: string; declared: string };

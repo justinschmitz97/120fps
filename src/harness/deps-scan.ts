@@ -7,7 +7,6 @@ import {
   readProjectManifest,
   resolveDirectoryEntry,
   resolveLocalImport,
-  resolvePackageDir,
   resolveSubpathImport,
   resolveTarget,
   SOURCE_EXTENSIONS,
@@ -466,7 +465,7 @@ function walkExternalDeps(
           // resolvable entry (an `exports` map with only subpath keys, no
           // `main`) — calcom-F1. Substitute the literal subpath instead, once
           // per distinct subpath; every other package keeps collapsing.
-          const pkgDir = resolvePackageDir(pkg, path.dirname(normalizedFile));
+          const pkgDir = installedPackageDir(pkg, path.dirname(normalizedFile));
           if (
             pkgDir &&
             isWorkspaceSibling(pkgDir, workspaceRoot) &&
@@ -564,7 +563,7 @@ function walkExternalDeps(
       const importerDir = firstImporterDir.get(entry) ?? firstImporterDir.get(pkg);
       const dir =
         installedPackageDir(pkg, projectRoot) ??
-        (importerDir === undefined ? undefined : resolvePackageDir(pkg, importerDir));
+        (importerDir === undefined ? undefined : installedPackageDir(pkg, importerDir));
       if (dir === undefined) {
         // M107 (review): the importer this specifier was first read from may be
         // a file where the package is not installed; a later round can reach the
@@ -688,7 +687,7 @@ function walkExternalDeps(
     const importerDir = firstImporterDir.get(entry) ?? firstImporterDir.get(pkg);
     const dir =
       installedPackageDir(pkg, projectRoot) ??
-      (importerDir === undefined ? undefined : resolvePackageDir(pkg, importerDir));
+      (importerDir === undefined ? undefined : installedPackageDir(pkg, importerDir));
     if (dir !== undefined) continue;
     reportedUnresolved.add(entry);
     const importerFile = firstImporterFile.get(entry) ?? firstImporterFile.get(pkg);

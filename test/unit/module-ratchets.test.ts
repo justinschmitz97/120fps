@@ -78,7 +78,7 @@ const COMMENT_TOKENS: Record<string, number> = {
   "project/preflight-gates.ts": 30,
   "project/preflight.ts": 26,
   "project/react-compiler.ts": 5,
-  "project/resolve.ts": 9,
+  "project/resolve.ts": 8,
   "project/transforms.ts": 10,
   "project/tsconfig-aliases.ts": 30,
   "project/vue-sfc.ts": 9,
