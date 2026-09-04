@@ -412,9 +412,9 @@ describe("M79 gap 3b: NO_ENV_FILE_REMEDY_NOTE", () => {
   });
 });
 
-// Wiring: enterHarness (measure.ts) and enterHarnessPage (analyze.ts) both
-// race readiness against a fatal page error instead of always waiting out
-// the full timeout, and both compute the env-remedy line lazily from
+// Wiring: enterHarness (browser/session.ts) and enterHarnessPage (analyze.ts)
+// both race readiness against a fatal page error instead of always waiting
+// out the full timeout, and both compute the env-remedy line lazily from
 // hasAnyEnvFile/NO_ENV_FILE_REMEDY_NOTE. Both functions require a real
 // Playwright Page to exercise end to end (e2e-only per this milestone's
 // constraints); the underlying race/message logic itself is unit-tested
@@ -423,10 +423,10 @@ describe("M79 gap 3b: enterHarness/enterHarnessPage wiring", () => {
   const src = (name: string): string => fs.readFileSync(path.resolve("src", name), "utf-8");
 
   it("measure.ts's enterHarness calls waitForReadyOrFatal with a lazy env-remedy callback", () => {
-    const measureSrc = src("browser/measure.ts");
+    const measureSrc = src("browser/session.ts");
     const fn = measureSrc.slice(
       measureSrc.indexOf("export async function enterHarness("),
-      measureSrc.indexOf("export const CONTEXT_RETRY_WARNING"),
+      measureSrc.indexOf("export interface CdpHolder"),
     );
     expect(fn).toContain("waitForReadyOrFatal(");
     expect(fn).toContain("hasAnyEnvFile(projectRoot)");

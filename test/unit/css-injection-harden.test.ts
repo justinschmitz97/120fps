@@ -195,7 +195,7 @@ describe("H22: harness navigation wait", () => {
     for (const file of [
       "pipeline/analyze.ts",
       "analysis/explorer.ts",
-      "browser/measure.ts",
+      "browser/session.ts",
       "analysis/react-profiler.ts",
     ]) {
       const text = src(file);
@@ -226,9 +226,9 @@ describe("H21: settle gate runs before CPU throttling", () => {
         text.indexOf("Emulation.setCPUThrottlingRate", settleIdx),
       ).toBeGreaterThan(settleIdx);
     }
-    // Scoped to the session preamble: measure.ts also mentions the throttle in
+    // Scoped to the session preamble: session.ts also mentions the throttle in
     // suspendThrottle (M34), which is inter-sample bookkeeping, not a session.
-    const measure = src("browser/measure.ts");
+    const measure = src("browser/session.ts");
     const preamble = measure.slice(measure.indexOf("export async function enterHarness"));
     const firstGate = preamble.indexOf("await settleStyles(page");
     const firstThrottle = preamble.indexOf("Emulation.setCPUThrottlingRate");

@@ -19,6 +19,7 @@ import type { DeltaPair } from "../../src/props/index.js";
 // combo, is measuring the page's failure, not the component.
 
 const measureSrc = fs.readFileSync(path.resolve("src", "browser/measure.ts"), "utf-8");
+const retrySrc = fs.readFileSync(path.resolve("src", "browser/retry.ts"), "utf-8");
 const analyzeSrc = fs.readFileSync(path.resolve("src", "pipeline/analyze.ts"), "utf-8");
 
 describe("a pass stops once the page has stopped measuring anything", () => {
@@ -81,7 +82,7 @@ describe("both measurement passes are bounded by it", () => {
   });
 
   it("keeps the per-combo retry bound it composes with", () => {
-    expect(measureSrc).toContain("export const MAX_FRAME_STARVATION_RETRIES = 2;");
+    expect(retrySrc).toContain("export const MAX_FRAME_STARVATION_RETRIES = 2;");
     expect(MAX_CONSECUTIVE_DEGRADED_COMBOS).toBe(3);
   });
 });

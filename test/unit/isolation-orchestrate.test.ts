@@ -19,7 +19,9 @@ import type { MountResult, RerenderResult } from "../../src/browser/index.js";
 
 // runHarnessSession is stubbed per label so the three browser runners resolve to
 // canned samples; measureMount/measureRerender are spied to assert the options
-// the orchestrator passes them.
+// the orchestrator passes them. M118: runHarnessSession moved from
+// browser/measure.ts to browser/session.ts, so its mock targets that module
+// directly; measureMount/measureRerender stay in browser/measure.ts.
 const canned = {
   churn: [1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 4, 4],
   memory: { heapBefore: 100_000, heapAfter: 110_000, gcPressure: 2 },
@@ -36,6 +38,13 @@ vi.mock("../../src/browser/measure.js", async (importOriginal) => {
     ...actual,
     measureMount: (...args: unknown[]) => measureMountSpy(...args),
     measureRerender: (...args: unknown[]) => measureRerenderSpy(...args),
+  };
+});
+
+vi.mock("../../src/browser/session.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../src/browser/session.js")>();
+  return {
+    ...actual,
     runHarnessSession: async (
       _harness: unknown,
       options: { label: string },
