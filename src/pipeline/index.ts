@@ -3,6 +3,7 @@ export * from "./build-report.js";
 export * from "./estimate.js";
 export * from "./explain-props.js";
 export * from "./fixtures.js";
+export * from "./phases.js";
 export * from "./remedies.js";
 export * from "./resolve.js";
 export * from "./verdict-reuse.js";

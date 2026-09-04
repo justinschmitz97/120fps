@@ -104,7 +104,7 @@ describe("the transform decisions a dry run makes from the same files the real r
 // is pinned here is that it reads the shared classifier and forwards
 // --no-transforms into it, instead of filtering the hits inline again.
 describe("the run path's own transform warnings", () => {
-  const analyzeSrc = fs.readFileSync(path.resolve("src/pipeline/analyze.ts"), "utf-8");
+  const analyzeSrc = fs.readFileSync(path.resolve("src/pipeline/phases.ts"), "utf-8");
   const block = analyzeSrc.slice(
     analyzeSrc.indexOf("const loadableTransforms = new Set("),
     analyzeSrc.indexOf("if (loadableTransforms.size > 0)"),

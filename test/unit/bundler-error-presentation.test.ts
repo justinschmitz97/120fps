@@ -310,16 +310,18 @@ describe("CSS_UNREADABLE_DROPPED_WARNING (M89 defect 3)", () => {
 // pure-function tests above assume it is.
 describe("M89 defect 3: analyze.ts wiring (source-level check)", () => {
   it("wraps the first enterHarnessPage() call, degrades only on stylesheetReadFailureTarget, and rebuilds with no cssFiles", () => {
-    const src = fs.readFileSync(path.resolve("src", "pipeline/analyze.ts"), "utf-8");
-    const start = src.indexOf("try {\n      await enterHarnessPage();");
+    const analyzeSrc = fs.readFileSync(path.resolve("src", "pipeline/analyze.ts"), "utf-8");
+    expect(analyzeSrc).toContain("try {\n      await enterHarnessPage();");
+    const src = fs.readFileSync(path.resolve("src", "pipeline/phases.ts"), "utf-8");
+    const start = src.indexOf("export async function recoverFromUnreadableStylesheet(");
     expect(start).toBeGreaterThan(-1);
-    const block = src.slice(start, src.indexOf("\n    }\n\n    // A structurally inferred tree", start));
+    const block = src.slice(start, src.indexOf("\n}\n", start));
     expect(block).toContain("stylesheetReadFailureTarget(message)");
     expect(block).toContain("if (!missingTarget) throw err;");
     expect(block).toContain("CSS_UNREADABLE_DROPPED_WARNING(missingTarget, droppedFiles)");
     expect(block).toContain('cssReport.layer = "unreadable"');
     expect(block).toContain("cssFiles: undefined");
-    expect(block).toContain("fingerprintValue = undefined");
+    expect(block).toContain("resetSourceFingerprint()");
     expect(block).toContain("await enterHarnessPage();");
   });
 });
@@ -331,9 +333,10 @@ describe("M89 defect 3: analyze.ts wiring (source-level check)", () => {
 // exercising this live needs a real browser run.
 describe("Item A: warnings-accumulator wiring (source-level check)", () => {
   it("analyze.ts reports the Stylesheets: decision line and every new runWarnings entry through options.onWarning", () => {
+    const phasesSrc = fs.readFileSync(path.resolve("src", "pipeline/phases.ts"), "utf-8");
+    expect(phasesSrc).toContain("const cssDecisionWarning = formatStylesheetsLine(cssReport);");
+    expect(phasesSrc).toContain("options.onWarning?.(cssDecisionWarning);");
     const src = fs.readFileSync(path.resolve("src", "pipeline/analyze.ts"), "utf-8");
-    expect(src).toContain("const cssDecisionWarning = formatStylesheetsLine(cssReport);");
-    expect(src).toContain("options.onWarning?.(cssDecisionWarning);");
     const onWarningStart = src.indexOf("const onWarning = (warning: string): void => {");
     expect(onWarningStart).toBeGreaterThan(-1);
     const onWarningBlock = src.slice(onWarningStart, src.indexOf("};", onWarningStart));

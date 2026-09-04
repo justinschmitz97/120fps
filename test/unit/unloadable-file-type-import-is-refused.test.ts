@@ -218,7 +218,8 @@ describe("the run path's own refusal", () => {
   const analyzeSrc = fs.readFileSync(path.resolve("src/pipeline/analyze.ts"), "utf-8");
 
   it("throws the shared preflight message for every hard hit", () => {
-    expect(analyzeSrc).toContain(
+    const phasesSrc = fs.readFileSync(path.resolve("src/pipeline/phases.ts"), "utf-8");
+    expect(phasesSrc).toContain(
       "throw new PreflightHardRejectionError(preflightFailureMessage(preflight.hard));",
     );
   });
