@@ -416,6 +416,34 @@ stage index.
   `browser/discovery.ts` 823, `props/values.ts` 808, `report/budget.ts` 811), 11 (docs, e2e,
   spec approval), then an adversarial review of d63537e..HEAD by a non-implementer.
 
+## Wave 4: review findings (opus reviewer, not an implementer, at e094cf8)
+
+Verified clean: `analyze()` versus its nine phases (statement multiset diff, `await` order,
+try/catch boundaries, thunk reads at the original points, `rebuildHarness` at the original two
+positions, `classifyHarnessFault` byte-identical expressions); every shared helper against both old
+bodies; the seven file-level sibling cycles (no top-level initialiser reads a partner binding);
+the direct-run gate for `npx`, `node dist/cli/main.js` and another cwd; every changed test (357 of
+391 are import-path-only; no assertion removed; `killed-run-cleanup` got stronger); move fidelity
+of all 17 split commits (only `export` prefixes and import reshuffles unbalanced); no exported
+name lost (916 → 1055 names); constants unchanged.
+
+Findings and disposition:
+
+| # | Finding | Disposition |
+|---|---|---|
+| 1 | `report/types.ts` comment claims `report` may not import `props`; it may, and `PropProvenance` is declared twice | fixed in wave 4: one declaration in `props/schema.ts`, `report/types.ts` re-exports it |
+| 2 | `shared/run-state.ts` comment says `--no-preflight` leaves the flag unset; the walk runs regardless | comment corrected in wave 4 |
+| 3 | after `runPreflightPhase` throws a hard rejection, `providerCandidates`, `transitiveProviderCandidates`, `activeTransforms` keep their initial values; unobservable because the catch rethrows before `attachHarnessContext` | comment at `analyze.ts:373` corrected in wave 4; behaviour identical on every observable path |
+| 4, 5 | two tests now read the whole `pipeline/` tree, so their `toContain` assertions are wider; two `slice` ranges are unbounded | deferred: tighten to the file that holds the asserted line |
+| 6 | `cloneDeep` aliases a `Map`/`Set`/class instance where `cloneTemplate` produced `{}`; unreachable because synthesis never emits those | disclosed here |
+| 7 | three `budget.ts` types and cli's `componentStem` were renamed | authorised exceptions, recorded in the spec's MUST NOT |
+| 9 | six comments cite files that no longer exist | fixed in wave 4 |
+| 10 | ratchet blind spots: directory-level cycle check only, `function` declarations only (an `export const f = () =>` duplicate escapes), side-effect imports unparsed | deferred |
+| 11 | 325 runtime values and 106 types leave the package root; none documented | CHANGELOG states it |
+
+Correction to the shared-helpers table: `toPosix` only swaps separators; `resolvePosix` is the
+one that resolves first (used at one site, `harness/server.ts`).
+
 ## Ratchet and boundary tests (written in wave 1, allowlists emptied by wave 3)
 
 `test/unit/module-boundaries.test.ts`: reads every `.ts` under `src/` (not `shims/`), extracts

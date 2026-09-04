@@ -2,12 +2,28 @@
 
 ## Unreleased
 
+Module layout (M118, ADR 0005): `src/` is nine stage directories (`cli`, `pipeline`, `analysis`,
+`report`, `browser`, `harness`, `props`, `project`, `shared`) with one-responsibility files of at
+most 800 lines, value imports pointing one way through stage `index.ts` files, one helper per fact
+in `src/shared/`, and comments that state the invariant instead of the milestone. Two unit tests
+enforce the layout. No measured behaviour changes: the unit suite reports the same passing set before
+and after, and `--explain-props` output is byte-identical.
+
+**Upgrading:** the CLI binary is `dist/cli/main.js` (the `120fps` bin entry follows; `npx 120fps`
+is unchanged). The package's programmatic surface is now the curated set in `src/index.ts`
+(`analyze`, `buildReport`, the Report types, `formatMarkdown`, `formatJUnit`, `loadBudgetConfig`,
+`validateBudgetConfig`, `hintsForReport`, `formatHints`, `HINTS`, `parseArgs`, `PropSchema`,
+`PropCombination`). This is breaking for anyone who imported 120fps programmatically beyond that
+set: 325 runtime values and 106 types the 0.6.0 barrel re-exported (`measureMount`, `explore`,
+`extractProps`, `buildAndServe`, `runPreflight` and the rest) are no longer reachable from the
+package root. The capability was real but never documented.
+
 Field-test run 5 remediation: the thirty confirmed findings against 0.6.0, closed.
 
 **Upgrading:** preset lookup now checks `<stem>.120fps.props.tsx` and `<stem>.120fps.props.ts` before the
 existing `<stem>.props.tsx`/`.props.ts` names; both old names keep working. `phaseTimings` is a new field on
 the report and on `--save-baseline` entries; a baseline recorded before this release just reads as "no phase
-timings recorded". Nothing forces a re-record, and `METRICS_REVISION` (`src/budget.ts:489`) is unchanged, so
+timings recorded". Nothing forces a re-record, and `METRICS_REVISION` (`src/report/budget.ts`) is unchanged, so
 no baseline invalidates.
 
 Resolution:

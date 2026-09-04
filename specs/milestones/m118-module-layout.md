@@ -62,7 +62,11 @@ there is one. A comment describes the code beside it, not the milestone that wro
 - Change any observable behaviour: report JSON, terminal output, exit codes, warning texts, file
   names written into a project (harness dirs, fixture scaffolds, baselines).
 - Rename an exported identifier or change a signature, except to delete a duplicate whose one
-  remaining copy keeps the surviving name.
+  remaining copy keeps the surviving name. Coordinator-authorised exceptions, none on the package
+  surface: the three `report/budget.ts` types whose names collided with different shapes in
+  `report/types.ts` became `BudgetComparison`, `BudgetRegression`, `BudgetImprovement`
+  (a9c8e8c); the file-private cli `componentStem`, which differs from the props one on a bare
+  dotfile name, became `reportStem` (b777684).
 - Combine a file move with a content edit in one commit. Moves are `git mv` plus import rewrites;
   splits and cleanups are separate commits.
 - Touch `fixtures/` or change test titles.
@@ -84,5 +88,15 @@ Recorded verbatim on approval:
   (ADR to follow; seed `PropWarningRecord`).
 - Mirroring `src/` directories under `test/unit/`.
 - Reconciling the two CV formulas (needs a measurement of the noise-probe thresholds).
-- Shrinking `analyze()` below 200 lines by extracting its phases (the split moves the mode engines
-  out; the orchestrator body stays).
+- Shrinking `analyze()` further: the wave 2 split left it at about 560 lines delegating nine
+  phases (`pipeline/phases.ts`); the mode dispatch and the harness build sequence still live in
+  the body.
+- Ratchet blind spots found in review: the cycle check is directory-level only (seven
+  function-body-only sibling cycles exist and are safe); the duplicate-name check sees `function`
+  declarations only; side-effect imports are not parsed.
+- Source-reading tests whose haystack widened to the whole `pipeline/` tree
+  (`a-wedged-page-cannot-consume-the-whole-run`, `an-aborted-run-still-prints-its-roots-and-total`)
+  and two unbounded `slice` ranges (`matrix-transparency`, `isolation-orchestrate-harden`) should
+  point at the single file that holds the asserted line.
+- The comment cleanup rewrote every flagged comment; the unflagged remainder was not audited for
+  stale claims.
