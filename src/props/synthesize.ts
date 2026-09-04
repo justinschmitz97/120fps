@@ -1,5 +1,6 @@
 import path from "node:path";
 import ts from "typescript";
+import { cloneDeep } from "../shared/index.js";
 import { isElementOrCallableUnion, isObjectLike, MAX_TUPLE_ARITY, presetRemedyClause } from "./classify.js";
 import { emit } from "./extract.js";
 import { isNoiseName } from "./rank.js";
@@ -178,7 +179,7 @@ export function collectionValue(
   const key = args[0] ? synthesizeValue(args[0], checker, 1, newSynth()) : undefined;
   const value = args[1] ? synthesizeValue(args[1], checker, 1, newSynth()) : undefined;
   return {
-    value: distinctValues(key).map((k) => [k, cloneSynthesized(value)]),
+    value: distinctValues(key).map((k) => [k, cloneDeep(value)]),
     reason,
   };
 }
@@ -195,20 +196,6 @@ function distinctValues(seed: unknown): unknown[] {
   }
   if (seed === undefined) return [];
   return [seed];
-}
-
-
-function cloneSynthesized(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(cloneSynthesized);
-  if (value instanceof Date) return new Date(value.getTime());
-  if (value && typeof value === "object" && value.constructor === Object) {
-    const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-      out[k] = cloneSynthesized(v);
-    }
-    return out;
-  }
-  return value;
 }
 
 

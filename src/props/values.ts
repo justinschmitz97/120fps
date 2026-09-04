@@ -1,3 +1,4 @@
+import { cloneDeep } from "../shared/index.js";
 import type { PropSchema, ScalingPropMatch } from "./schema.js";
 
 export type PropCombination = Record<string, unknown>;
@@ -109,23 +110,7 @@ export function fillArray(schema: PropSchema, n: number): unknown[] {
   if (template === undefined) {
     return Array.from({ length: n }, (_, i) => `item-${i + 1}`);
   }
-  return Array.from({ length: n }, () => cloneTemplate(template));
-}
-
-function cloneTemplate(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(cloneTemplate);
-  // Instants and patterns are values, not field bags: walking their entries
-  // would hand the component `{}` where the element type says `Date`.
-  if (value instanceof Date) return new Date(value.getTime());
-  if (value instanceof RegExp) return new RegExp(value.source, value.flags);
-  if (value && typeof value === "object") {
-    const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-      out[k] = cloneTemplate(v);
-    }
-    return out;
-  }
-  return value;
+  return Array.from({ length: n }, () => cloneDeep(template));
 }
 
 // M81 3c/4: a degenerate "object"/"reactnode" schema has no faithful value to

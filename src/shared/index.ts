@@ -1,3 +1,4 @@
+export * from "./clone.js";
 export * from "./fs.js";
 export * from "./git.js";
 export * from "./regex.js";
