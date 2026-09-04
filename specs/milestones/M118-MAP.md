@@ -388,9 +388,33 @@ stage index.
   verified the uncommitted step (tsc, 27 touched test files green) and committed it.
 - Line-cap allowlist: `analysis/explorer.ts` 899, `analysis/react-profiler.ts` 890,
   `browser/discovery.ts` 823, `props/values.ts` 822, `report/budget.ts` 809.
-- Remaining: task 8 (comments, per directory in worktrees), 9 (splits still over 800), 10
-  (`src/index.ts` curation), 11 (docs, e2e, spec approval), then an adversarial review of
-  d63537e..HEAD by a non-implementer.
+- Task 5 follow-up (e63d0ea, 6ffa17f, fc2addb): one `installedPackageDir` (`resolvePackageDir`
+  deleted; the only divergence was `isFile` versus `existsSync` on `package.json`, unreachable in
+  a real install); one `cloneDeep` in `shared/clone.ts` (union of both clone helpers; a synthesized
+  `RegExp` inside a generated `Map` is now cloned per entry where `cloneSynthesized` shared one
+  reference, no test or output depends on that identity); `readJsonFile` in `shared/fs.ts` for the
+  three readers whose try/catch wrapped only the read and parse (four readers with wider try blocks
+  stay inline). `componentStem` differs between cli and props (a bare dotfile name such as `.tsx`:
+  cli strips it to empty, props keeps it), so the cli copy is renamed `reportStem` (b777684) and
+  both stay.
+- Task 8 (comments, 5c7ed2f, df855d2, c014eae, 1f6aff8, 6d995e6, 594e683, 6c38bd1, 51e7b8b,
+  fb06669): every `COMMENT_TOKENS` entry removed; `grep` for the history regex over `src/` finds
+  one hit, a user-facing remedy string in `project/preflight-gates.ts`, which the scanner ignores.
+  Lanes rewrote mixed comments to their invariant, deleted history-only banners, corrected stale
+  flat-file path references inside rewritten comments, and stripped audit ids, review-round and
+  corpus citations the regex does not catch. Unflagged comments were not audited; a stale path in
+  an unflagged comment (e.g. `report/ci.ts` citing `src/isolation.ts`) may remain.
+- Task 10 (36f9780): `src/index.ts` 472 names → 20 (12 runtime: `analyze`, `buildReport`,
+  `DEFAULT_THRESHOLDS`, `TIER_BUDGETS`, `formatMarkdown`, `formatJUnit`, `loadBudgetConfig`,
+  `validateBudgetConfig` (newly exported from `report/budget.ts`), `hintsForReport`,
+  `formatHints`, `HINTS`, `parseArgs`); `export type * from "./report/types.js"` carries the
+  Report types. Nothing in `test/`, `src/`, `fixtures/` or `README.md` imports the root barrel.
+- Found, not fixed: `PropProvenance` is declared twice with the same literal union
+  (`props/schema.ts` and `report/types.ts`); `report` may import `props`, so one declaration
+  can go. Left for a follow-up.
+- Remaining: task 9 (splits for `analysis/explorer.ts` 891, `analysis/react-profiler.ts` 877,
+  `browser/discovery.ts` 823, `props/values.ts` 808, `report/budget.ts` 811), 11 (docs, e2e,
+  spec approval), then an adversarial review of d63537e..HEAD by a non-implementer.
 
 ## Ratchet and boundary tests (written in wave 1, allowlists emptied by wave 3)
 
