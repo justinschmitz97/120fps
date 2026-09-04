@@ -10,10 +10,7 @@ import {
   TSCONFIG_REFERENCES_MARKER,
 } from "./model.js";
 import { isDirectory, resolveTarget, SOURCE_EXTENSIONS } from "./resolve.js";
-
-export function escapeRegex(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
+import { escapeRegex } from "../shared/index.js";
 
 // M69: an entry whose two halves disagree about the wildcard produced a regex
 // that could never match, so the alias was absent and nothing said so.

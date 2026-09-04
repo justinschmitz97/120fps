@@ -1,2 +1,3 @@
+export * from "./regex.js";
 export * from "./run-state.js";
 export * from "./stats.js";

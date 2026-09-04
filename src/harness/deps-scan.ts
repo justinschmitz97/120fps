@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
+import { escapeRegex } from "../shared/index.js";
 import {
-  escapeRegex,
   findWorkspaceRoot,
   installedPackageDir,
   readProjectManifest,

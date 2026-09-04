@@ -1,8 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import ts from "typescript";
+import { escapeRegex } from "../shared/index.js";
 import {
-  escapeRegex,
   findProjectRoot,
   findWorkspaceRoot,
   installedPackageDir,
