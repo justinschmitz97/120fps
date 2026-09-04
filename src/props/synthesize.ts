@@ -5,7 +5,7 @@ import { isElementOrCallableUnion, isObjectLike, MAX_TUPLE_ARITY, presetRemedyCl
 import { emit } from "./extract.js";
 import { isNoiseName } from "./rank.js";
 
-// M103 (dub-F2, corpus re-test): a REQUIRED prop typed as a class or an
+// A REQUIRED prop typed as a class or an
 // interface with methods gets a placeholder object -- dub's Table declares
 // `table: TableType<T>`, the harness synthesizes `{}`, and the render dies on
 // `table.getVisibleLeafColumns is not a function` with nothing said in either
@@ -107,7 +107,7 @@ interface SynthContext {
   stack: ts.Type[];
   // Members that could not be reproduced faithfully, for the caller's warning.
   notes: string[];
-  // M84: whether any nested member's value came from a name-based heuristic
+  // Whether any nested member's value came from a name-based heuristic
   // (`namedStringValue`) or a generic type-agnostic fallback, so the outer
   // object schema's own `provenance` can reflect the riskiest thing it
   // contains rather than always reading "declared".
@@ -125,7 +125,7 @@ const MAP_TYPES = new Set(["Map", "WeakMap", "ReadonlyMap"]);
 
 const SET_TYPES = new Set(["Set", "WeakSet", "ReadonlySet"]);
 
-// M81 3a: a structural iterable that is neither Map nor Set. Unlike them, a
+// A structural iterable that is neither Map nor Set. Unlike them, a
 // real array IS a valid `Iterable<T>` and survives Playwright's serializer
 // unchanged, so it carries no `reason` and is not marked degenerate.
 const ITERABLE_TYPES = new Set(["Iterable", "IterableIterator"]);
@@ -157,7 +157,7 @@ export function collectionValue(
   const name = builtinName(type);
   if (!name) return undefined;
 
-  // M81 3a: a real array is a valid `Iterable<T>`/`IterableIterator<T>` and
+  // A real array is a valid `Iterable<T>`/`IterableIterator<T>` and
   // does not throw inside `new Set(prop)`; unlike Map/Set it needs no
   // entries-transport `reason` and is not marked degenerate.
   if (ITERABLE_TYPES.has(name)) {
@@ -225,7 +225,7 @@ export function opaqueReason(type: ts.Type, checker: ts.TypeChecker): string | u
   if (name && !MAP_TYPES.has(name) && !SET_TYPES.has(name) && !ITERABLE_TYPES.has(name)) {
     return `${name} has no synthesizable shape`;
   }
-  // M81 3b: `ReactElement | (props) => ReactElement` (Base UI's `render`
+  // `ReactElement | (props) => ReactElement` (Base UI's `render`
   // idiom): a function/element union has no synthesizable field-bag shape.
   if (isElementOrCallableUnion(type, checker)) {
     return `${checker.typeToString(type)} requires a real element or render function`;
@@ -244,7 +244,7 @@ export function synthesizeElement(arrayType: ts.Type, checker: ts.TypeChecker): 
 }
 
 
-// M84: `name` is the prop or field this value is being synthesized for, when
+// `name` is the prop or field this value is being synthesized for, when
 // one is known — the object-property loop below passes `prop.name`; every
 // other recursive call (union members, tuple positions, array elements,
 // Map/Set/Iterable entries) has no single field name to offer and passes
@@ -252,7 +252,7 @@ export function synthesizeElement(arrayType: ts.Type, checker: ts.TypeChecker): 
 // name to test a heuristic against. This is the ONLY place besides
 // `classifyType`'s own top-level string branch that decides a string value,
 // and both call the same `namedStringValue`, so a heuristic added there
-// applies at every depth without a second copy to keep in sync (M84's
+// applies at every depth without a second copy to keep in sync (a
 // depth-independence invariant).
 export function synthesizeValue(
   type: ts.Type,
@@ -356,7 +356,7 @@ export function synthesizeValue(
 }
 
 
-// M81 3d: commerce-F1. Named runtime-validated string conventions, matched
+// Named runtime-validated string conventions, matched
 // before falling back to the generic "test" placeholder. Deliberately narrow:
 // closes the one repeatedly-observed false-FAIL class (Intl construction),
 // not a general claim that every runtime-validated string is now safe.
@@ -364,7 +364,7 @@ const CURRENCY_PROP_NAME = /^currency(code)?$/i;
 
 const LOCALE_PROP_NAME = /^(locale|language)$/i;
 
-// M84: element-plus-F2. A `src`/`srcSet`/`poster` string synthesized as the
+// A `src`/`srcSet`/`poster` string synthesized as the
 // generic "test" placeholder relative-resolves against the harness origin
 // and 404s, and the 404 is then wrongly charged to the component. An inline
 // `data:` URI (a real, valid 1x1 transparent GIF) resolves with no network
@@ -375,13 +375,13 @@ const DATA_URI_PLACEHOLDER =
   "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==";
 
 
-// M84: the single place a name-based string heuristic is defined. Both
+// The single place a name-based string heuristic is defined. Both
 // `classifyType`'s top-level string branch and `synthesizeValue`'s nested
 // object-member branch call this, so a heuristic that works one level deep
 // works at every level (commerce's control: top-level `currencyCode`
-// synthesizes "USD", nested `label.currencyCode` must synthesize the same
-// value, not the generic "test" placeholder it fell back to before this
-// milestone). Returns `undefined` when no convention matches, meaning the
+// synthesizes "USD"; nested `label.currencyCode` must synthesize the same
+// value, not the generic "test" placeholder a depth-blind heuristic would
+// fall back to). Returns `undefined` when no convention matches, meaning the
 // caller falls back to its own generic placeholder.
 export function namedStringValue(name: string | undefined): string | undefined {
   if (!name) return undefined;
@@ -392,17 +392,17 @@ export function namedStringValue(name: string | undefined): string | undefined {
 }
 
 
-// M84 cross-lane interface: a boolean whose truthiness imposes a contract on
-// another prop (M85's asChild/as/render examples). Deliberately narrow, the
+// A boolean whose truthiness imposes a contract on
+// another prop (`asChild`/`as`/`render` are examples). Deliberately narrow, the
 // same allowlist shape as the string heuristics above: these three names are
 // the one convention observed across Radix, Base UI, react-aria and shadcn
 // corpora. A general "any boolean whose true branch changes what another
-// prop must be" detector needs cross-prop analysis this milestone does not
+// prop must be" detector needs cross-prop analysis this codebase does not
 // attempt.
 export const CONTRACT_PROP_NAME = /^(asChild|as|render)$/;
 
 
-// M84: element-plus-F4. An array whose element type could not be resolved
+// An array whose element type could not be resolved
 // (commonly an unbound generic, `T[]`) and whose name identifies it as a
 // row/item collection gets a real object element instead of the generic
 // bare string "item", so a component keying a `WeakMap`/`Map` on its own

@@ -14,7 +14,7 @@ import { literalValue } from "./presets.js";
 import type { ExportInfo, PropSchema } from "./schema.js";
 import { REACT_TYPE_PACKAGE } from "./synthesize.js";
 
-// M58: one component declaration per entry, in source order, with the export
+// One component declaration per entry, in source order, with the export
 // facts that decide which of them the harness will actually render.
 interface ComponentCandidate {
   name: string;
@@ -126,7 +126,7 @@ interface BoundProps {
   // The function the type came from, when one was reachable: the source of
   // the destructured parameter names the self-consistency guard compares.
   fn?: ts.SignatureDeclaration;
-  // M97: set only by the last resort in `bindProps` — the call signatures of
+  // Set only by the last resort in `bindProps` — the call signatures of
   // the binding's own type, rather than an annotated parameter. A JS entry's
   // sibling declaration outranks this one (ADR 0004).
   viaTypeFallback?: boolean;
@@ -136,7 +136,7 @@ interface BoundProps {
 const IDENTIFIER_HOPS = 8;
 
 
-// M65: the one stem rule. Shared with `detectComponentExport` so the harness
+// The one stem rule. Shared with `detectComponentExport` so the harness
 // renders the component whose props were extracted.
 export function normalizeComponentName(name: string): string {
   return name.replace(/[^a-z0-9]/gi, "").toLowerCase();
@@ -241,7 +241,7 @@ function collectComponentCandidates(sourceFile: ts.SourceFile): ComponentCandida
 }
 
 
-// Selection order (M58): default export > file-stem match after dropping
+// Selection order: default export > file-stem match after dropping
 // non-alphanumerics > first exported component > first declaration. The last
 // step only applies to files that export nothing at all.
 function selectTargetCandidate(
@@ -250,7 +250,7 @@ function selectTargetCandidate(
   sourceText: string,
   explicitTarget?: string,
 ): ComponentCandidate | undefined {
-  // M65: `<file>#Export` names the component the harness will import, so the
+  // `<file>#Export` names the component the harness will import, so the
   // schema follows it rather than the selection order. Aliases count: the name
   // the module exports under is the name the user can type.
   if (explicitTarget) {
@@ -271,11 +271,12 @@ function selectTargetCandidate(
     );
     if (stemMatch) return stemMatch;
 
-    // M103 (heroui-F2): the header named `BadgeRoot` and the props table
-    // described `BadgeAnchor`. `detectComponentExport` reads `scanExports`'s
-    // order (heroui's `export { BadgeRoot, BadgeLabel, BadgeAnchor }`); this
-    // function read declaration order, where BadgeAnchor comes first. One
-    // selection function over one export list, so the two cannot diverge.
+    // Export order and declaration order can diverge — heroui's
+    // `export { BadgeRoot, BadgeLabel, BadgeAnchor }` puts `BadgeRoot` first
+    // in `scanExports`'s order, while declaration order puts `BadgeAnchor`
+    // first. `detectComponentExport` reads `scanExports`'s order, so this
+    // fallback reads the same order: one selection function over one export
+    // list keeps the two picks from diverging.
     const measured = selectMeasuredExport(scanExports(sourceText, fileName), fileName);
     const measuredMatch = measured
       ? exported.find((c) => [c.name, ...c.aliases].includes(measured))
@@ -287,10 +288,10 @@ function selectTargetCandidate(
 }
 
 
-// M103: the export a run measures, from one list of exports. `scanExports`
-// lives in this file and `detectComponentExport` (src/harness.ts) already
-// imports from here, so the harness's own pick can route through this same
-// order (I9's `Provider` rule is the third clause).
+// The export a run measures, from one list of exports. `scanExports`
+// lives in this file and `detectComponentExport` (src/harness/exports.ts)
+// imports from here, so the harness's own pick routes through this same
+// order (a `Provider` rule is the third clause).
 export function selectMeasuredExport(
   exports: ExportInfo[],
   fileName: string,
@@ -406,7 +407,7 @@ function bindProps(
 }
 
 
-// M103 (I8, calcom-F2): the literal defaults a destructured first parameter
+// The literal defaults a destructured first parameter
 // declares (`{ loading = false, color = "primary" }`). A non-literal default
 // (a call, a variable) is not recorded rather than guessed at.
 export function destructuredParameterDefaults(
@@ -450,7 +451,7 @@ export function destructuredParameterDefaults(
 }
 
 
-// M103 (I8): the pre-hooks convention, `Component.defaultProps = {...}` at the
+// The pre-hooks convention, `Component.defaultProps = {...}` at the
 // top level of the component's own file. Parse-only, same shallow tradeoff
 // `detectOptionsApiProps` accepts.
 export function defaultPropsAssignment(
@@ -480,11 +481,10 @@ export function defaultPropsAssignment(
 }
 
 
-// M103 (I8): the default is recorded on the schema. `reorderValues` is Vue's
-// pre-M103 `withDefaults` behavior (the declared default leads the pool) and
-// stays exactly where it was; a React default is disclosed without changing
-// which values are measured in which order, since M103 changes ranking,
-// binding and typing only.
+// The default is recorded on the schema. `reorderValues` matches Vue's
+// `withDefaults` behavior: the declared default leads the pool. A React
+// default is disclosed without changing which values are measured in which
+// order.
 export function applyDeclaredDefaults(
   schemas: PropSchema[],
   defaults: Map<string, unknown>,
@@ -562,21 +562,21 @@ export interface PropsBinding {
   // The target's first-parameter annotation, when it is a computed type: the
   // only case where an empty schema is a resolution failure rather than a fact.
   computedAnnotation?: string;
-  // M86: the function the props type was bound to, when one was reachable —
+  // The function the props type was bound to, when one was reachable —
   // threaded through so `typeToSchema` can read which prop names the
   // component's own body references by name.
   fn?: ts.SignatureDeclaration;
-  // M97: the type came from the binding's own call signatures, the last resort
+  // The type came from the binding's own call signatures, the last resort
   // in `bindProps`. A JS entry's sibling declaration outranks it (ADR 0004).
   viaTypeFallback?: boolean;
-  // M97: nothing bound to the measured target while another declaration in the
+  // Nothing bound to the measured target while another declaration in the
   // same file did bind. Reported only once the declaration fallback has also
   // come up empty.
   unboundTargetHijacked?: boolean;
-  // M114 B4 (gutenberg-F2): the module the binding was read from, when the
+  // The module the binding was read from, when the
   // measured file only re-exports the component another module declares.
   targetFile?: string;
-  // M114 B5 / I7 (react-spectrum-F3): the barrel and the specifier that did not
+  // The barrel and the specifier that did not
   // resolve. A cause the filesystem decides, so no props table is a fact about
   // this file rather than a failed extraction.
   unresolvedReExport?: { barrel: string; specifier: string };
@@ -697,9 +697,9 @@ export function findComponentPropsType(
     };
   }
 
-  // M97: reported by the caller, after the sibling declaration has had its
-  // turn. Emitting here claimed "could not resolve props" on every MUI `.js`
-  // component whose declaration then resolved all sixteen.
+  // Reported by the caller, after the sibling declaration has had its turn:
+  // emitting here would flag every MUI `.js` component whose declaration
+  // resolves all sixteen props as unresolvable.
   if (expectsProps(target)) {
     const hijacker = candidates.some(
       (candidate) => candidate !== target && bindProps(candidate, checker, byName),
@@ -711,7 +711,7 @@ export function findComponentPropsType(
 }
 
 
-// M97 / ADR 0004: `React.forwardRef<T, P = {}>` with an unannotated render
+// ADR 0004: `React.forwardRef<T, P = {}>` with an unannotated render
 // parameter types the binding as `ForwardRefExoticComponent<RefAttributes<any>>`,
 // whose first call signature's parameter has exactly two properties: `ref` from
 // `RefAttributes` and `key` from `Attributes`. Neither is a prop of the

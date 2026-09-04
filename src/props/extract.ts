@@ -16,7 +16,7 @@ import { createCachedProgram } from "./program.js";
 import type { PropSchema, PropWarningRecord, ScalingPropMatch, WarningRecorder } from "./schema.js";
 import { extractVueProps } from "./vue.js";
 
-// M65: `target` overrides M58's selection order with the export the user named
+// `target` overrides the selection order with the export the user named
 // (`<file>#Export`); `onWarning` collects what extraction would have written to
 // stderr, so a dry run can print the same diagnostics as data.
 export interface ExtractPropsOptions {
@@ -33,11 +33,11 @@ export interface PropsExtraction {
   targetName?: string;
   targetLine?: number;
   computedAnnotation?: string;
-  // M114 B4 (gutenberg-F2): the module the binding was read from, when the
+  // The module the binding was read from, when the
   // measured file only re-exports the component another module declares.
   // Absent when the component is declared in the measured file itself.
   targetFile?: string;
-  // M114 B5 / I7 (react-spectrum-F3): the barrel and the specifier that did not
+  // The barrel and the specifier that did not
   // resolve, in place of a props table nothing could have filled.
   unresolvedReExport?: { barrel: string; specifier: string };
   warnings: string[];
@@ -53,11 +53,11 @@ const NUMERIC_SHORTHAND = /^n$|^num/i;
 
 const ARIA_PATTERN = /^aria-/;
 
-// M103 (base-ui-F3): a numeric prop whose name denotes a bound or a step is
-// not a quantity of rendered things. `NumberFieldRoot.max` matched
-// SCALING_NAME_PATTERN's `/max/i` and ran a whole curve mode whose own output
-// then reported that the DOM node count never moved. Exact names only: a
-// `maxItems` or `rowCount` still scales.
+// A numeric prop whose name denotes a bound or a step is
+// not a quantity of rendered things. `NumberFieldRoot.max` matches
+// SCALING_NAME_PATTERN's `/max/i`; treated as scaling, it would run a whole
+// curve mode whose own output would then report that the DOM node count
+// never moved. Exact names only: a `maxItems` or `rowCount` still scales.
 const SCALING_BOUND_NAME =
   /^(min|max|step|largeStep|smallStep|precision|decimalScale|tabIndex|zIndex|maxLength|minLength|maxWidth|minWidth|maxHeight|minHeight)$/i;
 
@@ -100,7 +100,7 @@ export async function extractProps(
 }
 
 
-// M65: the same resolution `extractProps` performs, plus the binding facts a
+// The same resolution `extractProps` performs, plus the binding facts a
 // dry run has to show. `extractProps` is the schema-only view of it.
 export async function extractPropsDetailed(
   filePath: string,
@@ -117,7 +117,7 @@ export async function extractPropsDetailed(
     options?.onWarning?.(line);
   };
   const collecting = options?.onWarning !== undefined;
-  // M112 B3: records are collected whether or not a sink is printing, because
+  // Records are collected whether or not a sink is printing, because
   // `warnOnce` prints a given warning once per process and the second caller
   // still has to be able to re-render it.
   const warningRecords: PropWarningRecord[] = [];
@@ -131,7 +131,7 @@ export async function extractPropsDetailed(
   }
 
   const compilerOptions = createCompilerOptions(absolutePath);
-  // M97 / ADR 0004: a JavaScript entry's declared types live in a sibling
+  // ADR 0004: a JavaScript entry's declared types live in a sibling
   // `.d.ts`. It joins the program as a second root so its symbols bind.
   const declarationPath = isJsEntry(absolutePath)
     ? resolveEntryDeclaration(absolutePath, compilerOptions)
@@ -149,7 +149,7 @@ export async function extractPropsDetailed(
     throw new Error(`Could not parse ${filePath}`);
   }
 
-  // M81 section 6: the classification loop's own try/catch (inside
+  // The classification loop's own try/catch (inside
   // `typeToSchema`) covers a recursion that surfaces per-prop; this outer
   // guard covers one that surfaces resolving the target's props type itself,
   // before or during that loop, so a self-referential generic never reaches
@@ -164,7 +164,7 @@ export async function extractPropsDetailed(
       options?.target,
       collecting ? sink : undefined,
     );
-    // M97 / ADR 0004: the sibling declaration is the published contract, so it
+    // ADR 0004: the sibling declaration is the published contract, so it
     // outranks `bindProps`'s last resort (the call signatures of the binding's
     // own type) and answers where the JavaScript source binds nothing at all.
     // The bound function is kept: its destructured names are what the
@@ -186,7 +186,7 @@ export async function extractPropsDetailed(
           record,
         )
       : [];
-    // M103 (I8): the component's own declared defaults, destructuring first —
+    // The component's own declared defaults, destructuring first —
     // it is the form a reader of the source sees.
     schemas = applyDeclaredDefaults(
       schemas,
@@ -221,8 +221,8 @@ export async function extractPropsDetailed(
   if (!recursed) {
     warnDegenerateProps(absolutePath, schemas, collecting ? sink : undefined, record);
   }
-  // M97 / ADR 0004: an empty JS schema now names its own cause instead of
-  // reaching analyze.ts's generic "extraction may have failed" hedge.
+  // ADR 0004: an empty JS schema names its own cause instead of
+  // reaching the pipeline's generic "extraction may have failed" hedge.
   if (
     !recursed &&
     schemas.length === 0 &&
@@ -255,11 +255,11 @@ export async function extractPropsDetailed(
 }
 
 
-// M97 / ADR 0004: a JavaScript entry that bound no props type and had no
-// declaration file to read. material-ui-F1 is what silence here produced:
-// `React.forwardRef`'s own `ref`/`key` were reported as the contract and every
-// measured combo mounted with `{}`. Same register as the two Vue scope
-// exclusions above -- a stated cause rather than the generic
+// ADR 0004: a JavaScript entry that bound no props type and had no
+// declaration file to read. Silence here would report `React.forwardRef`'s
+// own `ref`/`key` as the contract, mounting every measured combo with `{}`
+// (material-ui's shape). Same register as the two Vue scope exclusions
+// above -- a stated cause rather than the generic
 // "extraction may have failed" hedge.
 const UNTYPED_JS_COMPONENT_MARK = "declares no props type";
 
@@ -267,15 +267,15 @@ const UNTYPED_JS_COMPONENT_MARK = "declares no props type";
 export const UNTYPED_JS_COMPONENT_WARNING = (
   absolutePath: string,
   targetName: string,
-  // Review B-2: the declaration that WAS read, when one resolved. Saying "has
-  // no declaration file beside it" with `Widget.d.ts` on disk is the same class
-  // of false claim M97 section 4 fixed for `warnUnboundTarget`.
+  // The declaration that WAS read, when one resolved. Saying "has
+  // no declaration file beside it" with `Widget.d.ts` on disk would be the same
+  // class of false claim `warnUnboundTarget` avoids.
   declarationPath?: string,
 ): string => {
   const source = declarationPath
     ? `${UNTYPED_JS_COMPONENT_MARK}: ${path.basename(declarationPath)} was read and declares none for it either`
     : `${UNTYPED_JS_COMPONENT_MARK} and has no declaration file beside it (a sibling <stem>.d.ts is read when one exists, ADR 0004)`;
-  // Review B-3: with a preset on disk, applyPropPresets's append path supplies
+  // With a preset on disk, applyPropPresets's append path supplies
   // the props and the run measures them, so "measuring with no props" is false.
   const outcome = detectPropPresets(absolutePath)
     ? `${presetFileName(absolutePath)} next to it supplies the values measured instead.`
@@ -291,7 +291,6 @@ export function isUntypedJsComponentWarning(message: string): boolean {
 }
 
 
-// M97 / ADR 0004 ---------------------------------------------------------------
 
 const JS_ENTRY_EXTENSION = /\.(js|jsx|mjs|cjs)$/i;
 

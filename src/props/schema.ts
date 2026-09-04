@@ -1,5 +1,5 @@
-// M84 cross-lane interface: how a schema's value(s) were chosen. Lane C (M85)
-// keys a combo's `harnessFault` on this. "declared": a real literal or union
+// How a schema's value(s) were chosen. A combo's `harnessFault` keys on
+// this. "declared": a real literal or union
 // member from the type. "preset": from a `<stem>.props.tsx` (set only by
 // `applyPropPresets`, never assigned in this file). "heuristic": a name-based
 // special case such as `currencyCode`. "placeholder": a generic, type-agnostic
@@ -25,12 +25,12 @@ export interface PropSchema {
   // Array props only: a value shaped like one element, synthesized from the
   // element type. Absent when the element type has no synthesizable shape.
   elementTemplate?: unknown;
-  // M60: why the generated value is not a faithful stand-in for the declared
+  // Why the generated value is not a faithful stand-in for the declared
   // type. Set means the component is measured with something it cannot use.
   degenerate?: string;
-  // M84: how the value(s) above were chosen. See `PropProvenance`.
+  // How the value(s) above were chosen. See `PropProvenance`.
   provenance?: PropProvenance;
-  // M103 (I8, calcom-F2): the default the component itself declares, when it
+  // The default the component itself declares, when it
   // is a literal the AST can read. Absent means no default was declared or the
   // declared one is not a literal — never "the default is undefined".
   defaultValue?: unknown;
@@ -45,7 +45,7 @@ export interface ScalingPropMatch {
 }
 
 
-// M112 I7: the extraction warnings a preset loaded afterwards can change,
+// The extraction warnings a preset loaded afterwards can change,
 // carried as data beside their printed text so a caller can re-render them
 // against the applied schema instead of parsing a line.
 export interface PropWarningRecord {

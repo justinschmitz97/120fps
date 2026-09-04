@@ -46,7 +46,7 @@ function buildAllDeltaPairs(schemas: PropSchema[]): DeltaPair[] {
         });
       }
     } else if (s.kind === "object" && !s.required && !s.degenerate) {
-      // M81 3c/4: a degenerate schema has no real value to flip to (base and
+      // A degenerate schema has no real value to flip to (base and
       // flip would be the same fabricated stand-in), so it does not
       // participate in its own delta pair; it still flows into `anchor` via
       // `resolveAnchorValue`, which resolves it to `undefined` for every
@@ -113,7 +113,7 @@ export function fillArray(schema: PropSchema, n: number): unknown[] {
   return Array.from({ length: n }, () => cloneDeep(template));
 }
 
-// M81 3c/4: a degenerate "object"/"reactnode" schema has no faithful value to
+// A degenerate "object"/"reactnode" schema has no faithful value to
 // synthesize; the run and `--explain-props` must agree it is unusable, so
 // this returns an omitted prop, not a fabricated stand-in. A preset override
 // clears `degenerate` (`applyPropPresets`), so this never overrides one.
@@ -328,11 +328,12 @@ const MAX_MATRIX_AUTO_CELLS = 64;
 
 export function isMatrixEligible(schema: PropSchema): boolean {
   if (schema.kind === "boolean") return true;
-  // M104 / I10 (dub-F7): a literal union is an axis whatever its arity. dub's
-  // Badge declares `variant` with twelve values, and a 1..8 window excluded the
-  // component's only own prop while thirteen inherited `<span>` attributes were
-  // crossed. An over-wide union is crossed over a truncated value set instead
-  // (`matrixValues`), so the cell-count bound is unchanged.
+  // A literal union is an axis whatever its arity. dub's
+  // Badge declares `variant` with twelve values; a 1..8 window would exclude
+  // the component's only own prop while thirteen inherited `<span>`
+  // attributes get crossed. An over-wide union is crossed over a truncated
+  // value set instead (`matrixValues`), so the cell-count bound is
+  // unchanged.
   if (schema.kind === "union" && schema.values.length >= 1) return true;
   return false;
 }
@@ -355,14 +356,14 @@ export function shouldAutoActivateMatrix(schemas: PropSchema[]): boolean {
   return product <= MAX_MATRIX_AUTO_CELLS;
 }
 
-// M104 / I10: exported so `runMatrixMode` derives the values it prints as an
+// Exported so `runMatrixMode` derives the values it prints as an
 // axis from the same function the cells are generated from, rather than a
 // second inline copy of the predicate.
-// M114 B3 (fluentui-F1): `defaultOpen` is `open`'s uncontrolled twin. Fluent's
-// `useControllableState` rejects a component that receives both, so all four
-// Dialog cells measured the error path. The controlled member is the one a
-// matrix can cross meaningfully, so the twin leaves the axis set and is held
-// absent, which `matrixHeldAbsentProps` then names.
+// `defaultOpen` is `open`'s uncontrolled twin. Fluent's
+// `useControllableState` rejects a component that receives both, so crossing
+// both would measure all four Dialog cells on the error path. The controlled
+// member is the one a matrix can cross meaningfully, so the twin leaves the
+// axis set and is held absent, which `matrixHeldAbsentProps` then names.
 const UNCONTROLLED_TWIN = /^default([A-Z]\w*)$/;
 
 function controlledTwinOf(name: string): string | undefined {
@@ -379,12 +380,12 @@ export function matrixAxisSchemas(schemas: PropSchema[]): PropSchema[] {
   return schemas.filter((schema) => isMatrixEligible(schema) && !dropped.has(schema.name));
 }
 
-// M114 (review B-major): the uncontrolled twins `matrixAxisSchemas` drops. A
+// The uncontrolled twins `matrixAxisSchemas` drops. A
 // dropped twin is not merely off-axis: pinning `defaultOpen` beside a
-// controlled `open` is the pairing the milestone forbids, so every caller has
-// to treat these names as absent rather than routing them through
-// `matrixNonAxisValue`, which would hold a declared default or a required
-// value present.
+// controlled `open` is a pairing that breaks a controlled component, so
+// every caller has to treat these names as absent rather than routing them
+// through `matrixNonAxisValue`, which would hold a declared default or a
+// required value present.
 export function droppedTwinNames(schemas: PropSchema[]): Set<string> {
   const eligibleNames = new Set(schemas.filter(isMatrixEligible).map((schema) => schema.name));
   const dropped = new Set<string>();
@@ -396,7 +397,7 @@ export function droppedTwinNames(schemas: PropSchema[]): Set<string> {
 }
 
 export function matrixValues(schema: PropSchema): unknown[] {
-  // M114 B2 (fluentui-F1): an optional boolean's two states are absent and
+  // An optional boolean's two states are absent and
   // present. `false` is what the component already does when the prop is not
   // passed, so crossing `false` against `true` measured the resting state twice
   // and never measured the component without the prop at all -- the case a
@@ -430,7 +431,7 @@ export function matrixDeclaredValues(schema: PropSchema): unknown[] {
   return schema.kind === "boolean" ? matrixValues(schema) : schema.values;
 }
 
-// M104 / I10 (dub-F7): the axes a matrix crosses, with what each one declares
+// The axes a matrix crosses, with what each one declares
 // beside what it measures, so the report can say "variant: 8 of 12 values
 // crossed" instead of presenting the truncation as the whole contract.
 export interface MatrixAxisValues {
@@ -454,18 +455,18 @@ export function matrixAxesFor(schemas: PropSchema[]): MatrixAxisValues[] {
   });
 }
 
-// M104 / I10 (dub-F1): a prop the matrix does not vary is not a free variable.
-// dub's Switch declares `disabledTooltip?: string | ReactNode`, and
-// `resolveAnchorValue` fixed it at the truthy `"120fps-placeholder"` in every
-// cell, so every cell entered the `<Tooltip>` branch and failed for a reason no
-// axis named. An optional non-axis prop holds the default the component
-// declares, or is absent. A required one stays present with its anchor value:
-// an absent required prop is a guaranteed crash (M86), not a cleaner cell.
-// M104 / I10 (review B-1): "absent" is for a SYNTHESIZED stand-in only. A value
-// the user wrote in `<stem>.props.tsx` (`provenance: "preset"`) is the whole
-// point of M98's primevue closure, and a content slot is what the component
-// renders -- dropping either measured a component with no content while combo
-// mode still measured it, so the two modes disagreed about the same component.
+// A prop the matrix does not vary is not a free variable. dub's Switch
+// declares `disabledTooltip?: string | ReactNode`; fixing it at the truthy
+// `"120fps-placeholder"` in every cell would make every cell enter the
+// `<Tooltip>` branch and fail for a reason no axis named. An optional
+// non-axis prop holds the default the component declares, or is absent. A
+// required one stays present with its anchor value: an absent required prop
+// is a guaranteed crash, not a cleaner cell.
+// "absent" is for a SYNTHESIZED stand-in only. A value the user wrote in
+// `<stem>.props.tsx` (`provenance: "preset"`) is the point of the preset
+// escape hatch, and a content slot is what the component renders -- dropping
+// either would measure a component with no content while combo mode still
+// measures it, so the two modes would disagree about the same component.
 const CONTENT_SLOT_NAME = /^(children|label)$/;
 
 function isContentSlot(schema: PropSchema): boolean {
@@ -487,7 +488,7 @@ function matrixNonAxisValue(schema: PropSchema): { present: boolean; value?: unk
   return { present: false };
 }
 
-// M104 / I10 (review B-1): the non-axis props no cell carries, so the matrix
+// The non-axis props no cell carries, so the matrix
 // header can say so. A cell that silently lost a prop reads as a cell the
 // component rendered without it.
 export function matrixHeldAbsentProps(schemas: PropSchema[]): string[] {
@@ -527,14 +528,14 @@ export function generatePropMatrix(schemas: PropSchema[]): PropCombination[] {
   if (product <= MAX_MATRIX_CELLS) {
     matrixCells = matrixCartesian(axes);
   } else {
-    // M104 / I10: `pairwiseCover` optimizes for pair coverage and need not
+    // `pairwiseCover` optimizes for pair coverage and need not
     // produce the all-first-value row at all. `--max-combos` promises the
-    // anchor cell survives every cap (cli.ts), so it is generated here rather
-    // than hoped for.
+    // anchor cell survives every cap (cli/args.ts), so it is generated here
+    // rather than hoped for.
     matrixCells = withAnchorCell(pairwiseCover(axes, MAX_MATRIX_CELLS), axes);
   }
 
-  // M114 B2: an axis at its absent member sets no key at all. A cell that
+  // An axis at its absent member sets no key at all. A cell that
   // carried `open: undefined` would still be a cell that passed the prop.
   return matrixCells.map((cell) => {
     const merged: PropCombination = { ...anchorProps };
@@ -589,7 +590,7 @@ export function pairwiseCover(
 
   const uncovered = new Set(allPairs);
 
-  // M104 / I10 (twenty-F3): the greedy pair-covering rows below differ from the
+  // The greedy pair-covering rows below differ from the
   // anchor on two axes at once, so with ten eligible axes the cover contained
   // no distance-1 cell at all and `selectMatrixCombos`'s deviation rule had no
   // candidate to promote -- twenty's Modal kept two cells that both carried
@@ -604,7 +605,7 @@ export function pairwiseCover(
   const rows: PropCombination[] = [{ ...anchorRow }];
   for (const axis of axes) {
     if (rows.length >= maxRows) break;
-    // Review B-12: a second value that is literally `undefined` is the prop's
+    // A second value that is literally `undefined` is the prop's
     // own absence, not a deviation worth a cell of the budget.
     if (axis.values.length < 2) continue;
     const deviation = axis.values[1];
@@ -690,32 +691,32 @@ export interface MatrixAxisLike {
   values: unknown[];
 }
 
-// M61: --max-combos never bounded matrix cells at all. Capping needs an
-// order: keep the all-anchor base cell (every axis at its first/anchor
-// value: never dropped), then cells one axis away from it (the same
-// single-prop-effect story --max-combos already tells in plain-combo mode),
-// then two axes away, and so on. Ties keep generation order, so a
-// lexicographic cartesian or a pairwise-cover fallback both cap
+// Without an explicit order, `--max-combos` would not bound matrix cells at
+// all. Capping needs an order: keep the all-anchor base cell (every axis at
+// its first/anchor value: never dropped), then cells one axis away from it
+// (the same single-prop-effect story `--max-combos` already tells in
+// plain-combo mode), then two axes away, and so on. Ties keep generation
+// order, so a lexicographic cartesian or a pairwise-cover fallback both cap
 // predictably. This selects over an already-generated cell set; it does not
 // change generatePropMatrix's generation or cell ordering.
-// M104 / I10 (twenty-F3, dub-F7): an axis whose flip is what makes the
+// An axis whose flip is what makes the
 // component render anything. `Modal.isOpen` anchors at `false`, the state the
-// run itself reports as rendering nothing, so a two-cell cap that kept the
-// cartesian-adjacent cell measured two empty renders and passed. Boolean and
-// falsy-anchored are structural; the name list is the convention this reads as
-// "off by default, on is the interesting state".
+// run itself reports as rendering nothing, so a two-cell cap that kept only
+// the cartesian-adjacent cell would measure two empty renders and pass.
+// Boolean and falsy-anchored are structural; the name list is the convention
+// this reads as "off by default, on is the interesting state".
 const REVEAL_AXIS_NAME = /^(is|has|show|open|visible|expanded|active|enabled)/i;
 
 function isRevealAxis(axis: MatrixAxisLike): boolean {
   if (!REVEAL_AXIS_NAME.test(axis.propName)) return false;
   if (axis.values.length !== 2) return false;
-  // M114 B2: an optional boolean's off state is absence, which is still the
+  // An optional boolean's off state is absence, which is still the
   // state whose flip is what makes the component render anything.
   if (!axis.values.every((value) => typeof value === "boolean" || value === undefined)) return false;
   return !axis.values[0];
 }
 
-// M104 / I10: the all-first-value cell, added when the generator did not
+// The all-first-value cell, added when the generator did not
 // produce it. Placed first so it is also the first cell the cap keeps.
 function withAnchorCell(
   cells: PropCombination[],
@@ -745,11 +746,11 @@ export function selectMatrixCombos(
   const distance = (combo: PropCombination): number =>
     axes.reduce((acc, axis) => acc + (deviates(combo, axis) ? 1 : 0), 0);
 
-  // M104 / I10: `matrixCartesian` increments the LAST axis fastest, so cell
-  // index 1 always deviates on the last-declared axis and the first-declared
-  // one -- the component's own prop, after M103's ranking -- was never crossed
-  // at a small cap. Order is: the anchor, then a reveal flip, then the
-  // earliest-declared axis.
+  // `matrixCartesian` increments the LAST axis fastest, so cell
+  // index 1 always deviates on the last-declared axis; the first-declared
+  // one -- the component's own prop, after ranking -- would never be crossed
+  // at a small cap without reordering. Order is: the anchor, then a reveal
+  // flip, then the earliest-declared axis.
   const revealsSomething = (combo: PropCombination): 0 | 1 =>
     axes.some((axis) => isRevealAxis(axis) && deviates(combo, axis)) ? 0 : 1;
 

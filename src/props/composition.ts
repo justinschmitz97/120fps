@@ -64,7 +64,7 @@ function classifySuffix(name: string, rootName: string): SuffixRole {
   return "unknown";
 }
 
-// M80: `classifySuffix` assumes `name` starts with `rootName` (a fixed-length
+// `classifySuffix` assumes `name` starts with `rootName` (a fixed-length
 // slice), which silently misclassifies a bare Radix-convention alias (`List`
 // vs root `Tabs`: `"List".slice(4)` is `""`, so it reads as "unknown" even
 // though "List" plainly means `list`). Stemming by longest common
@@ -386,7 +386,7 @@ export const COMPOSITION_EMPTY_WARNING = (rootName: string): string =>
   `auto-composed scene for ${rootName} rendered no elements; measured the bare export instead. ` +
   `Write a fixture that renders the real composition and pass --fixture <path>.`;
 
-// M80: a sibling part declared by the measured file itself (a same-file
+// A sibling part declared by the measured file itself (a same-file
 // export, or — base-ui's shape — a same-file type-only relative import) that
 // the run never actually composed in.
 export interface DeclaredSibling {
@@ -425,7 +425,7 @@ export const UNCOMPOSED_SIBLINGS_WARNING = (root: string, siblings: string[]): s
   `none were composed in: every combo measured the bare ${root} export alone. Try --init-fixture ` +
   `to scaffold a fixture, or compose them yourself and pass --fixture.`;
 
-// M80: covers base-ui's shape, where the sibling parts a compound Root
+// Covers base-ui's shape, where the sibling parts a compound Root
 // declares live in adjacent files and never appear as same-file exports —
 // only as same-file type-only relative imports (`TabsRoot.tsx`'s `import
 // type { TabsTab } from '../tab/TabsTab'`). Collects the local name of every
@@ -461,22 +461,22 @@ export async function extractRelativeTypeImports(filePath: string): Promise<stri
   return scanRelativeTypeImports(sourceText, absolutePath);
 }
 
-// M91 (commerce-F3): the opposite direction from scanRelativeTypeImports — a
+// The opposite direction from scanRelativeTypeImports — a
 // file's own JSX return can compose a locally-imported component (an
 // ordinary value import, not type-only) that the import-graph walk never
 // singles out for its own async-ness, because that walk only asks whether
 // entries[0] itself is async. Collects the local import actually used as a
 // JSX tag, so a caller can hand each one to runPreflight as its own
 // entries[0] and reproduce the exact rejection a direct target would get.
-// M92: every non-type-only import is collected here, not only a `.`-prefixed
+// Every non-type-only import is collected here, not only a `.`-prefixed
 // one -- commerce's real app/page.tsx composes its async children as
 // baseUrl-relative bare specifiers ("components/carousel", no leading "./"),
-// which a dot-prefix filter here excluded outright. Whether a given
+// so a dot-prefix filter here would exclude them outright. Whether a given
 // specifier is actually a local project file (kept) or a real npm dependency
 // (not a composed child) needs tsconfig baseUrl/paths context this
 // source-only scan does not have; that classification happens at resolution
-// time in the caller (analyze.ts's resolveRelativeJsxChild), which excludes
-// anything that resolves into node_modules.
+// time in the caller (pipeline/fixtures.ts's resolveRelativeJsxChild), which
+// excludes anything that resolves into node_modules.
 export function scanJsxComposedLocalImports(
   sourceText: string,
   fileName: string,
@@ -511,7 +511,6 @@ export function scanJsxComposedLocalImports(
   return [...used.entries()].map(([name, specifier]) => ({ name, specifier }));
 }
 
-// --- M32 D2: fixture scaffolding ---
 
 export function fixtureScaffoldPath(componentPath: string): string {
   const dot = componentPath.lastIndexOf(".");
@@ -577,7 +576,7 @@ ${inner}
 `;
 }
 
-// M112 C3 (radix-themes-F3): the never-composed shape has no inferred tree to
+// The never-composed shape has no inferred tree to
 // write out — the run reached its disclosure precisely because `findRoot`
 // found none. The scaffold is the bound root plus one placeholder per declared
 // sibling, so the user edits placement instead of an empty file.
@@ -586,14 +585,14 @@ export function buildUncomposedFixtureScaffold(
   root: string,
   siblings: string[],
   // The measured file's own exports. A declared sibling that is not among
-  // them is a type-only relative import from another module (M80's base-ui
+  // them is a type-only relative import from another module (base-ui's
   // shape): importing it here would not resolve, so it stays a placeholder
   // with no import and the written file still compiles on the re-run this
   // scaffold advertises.
   exports: ExportInfo[] = [],
 ): string {
   // With no export list the caller knows nothing about the file, so every
-  // declared sibling keeps the pre-M112 named import.
+  // declared sibling keeps its named import.
   const known = exports.length > 0;
   const isValueExport = (name: string): boolean =>
     !known || exports.some((e) => e.name === name && !e.isDefault);

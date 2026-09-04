@@ -7,7 +7,7 @@ import { createCachedProgram } from "./program.js";
 import type { ExportInfo, PropSchema } from "./schema.js";
 import { createVueScripts, vueEntryScript, type VirtualScripts } from "./vue.js";
 
-// M114 B4/B5 (gutenberg-F2, react-spectrum-F3): the module a barrel's exported
+// The module a barrel's exported
 // binding is declared in. `export { X } from "./component"` and
 // `import { X } from "./component"; export { X };` both reach it through the
 // checker's alias, so one lookup serves both spellings. An alias whose target
@@ -19,7 +19,7 @@ type ReExportTarget =
 
 
 function moduleSpecifierFor(sourceFile: ts.SourceFile, name: string): string | undefined {
-  // M114 (review B-minor): a bare `export * from` specifier stands in for a
+  // A bare `export * from` specifier stands in for a
   // name it never matched. It is the only candidate when the file has exactly
   // one star; with two, naming either as the cause would be a guess.
   let starSpecifier: string | undefined;
@@ -69,7 +69,7 @@ function aliasTargetOf(
   try {
     return checker.getAliasedSymbol(symbol);
   } catch (error) {
-    // M114 (review B-minor): the checker throwing is a different cause from a
+    // The checker throwing is a different cause from a
     // specifier the filesystem never resolved, so the run says which one it hit.
     const reason = error instanceof Error ? error.message : String(error);
     sink?.(`re-export of ${symbol.getName()}: the type checker could not follow the alias (${reason})`);
@@ -91,7 +91,7 @@ function isValueDeclaration(declaration: ts.Declaration): boolean {
 }
 
 
-// M114 B4/B5: `export { default } from "./component"` and `export * from
+// `export { default } from "./component"` and `export * from
 // "./component"` name no PascalCase binding in the barrel's own text, so
 // `scanExports` yields nothing and the walk stopped at a barrel the filesystem
 // resolves fine. The module's export symbols carry both spellings.
@@ -173,8 +173,8 @@ export function followReExportedComponent(
 export const RE_EXPORT_HOPS = 4;
 
 
-// M92 (M86's own motivating case, ant-design Button.tsx:294): a same-file,
-// top-level `const NAME = <expr>` initializer for the given identifier --
+// A same-file, top-level `const NAME = <expr>` initializer for the given
+// identifier (ant-design's Button.tsx:294 is the motivating case) --
 // shallow and parse-only, matching this codebase's existing precedent for a
 // same-file, top-level alias lookup (no cross-file/scope resolution, no
 // checker). `identifier` names could theoretically collide across nested
@@ -197,7 +197,7 @@ export function extractFunctionFromInitializer(
   node: ts.Expression,
   depth = 0,
 ): ts.ArrowFunction | ts.FunctionExpression | undefined {
-  // M92: an `as`/`satisfies` assertion is erased at runtime and asserts
+  // An `as`/`satisfies` assertion is erased at runtime and asserts
   // nothing about the VALUE, only a claim about its type -- ant-design's
   // `const Button = InternalCompoundedButton as CompoundedComponent` is
   // exactly InternalCompoundedButton at runtime. Unwrapped before every other
@@ -219,7 +219,7 @@ export function extractFunctionFromInitializer(
     }
   }
 
-  // M92: a bare identifier alias points at a different declaration, often in
+  // A bare identifier alias points at a different declaration, often in
   // the same file (ant-design's Button.tsx:294 own motivating shape) --
   // follow it once so Tier-0's source-reference scan (sourceReferencedPropNames)
   // sees the real implementation's body instead of an empty alias with none
@@ -261,11 +261,11 @@ export function scanExports(sourceText: string, fileName: string): ExportInfo[] 
   ts.forEachChild(sourceFile, (node) => {
     // export default <Identifier>;
     if (ts.isExportAssignment(node)) {
-      // M114 B1 / I9 (logto-F1): `export default forwardRef(Button)` and
+      // `export default forwardRef(Button)` and
       // `memo(forwardRef(Button))` name `Button` as the default. Recording only
-      // a bare identifier dropped the default entirely, so `selectMeasuredExport`
-      // fell through to the first non-Provider export and the header named a
-      // sibling while the props table described the wrapped component.
+      // a bare identifier would drop the default entirely: `selectMeasuredExport`
+      // would fall through to the first non-Provider export, so the header would
+      // name a sibling while the props table described the wrapped component.
       const identifier = !node.isExportEquals ? identifierBehind(node.expression) : undefined;
       if (identifier) add(identifier.text, true);
       return;
@@ -306,14 +306,14 @@ export function scanExports(sourceText: string, fileName: string): ExportInfo[] 
 }
 
 
-// M39: every source file a component's type-check touches, minus default
+// Every source file a component's type-check touches, minus default
 // libs and external libraries: the file set whose contents identify the
-// component for fingerprinting. Rides the M36 program cache.
+// component for fingerprinting. Rides the program cache.
 export async function projectSourceFiles(filePath: string): Promise<string[]> {
   const absolutePath = path.resolve(filePath);
   const files: string[] = [];
 
-  // M57: the program roots at a virtual script, which is not a file anyone can
+  // The program roots at a virtual script, which is not a file anyone can
   // hash. Each `<x>.vue.ts` collapses back to `<x>.vue`: without that an
   // edited component would keep reusing a stored verdict about different source.
   let root = absolutePath;

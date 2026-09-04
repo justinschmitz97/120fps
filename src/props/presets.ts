@@ -25,7 +25,7 @@ export interface PropPresets {
   entries: Map<string, unknown[]>;
 }
 
-// M112 (radix-themes-F1, epic-stack-F3): the preferred name first, then the
+// The preferred name first, then the
 // older one. `<stem>.props.tsx` next to a component is real component source in
 // several design systems, so a name alone never makes a file a preset.
 const PRESET_SUFFIXES = [".120fps.props.tsx", ".120fps.props.ts", ".props.tsx", ".props.ts"];
@@ -37,7 +37,7 @@ export interface PresetSibling {
   shape: "preset" | "no-default-export";
 }
 
-// M112 B2: the sibling that carries a preset's name without its shape, named so
+// The sibling that carries a preset's name without its shape, named so
 // a caller discloses it instead of dropping it.
 export const PRESET_SHAPE_WARNING = (presetPath: string): string =>
   `${presetPath} exists, not a preset: no default-exported object literal ` +
@@ -55,7 +55,7 @@ function parsePresetFile(absolutePath: string): ts.SourceFile | undefined {
   );
 }
 
-// M112 B1: the first candidate carrying the preset shape wins; an earlier
+// The first candidate carrying the preset shape wins; an earlier
 // candidate without it is kept for the disclosure and does not stop the search.
 export function describePresetSibling(componentPath: string): PresetSibling | undefined {
   const ext = path.extname(componentPath);
@@ -81,7 +81,7 @@ export function detectPropPresets(componentPath: string): string | undefined {
 // Literals are evaluated so they flow through the existing pipeline unchanged:
 // combos, deltas, matrix cells and curve anchors all compare real values.
 // Everything else keeps its position and is resolved in the page.
-// Exported for M57: a Vue `withDefaults` object is the same problem: an AST
+// Exported because a Vue `withDefaults` object is the same problem: an AST
 // literal that has to become a real value without executing the module.
 export function literalValue(node: ts.Expression): { ok: true; value: unknown } | { ok: false } {
   if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
@@ -203,7 +203,7 @@ export interface AppliedPresets {
   unknown: string[];
 }
 
-// M98 (primevue-F1): the kind a preset value implies, for a prop no extraction
+// The kind a preset value implies, for a prop no extraction
 // produced a schema for. Values of differing kinds make the pool a union, the
 // same word the schema uses for a declared multi-shape prop.
 function inferPresetKind(values: unknown[]): PropSchema["kind"] {
@@ -227,11 +227,11 @@ function inferPresetKind(values: unknown[]): PropSchema["kind"] {
 // measure the values the user says are representative, not those plus three
 // synthesized ones.
 //
-// M98 (primevue-F1): the one case where a preset also ADDS. When extraction
-// produced nothing -- an Options-API `extends` component, whose own warning
+// The one case where a preset also ADDS. When extraction
+// produces nothing -- an Options-API `extends` component, whose own warning
 // names `<stem>.props.tsx` as the remedy -- there is no schema to replace, and
-// routing every preset key to `unknown` told the user the props they had just
-// supplied "are not a prop of the measured component". With extraction
+// routing every preset key to `unknown` would tell the user the props they
+// just supplied "are not a prop of the measured component". With extraction
 // succeeding, an absent key is still genuinely absent and still reported:
 // silently measuring a mistyped key as a prop would drop a disclosure this
 // codebase does not drop.
@@ -261,8 +261,8 @@ export function applyPropPresets(
     const values = presets.entries.get(schema.name);
     if (values === undefined || values.length === 0) return schema;
     applied.push(schema.name);
-    // Whatever synthesis could not build, the preset now supplies: the prop is
-    // no longer measured with a stand-in (M60). M84: a preset always wins the
+    // Whatever synthesis could not build, the preset supplies: the prop is
+    // measured with the preset value, not a stand-in. A preset always wins the
     // provenance question the same way it already wins the value question —
     // this is the only place `provenance: "preset"` is ever assigned.
     const { degenerate: _replaced, ...rest } = schema;
