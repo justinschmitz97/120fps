@@ -22,7 +22,8 @@ import { DEFAULT_THRESHOLDS } from "./types.js";
 import type { PhaseClock } from "./phases.js";
 import type { ScalingCurve } from "./metrics.js";
 import { computeScalingCurve, attributeCost } from "./metrics.js";
-import { computeMedian, computeP95, hasPageErrors, renderDrain } from "../browser/index.js";
+import { hasPageErrors, renderDrain } from "../browser/index.js";
+import { computeCV, computeMedian, computeP95 } from "../shared/index.js";
 import { comboKey } from "../props/index.js";
 
 // One predicate, so the growth column, the JSON and the hint can never disagree
@@ -47,24 +48,6 @@ export function classifyTier(info: {
   // headroom away. A 2000-node animated table is still a 2000-node table.
   if (!info.hasPortal && !info.hasAnimation) return bySize;
   return TIER_ORDER.indexOf(bySize) >= TIER_ORDER.indexOf("T3") ? bySize : "T3";
-}
-
-export function computeCV(samples: number[]): number {
-  if (samples.length <= 1) return 0;
-  const n = samples.length;
-  let sum = 0;
-  for (const s of samples) sum += s;
-  const mean = sum / n;
-  const absMean = Math.abs(mean);
-  if (absMean === 0) return 0;
-  let variance = 0;
-  for (const s of samples) variance += (s - mean) ** 2;
-  // Sample variance: N measurements are a sample of the component's cost
-  // distribution, not the population. The n divisor understates dispersion at
-  // the sample counts this tool runs (n=3..10).
-  variance /= n - 1;
-  const stddev = Math.sqrt(variance);
-  return (stddev / absMean) * 100;
 }
 
 // M35: driven pacing shrinks medians to their busy cost, so relative CV on a
@@ -201,7 +184,7 @@ export function buildCurveReport(input: BuildCurveReportInput): ScalingCurveRepo
           label: edge.interaction.label,
           timing: buildTimingWithCV(edge.samples),
           relativeTiming: input.calibration.totalDuration > 0
-            ? computeMedianLocal(edge.samples) / input.calibration.totalDuration
+            ? computeMedian(edge.samples) / input.calibration.totalDuration
             : 0,
           ...(edge.interaction.portal ? { portal: true } : {}),
           ...(edge.stressPattern ? { stressPattern: edge.stressPattern } : {}),
@@ -283,14 +266,6 @@ export function buildCurveReport(input: BuildCurveReportInput): ScalingCurveRepo
     ...(fitExcludedPoints.length > 0 ? { fitExcludedPoints } : {}),
     ...(violation ? { violation } : {}),
   };
-}
-
-function computeMedianLocal(samples: number[]): number {
-  if (samples.length === 0) return 0;
-  const sorted = [...samples].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  if (sorted.length % 2 === 1) return sorted[mid];
-  return (sorted[mid - 1] + sorted[mid]) / 2;
 }
 
 export function computeCurveVerdict(

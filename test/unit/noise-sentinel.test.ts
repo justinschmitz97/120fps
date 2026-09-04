@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
+import { computeCvPercent } from "../../src/shared/index.js";
 import {
   classifyNoise,
-  computeCvPercent,
   buildNoiseReport,
   NOISE_CV_PERCENT,
   HOSTILE_CV_PERCENT,

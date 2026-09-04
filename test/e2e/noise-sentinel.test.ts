@@ -1,6 +1,7 @@
 import { describe, it, expect, afterAll } from "vitest";
 import { chromium, type Browser } from "playwright";
-import { probeMachineNoise, computeCvPercent, NOISE_PROBE_SAMPLES } from "../../src/browser/index.js";
+import { probeMachineNoise, NOISE_PROBE_SAMPLES } from "../../src/browser/index.js";
+import { computeCvPercent } from "../../src/shared/index.js";
 import { analyze, type AnalyzeOptions } from "../../src/pipeline/index.js";
 
 let browser: Browser | undefined;

@@ -3,6 +3,7 @@ import type { PropCombination } from "../props/index.js";
 import type { PageErrorDrain } from "./page-errors.js";
 import type { MeasuredState } from "./dom.js";
 import type { BrowserPool, MeasurementPacing } from "./pacing.js";
+import { computeMedian, computeP95 } from "../shared/index.js";
 
 export interface TraceEvent {
   cat?: string;
@@ -35,26 +36,6 @@ const SCRIPT_EVENT_NAMES = new Set([
 // action is bounded by its caller (the explore pass's remaining wall clock, the
 // rAF fence elsewhere), which is where an action budget belongs.
 export const TRACE_FLUSH_TIMEOUT_MS = 60_000;
-
-export function computeMedian(values: number[]): number {
-  if (values.length === 0) return 0;
-  const sorted = [...values].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  if (sorted.length % 2 === 1) return sorted[mid];
-  return (sorted[mid - 1] + sorted[mid]) / 2;
-}
-
-// Type-7 quantile (the default of R and numpy), so the printed number
-// reproduces in any standard tool. Below n≈20 it is dominated by the slowest
-// sample and estimates no tail: see the glossary.
-export function computeP95(values: number[]): number {
-  if (values.length === 0) return 0;
-  const sorted = [...values].sort((a, b) => a - b);
-  const h = (sorted.length - 1) * 0.95;
-  const lo = Math.floor(h);
-  const hi = Math.ceil(h);
-  return sorted[lo] + (h - lo) * (sorted[hi] - sorted[lo]);
-}
 
 export function parseTraceDuration(events: TraceEvent[]): ParsedDuration {
   let scriptDuration = 0;

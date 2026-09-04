@@ -39,7 +39,6 @@ import {
 import {
   buildTimingResult,
   collectTrace,
-  computeMedian,
   nextComboIndex,
   parseTraceDuration,
   type MeasureOptions,
@@ -49,6 +48,7 @@ import {
   type TraceEvent,
   type TransitionWindow,
 } from "./trace.js";
+import { computeMedian } from "../shared/index.js";
 
 // Read from the page, not from Node: the wrapper module may import CSS and
 // browser-only packages, so its `viewport` export only exists in the browser.

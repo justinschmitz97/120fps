@@ -1,5 +1,5 @@
 import type { Page } from "playwright";
-import { computeMedian } from "./trace.js";
+import { computeCvPercent, computeMedian } from "../shared/index.js";
 
 export type NoiseLevel = "quiet" | "noisy" | "hostile";
 
@@ -46,15 +46,6 @@ export function classifyNoise(signals: NoiseSignals): NoiseLevel {
     return "noisy";
   }
   return "quiet";
-}
-
-export function computeCvPercent(samples: number[]): number {
-  if (samples.length < 2) return 0;
-  const mean = samples.reduce((sum, value) => sum + value, 0) / samples.length;
-  if (mean <= 0) return 0;
-  const variance =
-    samples.reduce((sum, value) => sum + (value - mean) ** 2, 0) / samples.length;
-  return (Math.sqrt(variance) / mean) * 100;
 }
 
 // A fixed arithmetic loop, timed K times. Deliberately not calibration: that

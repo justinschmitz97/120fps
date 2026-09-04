@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
+import { computeCV } from "../../src/shared/index.js";
 import {
-  computeCV,
   buildTimingWithCV,
   computeVerdict,
   formatTable,

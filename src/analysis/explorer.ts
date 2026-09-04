@@ -19,8 +19,6 @@ import {
 import {
   applyWrapperViewport,
   collectTrace,
-  computeMedian,
-  computeP95,
   parseTraceDuration,
   settleStyles,
   reportFontSettle,
@@ -36,6 +34,7 @@ import {
   HARNESS_NAV_WAIT,
   type TraceEvent,
 } from "../browser/index.js";
+import { computeMedian, computeP95 } from "../shared/index.js";
 import {
   attachPageErrorCapture,
   enrichTimeoutError,

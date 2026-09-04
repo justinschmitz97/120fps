@@ -12,7 +12,8 @@ export {
   SOLID_AND_REACT_DECLARED,
 } from "../project/index.js";
 import type { PropCombination } from "../props/index.js";
-import { applyWrapperViewport, collectTrace, createPhaseTracker, parseTraceDuration, settleStyles, reportFontSettle, tryCollectGarbage, computeMedian, HARNESS_NAV_WAIT } from "../browser/index.js";
+import { applyWrapperViewport, collectTrace, createPhaseTracker, parseTraceDuration, settleStyles, reportFontSettle, tryCollectGarbage, HARNESS_NAV_WAIT } from "../browser/index.js";
+import { computeMedian } from "../shared/index.js";
 import {
   attachPageErrorCapture,
   enrichTimeoutError,

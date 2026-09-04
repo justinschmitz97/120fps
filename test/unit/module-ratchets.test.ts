@@ -12,7 +12,7 @@ const LINE_LIMIT = 800;
 
 const LINE_CAPS: Record<string, number> = {
   "analysis/explorer.ts": 909,
-  "analysis/react-profiler.ts": 902,
+  "analysis/react-profiler.ts": 903,
   "browser/discovery.ts": 823,
   "props/values.ts": 822,
   "report/budget.ts": 808,

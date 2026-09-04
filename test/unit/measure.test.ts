@@ -1,7 +1,6 @@
 import { describe, it, expect } from "vitest";
+import { computeMedian, computeP95 } from "../../src/shared/index.js";
 import {
-  computeMedian,
-  computeP95,
   parseTraceDuration,
   tryCollectGarbage,
   reportFontSettle,

@@ -81,8 +81,6 @@ export {
   FONT_SETTLE_TIMEOUT_MS,
   FONT_SETTLE_WARNING,
   collectTrace,
-  computeMedian,
-  computeP95,
   parseTraceDuration,
   tryCollectGarbage,
   detectAnimations,
@@ -151,7 +149,6 @@ export {
   type CostBucket,
 } from "./report/index.js";
 export {
-  computeCV,
   buildTimingWithCV,
   computeVerdict,
   classifyTier,
@@ -386,7 +383,6 @@ export {
 // M46
 export {
   classifyNoise,
-  computeCvPercent,
   buildNoiseReport,
   probeMachineNoise,
   NOISE_CV_PERCENT,
@@ -497,3 +493,4 @@ export {
 
 // M106 C4
 export { UNRESOLVED_SPRITE_REFS_WARNING } from "./pipeline/index.js";
+export { computeCV, computeCvPercent, computeMedian, computeP95 } from "./shared/index.js";

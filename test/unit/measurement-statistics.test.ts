@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { computeP95, computeMedian, warmupsForPosition } from "../../src/browser/index.js";
-import { computeCV, buildTimingWithCV } from "../../src/report/index.js";
+import { warmupsForPosition } from "../../src/browser/index.js";
+import { computeCV, computeMedian, computeP95 } from "../../src/shared/index.js";
+import { buildTimingWithCV } from "../../src/report/index.js";
 import { computeScalingCurve } from "../../src/report/index.js";
 import {
   computeChurnDegradation,

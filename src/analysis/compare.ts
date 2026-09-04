@@ -11,10 +11,10 @@ import {
   enterHarness,
   openMeasurementSession,
   runMountUnmount,
-  computeMedian,
   type BrowserPool,
   type MeasurementSession,
 } from "../browser/index.js";
+import { computeMedian } from "../shared/index.js";
 
 export interface CompareSideMetrics {
   mountSamples: number[];
