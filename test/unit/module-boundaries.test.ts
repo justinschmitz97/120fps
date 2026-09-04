@@ -56,11 +56,11 @@ const ALLOWLIST: readonly { file: string; target: string; reason: string }[] = [
       "so the failure body never drifts from computeIsolationVerdict's own thresholds); not moved",
   },
   {
-    file: "report/report.ts",
+    file: "report/stats.ts",
     target: "analysis",
     reason:
       "computeScalingCurve, attributeCost (real analysis/metrics.ts values buildCurveReport " +
-      "calls); not moved. isSuperlinearGrowth moved to report/stats.ts",
+      "calls); not moved. isSuperlinearGrowth (this file) is the only part that did move",
   },
 ];
 

@@ -1,4 +1,4 @@
-import type { Report } from "./report.js";
+import type { Report } from "./types.js";
 import { isSuperlinearGrowth } from "./stats.js";
 
 // A hint is documentation attached to a diagnosis, not advice generated from

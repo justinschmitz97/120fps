@@ -11,9 +11,9 @@ import {
   type MachineInfo,
   type MeasuredState,
   type NormalizedDelta,
-  type PhaseTimings,
   type TierBudget,
-} from "./report.js";
+} from "./types.js";
+import type { PhaseTimings } from "./phases.js";
 
 export interface ComponentBudget {
   tier?: ComponentTier;

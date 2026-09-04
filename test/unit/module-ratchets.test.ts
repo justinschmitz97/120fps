@@ -22,7 +22,6 @@ const LINE_CAPS: Record<string, number> = {
   "props/extract.ts": 3311,
   "props/values.ts": 822,
   "report/budget.ts": 808,
-  "report/report.ts": 2203,
 };
 
 const COMMENT_TOKENS: Record<string, number> = {
@@ -51,7 +50,11 @@ const COMMENT_TOKENS: Record<string, number> = {
   "report/budget.ts": 25,
   "report/ci.ts": 6,
   "report/hints.ts": 29,
-  "report/report.ts": 108,
+  "report/phases.ts": 4,
+  "report/stats.ts": 13,
+  "report/terminal-modes.ts": 20,
+  "report/terminal.ts": 19,
+  "report/types.ts": 51,
 };
 
 const DUPLICATE_FUNCTIONS: Record<string, string[]> = {
