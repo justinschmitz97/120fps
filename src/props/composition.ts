@@ -1,12 +1,7 @@
 import ts from "typescript";
 import path from "node:path";
-import type { PropSchema } from "./extract.js";
+import type { ExportInfo, PropSchema } from "./schema.js";
 import type { PropCombination } from "./values.js";
-
-export interface ExportInfo {
-  name: string;
-  isDefault: boolean;
-}
 
 // Props of a composition node. `text` is the payload of `__text__` nodes;
 // it stays inside props so the serialized tree shape is unchanged.

@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import ts from "typescript";
-import type { PropSchema } from "./extract.js";
+import type { PropSchema } from "./schema.js";
 
 // A value the entry resolves from the imported preset module at render time.
 // Functions and JSX cannot cross the CDP boundary; their position can.
