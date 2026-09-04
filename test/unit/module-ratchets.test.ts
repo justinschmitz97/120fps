@@ -30,9 +30,9 @@ const COMMENT_TOKENS: Record<string, number> = {
   "browser/noise.ts": 3,
   "browser/observers.ts": 1,
   "browser/pacing.ts": 2,
-  "browser/page-errors.ts": 18,
+  "browser/page-errors.ts": 20,
   "cli/args.ts": 3,
-  "cli/errors.ts": 5,
+  "cli/errors.ts": 6,
   "cli/gitignore.ts": 3,
   "cli/lifecycle.ts": 14,
   "cli/main.ts": 35,
@@ -42,7 +42,7 @@ const COMMENT_TOKENS: Record<string, number> = {
   "browser/settle.ts": 1,
   "browser/trace.ts": 17,
   "harness/build.ts": 31,
-  "harness/bundler-failure.ts": 13,
+  "harness/bundler-failure.ts": 23,
   "harness/css.ts": 27,
   "harness/deps-scan.ts": 43,
   "harness/dirs.ts": 21,
@@ -54,14 +54,14 @@ const COMMENT_TOKENS: Record<string, number> = {
   "harness/server.ts": 10,
   "harness/shims.ts": 3,
   "harness/style-tooling.ts": 11,
-  "harness/stylesheets.ts": 8,
+  "harness/stylesheets.ts": 15,
   "harness/vite-config.ts": 29,
   "harness/workspace-entries.ts": 4,
   "index.ts": 17,
   "pipeline/analyze.ts": 46,
   "pipeline/build-report.ts": 46,
   "pipeline/estimate.ts": 2,
-  "pipeline/explain-props.ts": 58,
+  "pipeline/explain-props.ts": 71,
   "pipeline/fixtures.ts": 5,
   "pipeline/modes/combo.ts": 13,
   "pipeline/modes/context.ts": 11,
@@ -69,7 +69,7 @@ const COMMENT_TOKENS: Record<string, number> = {
   "pipeline/modes/isolation.ts": 9,
   "pipeline/modes/matrix.ts": 22,
   "pipeline/phases.ts": 47,
-  "pipeline/remedies.ts": 24,
+  "pipeline/remedies.ts": 25,
   "pipeline/resolve.ts": 9,
   "pipeline/verdict-reuse.ts": 7,
   "project/compiler-options.ts": 4,
@@ -94,7 +94,7 @@ const COMMENT_TOKENS: Record<string, number> = {
   "props/values.ts": 22,
   "props/vue.ts": 14,
   "report/budget.ts": 25,
-  "report/ci.ts": 6,
+  "report/ci.ts": 7,
   "report/hints.ts": 29,
   "report/metrics.ts": 3,
   "report/phases.ts": 4,
@@ -132,11 +132,71 @@ function lineCount(text: string): number {
   return text.split("\n").length - (text.endsWith("\n") ? 1 : 0);
 }
 
-// The `//` and `/* */` text of a file, with string and template literals
-// skipped so a warning's own wording never counts as a comment.
+// A `/` starts a regex literal only where an expression is expected: after an
+// operator, punctuation, or one of these keywords, never right after a value
+// (identifier, number, `)`, `]`, or a closing quote) — the standard division
+// vs. regex-literal disambiguation, kept to the minimum this file needs.
+const REGEX_PRECEDING_KEYWORDS = new Set([
+  "return", "typeof", "instanceof", "in", "of", "new", "delete", "void",
+  "yield", "await", "case", "else", "do", "throw",
+]);
+
+function regexLiteralAllowed(text: string, i: number): boolean {
+  let j = i - 1;
+  while (j >= 0 && /\s/.test(text[j])) j--;
+  if (j < 0) return true;
+  const c = text[j];
+  if (/[A-Za-z0-9_$]/.test(c)) {
+    let k = j;
+    while (k >= 0 && /[A-Za-z0-9_$]/.test(text[k])) k--;
+    return REGEX_PRECEDING_KEYWORDS.has(text.slice(k + 1, j + 1));
+  }
+  return c !== ")" && c !== "]" && c !== "`" && c !== '"' && c !== "'";
+}
+
+// The end index just past a regex literal starting at `start`, honoring `\`
+// escapes and a `[...]` character class (where an unescaped `/` does not
+// close the regex), or null if no unescaped `/` closes it on the same line —
+// then not a regex literal after all, so the caller falls back to `i++`.
+function regexLiteralEnd(text: string, start: number): number | null {
+  let i = start + 1;
+  let inClass = false;
+  while (i < text.length) {
+    const c = text[i];
+    if (c === "\\") {
+      i += 2;
+      continue;
+    }
+    if (c === "\n") return null;
+    if (inClass) {
+      if (c === "]") inClass = false;
+      i++;
+      continue;
+    }
+    if (c === "[") {
+      inClass = true;
+      i++;
+      continue;
+    }
+    if (c === "/") {
+      i++;
+      break;
+    }
+    i++;
+  }
+  while (i < text.length && /[a-z]/i.test(text[i])) i++;
+  return i;
+}
+
+// The `//` and `/* */` text of a file, with string literals, template
+// literals and regex literals skipped so a warning's own wording, or a `"`
+// or `'` inside a regex literal (e.g. `/"/g`), never counts as a comment or
+// flips the quote state.
 function commentText(text: string): string {
   const comments: string[] = [];
-  let i = 0;
+  // A `#!` shebang is not JS/TS syntax; its slashes are not division or a
+  // regex start, so it is skipped whole before the tokenizer begins.
+  let i = text.startsWith("#!") ? (text.indexOf("\n") === -1 ? text.length : text.indexOf("\n")) : 0;
   let inBlock = false;
   let blockStart = 0;
   let quote: string | null = null;
@@ -188,6 +248,13 @@ function commentText(text: string): string {
       blockStart = i + 2;
       i += 2;
       continue;
+    }
+    if (c === "/" && regexLiteralAllowed(text, i)) {
+      const end = regexLiteralEnd(text, i);
+      if (end !== null) {
+        i = end;
+        continue;
+      }
     }
     i++;
   }

@@ -109,14 +109,55 @@ function readEdges(): Edge[] {
   return edges;
 }
 
+// A dynamic `import("…")` call. TypeScript's inline type query
+// (`import("../x/index.js").Foo`) has the identical `import(<string>)` shape;
+// its closing paren is always immediately followed by the `.Member` access
+// that makes it a type, never a runtime load, so that dot marks it typeOnly
+// the same way `import type` does for a static statement.
+const DYNAMIC_IMPORT = /\bimport\(\s*["']([^"']+)["']\s*\)(\s*\.)?/g;
+
+function readDynamicEdges(): Edge[] {
+  const edges: Edge[] = [];
+  for (const rel of listSources(SRC)) {
+    const fromParent = parentOf(rel);
+    const fromDir = directoryOf(rel);
+    const text = fs.readFileSync(path.join(SRC, rel), "utf8");
+    DYNAMIC_IMPORT.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = DYNAMIC_IMPORT.exec(text))) {
+      const [, spec, dot] = match;
+      if (!spec.startsWith(".") || spec.includes("${")) continue;
+      const target = path.posix.normalize(path.posix.join(fromParent, spec));
+      edges.push({
+        file: rel,
+        line: text.slice(0, match.index).split("\n").length,
+        typeOnly: Boolean(dot),
+        spec,
+        fromDir,
+        toDir: directoryOf(target),
+        viaIndex: /(^|\/)index\.js$/.test(spec),
+      });
+    }
+  }
+  return edges;
+}
+
 const EDGES = readEdges();
-const CROSS_VALUE = EDGES.filter((e) => !e.typeOnly && e.fromDir !== e.toDir);
+const DYNAMIC_EDGES = readDynamicEdges();
+const STATIC_CROSS_VALUE = EDGES.filter((e) => !e.typeOnly && e.fromDir !== e.toDir);
+const DYNAMIC_CROSS_VALUE = DYNAMIC_EDGES.filter((e) => !e.typeOnly && e.fromDir !== e.toDir);
+// Routing and the edge table apply to a dynamic value import exactly like a
+// static one. The cycle check does not: a dynamic import().then()/await never
+// runs while its module is being evaluated, so it cannot close a load-order
+// cycle the way a static import can, and STATIC_CROSS_VALUE alone feeds it.
+const CROSS_VALUE = [...STATIC_CROSS_VALUE, ...DYNAMIC_CROSS_VALUE];
 const key = (e: { file: string; target: string }) => `${e.file} -> ${e.target}`;
 
 describe("module boundaries (ADR 0005)", () => {
   it("finds the imports it is meant to police", () => {
     expect(EDGES.length).toBeGreaterThan(150);
-    expect(CROSS_VALUE.length).toBeGreaterThan(100);
+    expect(STATIC_CROSS_VALUE.length).toBeGreaterThan(100);
+    expect(DYNAMIC_EDGES.length).toBeGreaterThan(0);
   });
 
   it("routes every cross-directory value import through the target's index.js", () => {
@@ -146,7 +187,7 @@ describe("module boundaries (ADR 0005)", () => {
   it("has no value cycle among directories once the allowlisted edges are removed", () => {
     const allowed = new Set(ALLOWLIST.map(key));
     const graph = new Map<string, Set<string>>();
-    for (const e of CROSS_VALUE) {
+    for (const e of STATIC_CROSS_VALUE) {
       if (allowed.has(key({ file: e.file, target: e.toDir }))) continue;
       if (!graph.has(e.fromDir)) graph.set(e.fromDir, new Set());
       graph.get(e.fromDir)!.add(e.toDir);
