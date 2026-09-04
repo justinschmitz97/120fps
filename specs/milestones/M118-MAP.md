@@ -236,7 +236,62 @@ reads them today.
 | `gitignore.ts` | `findGitRoot`, `needsGitignoreAdvisory`, `formatGitignoreTip`, `gitignoreTipPatterns`, `suggestedPatternFor` |
 | `main.ts` (residual) | `main`, `runOne`, `writeCiFile`, `formatTotalLine`, `resolvedRootsLine`, `resolvedRootsOutput` |
 
+## Wave 2a outcome (merged at 8e34075)
+
+- `harness/`: `build.ts` 7,215 → 511; 16 files, largest `vite-config.ts` 713. Beyond the table:
+  `css.ts` split into `css.ts` + `stylesheets.ts`; `deps-scan.ts` split into `deps-scan.ts` +
+  `workspace-entries.ts`; `entry.ts` stayed one file (565). `detectReactMajor` lives in
+  `project/react-compiler.ts` (its only caller), `disclosedGoverningConfigs` in
+  `project/tsconfig-aliases.ts` (its only writer), `escapeRegex` in `project/tsconfig-aliases.ts`
+  (imported by two harness files; wave 3 moves it to `shared/`). `harness/index.ts` carries a
+  24-name compatibility re-export block from `../project/index.js` so `src/index.ts` and tests
+  that read those names from `harness/index.js` still compile; wave 3 deletes it and repoints.
+- `project/`: `preflight.ts` 1,193 → 666 + `preflight-gates.ts` 536; `framework.ts` 79 (from
+  `analysis/react-profiler.ts`, which re-exports the four framework names for its tests; wave 3
+  repoints those tests and deletes the re-export); `tsconfig-aliases.ts`, `resolve.ts`,
+  `react-compiler.ts`, `transforms.ts`.
+- `props/`: `extract.ts` 3,311 → 371; `program.ts` 429, `schema.ts` 64, `vue.ts` 355,
+  `candidates.ts` 751, `classify.ts` 739, `synthesize.ts` 432, `exports.ts` 418. The prop-ranking
+  cluster (`propRank`, `MAX_PROPS`, `isNoiseName`, `KNOWN_VARIANT_AXIS_NAMES`, …) sits in
+  `program.ts` for size reasons only; wave 3 moves it to `props/rank.ts`. New export
+  `resetWarnOnceCache` in `extract.ts` (called by `resetExtractionCache`).
+- `report/`: `report.ts` deleted; `types.ts` 539, `stats.ts` 508, `terminal.ts` 477,
+  `terminal-modes.ts` 556, `phases.ts` 169. Nine formerly private `append*`/`format*` helpers are
+  exported for `terminal-modes.ts`. `budget.ts` and `types.ts` both declare `BaselineComparison`,
+  `Regression`, `Improvement` (different shapes); wave 3 renames the `budget.ts` trio.
+- Boundary allowlist after 2a: `project/preflight.ts → browser`, `project/preflight.ts → props`,
+  `report/stats.ts → analysis`, `report/ci.ts → analysis`. Line-cap allowlist: `analysis/explorer.ts`
+  909, `analysis/react-profiler.ts` 902, `browser/discovery.ts` 823, `browser/measure.ts`,
+  `cli/main.ts`, `pipeline/analyze.ts` (2b), `props/values.ts` 822, `report/budget.ts` 808.
+
 ## Wave 3: shared helpers, cycles, comments, surface
+
+Ordered task list (sequential in the main checkout, one commit each, tsc + the stage's tests per
+commit, full unit suite after tasks 6 and 11):
+
+1. `git mv src/analysis/metrics.ts src/report/metrics.ts`; repoint imports (pipeline, report,
+   tests); remove the `report/stats.ts → analysis` allowlist entry.
+2. `CHURN_DEGRADATION_LIMIT`, `LEAK_BYTES_PER_CYCLE` move to `report/types.ts`;
+   `analysis/isolation.ts` imports them from `../report/index.js`; remove the `report/ci.ts →
+   analysis` entry.
+3. `project/compiler-options.ts` takes `projectCompilerOptions`, `createCompilerOptions`,
+   `warnTsconfigOnce` (and `warnedTsconfigPaths`) out of `props/program.ts`; `preflight.ts` imports
+   `./compiler-options.js`; remove the `preflight → props` entry.
+4. `setImportCycleReported` and its flag leave `browser/page-errors.ts` for `shared/run-state.ts`
+   (or `project/` if it is only read there); remove the `preflight → browser` entry. Allowlist empty.
+5. `shared/fs.ts`, `shared/git.ts`, `shared/stats.ts`, `shared/clone.ts`, `shared/regex.ts`
+   (`escapeRegex`), `props/serialize.ts` per the table below; callers repointed; copies deleted;
+   duplicate-name allowlist empty.
+6. `props/rank.ts`; delete the `harness/index.ts` compatibility block and the
+   `analysis/react-profiler.ts` framework re-exports, repointing tests to `project/index.js`; rename
+   the `budget.ts` `BaselineComparison`/`Regression`/`Improvement` trio to `Budget*` names.
+7. Boundary test also scans dynamic `import("…")` specifiers against the edge table.
+8. Comment cleanup per directory (one commit per directory): comment-token allowlist to zero.
+9. Files still over 800 lines after 8 get a split (expected: `analysis/explorer.ts`,
+   `analysis/react-profiler.ts` if still above); line-cap allowlist empty.
+10. `src/index.ts` curated to the surface table; tests importing removed names repointed to stage
+    indexes.
+11. Module table in `00-tdd.md`; `02-milestones.md` entry; spec Verification filled; e2e subset.
 
 Shared helpers (one commit per row, every former copy deleted, callers repointed):
 
