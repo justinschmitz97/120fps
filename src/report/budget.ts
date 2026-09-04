@@ -43,18 +43,18 @@ export interface BaselineEntry {
   interactions: Record<string, number>;
   tier: ComponentTier;
   env?: EnvFingerprint;
-  // M39: identity of the sources this entry measured, and the verdict of the
+  // Identity of the sources this entry measured, and the verdict of the
   // run that saved it: together they let an unchanged component reuse the
   // entry instead of re-measuring.
   sourceFingerprint?: string;
   pass?: boolean;
-  // M40: the scene the entry measured. Absent on pre-M40 baselines, which
-  // recorded no scene at all: an unknown state is not a changed state.
+  // The scene the entry measured. Absent on baselines that recorded no
+  // scene at all: an unknown state is not a changed state.
   measuredState?: MeasuredState;
-  // M45: when this slot was last written, for pruning. Absent means pre-M45,
-  // which is kept: absence is not age.
+  // When this slot was last written, for pruning. Absent means an older
+  // slot that predates this field, which is kept: absence is not age.
   savedAt?: string;
-  // M115 C7: where the recording run's minutes went, and the combo and sample
+  // Where the recording run's minutes went, and the combo and sample
   // counts it spent them on, so a later dry run can scale them to the run it
   // is predicting. Never part of `computeEnvKey` or the baseline key: an entry
   // that differs only here is still the same slot and is still reused.
@@ -62,7 +62,7 @@ export interface BaselineEntry {
   phaseUnits?: { combos: number; samples: number };
 }
 
-// M115 C6: the entry a dry run may estimate from. A dry run launches no
+// The entry a dry run may estimate from. A dry run launches no
 // browser, so `chromiumVersion` cannot be part of the match; machine identity
 // is what the estimate depends on, and a mismatch falls back to the defaults
 // rather than presenting another machine's numbers as a prediction.
@@ -88,7 +88,7 @@ export function selectPhaseTimingEntry(
   return candidates[0];
 }
 
-// M39: order-independent identity over file contents plus a config string.
+// Order-independent identity over file contents plus a config string.
 // Missing files hash as missing: absence is part of the identity, not an
 // error, so a deleted import invalidates the fingerprint like an edit does.
 export function computeSourceFingerprint(
@@ -114,7 +114,7 @@ export function computeSourceFingerprint(
     .digest("hex");
 }
 
-// Keys are `<componentPath>#<envKey>` (M45). A version-1 file's plain component
+// Keys are `<componentPath>#<envKey>`. A version-1 file's plain component
 // keys are rekeyed on load, so readers only ever see slots.
 export interface Baseline {
   version: 1 | 2;
@@ -149,14 +149,14 @@ export interface BudgetComparison {
   missingInteractions: string[];
   envMatch: EnvMatch;
   envMismatches: string[];
-  // M40: set when baseline and current run measured different scenes. The
+  // Set when baseline and current run measured different scenes. The
   // comparison is skipped: a skeleton against settled content is a different
   // component, not a regression.
   measuredStateMismatch?: { baseline: MeasuredState; current: MeasuredState };
-  // M45: the entry came from another environment's slot. Informational: such a
+  // The entry came from another environment's slot. Informational: such a
   // comparison never fails a run.
   crossEnvironment?: boolean;
-  // M46: the machine was too busy to compare against. No verdicts were drawn.
+  // The machine was too busy to compare against. No verdicts were drawn.
   skippedNoisy?: boolean;
 }
 
@@ -266,7 +266,7 @@ function validateBudgetConfig(configPath: string, config: unknown): asserts conf
   }
 }
 
-// M68. A monorepo keeps one committed policy at the workspace root; a member
+// A monorepo keeps one committed policy at the workspace root; a member
 // that has its own config still wins, because the nearer file is the more
 // specific statement.
 export function loadBudgetConfig(projectRoot: string): BudgetConfig | null {
@@ -286,8 +286,8 @@ export function loadBudgetConfig(projectRoot: string): BudgetConfig | null {
   return null;
 }
 
-// M45. One committed baseline meets many machines. Rather than classifying the
-// resulting mismatch after the fact (M29), entries get a slot per environment
+// One committed baseline meets many machines. Rather than classifying the
+// resulting mismatch after the fact, entries get a slot per environment
 // so the mismatch mostly stops happening.
 //
 // Composite keys rather than a nested object: the map stays
@@ -298,8 +298,8 @@ export const LEGACY_ENV_KEY = "legacy";
 const BASELINE_KEY_SEPARATOR = "#";
 
 // Slots are indexed by machine identity, not by measurement conditions.
-// Calibration is excluded on M39's evidence: a single sample swings 20–40%, so
-// gating on it would fragment slots by thermal luck. Chromium is keyed by major
+// Calibration is excluded: a single sample swings 20–40%, so gating on it
+// would fragment slots by thermal luck. Chromium is keyed by major
 // version only: patch bumps land weekly and have not been shown to move timing.
 export function computeEnvKey(env: EnvFingerprint | undefined): string {
   if (!env) return LEGACY_ENV_KEY;
@@ -315,8 +315,8 @@ export function computeEnvKey(env: EnvFingerprint | undefined): string {
     (env.css ?? []).join(","),
     env.wrapper ?? "",
     env.reactCompiler ? "1" : "0",
-    // Appended only when it is not React, so every slot written before M57
-    // keeps the key it was written under.
+    // Appended only when it is not React, so every slot written before this
+    // field existed keeps the key it was written under.
     ...(env.framework ? [env.framework] : []),
   ].join("\0");
   return crypto.createHash("sha1").update(identity).digest("hex").slice(0, 8);
@@ -399,7 +399,7 @@ export function saveBaseline(
   for (const [candidate, value] of Object.entries(entries)) {
     if (candidate === key) continue;
     const savedAt = value?.savedAt ? Date.parse(value.savedAt) : NaN;
-    // A slot with no timestamp predates M45 and is kept: absence is not age.
+    // A slot with no timestamp predates this field and is kept: absence is not age.
     if (Number.isFinite(savedAt) && savedAt < cutoff) {
       delete entries[candidate];
       pruned.push(candidate);
@@ -482,14 +482,14 @@ export function resolveComponentBudget(
 
 // Bumped whenever a measurement changes meaning rather than value. Distinct
 // from `shape`, which versions which fields exist and must stay comparable.
-// 3: M34 removed ~30ms of throttled idle (GC, DOM reads) before each traced
+// 3: removed ~30ms of throttled idle (GC, DOM reads) before each traced
 // window; mount/unmount medians read up to ~6% higher than revision 2.
-// 4: M35 drives frames instead of waiting for vsync; the narrower traced
+// 4: drives frames instead of waiting for vsync; the narrower traced
 // windows carry less ambient frame work (interleaved A/B: mount ×1.03,
 // rerender ×1.00, unmount ×0.74).
 export const METRICS_REVISION = 4;
 
-// Absent means pre-M31: domNodeCount counted the whole document.
+// Absent means an older baseline: domNodeCount counted the whole document.
 function metricsRevision(env: EnvFingerprint): number {
   return typeof env.metrics === "number" ? env.metrics : 1;
 }
@@ -511,7 +511,7 @@ export function buildEnvFingerprint(input: EnvFingerprintInput): EnvFingerprint 
     ...(input.css && input.css.length > 0 ? { css: input.css } : {}),
     ...(input.wrapper ? { wrapper: input.wrapper } : {}),
     ...(input.reactCompiler !== undefined ? { reactCompiler: input.reactCompiler } : {}),
-    // React is the absence of the field, which is what a pre-M57 baseline
+    // React is the absence of the field, which is what every older baseline
     // records: writing it would make every stored entry incomparable.
     ...(input.framework && input.framework !== "react" ? { framework: input.framework } : {}),
   };
@@ -531,14 +531,15 @@ function sameCssList(a: string[] | undefined, b: string[] | undefined): boolean 
 // Feature fields change what is measured; no arithmetic rescues a difference.
 function featuresDiffer(a: EnvFingerprint, b: EnvFingerprint): boolean {
   return (
-    // M31 rescoped domNodeCount to component DOM, which moves tier boundaries.
-    // Comparing across the change would read as a large improvement.
+    // A change in measurement revision (see METRICS_REVISION above) moves
+    // tier boundaries. Comparing across the change would read as a large
+    // improvement.
     metricsRevision(a) !== metricsRevision(b) ||
     a.mode !== b.mode ||
     !sameCssList(a.css, b.css) ||
     a.wrapper !== b.wrapper ||
     a.reactCompiler !== b.reactCompiler ||
-    // M57: a different renderer measured a different thing entirely.
+    // A different renderer measured a different thing entirely.
     frameworkLabel(a) !== frameworkLabel(b)
   );
 }
@@ -548,10 +549,11 @@ function calibrationClose(a: number, b: number): boolean {
   return Math.abs(a - b) <= CALIBRATION_DRIFT_BAND * Math.max(a, b);
 }
 
-// M39: the reuse gate needs machine identity, not thermal identity. A single
+// The reuse gate needs machine identity, not thermal identity. A single
 // calibration sample swings 20–40% on a real machine (measured 41.7 vs 57.3
-// within one sweep), so requiring calibrationClose made reuse a lottery:
-// and drift changes measured values, never the verdict of unchanged code.
+// within one sweep), so requiring calibrationClose would make reuse a
+// lottery: drift changes measured values, never the verdict of unchanged
+// code.
 export function sameMachineIdentity(
   baseline: EnvFingerprint | undefined,
   current: EnvFingerprint,

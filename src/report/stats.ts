@@ -50,11 +50,11 @@ export function classifyTier(info: {
   return TIER_ORDER.indexOf(bySize) >= TIER_ORDER.indexOf("T3") ? bySize : "T3";
 }
 
-// M35: driven pacing shrinks medians to their busy cost, so relative CV on a
-// sub-millisecond metric explodes while absolute noise stays trivial: and an
-// unstable flag would silently skip its baseline comparison (M22). Unstable
+// Driven pacing shrinks medians to their busy cost, so relative CV on a
+// sub-millisecond metric explodes while absolute noise stays trivial, and an
+// unstable flag would silently skip its baseline comparison. Unstable
 // requires both: high relative CV and noise above the 0.5ms absolute floor
-// (the same floor M29 uses for normalized comparison).
+// (the same floor normalized comparison uses).
 export const UNSTABLE_NOISE_FLOOR_MS = 0.5;
 
 export function buildTimingWithCV(samples: number[]): TimingWithCV {
@@ -88,7 +88,7 @@ export function computeVerdict(
   thresholds: Thresholds,
   options?: { tierBudget?: TierBudget; explicitInteraction?: boolean },
 ): "pass" | "warn" | "fail" {
-  // M59: nothing rendered and the page threw. The timings are real, but they
+  // Nothing rendered and the page threw. The timings are real, but they
   // describe React mounting and unmounting a broken tree, so no budget
   // comparison on them means anything.
   if (combo.renderHealth === "error") return "fail";
@@ -122,8 +122,8 @@ export function computeVerdict(
   return "pass";
 }
 
-// M83 #1 (element-plus-F2): a combo marked "renderHealth: empty" and a
-// sibling in the same `combos` array (a discrete prop combo or an M61
+// A combo marked "renderHealth: empty" and a
+// sibling in the same `combos` array (a discrete prop combo or a
 // scale-probe row) that measured a nonzero DOM count are not two different
 // facts to reconcile — they come from the exact same `countComponentNodes`
 // computation, so a disagreement between them is a same-run inconsistency,
@@ -161,7 +161,7 @@ export interface BuildCurveReportInput {
   calibration: CalibrationResult;
   thresholds: Thresholds;
   skipAttribution?: boolean;
-  // M115 C2: curve mode's attribution work belongs to the `attribution` phase,
+  // Curve mode's attribution work belongs to the `attribution` phase,
   // exactly as combo and matrix mode charge it.
   phaseClock?: Pick<PhaseClock, "addAttribution">;
 }
@@ -208,9 +208,9 @@ export function buildCurveReport(input: BuildCurveReportInput): ScalingCurveRepo
       input.phaseClock?.addAttribution(Date.now() - attributionStart);
     }
 
-    // M104 (commerce-F2) / M106 C3 (dub-F6): the same split combo mode draws.
-    // A point that rendered nothing measured a render that did not happen —
-    // its timings are real and its growth contribution is not.
+    // The same split combo mode draws. A point that rendered nothing
+    // measured a render that did not happen — its timings are real and its
+    // growth contribution is not.
     if (point.domNodeCount === 0) {
       point.renderHealth = mount?.pageErrors?.fatal ? "error" : "empty";
     }
@@ -335,7 +335,7 @@ export function evaluateCurve(
 export interface BuildMatrixReportInput {
   axes: MatrixAxis[];
   heldAbsentProps?: string[];
-  // The matrix cells ARE the combos (M21). Projecting them keeps cell verdicts
+  // The matrix cells ARE the combos. Projecting them keeps cell verdicts
   // and the run-level pass/fail derived from one computation instead of two
   // that drift: the combo verdict already accounts for interactions.
   combos: ComboReport[];
@@ -408,7 +408,7 @@ export function buildMatrixReport(input: BuildMatrixReportInput): MatrixReport {
     }
   }
 
-  // M104 (twenty-F3): derived from the cells that were measured, never from
+  // Derived from the cells that were measured, never from
   // the axis declaration, so the cap's effect on the run is visible.
   const axisCoverage: MatrixAxisCoverage[] = input.axes.map((axis) => {
     const seen = new Map<string, unknown>();
@@ -447,7 +447,7 @@ export function deriveReportMode(report: Report): ReportMode {
   return "combo";
 }
 
-// M32 D3: curve mode auto-activates, empties `combos`, and prints a different
+// Curve mode auto-activates, empties `combos`, and prints a different
 // table. Without this line the reader cannot tell which measurement they got.
 export function describeMode(report: Report): string {
   switch (deriveReportMode(report)) {
@@ -461,7 +461,7 @@ export function describeMode(report: Report): string {
       return "Mode: prop matrix";
   }
 
-  // M61: the sibling-copies scale probe is not a prop combo: counting it in
+  // The sibling-copies scale probe is not a prop combo: counting it in
   // "measured" without a matching "generated" is exactly the contradiction
   // dogfooding found ("12 measured of 8 generated").
   const propCombos = report.combos.filter((c) => c.scaleProbe === undefined);

@@ -51,13 +51,13 @@ export function attachWrapperReport(report: Report, wrapper: WrapperReport): voi
   }
 }
 
-// M82: the outcome is always disclosed, including "none" — wording keyed on
-// which discovery layer decided. `layer` may be absent on a pre-M82 report or
-// baseline (the type is required going forward, but reading an old `css`
-// object at runtime is not type-checked), so the default branch falls back to
-// the old rendering rather than mislabeling a legacy auto-detected pick as
-// "none found".
-// M90: exported so analyze.ts can format the decision once, right when
+// The outcome is always disclosed, including "none" — wording keyed on
+// which discovery layer decided. `layer` may be absent on an old report or
+// baseline read from disk (the type is required going forward, but reading
+// a stored `css` object at runtime is not type-checked), so the default
+// branch falls back to the old rendering rather than mislabeling an
+// auto-detected pick as "none found".
+// Exported so pipeline/phases.ts can format the decision once, right when
 // `cssReport` is built, and reuse the identical text as a warning that
 // survives a later crash — the same line the final report block would have
 // printed, computed early instead of only at assembly time.
@@ -77,7 +77,7 @@ export function formatStylesheetsLine(css: CssReport): string {
         "verify with --css)"
       );
     case "runtime":
-      // M114 C4 (fluentui-F3): a recognised engine is a fact about the
+      // A recognised engine is a fact about the
       // measured package's dependencies, so it closes the question. An
       // unlisted package read from a `makeStyles`/`styled` import is an
       // observation, so it names the escape hatch instead of asserting that
@@ -98,11 +98,10 @@ export function formatStylesheetsLine(css: CssReport): string {
     case "unreadable":
       return "Stylesheets: dropped after a read failure -- measured unstyled (see warnings)";
     case "none":
-      // M112 C4: "none found" is false when the package named one. The
+      // "none found" is false when the package named one. The
       // declaration is the fact the user acts on, so it replaces the sentence
-      // rather than being appended to it.
-      // C4: the field and the build command when the producer named them,
-      // the paths alone when it did not.
+      // rather than being appended to it: the field and the build command
+      // when the producer named them, the paths alone when it did not.
       if (css.declaredMissingFields && css.declaredMissingFields.length > 0) {
         const named = css.declaredMissingFields
           .map((d) => `package.json "${d.field}" declares ${d.path}`)
@@ -139,20 +138,19 @@ export function formatStylesheetsLine(css: CssReport): string {
   }
 }
 
-// M64: an entry whose analysis found nothing contributes a header and a blank
+// An entry whose analysis found nothing contributes a header and a blank
 // label line and no information. Only entries with a finding are shown, and a
 // run where none has one prints no section at all.
-// M104 (commerce-F1): extracted from formatTable so curve and matrix modes
-// print the identical section for the identical data. The label is what the
-// mode calls one measurement ("Combo #2", "N=50"); everything else is
-// unchanged.
+// Extracted from formatTable so curve and matrix modes print the identical
+// section for the identical data. The label is what the mode calls one
+// measurement ("Combo #2", "N=50"); everything else is unchanged.
 export function appendReactSection(
   lines: string[],
   entries: Array<{ label: string; opts?: ReactOptimizations }>,
   // A curve always has several points, so a finding on one of them has to name
   // which N it came from even when it is the only finding — otherwise it reads
-  // as describing the whole sweep. Combo mode keeps M64's rule (a single combo
-  // needs no label) so its output is unchanged.
+  // as describing the whole sweep. Combo mode keeps the rule that a single
+  // combo needs no label, so its output is unchanged.
   options?: { labelEveryEntry?: boolean },
 ): void {
   const found = entries.filter((e) => hasReactFinding(e.opts));
@@ -195,7 +193,7 @@ export function appendReactSection(
   }
 }
 
-// M59: the messages themselves, once per combo that produced any. A gated
+// The messages themselves, once per combo that produced any. A gated
 // combo also states why its timings were not allowed to pass.
 export function appendPageErrors(lines: string[], report: Report): void {
   const affected = report.combos.filter(
@@ -207,10 +205,10 @@ export function appendPageErrors(lines: string[], report: Report): void {
   for (const combo of affected) {
     lines.push(`  Combo #${combo.comboIndex}:`);
     for (const message of combo.pageErrors ?? []) lines.push(`    - ${message}`);
-    // C-17: the verdict sentence belongs to the errors above it. Printed after
-    // the transition block, "counted as a failure" sat directly under
-    // "excluded from combo N's verdict" and read as if the transition errors
-    // were what got counted.
+    // The verdict sentence belongs to the errors above it, so it prints
+    // before the transition block: "counted as a failure" directly under
+    // "excluded from combo N's verdict" would read as if the transition
+    // errors were what got counted.
     appendComboErrorVerdict(lines, combo);
     appendTransitionPageErrors(lines, combo);
   }
@@ -218,7 +216,7 @@ export function appendPageErrors(lines: string[], report: Report): void {
 
 function appendComboErrorVerdict(lines: string[], combo: ComboReport): void {
   if (combo.harnessFault) {
-    // M85: the "counted as a failure" line below is specifically false for
+    // The "counted as a failure" line below is specifically false for
     // this combo — the value that caused the crash was the harness's own,
     // not the component's, so the opposite statement belongs here instead.
     lines.push(
@@ -235,7 +233,7 @@ function appendComboErrorVerdict(lines: string[], combo: ComboReport): void {
   }
 }
 
-// M99: the prop-delta sub-probe rerenders combo N's mounted tree into combo
+// The prop-delta sub-probe rerenders combo N's mounted tree into combo
 // N+1's props inside combo N's measurement. What it raised is real and stays
 // in the report, but it is not combo N's own render, and the window also
 // spans the re-mount preceding each delta rerender — so this states what was
@@ -250,12 +248,12 @@ function appendTransitionPageErrors(lines: string[], combo: ComboReport): void {
   for (const message of transition.errors) lines.push(`      - ${message}`);
 }
 
-// M59: rendering null is legal, and saying so is cheaper than leaving the
+// Rendering null is legal, and saying so is cheaper than leaving the
 // reader to infer it from a 0 in the DOM column.
 export function appendEmptyRenderNote(lines: string[], report: Report): void {
   const empty = report.combos.filter((c) => c.renderHealth === "empty");
   if (empty.length === 0) return;
-  // M83 #1: a sibling combo in the same run that measured a nonzero count
+  // A sibling combo in the same run that measured a nonzero count
   // contradicts the categorical claim below, so the disagreement is stated
   // instead of asserted away.
   const inconsistency = detectRenderHealthInconsistency(report.combos);
@@ -278,10 +276,10 @@ export function appendWarnings(lines: string[], report: Report): void {
   }
 }
 
-// M117 C1 (dx-audit item 6): a run that rebuilds its harness collected the same
-// static pre-build warning list twice, so one identical sentence printed twice.
-// The key is the exact string: two texts that differ by one character are two
-// warnings. The count reuses the page-error shape (src/page-errors.ts).
+// A run that rebuilds its harness collected the same static pre-build
+// warning list twice, so one identical sentence printed twice. The key is
+// the exact string: two texts that differ by one character are two
+// warnings. The count reuses the page-error shape (browser/page-errors.ts).
 export function dedupeWarnings(warnings: readonly string[]): string[] {
   const counts = new Map<string, number>();
   const order: string[] = [];
@@ -300,19 +298,17 @@ export function dedupeWarnings(warnings: readonly string[]): string[] {
   });
 }
 
-// M117 C1, C5: what a reader-facing channel prints — the terminal here, the
-// markdown fold in src/ci-report.ts. One line per distinct text, and the noise
-// warning shortened to the one line C5 defines. `report.warnings` itself keeps
-// the long form for the JSON (C6).
+// What a reader-facing channel prints — the terminal here, the markdown
+// fold in report/ci.ts. One line per distinct text, and the noise warning
+// shortened to one line. `report.warnings` itself keeps the long form for
+// the JSON.
 export function presentWarnings(report: Report): string[] {
   return dedupeWarnings(report.warnings ?? []).map((warning) =>
     shortenNoiseWarning(warning, report),
   );
 }
 
-// M117 C5 (dx-audit item 7): the four-sentence form listed both signals at
-// their raw values whether or not either crossed its threshold and named no
-// flag, in the one place a reader is scanning. One line, only the signals that
+// A reader scanning for what to do gets one line: only the signals that
 // fired against the level's own thresholds, and the one flag that helps.
 export function formatNoiseLine(noise: NoiseReport): string {
   if (noise.level === "quiet") return "";
@@ -332,7 +328,7 @@ export function formatNoiseLine(noise: NoiseReport): string {
   return `machine: ${noise.level} (${signals.join(", ")}); raise --samples to measure through it.`;
 }
 
-// The noise warning is the one text that differs by channel (M117 C6): the JSON
+// The noise warning is the one text that differs by channel: the JSON
 // carries the full sentences `formatNoiseWarning` builds, a reader gets one
 // line. Recognized by the fixed sentence the full form is built around, so both
 // the bare constant and the expanded text shorten to the same line.
@@ -342,7 +338,7 @@ function shortenNoiseWarning(warning: string, report: Report): string {
   return formatNoiseLine(report.noise) || warning;
 }
 
-// M64: WARN rows under "Result: PASS" read as a contradiction without the
+// WARN rows under "Result: PASS" read as a contradiction without the
 // rollup rule stated. Only a fail flips `report.pass`, and that is worth one
 // line whenever the table shows warnings and the result does not.
 export function appendWarnRollup(
@@ -359,7 +355,7 @@ export function appendWarnRollup(
   );
 }
 
-// C-14: scale probes are excluded from the prop-combo rollup above because
+// Scale probes are excluded from the prop-combo rollup above because
 // they are not prop combos, but a warn on one is still a warn the CI surface
 // reports. Named separately so the two counts stay distinguishable.
 export function appendScaleProbeWarnRollup(lines: string[], report: Report): void {
@@ -373,7 +369,7 @@ export function appendScaleProbeWarnRollup(lines: string[], report: Report): voi
   );
 }
 
-// M51: every mode ends with what to do about what it found. Once per run, after
+// Every mode ends with what to do about what it found. Once per run, after
 // the findings, never as a substitute for them.
 export function appendHints(lines: string[], report: Report): void {
   const hints = formatHints(report.hints ?? hintsForReport(report), report);
