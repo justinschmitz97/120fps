@@ -1,6 +1,6 @@
 import path from "node:path";
 import ts from "typescript";
-import { isVueFile } from "../project/index.js";
+import { isVueFile, createCompilerOptions } from "../project/index.js";
 import {
   applyDeclaredDefaults,
   defaultPropsAssignment,
@@ -12,7 +12,7 @@ import {
 } from "./candidates.js";
 import { presetFileName, typeToSchema, warnDegenerateProps, warnRecursiveType } from "./classify.js";
 import { detectPropPresets } from "./presets.js";
-import { createCachedProgram, createCompilerOptions } from "./program.js";
+import { createCachedProgram } from "./program.js";
 import type { PropSchema, PropWarningRecord, ScalingPropMatch, WarningRecorder } from "./schema.js";
 import { extractVueProps } from "./vue.js";
 

@@ -7,13 +7,14 @@ import {
   loadVueCompiler,
   parseSfcScript,
   virtualScriptPath,
+  createCompilerOptions,
   type SfcScript,
   type VueSfcCompiler,
 } from "../project/index.js";
 import { applyDeclaredDefaults, looksLikePropsType } from "./candidates.js";
 import { presetRemedyClause, typeToSchema, warnDegenerateProps } from "./classify.js";
 import { detectPropPresets, literalValue } from "./presets.js";
-import { createCachedProgram, createCompilerOptions } from "./program.js";
+import { createCachedProgram } from "./program.js";
 import type { PropSchema, WarningRecorder } from "./schema.js";
 
 // M57: a `.vue` script block has no file of its own. It is served to the

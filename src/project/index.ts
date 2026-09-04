@@ -1,3 +1,4 @@
+export * from "./compiler-options.js";
 export * from "./framework.js";
 export * from "./model.js";
 export * from "./preflight-gates.js";

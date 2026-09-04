@@ -33,11 +33,6 @@ const ALLOWLIST: readonly { file: string; target: string; reason: string }[] = [
     target: "browser",
     reason: "page-error helpers; wave 2 moves the shared ones out of browser/",
   },
-  {
-    file: "project/preflight.ts",
-    target: "props",
-    reason: "prop extraction reached from the preflight probe; wave 2 splits props/extract.ts",
-  },
 ];
 
 interface Edge {

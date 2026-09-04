@@ -3,7 +3,6 @@ import fs from "node:fs";
 import path from "node:path";
 import { detectComponentExport } from "../harness/index.js";
 import {
-  projectCompilerOptions,
   buildFixtureScaffold,
   buildUncomposedFixtureScaffold,
   fixtureScaffoldPath,
@@ -11,7 +10,7 @@ import {
   type CompositionTree,
   type ExportInfo,
 } from "../props/index.js";
-import { runPreflight, isVueFile } from "../project/index.js";
+import { runPreflight, isVueFile, projectCompilerOptions } from "../project/index.js";
 
 // M110 review: `--target` throws TARGET_WITH_FIXTURE_ERROR whenever the
 // fixture came from an explicit --fixture or from the input file itself, so

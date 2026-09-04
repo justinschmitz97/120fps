@@ -1,9 +1,9 @@
 import path from "node:path";
 import ts from "typescript";
-import { isVueFile, loadVueCompiler } from "../project/index.js";
+import { isVueFile, loadVueCompiler, createCompilerOptions } from "../project/index.js";
 import { identifierBehind, looksLikePropsType, selectMeasuredExport } from "./candidates.js";
 import { typeToSchema } from "./classify.js";
-import { createCachedProgram, createCompilerOptions } from "./program.js";
+import { createCachedProgram } from "./program.js";
 import type { ExportInfo, PropSchema } from "./schema.js";
 import { createVueScripts, vueEntryScript, type VirtualScripts } from "./vue.js";
 
