@@ -5,6 +5,7 @@ export * from "./noise.js";
 export * from "./observers.js";
 export * from "./pacing.js";
 export * from "./page-errors.js";
+export * from "./portal-probe.js";
 export * from "./retry.js";
 export * from "./session.js";
 export * from "./settle.js";
