@@ -1,6 +1,7 @@
 export * from "./candidates.js";
 export * from "./classify.js";
 export * from "./composition.js";
+export * from "./delta-pairs.js";
 export * from "./exports.js";
 export * from "./extract.js";
 export * from "./presets.js";
