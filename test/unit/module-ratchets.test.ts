@@ -11,7 +11,6 @@ const SRC = path.resolve("src");
 const LINE_LIMIT = 800;
 
 const LINE_CAPS: Record<string, number> = {
-  "analysis/explorer.ts": 891,
   "analysis/react-profiler.ts": 877,
   "browser/discovery.ts": 823,
   "props/values.ts": 808,
