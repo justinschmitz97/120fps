@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
 import path from "node:path";
-import { applyPropPresets, loadPropPresets } from "../../src/prop-presets.js";
-import type { PropPresets } from "../../src/prop-presets.js";
-import type { PropSchema } from "../../src/prop-gen.js";
+import { applyPropPresets, loadPropPresets } from "../../src/props/index.js";
+import type { PropPresets } from "../../src/props/index.js";
+import type { PropSchema } from "../../src/props/index.js";
 
 const FIXTURES = path.resolve(__dirname, "../../fixtures/vue-dual-block");
 

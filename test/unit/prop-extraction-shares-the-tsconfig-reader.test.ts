@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach, afterAll } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { extractProps, type PropSchema } from "../../src/prop-gen.js";
+import { extractProps, type PropSchema } from "../../src/props/index.js";
 
 const REFERENCES = path.resolve("fixtures/tsconfig-shapes/project-references");
 const BUTTON = path.join(REFERENCES, "src", "components", "Button.tsx");

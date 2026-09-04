@@ -1,9 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { buildCurveReport, computeCurveVerdict } from "../../src/report.js";
-import { computeScalingCurve, type ScalingCurve } from "../../src/metrics.js";
-import type { MountResult, RerenderResult } from "../../src/measure.js";
-import type { ExploreResult } from "../../src/explorer.js";
-import type { CalibrationResult, Thresholds, ScalingPoint } from "../../src/report.js";
+import { buildCurveReport, computeCurveVerdict } from "../../src/report/index.js";
+import { computeScalingCurve, type ScalingCurve } from "../../src/analysis/index.js";
+import type { MountResult, RerenderResult } from "../../src/browser/index.js";
+import type { ExploreResult } from "../../src/analysis/index.js";
+import type { CalibrationResult, Thresholds, ScalingPoint } from "../../src/report/index.js";
 
 function makeMountResult(comboIndex: number, mountMedian: number, unmountMedian: number, dom: number, heap: number): MountResult {
   return {

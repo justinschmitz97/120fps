@@ -6,7 +6,7 @@ import {
   formatGitignoreTip,
   gitignoreTipPatterns,
   harnessLeftoverDirs,
-} from "../../src/cli.js";
+} from "../../src/cli/index.js";
 
 // M117 A1, A2 (dx-audit, shadcn-admin/dialog-real2.log:67): the tip fired for
 // a report written to a directory outside the repository, because the gate

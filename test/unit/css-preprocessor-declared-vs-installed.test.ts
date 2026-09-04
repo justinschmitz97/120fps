@@ -8,8 +8,8 @@ import {
   PROJECT_TRANSFORM_WARNING,
   recognizeTransform,
   CSS_PREPROCESSOR_PACKAGES,
-} from "../../src/preflight.js";
-import { findWorkspaceRoot } from "../../src/project-model.js";
+} from "../../src/project/index.js";
+import { findWorkspaceRoot } from "../../src/project/index.js";
 
 // M79 (3c, twenty-F3's false positive; excalidraw-F3). The css-preprocessor
 // recognizer (preflight.ts) performs no availability check by design and

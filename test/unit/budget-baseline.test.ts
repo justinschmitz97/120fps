@@ -11,7 +11,7 @@ import {
   type Baseline,
   type BaselineEntry,
   type ResolvedTolerance,
-} from "../../src/budget.js";
+} from "../../src/report/index.js";
 
 // M45: entries are keyed by component x environment slot; selectBaselineEntry
 // resolves the slot for us so these assertions stay about the entry, not the key.

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { sameMachineIdentity, buildEnvFingerprint, METRICS_REVISION } from "../../src/budget.js";
-import type { EnvFingerprint, MachineInfo } from "../../src/report.js";
+import { sameMachineIdentity, buildEnvFingerprint, METRICS_REVISION } from "../../src/report/index.js";
+import type { EnvFingerprint, MachineInfo } from "../../src/report/index.js";
 
 const machine: MachineInfo = {
   cpu: "Test CPU",

@@ -8,7 +8,7 @@ import {
   TYPES_ONLY_WORKSPACE_PACKAGE_WARNING,
   UNBUILT_WORKSPACE_PACKAGE_WARNING,
   UNBUILT_WORKSPACE_PACKAGE_NO_SOURCE_WARNING,
-} from "../../src/harness.js";
+} from "../../src/harness/index.js";
 
 const cleanupDirs: string[] = [];
 

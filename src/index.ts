@@ -1,18 +1,18 @@
-export { extractProps, extractExports, extractAllProps, detectScalingProps, projectSourceFiles, resetExtractionCache, extractionCacheStats, type PropSchema, type ScalingPropMatch } from "./prop-gen.js";
+export { extractProps, extractExports, extractAllProps, detectScalingProps, projectSourceFiles, resetExtractionCache, extractionCacheStats, type PropSchema, type ScalingPropMatch } from "./props/index.js";
 export {
   inferComposition,
   type ExportInfo,
   type CompositionTree,
   type CompositionNode,
   type CompositionTemplate,
-} from "./composition.js";
+} from "./props/index.js";
 export {
   generateCombinations,
   generateDeltaPairs,
   generateScalingCombos,
   type PropCombination,
   type DeltaPair,
-} from "./prop-gen-values.js";
+} from "./props/index.js";
 export {
   buildAndServe,
   compositionToJsx,
@@ -70,7 +70,7 @@ export {
   type ShimEntry,
   type ReactCompilerResolution,
   type ReactCompilerState,
-} from "./harness.js";
+} from "./harness/index.js";
 export {
   measureMount,
   measureRerender,
@@ -117,13 +117,13 @@ export {
   type RerenderResult,
   type TimingResult,
   type HarnessSessionOptions,
-} from "./measure.js";
+} from "./browser/index.js";
 export {
   discoverInteractions,
   type InteractionDescriptor,
   type InteractionType,
   type DiscoverOptions,
-} from "./discovery.js";
+} from "./browser/index.js";
 export {
   explore,
   fnv1aHash,
@@ -134,7 +134,7 @@ export {
   type PathStep,
   type ExploreOptions,
   type ExploreResult,
-} from "./explorer.js";
+} from "./analysis/index.js";
 export {
   parseMetrics,
   computeINP,
@@ -149,7 +149,7 @@ export {
   type ParseMetricsOptions,
   type CostAttribution,
   type CostBucket,
-} from "./metrics.js";
+} from "./analysis/index.js";
 export {
   computeCV,
   buildTimingWithCV,
@@ -180,8 +180,8 @@ export {
   type WrapperReport,
   type CssReport,
   type ReactCompilerReport,
-} from "./report.js";
-export { analyze, buildReport, isFixturePath, detectFixture, hasScaleExport, resolveWrapPath, resolveCssFiles, type AnalyzeOptions, type BuildReportInput } from "./analyze.js";
+} from "./report/index.js";
+export { analyze, buildReport, isFixturePath, detectFixture, hasScaleExport, resolveWrapPath, resolveCssFiles, type AnalyzeOptions, type BuildReportInput } from "./pipeline/index.js";
 // M65
 export {
   explainProps,
@@ -191,25 +191,25 @@ export {
   TARGET_WITH_FIXTURE_ERROR,
   type PropsExplanation,
   type ExplainedProp,
-} from "./analyze.js";
+} from "./pipeline/index.js";
 export {
   extractPropsDetailed,
   normalizeComponentName,
   type ExtractPropsOptions,
   type PropsExtraction,
   type PropWarningRecord,
-} from "./prop-gen.js";
+} from "./props/index.js";
 export {
   detectProviderImport,
   detectLocalProviderModule,
   providerCandidateLabels,
   PROVIDER_LIBRARIES,
   type ProviderHit,
-} from "./preflight.js";
-export { targetNotFoundMessage } from "./harness.js";
-export { collectStaticPreBuildWarnings, assertRendererSupported, VUE_PROJECT_REACT_FILE_ERROR, resolveJsxImportSource, type StaticPreBuild } from "./harness.js";
-export { PROVIDER_HINT_LINE } from "./hints.js";
-export { detectScaleExport, loadTsconfigAliases, findProjectRoot, sweepStaleHarnessDirs, detectComponentExport, createServerPool, SWEEP_DEP_WARNING, ALIAS_SHAPE_WARNING, BROKEN_ALIAS_WARNING, fsAllowDirs, type ServerPool } from "./harness.js";
+} from "./project/index.js";
+export { targetNotFoundMessage } from "./harness/index.js";
+export { collectStaticPreBuildWarnings, assertRendererSupported, VUE_PROJECT_REACT_FILE_ERROR, resolveJsxImportSource, type StaticPreBuild } from "./harness/index.js";
+export { PROVIDER_HINT_LINE } from "./report/index.js";
+export { detectScaleExport, loadTsconfigAliases, findProjectRoot, sweepStaleHarnessDirs, detectComponentExport, createServerPool, SWEEP_DEP_WARNING, ALIAS_SHAPE_WARNING, BROKEN_ALIAS_WARNING, fsAllowDirs, type ServerPool } from "./harness/index.js";
 export {
   createHarnessDir,
   HARNESS_DIR_UNWRITABLE,
@@ -218,7 +218,7 @@ export {
   isOutsideRoot,
   componentImportPath,
   resolveWrapper,
-} from "./harness.js";
+} from "./harness/index.js";
 export {
   findCompilerConfig,
   findWorkspaceRoot,
@@ -230,8 +230,8 @@ export {
   readProjectManifest,
   WORKSPACE_LOCKFILES,
   type ProjectModel,
-} from "./project-model.js";
-export { scanExports } from "./prop-gen.js";
+} from "./project/index.js";
+export { scanExports } from "./props/index.js";
 export {
   attachPageErrorCapture,
   enrichTimeoutError,
@@ -245,17 +245,17 @@ export {
   type PageErrorDrain,
   type MeasurementPhase,
   type PhaseContext,
-} from "./page-errors.js";
+} from "./browser/index.js";
 export {
   resolveStressPattern,
   executeStressPattern,
   findAriaGroupSiblings,
   type StressStep,
   type StressPattern,
-} from "./stress-patterns.js";
+} from "./analysis/index.js";
 // M106 C1/C2
-export { type StressPatternRun } from "./stress-patterns.js";
-export { EXPLORE_STALLED_WARNING } from "./explorer.js";
+export { type StressPatternRun } from "./analysis/index.js";
+export { EXPLORE_STALLED_WARNING } from "./analysis/index.js";
 export {
   detectFramework,
   diffSnapshots,
@@ -280,8 +280,8 @@ export {
   type CallbackIdentityDelta,
   type ProbeEntryOptions,
   type ReactAnalysisOptions,
-} from "./react-profiler.js";
-export { parseArgs, resolveReactCompilerFlag, type CliArgs } from "./cli.js";
+} from "./analysis/index.js";
+export { parseArgs, resolveReactCompilerFlag, type CliArgs } from "./cli/index.js";
 export {
   parseIsolationPhases,
   computeChurnDegradation,
@@ -313,7 +313,7 @@ export {
   type IsolationRunResult,
   type MemoryMeasurement,
   type PhaseOptions,
-} from "./isolation.js";
+} from "./analysis/index.js";
 export {
   loadBudgetConfig,
   loadBaseline,
@@ -336,7 +336,7 @@ export {
   type BaselineMetrics,
   type EnvFingerprintInput,
   type ResolvedTolerance,
-} from "./budget.js";
+} from "./report/index.js";
 
 // M42/M48
 export {
@@ -352,7 +352,7 @@ export {
   type PreflightHit,
   type PreflightResult,
   type TransformRecognizer,
-} from "./preflight.js";
+} from "./project/index.js";
 
 // M44
 export {
@@ -367,7 +367,7 @@ export {
   type PropPresets,
   type PresetRef,
   type PresetSibling,
-} from "./prop-presets.js";
+} from "./props/index.js";
 
 // M45
 export {
@@ -381,7 +381,7 @@ export {
   NO_ENV_BASELINE_WARNING,
   PRUNED_SLOTS_NOTICE,
   type BaselineSelection,
-} from "./budget.js";
+} from "./report/index.js";
 
 // M46
 export {
@@ -400,14 +400,14 @@ export {
   type NoiseLevel,
   type NoiseReport,
   type NoiseSignals,
-} from "./noise.js";
+} from "./browser/index.js";
 
 // M47
 export {
   probeVolatileRegions,
   VOLATILITY_PROBE_GAP_MS,
   VOLATILE_DOM_NOTICE,
-} from "./explorer.js";
+} from "./analysis/index.js";
 
 // M49
 export {
@@ -420,10 +420,10 @@ export {
   type CompareReport,
   type CompareCombo,
   type CompareOptions,
-} from "./compare.js";
+} from "./analysis/index.js";
 
 // M50
-export { formatMarkdown, formatJUnit } from "./ci-report.js";
+export { formatMarkdown, formatJUnit } from "./report/index.js";
 
 // M51
 export {
@@ -433,9 +433,9 @@ export {
   MEASUREMENT_BASIS_LINE,
   type Hint,
   type HintId,
-} from "./hints.js";
+} from "./report/index.js";
 // M105 I12
-export { hintsForMountAbort } from "./hints.js";
+export { hintsForMountAbort } from "./report/index.js";
 
 // M52
 export {
@@ -447,20 +447,20 @@ export {
   type ObservedWindow,
   type ObservedEvent,
   type ObservedLongFrame,
-} from "./observers.js";
+} from "./browser/index.js";
 
 // M53
-export { warmupsForPosition } from "./measure.js";
-export { runWithSplitErrorWindows, type TransitionPageErrors } from "./measure.js";
-export { countComponentNodes, totalComponentNodes, collectUnresolvedSpriteRefs, COMPONENT_NODE_COUNT_SOURCE, UNRESOLVED_SPRITE_REFS_SOURCE, COMPONENT_NODE_COUNT_EXPRESSION, UNRESOLVED_SPRITE_REFS_EXPRESSION, MAX_UNRESOLVED_SPRITE_REFS, type ComponentNodeCount } from "./measure.js";
-export { matrixValues, matrixDeclaredValues, matrixAxesFor, matrixHeldAbsentProps, MAX_MATRIX_AXIS_VALUES, type MatrixAxisValues } from "./prop-gen-values.js";
-export { TRACE_FLUSH_TIMEOUT_MS, TRACING_STALL_RETRY_WARNING, TARGET_CLOSED_RETRY_WARNING, contextRetryWarningFor, retryBudgetExhaustedNoteFor, TRACING_BUDGET_EXHAUSTED_NOTE, TARGET_CLOSED_BUDGET_EXHAUSTED_NOTE } from "./measure.js";
-export { selectMeasuredExport } from "./prop-gen.js";
-export { UNTYPED_JS_COMPONENT_WARNING, isUntypedJsComponentWarning } from "./prop-gen.js";
-export { SYNTHESIZED_REQUIRED_OBJECT_WARNING, isSynthesizedRequiredObjectWarning } from "./prop-gen.js";
-export { VUE_SETUP_RUNTIME_PROPS_WARNING, isVueSetupRuntimePropsWarning, VUE_UNRESOLVED_PROPS_TYPE_WARNING, isVueUnresolvedPropsTypeWarning } from "./prop-gen.js";
-export { churnParitySeries, buildChurnTiming } from "./isolation.js";
-export { EFFECTIVE_SAMPLES_WARNING } from "./analyze.js";
+export { warmupsForPosition } from "./browser/index.js";
+export { runWithSplitErrorWindows, type TransitionPageErrors } from "./browser/index.js";
+export { countComponentNodes, totalComponentNodes, collectUnresolvedSpriteRefs, COMPONENT_NODE_COUNT_SOURCE, UNRESOLVED_SPRITE_REFS_SOURCE, COMPONENT_NODE_COUNT_EXPRESSION, UNRESOLVED_SPRITE_REFS_EXPRESSION, MAX_UNRESOLVED_SPRITE_REFS, type ComponentNodeCount } from "./browser/index.js";
+export { matrixValues, matrixDeclaredValues, matrixAxesFor, matrixHeldAbsentProps, MAX_MATRIX_AXIS_VALUES, type MatrixAxisValues } from "./props/index.js";
+export { TRACE_FLUSH_TIMEOUT_MS, TRACING_STALL_RETRY_WARNING, TARGET_CLOSED_RETRY_WARNING, contextRetryWarningFor, retryBudgetExhaustedNoteFor, TRACING_BUDGET_EXHAUSTED_NOTE, TARGET_CLOSED_BUDGET_EXHAUSTED_NOTE } from "./browser/index.js";
+export { selectMeasuredExport } from "./props/index.js";
+export { UNTYPED_JS_COMPONENT_WARNING, isUntypedJsComponentWarning } from "./props/index.js";
+export { SYNTHESIZED_REQUIRED_OBJECT_WARNING, isSynthesizedRequiredObjectWarning } from "./props/index.js";
+export { VUE_SETUP_RUNTIME_PROPS_WARNING, isVueSetupRuntimePropsWarning, VUE_UNRESOLVED_PROPS_TYPE_WARNING, isVueUnresolvedPropsTypeWarning } from "./props/index.js";
+export { churnParitySeries, buildChurnTiming } from "./analysis/index.js";
+export { EFFECTIVE_SAMPLES_WARNING } from "./pipeline/index.js";
 
 // M57
 export {
@@ -473,7 +473,7 @@ export {
   VUE_SFC_SPECIFIERS,
   type SfcScript,
   type VueSfcCompiler,
-} from "./vue-sfc.js";
+} from "./project/index.js";
 export {
   rendererFor,
   vueComponentName,
@@ -482,8 +482,8 @@ export {
   sfcProducesComponent,
   SFC_NO_COMPONENT,
   type Renderer,
-} from "./harness.js";
-export { strictModeUnsupported, VUE_STRICTMODE_ERROR } from "./isolation.js";
+} from "./harness/index.js";
+export { strictModeUnsupported, VUE_STRICTMODE_ERROR } from "./analysis/index.js";
 
 // M100
 export {
@@ -493,7 +493,7 @@ export {
   predictMode,
   DRY_RUN_RUNTIME_ONLY_NOTE,
   type PredictedMode,
-} from "./analyze.js";
+} from "./pipeline/index.js";
 
 // M106 C4
-export { UNRESOLVED_SPRITE_REFS_WARNING } from "./analyze.js";
+export { UNRESOLVED_SPRITE_REFS_WARNING } from "./pipeline/index.js";

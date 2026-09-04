@@ -12,19 +12,19 @@ import {
   type MatrixReport,
   type Report,
   type ScalingCurveReport,
-} from "../../src/report.js";
-import { buildReport, type BuildReportInput } from "../../src/analyze.js";
+} from "../../src/report/index.js";
+import { buildReport, type BuildReportInput } from "../../src/pipeline/index.js";
 import {
   formatNoiseWarning,
   HOSTILE_RUN_WARNING,
   HOSTILE_BASELINE_NOTE,
   NOISY_RUN_WARNING,
   type NoiseReport,
-} from "../../src/noise.js";
-import { OBSERVED_ANIMATION_EXPRESSION } from "../../src/measure.js";
-import { FIBER_TYPE_NAME_SOURCE } from "../../src/react-profiler.js";
-import { formatJsonSplitNotice, helpText, KNOWN_FLAGS } from "../../src/cli.js";
-import { formatMarkdown } from "../../src/ci-report.js";
+} from "../../src/browser/index.js";
+import { OBSERVED_ANIMATION_EXPRESSION } from "../../src/browser/index.js";
+import { FIBER_TYPE_NAME_SOURCE } from "../../src/analysis/index.js";
+import { formatJsonSplitNotice, helpText, KNOWN_FLAGS } from "../../src/cli/index.js";
+import { formatMarkdown } from "../../src/report/index.js";
 
 const baseMachine = {
   cpu: "Test", cores: 4, ramMb: 16384,

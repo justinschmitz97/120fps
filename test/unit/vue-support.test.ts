@@ -7,7 +7,7 @@ import {
   expandComponentPaths,
   parseArgs,
   type PathReader,
-} from "../../src/cli.js";
+} from "../../src/cli/index.js";
 import {
   detectProjectTransforms,
   detectWrapper,
@@ -15,7 +15,7 @@ import {
   rendererFor,
   SUPPORTED_TRANSFORM_PLUGINS,
   WRAPPER_CANDIDATES,
-} from "../../src/harness.js";
+} from "../../src/harness/index.js";
 import {
   isVueFile,
   loadVueCompiler,
@@ -24,7 +24,7 @@ import {
   VUE_COMPILER_MISSING,
   detectOptionsApiProps,
   type VueSfcCompiler,
-} from "../../src/vue-sfc.js";
+} from "../../src/project/index.js";
 import {
   extractProps,
   detectScalingProps,
@@ -34,25 +34,25 @@ import {
   VUE_RUNTIME_DEFINE_PROPS_WARNING,
   isVueRuntimeDefinePropsWarning,
   isVuePropsScopeExclusionWarning,
-} from "../../src/prop-gen.js";
-import { detectFramework } from "../../src/react-profiler.js";
+} from "../../src/props/index.js";
+import { detectFramework } from "../../src/analysis/index.js";
 import {
   resolveFramework,
   isFixturePath,
   detectFixture,
   explainProps,
   ZERO_PROPS_WARNING,
-} from "../../src/analyze.js";
-import { runPreflight, recognizeTransform } from "../../src/preflight.js";
+} from "../../src/pipeline/index.js";
+import { runPreflight, recognizeTransform } from "../../src/project/index.js";
 import {
   buildEnvFingerprint,
   classifyEnv,
   computeEnvKey,
   describeEnvDiff,
   sameMachineIdentity,
-} from "../../src/budget.js";
-import type { EnvFingerprint, MachineInfo, CalibrationResult } from "../../src/report.js";
-import { strictModeUnsupported, VUE_STRICTMODE_ERROR } from "../../src/isolation.js";
+} from "../../src/report/index.js";
+import type { EnvFingerprint, MachineInfo, CalibrationResult } from "../../src/report/index.js";
+import { strictModeUnsupported, VUE_STRICTMODE_ERROR } from "../../src/analysis/index.js";
 
 const VUE_ROOT = path.resolve("fixtures/vue-project");
 const VUE_WRAP_ROOT = path.resolve("fixtures/vue-wrap-project");

@@ -6,12 +6,12 @@ import {
   TRANSFORM_RECOGNIZERS,
   PROJECT_TRANSFORM_WARNING,
   transformFailureNote,
-} from "../../src/preflight.js";
+} from "../../src/project/index.js";
 import {
   detectProjectTransforms,
   stripServerHooks,
   SUPPORTED_TRANSFORM_PLUGINS,
-} from "../../src/harness.js";
+} from "../../src/harness/index.js";
 
 const ROOT = path.resolve("fixtures/m42-server");
 const PROJECT = path.resolve("fixtures/transform-project");

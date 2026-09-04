@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach, afterAll } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { loadTsconfigAliases, TYPES_ONLY_ALIAS_WARNING } from "../../src/harness.js";
+import { loadTsconfigAliases, TYPES_ONLY_ALIAS_WARNING } from "../../src/harness/index.js";
 
 const cleanupDirs: string[] = [];
 

@@ -1,12 +1,12 @@
 import { describe, it, expect } from "vitest";
 import path from "node:path";
-import { discoverGlobalCss } from "../../src/harness.js";
+import { discoverGlobalCss } from "../../src/harness/index.js";
 import {
   STYLESHEET_MATCHED_NOTHING_WARNING,
   buildCssReport,
   resolveCssFiles,
-} from "../../src/analyze.js";
-import { formatStylesheetsLine, type CssReport } from "../../src/report.js";
+} from "../../src/pipeline/index.js";
+import { formatStylesheetsLine, type CssReport } from "../../src/report/index.js";
 
 // shadcn-ui-F3: a stylesheet dropped because it could not be read left
 // `layer: "unreadable"` with an empty `details`, which a JSON reader cannot

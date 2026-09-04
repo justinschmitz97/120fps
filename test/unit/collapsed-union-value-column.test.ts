@@ -5,7 +5,7 @@ import {
   formatExplainProps,
   collapsedUnionBranchesFor,
   explainUnionBranches,
-} from "../../src/analyze.js";
+} from "../../src/pipeline/index.js";
 
 // excalidraw-F4: `--explain-props` on ConfirmDialog printed
 // `size  union  optional  "small"` and, two lines below,

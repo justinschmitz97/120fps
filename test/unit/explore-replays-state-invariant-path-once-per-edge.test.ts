@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { explore, type StateGraph } from "../../src/explorer.js";
-import type { HarnessResult } from "../../src/harness.js";
-import type { BrowserPool } from "../../src/measure.js";
+import { explore, type StateGraph } from "../../src/analysis/index.js";
+import type { HarnessResult } from "../../src/harness/index.js";
+import type { BrowserPool } from "../../src/browser/index.js";
 
 // M116 C1-C5. A state-invariant stress pattern ends where it started, so the
 // path from the root cannot differ between samples 2..N -- yet the sample loop

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { buildAndServe, loadTsconfigAliases, type ServerPool } from "../../src/harness.js";
+import { buildAndServe, loadTsconfigAliases, type ServerPool } from "../../src/harness/index.js";
 
 function poolThatThrows(err: unknown): ServerPool {
   return {
@@ -223,6 +223,7 @@ describe("missing shim export (esbuild 'No matching export', M96)", () => {
       "..",
       "..",
       "src",
+      "harness",
       "shims",
       "next-navigation.js",
     );

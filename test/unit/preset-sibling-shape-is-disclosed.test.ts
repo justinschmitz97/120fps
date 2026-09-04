@@ -1,12 +1,12 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import path from "node:path";
-import { extractPropsDetailed, resetExtractionCache } from "../../src/prop-gen.js";
+import { extractPropsDetailed, resetExtractionCache } from "../../src/props/index.js";
 import {
   describePresetSibling,
   detectPropPresets,
   loadPropPresets,
   PRESET_SHAPE_WARNING,
-} from "../../src/prop-presets.js";
+} from "../../src/props/index.js";
 
 const DIR = path.resolve("./fixtures/preset-collision");
 const fixture = (name: string): string => path.join(DIR, name);

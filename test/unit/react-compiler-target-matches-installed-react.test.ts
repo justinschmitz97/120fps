@@ -8,7 +8,7 @@ import {
   reactCompilerRuntimeDeps,
   resolveReactCompilerState,
   REACT_COMPILER_PACKAGE,
-} from "../../src/harness.js";
+} from "../../src/harness/index.js";
 
 // primer-react-F1: the compiler ran with an empty options object, defaulted to
 // React 19, emitted `import { c } from "react/compiler-runtime"`, and the

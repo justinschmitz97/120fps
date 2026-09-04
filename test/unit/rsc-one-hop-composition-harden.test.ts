@@ -2,8 +2,8 @@ import { describe, it, expect, afterEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { explainProps } from "../../src/analyze.js";
-import { scanJsxComposedLocalImports } from "../../src/composition.js";
+import { explainProps } from "../../src/pipeline/index.js";
+import { scanJsxComposedLocalImports } from "../../src/props/index.js";
 
 // M91 harden: adversarial hypotheses against the RSC one-hop composition
 // gate and the JSX-composed-import scanner.

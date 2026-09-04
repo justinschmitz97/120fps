@@ -1,12 +1,12 @@
 import { describe, it, expect } from "vitest";
 import { chromium } from "playwright";
-import { buildAndServe } from "../../src/harness.js";
-import { analyze } from "../../src/analyze.js";
+import { buildAndServe } from "../../src/harness/index.js";
+import { analyze } from "../../src/pipeline/index.js";
 import {
   measureMount,
   rafFence,
   MEASUREMENT_BROWSER_ARGS,
-} from "../../src/measure.js";
+} from "../../src/browser/index.js";
 
 // H2: animation depends on props: the vsync fallback is a per-combo
 // decision, so one run carries both pacings.

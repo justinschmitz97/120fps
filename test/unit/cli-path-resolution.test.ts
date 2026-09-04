@@ -8,7 +8,7 @@ import {
   hasComponentShape,
   NO_COMPONENT_EXPORT_ERROR,
   type PathReader,
-} from "../../src/cli.js";
+} from "../../src/cli/index.js";
 
 // Injected filesystem so the contract is testable without touching disk.
 function reader(tree: Record<string, "file" | "dir">): PathReader {
@@ -355,7 +355,7 @@ describe("path expansion for an absolute glob pattern", () => {
   });
 });
 
-import { resolveReportPaths } from "../../src/cli.js";
+import { resolveReportPaths } from "../../src/cli/index.js";
 
 describe("--json survives expansion into many components", () => {
   it("keeps the exact path for a single component", () => {

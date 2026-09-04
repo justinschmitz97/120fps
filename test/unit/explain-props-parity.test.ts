@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { explainProps } from "../../src/analyze.js";
+import { explainProps } from "../../src/pipeline/index.js";
 
 // M91 (preact-app-F2): --explain-props is the tool's cheapest, most
 // recommended first probe, and it silently dropped the warning that matters

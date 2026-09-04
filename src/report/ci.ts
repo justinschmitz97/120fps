@@ -1,7 +1,7 @@
 import type { Report, ScalingCurveReport, Thresholds } from "./report.js";
 import { computeCurveVerdict, deriveReportMode, describePhaseBreakdown, presentWarnings } from "./report.js";
-import type { IsolationReport } from "./isolation.js";
-import { CHURN_DEGRADATION_LIMIT, LEAK_BYTES_PER_CYCLE } from "./isolation.js";
+import type { IsolationReport } from "../analysis/index.js";
+import { CHURN_DEGRADATION_LIMIT, LEAK_BYTES_PER_CYCLE } from "../analysis/index.js";
 
 // Both formats derive from `Report` alone: no measurement state, no filesystem,
 // no network. 120fps emits what forges consume and never talks to a forge.

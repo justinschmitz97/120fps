@@ -5,8 +5,8 @@ import {
   computeScalingCurve,
   linearRegression,
   type CdpMetrics,
-} from "../../src/metrics.js";
-import { parseTraceDuration, type TraceEvent } from "../../src/measure.js";
+} from "../../src/analysis/index.js";
+import { parseTraceDuration, type TraceEvent } from "../../src/browser/index.js";
 
 describe("parseMetrics", () => {
   it("returns all-zero metrics for empty event array", () => {

@@ -2,9 +2,9 @@ import { describe, it, expect, vi, afterAll } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { closePoolsBounded } from "../../src/cli.js";
-import { loadTsconfigAliases } from "../../src/harness.js";
-import { loadVueCompiler, templateHasUnconditionalRoot, type VueSfcCompiler } from "../../src/vue-sfc.js";
+import { closePoolsBounded } from "../../src/cli/index.js";
+import { loadTsconfigAliases } from "../../src/harness/index.js";
+import { loadVueCompiler, templateHasUnconditionalRoot, type VueSfcCompiler } from "../../src/project/index.js";
 
 const cleanupDirs: string[] = [];
 afterAll(() => {

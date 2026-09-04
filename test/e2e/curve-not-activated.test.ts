@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { sharedAnalyze as analyze } from "./shared-analyze.js";
-import { CURVE_NOT_ACTIVATED_WARNING, formatTable } from "../../src/report.js";
+import { CURVE_NOT_ACTIVATED_WARNING, formatTable } from "../../src/report/index.js";
 
 const NO_ARRAY_PROP = CURVE_NOT_ACTIVATED_WARNING(
   "no array or list prop was found in the extracted schema",

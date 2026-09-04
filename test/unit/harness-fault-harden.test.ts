@@ -1,10 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { buildReport, type BuildReportInput } from "../../src/analyze.js";
-import { formatTable, type CalibrationResult, type Report, type Thresholds, type PropProvenance } from "../../src/report.js";
-import { hintsForReport } from "../../src/hints.js";
-import type { MountResult } from "../../src/measure.js";
-import type { ExploreResult, StateGraph } from "../../src/explorer.js";
-import type { PropSchema } from "../../src/prop-gen.js";
+import { buildReport, type BuildReportInput } from "../../src/pipeline/index.js";
+import { formatTable, type CalibrationResult, type Report, type Thresholds, type PropProvenance } from "../../src/report/index.js";
+import { hintsForReport } from "../../src/report/index.js";
+import type { MountResult } from "../../src/browser/index.js";
+import type { ExploreResult, StateGraph } from "../../src/analysis/index.js";
+import type { PropSchema } from "../../src/props/index.js";
 
 // M85 harden: 10 adversarial hypotheses against detectHarnessFault, see
 // report table in the milestone's final write-up.

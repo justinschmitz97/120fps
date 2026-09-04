@@ -2,11 +2,11 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { findProjectRoot } from "../../src/harness.js";
-import { resolveProjectPaths, legacyBaselineWarning, resolveFramework } from "../../src/analyze.js";
+import { findProjectRoot } from "../../src/harness/index.js";
+import { resolveProjectPaths, legacyBaselineWarning, resolveFramework } from "../../src/pipeline/index.js";
 import { saveBaseline, loadBaseline, loadBudgetConfig,
   selectBaselineEntry,
-} from "../../src/budget.js";
+} from "../../src/report/index.js";
 
 // M45: entries are keyed by component x environment slot; selectBaselineEntry
 // resolves the slot for us so these assertions stay about the entry, not the key.

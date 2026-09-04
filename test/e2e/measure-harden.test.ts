@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { buildAndServe } from "../../src/harness.js";
-import { measureMount } from "../../src/measure.js";
+import { buildAndServe } from "../../src/harness/index.js";
+import { measureMount } from "../../src/browser/index.js";
 
 // H33: component that renders null
 describe("H33: renders-null component", () => {

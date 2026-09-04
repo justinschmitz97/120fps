@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import path from "node:path";
-import { extractPropsDetailed } from "../../src/prop-gen.js";
+import { extractPropsDetailed } from "../../src/props/index.js";
 
 const BARREL = path.resolve(__dirname, "../../fixtures/barrel-reexport");
 

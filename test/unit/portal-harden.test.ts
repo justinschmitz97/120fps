@@ -7,7 +7,7 @@ import {
   type InteractionReport,
   type Report,
   DEFAULT_THRESHOLDS,
-} from "../../src/report.js";
+} from "../../src/report/index.js";
 
 function makeCombo(interactions: InteractionReport[]): ComboReport {
   return {

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import path from "node:path";
-import { extractProps, resetExtractionCache } from "../../src/prop-gen.js";
+import { extractProps, resetExtractionCache } from "../../src/props/index.js";
 
 const M84 = path.resolve("./fixtures/m84");
 const fixture = (name: string): string => path.join(M84, name);

@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { buildReport, type BuildReportInput } from "../../src/analyze.js";
-import { formatTable, describeMode, type CalibrationResult, type Report, type Thresholds } from "../../src/report.js";
-import type { MountResult } from "../../src/measure.js";
-import type { ExploreResult, StateGraph } from "../../src/explorer.js";
+import { buildReport, type BuildReportInput } from "../../src/pipeline/index.js";
+import { formatTable, describeMode, type CalibrationResult, type Report, type Thresholds } from "../../src/report/index.js";
+import type { MountResult } from "../../src/browser/index.js";
+import type { ExploreResult, StateGraph } from "../../src/analysis/index.js";
 
 // dub-F5: a Badge run's footer said "2 of 12 combos warned" two lines above
 // its own "measured 8 of 64 prop combos". Twelve is eight prop combos plus

@@ -2,8 +2,8 @@ import { describe, it, expect, afterEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { explainProps } from "../../src/analyze.js";
-import { runPreflight, preflightFailureMessage } from "../../src/preflight.js";
+import { explainProps } from "../../src/pipeline/index.js";
+import { runPreflight, preflightFailureMessage } from "../../src/project/index.js";
 
 // directus `app/src/components/v-button.vue`: five files deep the graph reaches
 // `src/lang/translations/en-US.yaml`, which Vite parses as JavaScript because
@@ -215,7 +215,7 @@ describe("the dry run on a real Vue project", () => {
 // The run path needs a browser to reach a report, so what is pinned here is
 // that it refuses through the same gate with the same message builder.
 describe("the run path's own refusal", () => {
-  const analyzeSrc = fs.readFileSync(path.resolve("src/analyze.ts"), "utf-8");
+  const analyzeSrc = fs.readFileSync(path.resolve("src/pipeline/analyze.ts"), "utf-8");
 
   it("throws the shared preflight message for every hard hit", () => {
     expect(analyzeSrc).toContain(

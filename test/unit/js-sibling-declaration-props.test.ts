@@ -6,7 +6,7 @@ import {
   extractProps,
   extractPropsDetailed,
   isUntypedJsComponentWarning,
-} from "../../src/prop-gen.js";
+} from "../../src/props/index.js";
 
 const FIXTURES = path.resolve(__dirname, "../../fixtures/js-with-dts");
 

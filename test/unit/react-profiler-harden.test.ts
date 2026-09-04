@@ -14,14 +14,14 @@ import {
   type ProfilerDiff,
   type ReactOptimizations,
   type FiberInfo,
-} from "../../src/react-profiler.js";
+} from "../../src/analysis/index.js";
 import {
   formatTable,
   DEFAULT_THRESHOLDS,
   type ComboReport,
   type Report,
-} from "../../src/report.js";
-import { parseArgs } from "../../src/cli.js";
+} from "../../src/report/index.js";
+import { parseArgs } from "../../src/cli/index.js";
 
 // --- helpers ---
 

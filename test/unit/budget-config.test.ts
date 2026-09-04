@@ -7,8 +7,8 @@ import {
   resolveComponentBudget,
   resolveTolerances,
   type BudgetConfig,
-} from "../../src/budget.js";
-import { TIER_BUDGETS } from "../../src/report.js";
+} from "../../src/report/index.js";
+import { TIER_BUDGETS } from "../../src/report/index.js";
 
 let tmpDir: string;
 

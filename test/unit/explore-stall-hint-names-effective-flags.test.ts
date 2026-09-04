@@ -3,7 +3,7 @@ import {
   enrichPhaseError,
   EXPLORE_PHASE_STALL_HINT,
   HARNESS_STALL_HINT,
-} from "../../src/page-errors.js";
+} from "../../src/browser/index.js";
 
 function stalled(phase: "explore" | "mount" | "attribution" | "rerender"): string {
   return enrichPhaseError(new Error("Tracing.tracingComplete timed out"), { phase }).message;

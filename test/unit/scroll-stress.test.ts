@@ -3,8 +3,8 @@ import {
   resolveStressPattern,
   countPatternEvents,
   SCROLL_SWEEP_STEPS,
-} from "../../src/stress-patterns.js";
-import type { InteractionDescriptor } from "../../src/discovery.js";
+} from "../../src/analysis/index.js";
+import type { InteractionDescriptor } from "../../src/browser/index.js";
 
 function descriptor(overrides: Partial<InteractionDescriptor> = {}): InteractionDescriptor {
   return {

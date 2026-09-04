@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { buildAndServe } from "../../src/harness.js";
-import { createBrowserPool, measureMount } from "../../src/measure.js";
+import { buildAndServe } from "../../src/harness/index.js";
+import { createBrowserPool, measureMount } from "../../src/browser/index.js";
 
 describe("pooled measurement sessions", () => {
   it("two components share one driven browser across passes", async () => {

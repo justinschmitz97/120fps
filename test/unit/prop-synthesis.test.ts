@@ -5,11 +5,11 @@ import {
   detectScalingProps,
   resetExtractionCache,
   type PropSchema,
-} from "../../src/prop-gen.js";
+} from "../../src/props/index.js";
 import {
   generateCombinations,
   countCombinationSpace,
-} from "../../src/prop-gen-values.js";
+} from "../../src/props/index.js";
 
 const M60 = path.resolve("./fixtures/m60");
 const fixture = (name: string): string => path.join(M60, name);

@@ -4,7 +4,7 @@ import { promisify } from "node:util";
 import path from "node:path";
 
 const run = promisify(execFile);
-const CLI = path.resolve("dist/cli.js");
+const CLI = path.resolve("dist/cli/main.js");
 
 async function cli(args: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
   try {

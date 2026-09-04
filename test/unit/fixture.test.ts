@@ -1,10 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { parseArgs } from "../../src/cli.js";
-import { isFixturePath, detectFixture } from "../../src/analyze.js";
-import { buildReport, type BuildReportInput } from "../../src/analyze.js";
-import type { Thresholds, CalibrationResult } from "../../src/report.js";
-import type { MountResult } from "../../src/measure.js";
-import type { ExploreResult, StateGraph } from "../../src/explorer.js";
+import { parseArgs } from "../../src/cli/index.js";
+import { isFixturePath, detectFixture } from "../../src/pipeline/index.js";
+import { buildReport, type BuildReportInput } from "../../src/pipeline/index.js";
+import type { Thresholds, CalibrationResult } from "../../src/report/index.js";
+import type { MountResult } from "../../src/browser/index.js";
+import type { ExploreResult, StateGraph } from "../../src/analysis/index.js";
 import path from "node:path";
 
 // --- CLI tests ---

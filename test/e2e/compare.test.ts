@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { compareAgainstRef } from "../../src/compare.js";
+import { compareAgainstRef } from "../../src/analysis/index.js";
 
 function gitClean(): boolean {
   try {

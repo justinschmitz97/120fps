@@ -2,11 +2,11 @@ import { describe, it, expect, afterEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { explainProps } from "../../src/analyze.js";
+import { explainProps } from "../../src/pipeline/index.js";
 import {
   collectStaticPreBuildWarnings,
   UNRESOLVED_PREBUNDLE_ENTRY_WARNING,
-} from "../../src/harness.js";
+} from "../../src/harness/index.js";
 
 // epic-stack-F2: the dry run promised a run the dev server killed at
 // dep-optimization one minute later, because the scan walked past a specifier

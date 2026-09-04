@@ -9,7 +9,7 @@ import {
   type Report,
   type Thresholds,
   DEFAULT_THRESHOLDS,
-} from "../../src/report.js";
+} from "../../src/report/index.js";
 
 describe("computeCV", () => {
   it("returns 0 for empty array", () => {

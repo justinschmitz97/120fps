@@ -8,7 +8,7 @@ import {
   vueCompilerLoadFailures,
   VUE_COMPILER_MISSING,
   type VueSfcCompiler,
-} from "../../src/vue-sfc.js";
+} from "../../src/project/index.js";
 
 const VUE_ROOT = path.resolve(__dirname, "../../fixtures/vue-project");
 const INJECT = path.resolve(__dirname, "../../fixtures/vue-inject-context");

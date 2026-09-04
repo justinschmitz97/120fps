@@ -8,7 +8,7 @@ import {
   extractThrowingModule,
   waitForReadyOrFatal,
   type PageErrorCapture,
-} from "../../src/page-errors.js";
+} from "../../src/browser/index.js";
 
 // --- helpers ---
 

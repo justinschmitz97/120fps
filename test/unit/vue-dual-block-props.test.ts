@@ -8,9 +8,9 @@ import {
   isVueOptionsApiPropsWarning,
   isVueSetupRuntimePropsWarning,
   isVuePropsScopeExclusionWarning,
-} from "../../src/prop-gen.js";
-import { loadVueCompiler, parseSfcScript, detectOptionsApiProps } from "../../src/vue-sfc.js";
-import type { VueSfcCompiler } from "../../src/vue-sfc.js";
+} from "../../src/props/index.js";
+import { loadVueCompiler, parseSfcScript, detectOptionsApiProps } from "../../src/project/index.js";
+import type { VueSfcCompiler } from "../../src/project/index.js";
 
 const FIXTURES = path.resolve(__dirname, "../../fixtures/vue-dual-block");
 

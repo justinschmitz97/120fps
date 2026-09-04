@@ -2,8 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { runPreflight, PROJECT_TRANSFORM_WARNING } from "../../src/preflight.js";
-import { presentBundlerFailure } from "../../src/harness.js";
+import { runPreflight, PROJECT_TRANSFORM_WARNING } from "../../src/project/index.js";
+import { presentBundlerFailure } from "../../src/harness/index.js";
 
 // hoppscotch-F2: `~icons/lucide/eye` has no file behind it; the run fell through
 // to the generic unresolved-import remedy ("run that package's own build

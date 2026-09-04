@@ -6,15 +6,15 @@ import {
   detectNextJs,
   SHIM_MODULES,
   buildShimAliases,
-} from "../../src/harness.js";
-import { parseArgs } from "../../src/cli.js";
-import { buildReport, type BuildReportInput } from "../../src/analyze.js";
+} from "../../src/harness/index.js";
+import { parseArgs } from "../../src/cli/index.js";
+import { buildReport, type BuildReportInput } from "../../src/pipeline/index.js";
 import {
   formatTable,
   DEFAULT_THRESHOLDS,
   type ComboReport,
   type Report,
-} from "../../src/report.js";
+} from "../../src/report/index.js";
 
 let tmpDir: string;
 
@@ -173,7 +173,7 @@ describe("H6: formatTable with single shim", () => {
 // H7: shim file contents are valid JS modules
 describe("H7: shim files are parseable", () => {
   it("all compiled shim files contain export", () => {
-    const shimDir = path.resolve(__dirname, "../../dist/shims");
+    const shimDir = path.resolve(__dirname, "../../dist/harness/shims");
     for (const entry of SHIM_MODULES) {
       const content = fs.readFileSync(path.join(shimDir, entry.shimFile), "utf-8");
       expect(content, `${entry.shimFile} should have exports`).toMatch(/export/);
@@ -181,13 +181,13 @@ describe("H7: shim files are parseable", () => {
   });
 
   it("next-image shim exports default", () => {
-    const shimDir = path.resolve(__dirname, "../../dist/shims");
+    const shimDir = path.resolve(__dirname, "../../dist/harness/shims");
     const content = fs.readFileSync(path.join(shimDir, "next-image.js"), "utf-8");
     expect(content).toContain("export default");
   });
 
   it("next-navigation shim exports named functions", () => {
-    const shimDir = path.resolve(__dirname, "../../dist/shims");
+    const shimDir = path.resolve(__dirname, "../../dist/harness/shims");
     const content = fs.readFileSync(path.join(shimDir, "next-navigation.js"), "utf-8");
     expect(content).toContain("useRouter");
     expect(content).toContain("usePathname");

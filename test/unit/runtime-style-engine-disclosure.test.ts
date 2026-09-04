@@ -4,8 +4,8 @@ import {
   RUNTIME_STYLE_ENGINES,
   detectRuntimeStyleEngines,
   discoverGlobalCss,
-} from "../../src/harness.js";
-import { formatStylesheetsLine } from "../../src/report.js";
+} from "../../src/harness/index.js";
+import { formatStylesheetsLine } from "../../src/report/index.js";
 
 const GRIFFEL_PROJECT = path.resolve("fixtures/griffel-project");
 const UNLISTED_PROJECT = path.resolve("fixtures/unlisted-style-engine");

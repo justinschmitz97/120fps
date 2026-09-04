@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
-import { watchdogAbortOutput, RUN_WATCHDOG_ABORT_ERROR } from "../../src/cli.js";
-import { measuredOnly } from "../../src/measure.js";
+import { watchdogAbortOutput, RUN_WATCHDOG_ABORT_ERROR } from "../../src/cli/index.js";
+import { measuredOnly } from "../../src/browser/index.js";
 
 // midday-NEW1, end-game fix-up. The watchdog abort printed its own sentence and
 // nothing else: no roots line (M111 A4), no total (M115 A1), no report -- and
@@ -11,7 +11,7 @@ import { measuredOnly } from "../../src/measure.js";
 // closing pools, so the run ended on an error about the teardown rather than on
 // what it had measured.
 
-const cliSrc = fs.readFileSync(path.resolve("src", "cli.ts"), "utf-8");
+const cliSrc = fs.readFileSync(path.resolve("src", "cli/main.ts"), "utf-8");
 const COMPONENT = path.resolve("fixtures", "simple.tsx");
 
 describe("what an aborted run prints on its way out", () => {
@@ -112,7 +112,7 @@ describe("a measurement pass that omitted combos", () => {
   });
 
   it("every delta-pass consumer of a result array asks for the measured entries", () => {
-    const analyzeSrc = fs.readFileSync(path.resolve("src", "analyze.ts"), "utf-8");
+    const analyzeSrc = fs.readFileSync(path.resolve("src", "pipeline/analyze.ts"), "utf-8");
     for (const raw of [
       "for (const m of mounts)",
       "for (const r of rerenders)",

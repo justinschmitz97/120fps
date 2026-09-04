@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { readViteConfigData, VITE_CONFIG_PREPROCESSOR_OPTION_WARNING } from "../../src/harness.js";
+import { readViteConfigData, VITE_CONFIG_PREPROCESSOR_OPTION_WARNING } from "../../src/harness/index.js";
 
 let root: string;
 

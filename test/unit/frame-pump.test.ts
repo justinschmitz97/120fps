@@ -3,7 +3,7 @@ import {
   createFramePump,
   MEASUREMENT_BROWSER_ARGS,
   FRAME_PUMP_WARNING,
-} from "../../src/measure.js";
+} from "../../src/browser/index.js";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 

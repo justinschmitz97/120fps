@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { resolveProgressReporter } from "../../src/analyze.js";
+import { resolveProgressReporter } from "../../src/pipeline/index.js";
 
 // Review A2: `--ci` owns stdout for JSON, so progress reporting is silenced
 // there. Lane A's run watchdog re-arms on each phase boundary; silenced with

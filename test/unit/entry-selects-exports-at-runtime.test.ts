@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { generateEntry, generateComposedEntry } from "../../src/harness.js";
+import { generateEntry, generateComposedEntry } from "../../src/harness/index.js";
 
 const base = {
   componentRelative: "packages/ui/components/icon/Icon.tsx",

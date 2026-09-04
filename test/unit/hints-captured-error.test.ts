@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { hintsForReport, formatHints, PROVIDER_HINT_LINE, PROVIDER_HINT_LINE_TRANSITIVE } from "../../src/hints.js";
-import type { Report } from "../../src/report.js";
+import { hintsForReport, formatHints, PROVIDER_HINT_LINE, PROVIDER_HINT_LINE_TRANSITIVE } from "../../src/report/index.js";
+import type { Report } from "../../src/report/index.js";
 
 // M79 (4a, base-ui-F2). extraHintLines used to map every providerCandidates
 // entry to PROVIDER_HINT_LINE whenever a render error was found, regardless

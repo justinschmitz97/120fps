@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { resolveCssFiles, resolveWrapPath } from "../../src/analyze.js";
+import { resolveCssFiles, resolveWrapPath } from "../../src/pipeline/index.js";
 
 // mantine-F1: the three stylesheets a MantineProvider setup module imports are
 // exactly the ones the measured render needs, and discovery walked the project

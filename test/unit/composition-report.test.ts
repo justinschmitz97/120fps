@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { buildReport, type BuildReportInput } from "../../src/analyze.js";
-import { DEFAULT_THRESHOLDS } from "../../src/report.js";
+import { buildReport, type BuildReportInput } from "../../src/pipeline/index.js";
+import { DEFAULT_THRESHOLDS } from "../../src/report/index.js";
 
 function makeInput(overrides?: Partial<BuildReportInput>): BuildReportInput {
   return {

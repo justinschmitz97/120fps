@@ -7,7 +7,7 @@ import {
   reportFontSettle,
   FONT_SETTLE_WARNING,
   FONT_LOAD_FAILED_WARNING,
-} from "../../src/measure.js";
+} from "../../src/browser/index.js";
 
 // M70: the one place a font-timeout run becomes a warning, shared by every
 // phase (harness entry, explore, react-analysis attribution) that calls

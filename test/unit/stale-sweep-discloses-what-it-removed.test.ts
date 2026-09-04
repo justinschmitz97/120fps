@@ -7,7 +7,7 @@ import {
   LIVE_PID_HARNESS_MAX_AGE_MS,
   STALE_HARNESS_MAX_AGE_MS,
   sweepStaleHarnessDirs,
-} from "../../src/harness.js";
+} from "../../src/harness/index.js";
 
 const roots: string[] = [];
 

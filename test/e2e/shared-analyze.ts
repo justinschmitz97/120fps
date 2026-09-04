@@ -1,5 +1,5 @@
-import { analyze, type AnalyzeOptions } from "../../src/analyze.js";
-import type { Report } from "../../src/report.js";
+import { analyze, type AnalyzeOptions } from "../../src/pipeline/index.js";
+import type { Report } from "../../src/report/index.js";
 
 // A full analyze pass costs 15-120s of throttled browser work, and e2e files
 // routinely run the same one several times to assert different fields of the

@@ -3,11 +3,11 @@ import { execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
 import path from "node:path";
 import fs from "node:fs";
-import { resolveReportPaths } from "../../src/cli.js";
+import { resolveReportPaths } from "../../src/cli/index.js";
 import os from "node:os";
 
 const execFileAsync = promisify(execFile);
-const CLI_PATH = path.resolve("dist/cli.js");
+const CLI_PATH = path.resolve("dist/cli/main.js");
 
 beforeAll(() => {
   execFileSync("npx", ["tsc"], { cwd: path.resolve("."), shell: true });

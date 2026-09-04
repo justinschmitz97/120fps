@@ -2,8 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { analyze } from "../../src/analyze.js";
-import type { ServerPool } from "../../src/harness.js";
+import { analyze } from "../../src/pipeline/index.js";
+import type { ServerPool } from "../../src/harness/index.js";
 
 // M90 harden: adversarial hypotheses against the catch-path accumulation fix.
 

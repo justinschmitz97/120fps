@@ -7,7 +7,7 @@ import {
   packageStylesheetCandidates,
   resolveStylesheetImportTarget,
   stylesheetImportSpecifiers,
-} from "../../src/harness.js";
+} from "../../src/harness/index.js";
 
 let root: string;
 

@@ -10,7 +10,7 @@ import {
   NODE_BUILTIN_WARNING,
   PREFLIGHT_BYPASSED_WARNING,
   HARD_REMEDY,
-} from "../../src/preflight.js";
+} from "../../src/project/index.js";
 
 const ROOT = path.resolve("fixtures/m42-server");
 

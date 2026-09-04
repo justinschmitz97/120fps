@@ -6,9 +6,9 @@ import {
   CSS_DECLARED_UNBUILT_WARNING,
   discoverGlobalCss,
   packageStylesheetCandidates,
-} from "../../src/harness.js";
-import { buildCssReport, resolveCssFiles } from "../../src/analyze.js";
-import { formatStylesheetsLine } from "../../src/report.js";
+} from "../../src/harness/index.js";
+import { buildCssReport, resolveCssFiles } from "../../src/pipeline/index.js";
+import { formatStylesheetsLine } from "../../src/report/index.js";
 
 const FIXTURES = path.resolve(__dirname, "../../fixtures");
 const DECLARED_ABSENT = path.join(FIXTURES, "declared-absent-style");

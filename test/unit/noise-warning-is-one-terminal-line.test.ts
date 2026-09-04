@@ -1,12 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { formatTable, type Report, type Thresholds, buildTimingWithCV } from "../../src/report.js";
+import { formatTable, type Report, type Thresholds, buildTimingWithCV } from "../../src/report/index.js";
 import {
   formatNoiseWarning,
   HOSTILE_RUN_WARNING,
   NOISY_RUN_WARNING,
   HOSTILE_BASELINE_NOTE,
   type NoiseReport,
-} from "../../src/noise.js";
+} from "../../src/browser/index.js";
 
 // M117 C5, C6, C7 (dx-audit item 7): the terminal spent four sentences on a
 // machine fact, listed both signals whether or not either crossed its

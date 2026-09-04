@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { buildCurveReport, buildMatrixReport, formatTable, type CalibrationResult, type ComboReport, type MatrixAxis, type Report, type Thresholds, type TimingWithCV } from "../../src/report.js";
-import type { ReactOptimizations } from "../../src/react-profiler.js";
-import type { MountResult, RerenderResult } from "../../src/measure.js";
-import type { ExploreResult, StateGraph } from "../../src/explorer.js";
+import { buildCurveReport, buildMatrixReport, formatTable, type CalibrationResult, type ComboReport, type MatrixAxis, type Report, type Thresholds, type TimingWithCV } from "../../src/report/index.js";
+import type { ReactOptimizations } from "../../src/analysis/index.js";
+import type { MountResult, RerenderResult } from "../../src/browser/index.js";
+import type { ExploreResult, StateGraph } from "../../src/analysis/index.js";
 
 // commerce-F1: Gallery and VariantSelector auto-activate curve mode because
 // their only interesting props are arrays, and curve mode never ran the React

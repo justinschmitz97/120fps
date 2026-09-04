@@ -10,14 +10,14 @@ import {
   detectOptionsApiProps,
   type SfcScript,
   type VueSfcCompiler,
-} from "./vue-sfc.js";
+} from "../project/index.js";
 import {
   describePresetSibling,
   detectPropPresets,
   loadPropPresets,
   literalValue,
-} from "./prop-presets.js";
-import { findProjectRoot, findWorkspaceRoot, resolveGoverningTsconfig } from "./project-model.js";
+} from "./presets.js";
+import { findProjectRoot, findWorkspaceRoot, resolveGoverningTsconfig } from "../project/index.js";
 
 // M36: a fresh ts.Program per extraction re-parses lib.d.ts and the project's
 // node_modules type graph every time. Between calls only the component file

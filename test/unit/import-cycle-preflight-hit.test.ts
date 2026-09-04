@@ -4,13 +4,13 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { Page } from "playwright";
-import { runPreflight, IMPORT_CYCLE_WARNING, NODE_BUILTIN_WARNING } from "../../src/preflight.js";
+import { runPreflight, IMPORT_CYCLE_WARNING, NODE_BUILTIN_WARNING } from "../../src/project/index.js";
 import {
   attachPageErrorCapture,
   enrichTimeoutError,
   setImportCycleReported,
   tdzCycleNote,
-} from "../../src/page-errors.js";
+} from "../../src/browser/index.js";
 
 const roots: string[] = [];
 afterAll(() => {

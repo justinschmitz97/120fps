@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import path from "node:path";
-import { extractProps } from "../../src/prop-gen.js";
+import { extractProps } from "../../src/props/index.js";
 
 const REACT = path.resolve(__dirname, "../../fixtures/own-props-rank");
 const VUE = path.resolve(__dirname, "../../fixtures/vue-dual-block");

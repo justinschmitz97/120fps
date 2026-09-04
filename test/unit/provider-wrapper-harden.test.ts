@@ -2,9 +2,9 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { buildAndServe, detectWrapper, generateEntry } from "../../src/harness.js";
-import { resolveWrapPath } from "../../src/analyze.js";
-import { parseArgs } from "../../src/cli.js";
+import { buildAndServe, detectWrapper, generateEntry } from "../../src/harness/index.js";
+import { resolveWrapPath } from "../../src/pipeline/index.js";
+import { parseArgs } from "../../src/cli/index.js";
 
 let tmpDir: string;
 

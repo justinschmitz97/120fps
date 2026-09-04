@@ -8,8 +8,8 @@ import {
   loadTsconfigAliases,
   detectComponentExport,
   sweepStaleHarnessDirs,
-} from "../../src/harness.js";
-import { extractProps, extractExports } from "../../src/prop-gen.js";
+} from "../../src/harness/index.js";
+import { extractProps, extractExports } from "../../src/props/index.js";
 
 const cleanupDirs: string[] = [];
 

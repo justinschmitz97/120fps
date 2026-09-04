@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { buildAndServe } from "../../src/harness.js";
-import { measureMount } from "../../src/measure.js";
-import { attributeCost } from "../../src/metrics.js";
+import { buildAndServe } from "../../src/harness/index.js";
+import { measureMount } from "../../src/browser/index.js";
+import { attributeCost } from "../../src/analysis/index.js";
 
 describe("attribution window", () => {
   it("reports one mount's scripting, bounded by the mount it describes", async () => {

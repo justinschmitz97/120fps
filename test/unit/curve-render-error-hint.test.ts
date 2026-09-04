@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
-import { hintsForReport } from "../../src/hints.js";
-import type { Report } from "../../src/report.js";
+import { hintsForReport } from "../../src/report/index.js";
+import type { Report } from "../../src/report/index.js";
 
 const src = (name: string): string => fs.readFileSync(path.resolve("src", name), "utf-8");
 
@@ -110,7 +110,7 @@ describe("M79 gap: hintsForReport reads renderErrorPoints structurally (no warni
 // section), so the population site is pinned by source content instead.
 describe("M79 gap: runCurveMode populates renderErrorPoints", () => {
   it("sets curveReport.renderErrorPoints at the same point CURVE_RENDER_ERROR_WARNING is pushed", () => {
-    const analyzeSrc = src("analyze.ts");
+    const analyzeSrc = src("pipeline/analyze.ts");
     const fn = analyzeSrc.slice(
       analyzeSrc.indexOf("async function runCurveMode("),
       analyzeSrc.indexOf("const curveVerdict = computeCurveVerdict("),

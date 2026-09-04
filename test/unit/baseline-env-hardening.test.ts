@@ -15,9 +15,9 @@ import {
   type BaselineEntry,
   type ResolvedTolerance,
   selectBaselineEntry,
-} from "../../src/budget.js";
-import { formatTable, buildTimingWithCV, type EnvFingerprint, type Report, type Thresholds } from "../../src/report.js";
-import { parseArgs } from "../../src/cli.js";
+} from "../../src/report/index.js";
+import { formatTable, buildTimingWithCV, type EnvFingerprint, type Report, type Thresholds } from "../../src/report/index.js";
+import { parseArgs } from "../../src/cli/index.js";
 
 // M45: entries are keyed by component x environment slot; selectBaselineEntry
 // resolves the slot for us so these assertions stay about the entry, not the key.

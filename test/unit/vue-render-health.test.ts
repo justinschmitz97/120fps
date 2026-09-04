@@ -1,12 +1,12 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import path from "node:path";
-import { generateEntry } from "../../src/harness.js";
+import { generateEntry } from "../../src/harness/index.js";
 import {
   loadVueCompiler,
   resetVueCompilerCache,
   templateHasUnconditionalRoot,
   type VueSfcCompiler,
-} from "../../src/vue-sfc.js";
+} from "../../src/project/index.js";
 
 const VUE_ROOT = path.resolve("fixtures/vue-project");
 

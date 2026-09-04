@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { buildMatrixReport, formatTable, type ComboReport, type MatrixAxis, type Report, type TimingWithCV } from "../../src/report.js";
-import { generatePropMatrix, selectMatrixCombos, isMatrixEligible, matrixValues } from "../../src/prop-gen-values.js";
-import type { PropSchema } from "../../src/prop-gen.js";
+import { buildMatrixReport, formatTable, type ComboReport, type MatrixAxis, type Report, type TimingWithCV } from "../../src/report/index.js";
+import { generatePropMatrix, selectMatrixCombos, isMatrixEligible, matrixValues } from "../../src/props/index.js";
+import type { PropSchema } from "../../src/props/index.js";
 
 // twenty-F3: `Modal.tsx --matrix --max-combos 2` printed
 // `Prop Matrix (isOpen × …)` over two cells that both carried `isOpen: false`

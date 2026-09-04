@@ -2,8 +2,8 @@ import { describe, it, expect } from "vitest";
 import {
   classifyTier,
   DEFAULT_THRESHOLDS,
-} from "../../src/report.js";
-import { buildReport, type BuildReportInput } from "../../src/analyze.js";
+} from "../../src/report/index.js";
+import { buildReport, type BuildReportInput } from "../../src/pipeline/index.js";
 
 // --- helpers ---
 

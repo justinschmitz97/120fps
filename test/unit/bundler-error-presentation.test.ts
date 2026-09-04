@@ -8,14 +8,14 @@ import {
   stylesheetReadFailureTarget,
   CSS_UNREADABLE_DROPPED_WARNING,
   type ServerPool,
-} from "../../src/harness.js";
+} from "../../src/harness/index.js";
 import {
   resolveFatalProcessError,
   resetFatalProcessErrorGuard,
   setCurrentRunProjectRoot,
   pushCurrentRunWarning,
   resetCurrentRunWarnings,
-} from "../../src/cli.js";
+} from "../../src/cli/index.js";
 
 // M94: shadcn-ui's two live repro shapes -- a raw PostCSS ENOENT and a raw
 // Vite "Failed to resolve import" -- each with ten/eight frames of bundler
@@ -310,7 +310,7 @@ describe("CSS_UNREADABLE_DROPPED_WARNING (M89 defect 3)", () => {
 // pure-function tests above assume it is.
 describe("M89 defect 3: analyze.ts wiring (source-level check)", () => {
   it("wraps the first enterHarnessPage() call, degrades only on stylesheetReadFailureTarget, and rebuilds with no cssFiles", () => {
-    const src = fs.readFileSync(path.resolve("src", "analyze.ts"), "utf-8");
+    const src = fs.readFileSync(path.resolve("src", "pipeline/analyze.ts"), "utf-8");
     const start = src.indexOf("try {\n      await enterHarnessPage();");
     expect(start).toBeGreaterThan(-1);
     const block = src.slice(start, src.indexOf("\n    }\n\n    // A structurally inferred tree", start));
@@ -331,7 +331,7 @@ describe("M89 defect 3: analyze.ts wiring (source-level check)", () => {
 // exercising this live needs a real browser run.
 describe("Item A: warnings-accumulator wiring (source-level check)", () => {
   it("analyze.ts reports the Stylesheets: decision line and every new runWarnings entry through options.onWarning", () => {
-    const src = fs.readFileSync(path.resolve("src", "analyze.ts"), "utf-8");
+    const src = fs.readFileSync(path.resolve("src", "pipeline/analyze.ts"), "utf-8");
     expect(src).toContain("const cssDecisionWarning = formatStylesheetsLine(cssReport);");
     expect(src).toContain("options.onWarning?.(cssDecisionWarning);");
     const onWarningStart = src.indexOf("const onWarning = (warning: string): void => {");
@@ -341,7 +341,7 @@ describe("Item A: warnings-accumulator wiring (source-level check)", () => {
   });
 
   it("cli.ts's runOne passes pushCurrentRunWarning as analyze()'s onWarning option", () => {
-    const src = fs.readFileSync(path.resolve("src", "cli.ts"), "utf-8");
+    const src = fs.readFileSync(path.resolve("src", "cli/main.ts"), "utf-8");
     const start = src.indexOf("async function runOne(");
     expect(start).toBeGreaterThan(-1);
     const block = src.slice(start, src.indexOf("\n}\n", start));

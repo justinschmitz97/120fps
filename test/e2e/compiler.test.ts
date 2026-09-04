@@ -8,8 +8,8 @@ import {
   reactCompilerResolutionWarning,
   REACT_COMPILER_DISABLED_WARNING,
   type HarnessResult,
-} from "../../src/harness.js";
-import { generateProbeEntry, hasReactWarning } from "../../src/react-profiler.js";
+} from "../../src/harness/index.js";
+import { generateProbeEntry, hasReactWarning } from "../../src/analysis/index.js";
 import { sharedAnalyze as analyze } from "./shared-analyze.js";
 import { chromium, type Browser, type Page } from "playwright";
 

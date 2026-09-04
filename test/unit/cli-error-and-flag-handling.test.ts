@@ -12,8 +12,8 @@ import {
   MIN_NODE_MAJOR,
   resolveFatalProcessError,
   resetFatalProcessErrorGuard,
-} from "../../src/cli.js";
-import { resolveWrapPath, resolveCssFiles } from "../../src/analyze.js";
+} from "../../src/cli/index.js";
+import { resolveWrapPath, resolveCssFiles } from "../../src/pipeline/index.js";
 
 describe("D3: resolveIsolationOption", () => {
   it("returns isolation options when --isolate is set and --no-isolate is not", () => {

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { armExitWatchdog, closePoolsBounded } from "../../src/cli.js";
-import { closeServerBounded } from "../../src/harness.js";
+import { armExitWatchdog, closePoolsBounded } from "../../src/cli/index.js";
+import { closeServerBounded } from "../../src/harness/index.js";
 
 // M88: the taxonomy hang -- a fatal error printed, then the process stayed
 // alive until an external timeout killed it. Pool/server teardown that never

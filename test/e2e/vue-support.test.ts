@@ -1,10 +1,10 @@
 import { describe, it, expect, afterAll } from "vitest";
 import path from "node:path";
 import { chromium, type Browser, type Page } from "playwright";
-import { buildAndServe, type HarnessResult } from "../../src/harness.js";
-import { attachPageErrorCapture } from "../../src/page-errors.js";
-import { applyWrapperViewport, measureMount, measureRerender } from "../../src/measure.js";
-import { explore } from "../../src/explorer.js";
+import { buildAndServe, type HarnessResult } from "../../src/harness/index.js";
+import { attachPageErrorCapture } from "../../src/browser/index.js";
+import { applyWrapperViewport, measureMount, measureRerender } from "../../src/browser/index.js";
+import { explore } from "../../src/analysis/index.js";
 import { sharedAnalyze as analyze } from "./shared-analyze.js";
 
 const VUE = path.resolve("fixtures/vue-project");

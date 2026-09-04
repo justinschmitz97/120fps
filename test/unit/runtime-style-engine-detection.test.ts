@@ -6,7 +6,7 @@ import {
   RUNTIME_STYLE_ENGINES,
   detectRuntimeStyleEngines,
   discoverGlobalCss,
-} from "../../src/harness.js";
+} from "../../src/harness/index.js";
 
 let tmpDir: string;
 

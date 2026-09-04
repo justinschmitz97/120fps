@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { sharedAnalyze as analyze } from "./shared-analyze.js";
-import { COMPOSITION_EMPTY_WARNING } from "../../src/composition.js";
+import { COMPOSITION_EMPTY_WARNING } from "../../src/props/index.js";
 
 // F3: the fixture's parts throw outside their required parent, so whatever
 // tree the taxonomy infers mounts to an empty root. The run must fall back to

@@ -9,8 +9,8 @@ import {
   resolveStyleTooling,
   resolveTailwind3Config,
   writeAnchoredTailwind3Config,
-} from "../../src/harness.js";
-import { resolveGoverningTsconfig } from "../../src/project-model.js";
+} from "../../src/harness/index.js";
+import { resolveGoverningTsconfig } from "../../src/project/index.js";
 
 const FIXTURE_ROOT = path.resolve(__dirname, "..", "..", "fixtures", "tailwind3-monorepo");
 const FIXTURE_MEMBER = path.join(FIXTURE_ROOT, "packages", "ui");

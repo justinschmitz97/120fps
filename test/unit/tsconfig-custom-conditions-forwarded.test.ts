@@ -4,7 +4,7 @@ import {
   collectStaticPreBuildWarnings,
   harnessServerCompileOptions,
   resolveServerConditions,
-} from "../../src/harness.js";
+} from "../../src/harness/index.js";
 
 const REFERENCES = path.resolve("fixtures/tsconfig-shapes/project-references");
 const BUTTON = path.join(REFERENCES, "src", "components", "Button.tsx");

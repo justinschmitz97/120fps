@@ -2,8 +2,8 @@ import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { classifyMeasuredState, MEASURED_STATE_HOLD_MS } from "../../src/measure.js";
-import { buildReport, MEASURED_STATE_WARNING, type BuildReportInput } from "../../src/analyze.js";
+import { classifyMeasuredState, MEASURED_STATE_HOLD_MS } from "../../src/browser/index.js";
+import { buildReport, MEASURED_STATE_WARNING, type BuildReportInput } from "../../src/pipeline/index.js";
 import {
   compareBaseline,
   saveBaseline,
@@ -11,8 +11,8 @@ import {
   type BaselineEntry,
   type ResolvedTolerance,
   selectBaselineEntry,
-} from "../../src/budget.js";
-import { DEFAULT_THRESHOLDS } from "../../src/report.js";
+} from "../../src/report/index.js";
+import { DEFAULT_THRESHOLDS } from "../../src/report/index.js";
 
 const baseMachine = {
   cpu: "Test", cores: 4, ramMb: 16384,

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import path from "node:path";
-import { explainProps, formatExplainProps } from "../../src/analyze.js";
+import { explainProps, formatExplainProps } from "../../src/pipeline/index.js";
 
 // calcom-F2: extraction has carried `defaultValue`/`defaultSource` since I8 --
 // calcom Button declares six of them inside the measured 32 -- and

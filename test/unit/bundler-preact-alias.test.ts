@@ -7,8 +7,8 @@ import {
   detectBundlerReactDomAlias,
   BUNDLER_PREACT_ALIAS_WARNING,
   type HarnessResult,
-} from "../../src/harness.js";
-import { resolveReactDomIdentity, REACT_DOM_NOT_REACT_WARNING, runReactAnalysis } from "../../src/react-profiler.js";
+} from "../../src/harness/index.js";
+import { resolveReactDomIdentity, REACT_DOM_NOT_REACT_WARNING, runReactAnalysis } from "../../src/analysis/index.js";
 
 // M78 (preact-app-F3): two bundler shapes, two mechanisms.
 //   (a) Vite's resolve.alias is a filesystem-literal-path alias that

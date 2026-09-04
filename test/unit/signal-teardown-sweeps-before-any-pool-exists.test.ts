@@ -2,7 +2,7 @@ import { describe, it, expect, afterAll } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { abortRun } from "../../src/cli.js";
+import { abortRun } from "../../src/cli/index.js";
 import {
   beginHarnessDirTeardown,
   createHarnessDir,
@@ -12,7 +12,7 @@ import {
   HARNESS_PID_FILE,
   removeActiveHarnessDirs,
   sweepActiveHarnessDirsOnExit,
-} from "../../src/harness.js";
+} from "../../src/harness/index.js";
 
 const roots: string[] = [];
 

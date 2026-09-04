@@ -6,7 +6,7 @@ import {
   scanExternalDeps,
   TYPE_ONLY_PACKAGE_WARNING,
   UNBUILT_WORKSPACE_PACKAGE_NO_SOURCE_WARNING,
-} from "../../src/harness.js";
+} from "../../src/harness/index.js";
 
 let tmpDir: string;
 

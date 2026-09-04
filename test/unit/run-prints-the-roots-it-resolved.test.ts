@@ -2,8 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { formatResolvedRoots, resolveProjectModel } from "../../src/project-model.js";
-import { resolvedRootsLine, resolvedRootsOutput } from "../../src/cli.js";
+import { formatResolvedRoots, resolveProjectModel } from "../../src/project/index.js";
+import { resolvedRootsLine, resolvedRootsOutput } from "../../src/cli/index.js";
 
 const FIXTURE_ROOT = path.resolve(__dirname, "..", "..", "fixtures", "tailwind3-monorepo");
 const FIXTURE_MEMBER = path.join(FIXTURE_ROOT, "packages", "ui");

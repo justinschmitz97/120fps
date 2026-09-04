@@ -5,7 +5,7 @@ import {
   createRetryBudget,
   CONTEXT_RETRY_WARNING,
   DEFAULT_RETRY_BUDGET,
-} from "../../src/measure.js";
+} from "../../src/browser/index.js";
 
 describe("a dev-server reload does not kill a run", () => {
   it("recognizes a destroyed execution context", () => {

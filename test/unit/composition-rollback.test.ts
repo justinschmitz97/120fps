@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { shouldRollbackComposition, COMPOSITION_EMPTY_WARNING } from "../../src/composition.js";
+import { shouldRollbackComposition, COMPOSITION_EMPTY_WARNING } from "../../src/props/index.js";
 
 describe("a composed scene that renders nothing is rolled back", () => {
   it("rolls back when the scene renders no elements", () => {

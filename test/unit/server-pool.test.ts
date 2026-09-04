@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { createServerPool, SWEEP_DEP_WARNING } from "../../src/harness.js";
+import { createServerPool, SWEEP_DEP_WARNING } from "../../src/harness/index.js";
 
 interface FakeServer {
   closed: boolean;

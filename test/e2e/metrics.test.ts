@@ -1,12 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { buildAndServe } from "../../src/harness.js";
+import { buildAndServe } from "../../src/harness/index.js";
 import { chromium } from "playwright";
 import {
   collectTrace,
   parseTraceDuration,
   type TraceEvent,
-} from "../../src/measure.js";
-import { parseMetrics, createCalibrationTrace } from "../../src/metrics.js";
+} from "../../src/browser/index.js";
+import { parseMetrics, createCalibrationTrace } from "../../src/analysis/index.js";
 
 describe("H15: calibration DOM cleanup", () => {
   it("removes calibration element after measurement", async () => {

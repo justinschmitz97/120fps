@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { detectScalingProps, type ScalingPropMatch } from "../../src/prop-gen.js";
-import { generateScalingCombos } from "../../src/prop-gen-values.js";
-import type { PropSchema } from "../../src/prop-gen.js";
+import { detectScalingProps, type ScalingPropMatch } from "../../src/props/index.js";
+import { generateScalingCombos } from "../../src/props/index.js";
+import type { PropSchema } from "../../src/props/index.js";
 
 describe("detectScalingProps", () => {
   it("detects array prop with items-like name", () => {

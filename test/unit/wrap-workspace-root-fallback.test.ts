@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { resolveWrapPath, WRAPPER_FROM_WORKSPACE_ROOT_WARNING } from "../../src/analyze.js";
+import { resolveWrapPath, WRAPPER_FROM_WORKSPACE_ROOT_WARNING } from "../../src/pipeline/index.js";
 
 let root: string;
 let member: string;

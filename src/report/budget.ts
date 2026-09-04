@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { findWorkspaceRoot } from "./project-model.js";
+import { findWorkspaceRoot } from "../project/index.js";
 import {
   TIER_BUDGETS,
   type CalibrationResult,

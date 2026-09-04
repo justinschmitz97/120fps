@@ -1,14 +1,14 @@
 import path from "node:path";
 import { chromium, type Browser, type CDPSession, type Page } from "playwright";
-import type { HarnessResult } from "./harness.js";
-import type { PropCombination } from "./prop-gen-values.js";
-import { extractProps } from "./prop-gen.js";
-import { generateCombinations, selectRepresentativeCombos } from "./prop-gen-values.js";
+import type { HarnessResult } from "../harness/index.js";
+import type { PropCombination } from "../props/index.js";
+import { extractProps } from "../props/index.js";
+import { generateCombinations, selectRepresentativeCombos } from "../props/index.js";
 import {
   discoverInteractions,
   type InteractionDescriptor,
   type DiscoverOptions,
-} from "./discovery.js";
+} from "../browser/index.js";
 import {
   resolveStressPattern,
   executeStressPattern,
@@ -35,18 +35,18 @@ import {
   type RetryBudget,
   HARNESS_NAV_WAIT,
   type TraceEvent,
-} from "./measure.js";
+} from "../browser/index.js";
 import {
   attachPageErrorCapture,
   enrichTimeoutError,
   gotoWithErrorContext,
-} from "./page-errors.js";
+} from "../browser/index.js";
 import {
   installObservers,
   beginObservedWindow,
   readObservedWindow,
   observedInteractionMs,
-} from "./observers.js";
+} from "../browser/index.js";
 
 // --- Types ---
 
@@ -102,7 +102,7 @@ export interface ExploreOptions {
   maxCombos?: number;
   // M37: reuse the pooled vsync browser (fresh context per pass). Explore
   // always paces at vsync: its metrics depend on real frame scheduling.
-  pool?: import("./measure.js").BrowserPool;
+  pool?: import("../browser/index.js").BrowserPool;
   onWarning?: (warning: string) => void;
   // M52: time interactions with in-page observers instead of a per-sample CDP
   // trace. Opt-in until the A/B acceptance in the milestone spec is met.

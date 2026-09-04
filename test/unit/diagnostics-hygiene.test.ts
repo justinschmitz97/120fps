@@ -11,12 +11,12 @@ import {
   TMP_SWEEP_MAX_REMOVALS,
   createServerPool,
   type ServerPool,
-} from "../../src/harness.js";
+} from "../../src/harness/index.js";
 import {
   withContextRetry,
   createRetryBudget,
   RETRY_BUDGET_EXHAUSTED_NOTE,
-} from "../../src/measure.js";
+} from "../../src/browser/index.js";
 import { withProductionResolution } from "../node-resolution.js";
 
 const pkgJson = JSON.parse(

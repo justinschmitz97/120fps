@@ -1,15 +1,15 @@
 import path from "node:path";
-import { isVueFile } from "./vue-sfc.js";
-import type { InteractionType } from "./discovery.js";
+import { isVueFile } from "../project/index.js";
+import type { InteractionType } from "../browser/index.js";
 import {
   computeScalingCurve,
   attributeCost,
   isSuperlinearGrowth,
   type ScalingCurve,
   type CostAttribution,
-} from "./metrics.js";
-import type { ReactOptimizations } from "./react-profiler.js";
-import { computeMedian, computeP95, type MeasuredState } from "./measure.js";
+} from "../analysis/index.js";
+import type { ReactOptimizations } from "../analysis/index.js";
+import { computeMedian, computeP95, type MeasuredState } from "../browser/index.js";
 import {
   HOSTILE_CV_PERCENT,
   HOSTILE_RUN_WARNING,
@@ -18,12 +18,12 @@ import {
   NOISY_RUN_WARNING,
   NOISY_UNSTABLE_FRACTION,
   type NoiseReport,
-} from "./noise.js";
+} from "../browser/index.js";
 import { hintsForReport, formatHints, MEASUREMENT_BASIS_LINE, type HintId } from "./hints.js";
 // M104: the same value identity the matrix generator itself uses, so "how many
 // distinct values did this axis take" is counted the way the cells were built.
-import { comboKey } from "./prop-gen-values.js";
-import { hasPageErrors, renderDrain } from "./page-errors.js";
+import { comboKey } from "../props/index.js";
+import { hasPageErrors, renderDrain } from "../browser/index.js";
 
 export type { MeasuredState };
 
@@ -538,12 +538,12 @@ export interface Report {
   autoScalingReason?: string;
   tieredBudgets?: boolean;
   autoComposition?: boolean;
-  compositionTree?: import("./composition.js").CompositionTree;
+  compositionTree?: import("../props/index.js").CompositionTree;
   nextJsShims?: string[];
   scalingCurveReport?: ScalingCurveReport;
   matrixReport?: MatrixReport;
   baseline?: BaselineComparison;
-  isolation?: import("./isolation.js").IsolationReport;
+  isolation?: import("../analysis/index.js").IsolationReport;
   wrapper?: WrapperReport;
   // M44: the preset module that supplied prop values, and which props it fed.
   propPresets?: { path: string; props: string[] };
@@ -1720,9 +1720,9 @@ export interface BuildCurveReportInput {
   propKind: "array" | "number";
   reason: string;
   scalePoints: number[];
-  mounts: import("./measure.js").MountResult[];
-  rerenders: import("./measure.js").RerenderResult[];
-  explores: import("./explorer.js").ExploreResult[];
+  mounts: import("../browser/index.js").MountResult[];
+  rerenders: import("../browser/index.js").RerenderResult[];
+  explores: import("../analysis/index.js").ExploreResult[];
   heapDeltas: number[];
   calibration: CalibrationResult;
   thresholds: Thresholds;

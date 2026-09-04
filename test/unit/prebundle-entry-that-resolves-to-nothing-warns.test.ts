@@ -4,7 +4,7 @@ import {
   collectStaticPreBuildWarnings,
   scanExternalDeps,
   UNRESOLVED_PREBUNDLE_ENTRY_WARNING,
-} from "../../src/harness.js";
+} from "../../src/harness/index.js";
 
 // epic-stack-F2: `#app/root` in a package whose manifest declares no `imports`
 // map resolves to no file, no package and no alias. The scan used to walk past

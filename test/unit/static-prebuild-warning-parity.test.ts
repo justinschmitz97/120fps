@@ -2,8 +2,8 @@ import { describe, it, expect, afterEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { explainProps, resolveWrapPath } from "../../src/analyze.js";
-import { collectStaticPreBuildWarnings } from "../../src/harness.js";
+import { explainProps, resolveWrapPath } from "../../src/pipeline/index.js";
+import { collectStaticPreBuildWarnings } from "../../src/harness/index.js";
 
 // V6's whole finding in one assertion: every warning the real run's pre-build
 // half produces is decidable from the filesystem, and the dry run used to

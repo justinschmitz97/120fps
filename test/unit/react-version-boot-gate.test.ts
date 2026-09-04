@@ -2,8 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { assertReactDomClient, REACT_DOM_CLIENT_MISSING } from "../../src/harness.js";
-import { HARD_REMEDY } from "../../src/preflight.js";
+import { assertReactDomClient, REACT_DOM_CLIENT_MISSING } from "../../src/harness/index.js";
+import { HARD_REMEDY } from "../../src/project/index.js";
 import { withProductionResolution } from "../node-resolution.js";
 
 let tmpDir: string;

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseArgs } from "../../src/cli.js";
+import { parseArgs } from "../../src/cli/index.js";
 import {
   computeVerdict,
   buildTimingWithCV,
@@ -8,10 +8,10 @@ import {
   type ComboReport,
   type Report,
   type Thresholds,
-} from "../../src/report.js";
-import { buildReport, hasScaleExport, type BuildReportInput } from "../../src/analyze.js";
-import type { MountResult } from "../../src/measure.js";
-import type { ExploreResult, StateGraph } from "../../src/explorer.js";
+} from "../../src/report/index.js";
+import { buildReport, hasScaleExport, type BuildReportInput } from "../../src/pipeline/index.js";
+import type { MountResult } from "../../src/browser/index.js";
+import type { ExploreResult, StateGraph } from "../../src/analysis/index.js";
 
 // --- Helpers ---
 

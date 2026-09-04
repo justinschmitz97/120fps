@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import path from "node:path";
-import { extractProps } from "../../src/prop-gen.js";
-import type { PropSchema } from "../../src/prop-gen.js";
+import { extractProps } from "../../src/props/index.js";
+import type { PropSchema } from "../../src/props/index.js";
 
 const M81 = path.resolve("./fixtures/m81");
 const fixture = (name: string): string => path.join(M81, name);

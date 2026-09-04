@@ -7,8 +7,8 @@ import {
   matrixAxesFor,
   isMatrixEligible,
   pairwiseCover,
-} from "../../src/prop-gen-values.js";
-import type { PropSchema } from "../../src/prop-gen.js";
+} from "../../src/props/index.js";
+import type { PropSchema } from "../../src/props/index.js";
 
 function schema(partial: Partial<PropSchema> & { name: string }): PropSchema {
   return { kind: "boolean", required: false, values: [true, false], ...partial };

@@ -8,7 +8,7 @@ import {
   needsGitignoreAdvisory,
   formatGitignoreTip,
   GITIGNORE_SUGGESTED_PATTERNS,
-} from "../../src/cli.js";
+} from "../../src/cli/index.js";
 
 // M74 (E5): the tool writes 120fps-report*.json and 120fps-baseline.json into
 // the user's repo with no gitignore awareness. This is a hint, never a file

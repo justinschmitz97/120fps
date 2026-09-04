@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { parseEnvFile, readEnvDefines } from "../../src/harness.js";
+import { parseEnvFile, readEnvDefines } from "../../src/harness/index.js";
 
 let tmpDir: string;
 

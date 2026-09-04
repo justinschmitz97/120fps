@@ -5,7 +5,7 @@ import {
   attachPageErrorCapture,
   gotoWithErrorContext,
   waitForReadyOrFatal,
-} from "../../src/page-errors.js";
+} from "../../src/browser/index.js";
 
 // documenso-F1: a Babel macro throws during module evaluation, before
 // `waitForReadyOrFatal` registers its waiter. The throw was dropped, the run

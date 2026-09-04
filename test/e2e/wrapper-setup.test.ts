@@ -1,11 +1,11 @@
 import { describe, it, expect, afterAll } from "vitest";
 import path from "node:path";
 import { chromium, type Browser } from "playwright";
-import { buildAndServe } from "../../src/harness.js";
-import { analyze } from "../../src/analyze.js";
-import type { AnalyzeOptions } from "../../src/analyze.js";
-import { attachPageErrorCapture } from "../../src/page-errors.js";
-import { runWrapperTeardown } from "../../src/measure.js";
+import { buildAndServe } from "../../src/harness/index.js";
+import { analyze } from "../../src/pipeline/index.js";
+import type { AnalyzeOptions } from "../../src/pipeline/index.js";
+import { attachPageErrorCapture } from "../../src/browser/index.js";
+import { runWrapperTeardown } from "../../src/browser/index.js";
 
 let browser: Browser | undefined;
 

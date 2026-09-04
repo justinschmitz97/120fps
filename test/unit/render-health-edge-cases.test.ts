@@ -5,11 +5,11 @@ import {
   enrichPhaseError,
   mergeDrains,
   renderDrain,
-} from "../../src/page-errors.js";
-import { isContextLostError } from "../../src/measure.js";
-import { buildReport, type BuildReportInput } from "../../src/analyze.js";
-import type { MountResult, RerenderResult } from "../../src/measure.js";
-import type { ExploreResult, StateGraph } from "../../src/explorer.js";
+} from "../../src/browser/index.js";
+import { isContextLostError } from "../../src/browser/index.js";
+import { buildReport, type BuildReportInput } from "../../src/pipeline/index.js";
+import type { MountResult, RerenderResult } from "../../src/browser/index.js";
+import type { ExploreResult, StateGraph } from "../../src/analysis/index.js";
 import {
   formatTable,
   computeVerdict,
@@ -18,8 +18,8 @@ import {
   type MatrixReport,
   type Report,
   type Thresholds,
-} from "../../src/report.js";
-import { formatJUnit } from "../../src/ci-report.js";
+} from "../../src/report/index.js";
+import { formatJUnit } from "../../src/report/index.js";
 
 type Handler = (payload: any) => void;
 

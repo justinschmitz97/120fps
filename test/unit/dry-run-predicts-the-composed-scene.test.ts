@@ -4,8 +4,8 @@ import {
   explainProps,
   formatExplainProps,
   MATRIX_SUPPRESSED_BY_COMPOSITION_WARNING,
-} from "../../src/analyze.js";
-import { CURVE_NOT_ACTIVATED_WARNING } from "../../src/report.js";
+} from "../../src/pipeline/index.js";
+import { CURVE_NOT_ACTIVATED_WARNING } from "../../src/report/index.js";
 
 // supabase-F3, calcom-R1: the dry run hard-coded `composed = false` and
 // promised a matrix over components the dispatcher auto-composes. Composition

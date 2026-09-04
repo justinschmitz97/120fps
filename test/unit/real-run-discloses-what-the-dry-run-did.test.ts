@@ -6,11 +6,11 @@ import {
   ALTERNATIVE_EXPORT_WITHOUT_DEGENERATE_PROPS_NOTE,
   NO_PROPS_MEASURED_WARNING,
   type BuildReportInput,
-} from "../../src/analyze.js";
-import { extractProps } from "../../src/prop-gen.js";
-import { formatTable, type CalibrationResult, type Report, type Thresholds } from "../../src/report.js";
-import type { MountResult } from "../../src/measure.js";
-import type { ExploreResult, StateGraph } from "../../src/explorer.js";
+} from "../../src/pipeline/index.js";
+import { extractProps } from "../../src/props/index.js";
+import { formatTable, type CalibrationResult, type Report, type Thresholds } from "../../src/report/index.js";
+import type { MountResult } from "../../src/browser/index.js";
+import type { ExploreResult, StateGraph } from "../../src/analysis/index.js";
 
 // chakra-ui-F4: --explain-props printed the one actionable sentence for a
 // Select whose resolved export takes a class instance ("Target it with

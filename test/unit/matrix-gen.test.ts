@@ -4,8 +4,8 @@ import {
   matrixValues,
   shouldAutoActivateMatrix,
   generatePropMatrix,
-} from "../../src/prop-gen-values.js";
-import type { PropSchema } from "../../src/prop-gen.js";
+} from "../../src/props/index.js";
+import type { PropSchema } from "../../src/props/index.js";
 
 function makeSchema(overrides: Partial<PropSchema> & { name: string; kind: PropSchema["kind"] }): PropSchema {
   return { required: true, values: [], ...overrides };

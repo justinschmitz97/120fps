@@ -12,7 +12,7 @@ import {
   RETRY_BUDGET_EXHAUSTED_NOTE,
   TRACING_BUDGET_EXHAUSTED_NOTE,
   TARGET_CLOSED_BUDGET_EXHAUSTED_NOTE,
-} from "../../src/measure.js";
+} from "../../src/browser/index.js";
 
 type Handler = (payload: unknown) => void;
 

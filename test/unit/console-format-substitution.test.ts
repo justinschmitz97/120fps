@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { EventEmitter } from "node:events";
 import type { Page } from "playwright";
-import { attachPageErrorCapture, substituteConsoleFormat } from "../../src/page-errors.js";
+import { attachPageErrorCapture, substituteConsoleFormat } from "../../src/browser/index.js";
 
 function makeFakePage(): { page: Page; emitter: EventEmitter } {
   const emitter = new EventEmitter();

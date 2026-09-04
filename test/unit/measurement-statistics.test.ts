@@ -1,14 +1,14 @@
 import { describe, it, expect } from "vitest";
-import { computeP95, computeMedian, warmupsForPosition } from "../../src/measure.js";
-import { computeCV, buildTimingWithCV } from "../../src/report.js";
-import { computeScalingCurve } from "../../src/metrics.js";
+import { computeP95, computeMedian, warmupsForPosition } from "../../src/browser/index.js";
+import { computeCV, buildTimingWithCV } from "../../src/report/index.js";
+import { computeScalingCurve } from "../../src/analysis/index.js";
 import {
   computeChurnDegradation,
   churnParitySeries,
   buildRerenderIsolation,
-} from "../../src/isolation.js";
-import { computeEffectiveSamples, EFFECTIVE_SAMPLES_WARNING } from "../../src/analyze.js";
-import { buildEnvFingerprint, classifyEnv } from "../../src/budget.js";
+} from "../../src/analysis/index.js";
+import { computeEffectiveSamples, EFFECTIVE_SAMPLES_WARNING } from "../../src/pipeline/index.js";
+import { buildEnvFingerprint, classifyEnv } from "../../src/report/index.js";
 
 // Type-7 (R/numpy default) reference values, computed independently:
 // h = (n-1)*0.95, value = x[floor(h)] + (h-floor(h)) * (x[ceil(h)] - x[floor(h)]).

@@ -1,10 +1,10 @@
 import type { CDPSession, Page } from "playwright";
-import type { HarnessResult } from "./harness.js";
-import type { PropCombination } from "./prop-gen-values.js";
-import type { BaselineMetrics } from "./budget.js";
-import { buildTimingWithCV, type ComponentTier, type TimingWithCV } from "./report.js";
-import type { NoiseLevel } from "./noise.js";
-import { isVueFile } from "./vue-sfc.js";
+import type { HarnessResult } from "../harness/index.js";
+import type { PropCombination } from "../props/index.js";
+import type { BaselineMetrics } from "../report/index.js";
+import { buildTimingWithCV, type ComponentTier, type TimingWithCV } from "../report/index.js";
+import type { NoiseLevel } from "../browser/index.js";
+import { isVueFile } from "../project/index.js";
 import {
   measureMount,
   measureRerender,
@@ -16,7 +16,7 @@ import {
   type BrowserPool,
   type HarnessSessionOptions,
   type MeasurementPacing,
-} from "./measure.js";
+} from "../browser/index.js";
 
 export type IsolationPhase = "mount" | "rerender" | "unmount" | "memory" | "strictmode";
 

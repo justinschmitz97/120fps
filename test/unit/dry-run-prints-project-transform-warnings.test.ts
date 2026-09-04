@@ -2,12 +2,12 @@ import { describe, it, expect, afterEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { explainProps } from "../../src/analyze.js";
+import { explainProps } from "../../src/pipeline/index.js";
 import {
   runPreflight,
   classifyProjectTransformHits,
   PROJECT_TRANSFORM_WARNING,
-} from "../../src/preflight.js";
+} from "../../src/project/index.js";
 
 // logto-F3: `runPreflight` returns `transforms` on both paths, and only the
 // real run read it -- the dry run stayed silent about the 13
@@ -104,7 +104,7 @@ describe("the transform decisions a dry run makes from the same files the real r
 // is pinned here is that it reads the shared classifier and forwards
 // --no-transforms into it, instead of filtering the hits inline again.
 describe("the run path's own transform warnings", () => {
-  const analyzeSrc = fs.readFileSync(path.resolve("src/analyze.ts"), "utf-8");
+  const analyzeSrc = fs.readFileSync(path.resolve("src/pipeline/analyze.ts"), "utf-8");
   const block = analyzeSrc.slice(
     analyzeSrc.indexOf("const loadableTransforms = new Set("),
     analyzeSrc.indexOf("if (loadableTransforms.size > 0)"),

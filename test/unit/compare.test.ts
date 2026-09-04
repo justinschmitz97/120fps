@@ -6,8 +6,8 @@ import {
   formatCompare,
   DEPENDENCY_DRIFT_ERROR,
   type CompareReport,
-} from "../../src/compare.js";
-import { parseArgs } from "../../src/cli.js";
+} from "../../src/analysis/index.js";
+import { parseArgs } from "../../src/cli/index.js";
 
 // C1: the heuristic: only non-overlapping spreads say anything survived noise.
 describe("distinguishability", () => {

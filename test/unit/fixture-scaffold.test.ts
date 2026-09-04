@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { buildFixtureScaffold, fixtureScaffoldPath } from "../../src/composition.js";
-import type { CompositionTree } from "../../src/composition.js";
+import { buildFixtureScaffold, fixtureScaffoldPath } from "../../src/props/index.js";
+import type { CompositionTree } from "../../src/props/index.js";
 
 const TREE: CompositionTree = {
   root: "Select",

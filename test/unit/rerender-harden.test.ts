@@ -1,15 +1,15 @@
 import { describe, it, expect } from "vitest";
-import { parseArgs } from "../../src/cli.js";
-import { hasScaleExport, buildReport, type BuildReportInput } from "../../src/analyze.js";
-import { detectScaleExport } from "../../src/harness.js";
+import { parseArgs } from "../../src/cli/index.js";
+import { hasScaleExport, buildReport, type BuildReportInput } from "../../src/pipeline/index.js";
+import { detectScaleExport } from "../../src/harness/index.js";
 import {
   computeVerdict,
   buildTimingWithCV,
   DEFAULT_THRESHOLDS,
   type ComboReport,
   type Thresholds,
-} from "../../src/report.js";
-import type { ExploreResult, StateGraph } from "../../src/explorer.js";
+} from "../../src/report/index.js";
+import type { ExploreResult, StateGraph } from "../../src/analysis/index.js";
 import path from "node:path";
 
 // --- Helpers ---

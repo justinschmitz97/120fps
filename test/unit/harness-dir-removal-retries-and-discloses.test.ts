@@ -2,13 +2,13 @@ import { describe, it, expect, afterAll } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { sweepHarnessDirsAfterClose } from "../../src/cli.js";
+import { sweepHarnessDirsAfterClose } from "../../src/cli/index.js";
 import {
   createHarnessDir,
   HARNESS_DIR_REMOVAL_MIN_ATTEMPTS,
   removeHarnessDirWithRetries,
   sweepStaleHarnessDirs,
-} from "../../src/harness.js";
+} from "../../src/harness/index.js";
 
 const roots: string[] = [];
 

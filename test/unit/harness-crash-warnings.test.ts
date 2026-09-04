@@ -8,8 +8,8 @@ import {
   hasAnyEnvFile,
   NO_ENV_FILE_REMEDY_NOTE,
   type ServerPool,
-} from "../../src/harness.js";
-import { analyze } from "../../src/analyze.js";
+} from "../../src/harness/index.js";
+import { analyze } from "../../src/pipeline/index.js";
 
 // M79 behavior 1: two independent places already accumulate diagnostic
 // strings in a local array (harness.ts's buildWarnings, analyze.ts's
@@ -423,7 +423,7 @@ describe("M79 gap 3b: enterHarness/enterHarnessPage wiring", () => {
   const src = (name: string): string => fs.readFileSync(path.resolve("src", name), "utf-8");
 
   it("measure.ts's enterHarness calls waitForReadyOrFatal with a lazy env-remedy callback", () => {
-    const measureSrc = src("measure.ts");
+    const measureSrc = src("browser/measure.ts");
     const fn = measureSrc.slice(
       measureSrc.indexOf("export async function enterHarness("),
       measureSrc.indexOf("export const CONTEXT_RETRY_WARNING"),
@@ -435,7 +435,7 @@ describe("M79 gap 3b: enterHarness/enterHarnessPage wiring", () => {
   });
 
   it("analyze.ts's enterHarnessPage calls waitForReadyOrFatal with a lazy env-remedy callback", () => {
-    const analyzeSrc = src("analyze.ts");
+    const analyzeSrc = src("pipeline/analyze.ts");
     const fn = analyzeSrc.slice(
       analyzeSrc.indexOf("const enterHarnessPage = async"),
       analyzeSrc.indexOf("await enterHarnessPage();"),

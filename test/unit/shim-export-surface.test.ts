@@ -1,13 +1,13 @@
 import { describe, it, expect } from "vitest";
-import * as nextNavigation from "../../src/shims/next-navigation.js";
-import * as nextHeaders from "../../src/shims/next-headers.js";
-import * as nextImage from "../../src/shims/next-image.js";
-import * as nextLink from "../../src/shims/next-link.js";
-import * as nextRouter from "../../src/shims/next-router.js";
-import * as nextScript from "../../src/shims/next-script.js";
-import * as nextDynamic from "../../src/shims/next-dynamic.js";
-import * as nextFontLocal from "../../src/shims/next-font-local.js";
-import * as nextHead from "../../src/shims/next-head.js";
+import * as nextNavigation from "../../src/harness/shims/next-navigation.js";
+import * as nextHeaders from "../../src/harness/shims/next-headers.js";
+import * as nextImage from "../../src/harness/shims/next-image.js";
+import * as nextLink from "../../src/harness/shims/next-link.js";
+import * as nextRouter from "../../src/harness/shims/next-router.js";
+import * as nextScript from "../../src/harness/shims/next-script.js";
+import * as nextDynamic from "../../src/harness/shims/next-dynamic.js";
+import * as nextFontLocal from "../../src/harness/shims/next-font-local.js";
+import * as nextHead from "../../src/harness/shims/next-head.js";
 
 // M96 (calcom-F2): cal.com's DatePicker hard-fails at build because
 // 120fps's own next-navigation shim is missing `ReadonlyURLSearchParams`, a

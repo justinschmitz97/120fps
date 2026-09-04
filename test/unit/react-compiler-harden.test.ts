@@ -9,11 +9,11 @@ import {
   resolveReactCompilerState,
   REACT_COMPILER_DISABLED_WARNING,
   REACT_COMPILER_PACKAGE,
-} from "../../src/harness.js";
-import { hasReactWarning, type ReactOptimizations } from "../../src/react-profiler.js";
-import { buildEnvFingerprint, classifyEnv } from "../../src/budget.js";
-import { DEFAULT_THRESHOLDS, formatTable, type Report } from "../../src/report.js";
-import { parseArgs, resolveReactCompilerFlag } from "../../src/cli.js";
+} from "../../src/harness/index.js";
+import { hasReactWarning, type ReactOptimizations } from "../../src/analysis/index.js";
+import { buildEnvFingerprint, classifyEnv } from "../../src/report/index.js";
+import { DEFAULT_THRESHOLDS, formatTable, type Report } from "../../src/report/index.js";
+import { parseArgs, resolveReactCompilerFlag } from "../../src/cli/index.js";
 import { withProductionResolution } from "../node-resolution.js";
 
 let tmpDir: string;

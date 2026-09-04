@@ -6,12 +6,12 @@ import {
   VITE_CONFIG_IGNORED_WARNING,
   readViteConfigData,
   collectStaticPreBuildWarnings,
-} from "../../src/harness.js";
+} from "../../src/harness/index.js";
 import {
   suppressHonoredPluginNote,
   viteConfigIgnoredKeys,
   withoutHonoredPluginNote,
-} from "../../src/analyze.js";
+} from "../../src/pipeline/index.js";
 
 // M117 A3 (I10, dx-audit item 6): the note said `plugins` and named none of
 // them, so a reader could not tell whether the harness dropped anything that

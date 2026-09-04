@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { explainProps, formatAccumulatedWarnings, FRAMEWORK_FLAG_NO_MOUNT_EFFECT_WARNING } from "../../src/analyze.js";
+import { explainProps, formatAccumulatedWarnings, FRAMEWORK_FLAG_NO_MOUNT_EFFECT_WARNING } from "../../src/pipeline/index.js";
 
 // element-plus F1/F2 (verify/V4): `packages/components/tabs/src/tabs.tsx` is a
 // pure-Vue render function in a repo that declares vue and no react-dom. The

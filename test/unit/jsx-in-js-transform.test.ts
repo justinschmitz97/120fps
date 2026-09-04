@@ -2,7 +2,7 @@ import { describe, it, expect, afterAll } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { jsxInJsPlugin, resolveJsxImportSource, buildAndServe } from "../../src/harness.js";
+import { jsxInJsPlugin, resolveJsxImportSource, buildAndServe } from "../../src/harness/index.js";
 
 // M77: Vite's default esbuild.include (`/\.(m?ts|[jt]sx)$/`) excludes plain
 // `.js`, and forcing config.esbuild.loader to "jsx" globally would break

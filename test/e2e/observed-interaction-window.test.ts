@@ -1,7 +1,7 @@
 import { describe, it, expect, afterAll } from "vitest";
 import { chromium, type Browser, type Page } from "playwright";
-import { buildAndServe, type HarnessResult } from "../../src/harness.js";
-import { explore } from "../../src/explorer.js";
+import { buildAndServe, type HarnessResult } from "../../src/harness/index.js";
+import { explore } from "../../src/analysis/index.js";
 import {
   installObservers,
   beginObservedWindow,
@@ -9,7 +9,7 @@ import {
   observedInteractionMs,
   EVENT_TIMING_THRESHOLD_MS,
   OBSERVER_STATE_KEY,
-} from "../../src/observers.js";
+} from "../../src/browser/index.js";
 
 let browser: Browser;
 

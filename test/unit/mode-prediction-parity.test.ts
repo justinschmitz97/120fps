@@ -3,7 +3,7 @@ import { afterEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { predictMode, explainProps, DRY_RUN_RUNTIME_ONLY_NOTE, formatExplainProps, type PropsExplanation } from "../../src/analyze.js";
+import { predictMode, explainProps, DRY_RUN_RUNTIME_ONLY_NOTE, formatExplainProps, type PropsExplanation } from "../../src/pipeline/index.js";
 
 // element-plus-F4: the dry run printed "Curve mode: would activate on max" and
 // "Matrix mode: would auto-activate" as two independent booleans, while the

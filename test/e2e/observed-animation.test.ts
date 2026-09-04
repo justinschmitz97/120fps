@@ -3,8 +3,8 @@ import path from "node:path";
 import fs from "node:fs";
 import os from "node:os";
 import { chromium, type Browser } from "playwright";
-import { buildAndServe, type HarnessResult } from "../../src/harness.js";
-import { detectAnimations } from "../../src/measure.js";
+import { buildAndServe, type HarnessResult } from "../../src/harness/index.js";
+import { detectAnimations } from "../../src/browser/index.js";
 import { sharedAnalyze as analyze } from "./shared-analyze.js";
 
 let browser: Browser;

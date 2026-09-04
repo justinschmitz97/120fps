@@ -1,9 +1,9 @@
 import path from "node:path";
 import { chromium, type Browser, type CDPSession, type Page } from "playwright";
-import { hasAnyEnvFile, NO_ENV_FILE_REMEDY_NOTE, type HarnessResult } from "./harness.js";
-import type { PropCombination } from "./prop-gen-values.js";
-import { extractProps } from "./prop-gen.js";
-import { generateCombinations } from "./prop-gen-values.js";
+import { hasAnyEnvFile, NO_ENV_FILE_REMEDY_NOTE, type HarnessResult } from "../harness/index.js";
+import type { PropCombination } from "../props/index.js";
+import { extractProps } from "../props/index.js";
+import { generateCombinations } from "../props/index.js";
 import {
   attachPageErrorCapture,
   enrichPhaseError,

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { buildAndServe } from "../../src/harness.js";
-import { runReactAnalysis } from "../../src/react-profiler.js";
+import { buildAndServe } from "../../src/harness/index.js";
+import { runReactAnalysis } from "../../src/analysis/index.js";
 
 async function analyze(fixture: string, fnProp: string) {
   const harness = await buildAndServe(fixture);

@@ -1,9 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { detectScalingProps } from "../../src/prop-gen.js";
-import { generateScalingCombos } from "../../src/prop-gen-values.js";
-import { parseArgs } from "../../src/cli.js";
-import { formatTable, type Report } from "../../src/report.js";
-import type { PropSchema, ScalingPropMatch } from "../../src/prop-gen.js";
+import { detectScalingProps } from "../../src/props/index.js";
+import { generateScalingCombos } from "../../src/props/index.js";
+import { parseArgs } from "../../src/cli/index.js";
+import { formatTable, type Report } from "../../src/report/index.js";
+import type { PropSchema, ScalingPropMatch } from "../../src/props/index.js";
 
 function makeReport(overrides: Partial<Report> = {}): Report {
   return {

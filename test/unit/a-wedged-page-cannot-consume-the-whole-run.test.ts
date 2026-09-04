@@ -7,9 +7,9 @@ import {
   measurementAbandonedWarning,
   type MountResult,
   type RerenderResult,
-} from "../../src/measure.js";
-import { buildReport, propDeltasFromMeasured, type BuildReportInput } from "../../src/analyze.js";
-import type { DeltaPair } from "../../src/prop-gen-values.js";
+} from "../../src/browser/index.js";
+import { buildReport, propDeltasFromMeasured, type BuildReportInput } from "../../src/pipeline/index.js";
+import type { DeltaPair } from "../../src/props/index.js";
 
 // midday-F1, end-game fix-up. `withFrameStarvationRetry` bounds one combo;
 // nothing bounded a pass. On midday's button the renderer wedged during the
@@ -18,8 +18,8 @@ import type { DeltaPair } from "../../src/prop-gen-values.js";
 // with no report at all. A pass whose combos stop measuring, combo after
 // combo, is measuring the page's failure, not the component.
 
-const measureSrc = fs.readFileSync(path.resolve("src", "measure.ts"), "utf-8");
-const analyzeSrc = fs.readFileSync(path.resolve("src", "analyze.ts"), "utf-8");
+const measureSrc = fs.readFileSync(path.resolve("src", "browser/measure.ts"), "utf-8");
+const analyzeSrc = fs.readFileSync(path.resolve("src", "pipeline/analyze.ts"), "utf-8");
 
 describe("a pass stops once the page has stopped measuring anything", () => {
   it("tolerates degraded combos below the bound", () => {

@@ -26,8 +26,8 @@ import {
   type FiberInfo,
   type RenderAttribution,
   type CallbackIdentityDelta,
-} from "../../src/react-profiler.js";
-import { parseArgs } from "../../src/cli.js";
+} from "../../src/analysis/index.js";
+import { parseArgs } from "../../src/cli/index.js";
 
 // --- helpers ---
 

@@ -6,9 +6,9 @@ import {
   cssImportSpecifier,
   generateEntry,
   loadTailwindVitePlugin,
-} from "../../src/harness.js";
-import { resolveCssFiles } from "../../src/analyze.js";
-import { parseArgs } from "../../src/cli.js";
+} from "../../src/harness/index.js";
+import { resolveCssFiles } from "../../src/pipeline/index.js";
+import { parseArgs } from "../../src/cli/index.js";
 import { withProductionResolution } from "../node-resolution.js";
 
 let tmpDir: string;
@@ -192,7 +192,12 @@ describe("H22: harness navigation wait", () => {
   // captured page errors reach a navigation timeout; the wait option is still
   // passed at the call site, so the invariant reads the same either way.
   it("never navigates with the default load wait", () => {
-    for (const file of ["analyze.ts", "explorer.ts", "measure.ts", "react-profiler.ts"]) {
+    for (const file of [
+      "pipeline/analyze.ts",
+      "analysis/explorer.ts",
+      "browser/measure.ts",
+      "analysis/react-profiler.ts",
+    ]) {
       const text = src(file);
       const gotos = text.match(/(?:page\.goto|gotoWithErrorContext)\([^)]*\)/g) ?? [];
       expect(gotos.length).toBeGreaterThan(0);
@@ -213,7 +218,7 @@ describe("H21: settle gate runs before CPU throttling", () => {
     // invariant is that a session which settles styles throttles only
     // afterwards, so the assertion anchors on the settle gate and requires a
     // throttle call after it.
-    for (const file of ["analyze.ts", "explorer.ts", "react-profiler.ts"]) {
+    for (const file of ["pipeline/analyze.ts", "analysis/explorer.ts", "analysis/react-profiler.ts"]) {
       const text = src(file);
       const settleIdx = text.indexOf("settleStyles(page");
       expect(settleIdx).toBeGreaterThan(-1);
@@ -223,7 +228,7 @@ describe("H21: settle gate runs before CPU throttling", () => {
     }
     // Scoped to the session preamble: measure.ts also mentions the throttle in
     // suspendThrottle (M34), which is inter-sample bookkeeping, not a session.
-    const measure = src("measure.ts");
+    const measure = src("browser/measure.ts");
     const preamble = measure.slice(measure.indexOf("export async function enterHarness"));
     const firstGate = preamble.indexOf("await settleStyles(page");
     const firstThrottle = preamble.indexOf("Emulation.setCPUThrottlingRate");

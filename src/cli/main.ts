@@ -3,10 +3,10 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { analyze, explainProps, formatExplainProps, resolveProjectPaths, formatAccumulatedWarnings } from "./analyze.js";
-import { compareAgainstRef, formatCompare, validateCompareOptions } from "./compare.js";
-import { formatMarkdown, formatJUnit } from "./ci-report.js";
-import { createBrowserPool } from "./measure.js";
+import { analyze, explainProps, formatExplainProps, resolveProjectPaths, formatAccumulatedWarnings } from "../pipeline/index.js";
+import { compareAgainstRef, formatCompare, validateCompareOptions } from "../analysis/index.js";
+import { formatMarkdown, formatJUnit } from "../report/index.js";
+import { createBrowserPool } from "../browser/index.js";
 import {
   beginHarnessDirTeardown,
   createServerPool,
@@ -15,13 +15,13 @@ import {
   refreshHarnessDirMarkers,
   removeActiveHarnessDirs,
   sweepActiveHarnessDirs,
-} from "./harness.js";
-import { scanExports } from "./prop-gen.js";
-import { formatResolvedRoots, resolveProjectModel } from "./project-model.js";
-import { parseIsolationPhases, strictModeUnsupported, VUE_STRICTMODE_ERROR } from "./isolation.js";
-import { setPreflightBypassed } from "./preflight.js";
-import { formatTable, formatPhaseBreakdown, DEFAULT_THRESHOLDS } from "./report.js";
-import type { PhaseTimings } from "./report.js";
+} from "../harness/index.js";
+import { scanExports } from "../props/index.js";
+import { formatResolvedRoots, resolveProjectModel } from "../project/index.js";
+import { parseIsolationPhases, strictModeUnsupported, VUE_STRICTMODE_ERROR } from "../analysis/index.js";
+import { setPreflightBypassed } from "../project/index.js";
+import { formatTable, formatPhaseBreakdown, DEFAULT_THRESHOLDS } from "../report/index.js";
+import type { PhaseTimings } from "../report/index.js";
 
 // M88: the taxonomy hang -- a fatal error printed in full, then the process
 // stayed alive until an external `timeout` killed it (EXIT=124). Pool/server
@@ -66,8 +66,8 @@ export function armExitWatchdog(
 // limitation rather than shipped as an unverified or fragile private-API
 // reach-in.
 export async function closePoolsBounded(
-  pool: Pick<import("./measure.js").BrowserPool, "closeAll">,
-  serverPool: Pick<import("./harness.js").ServerPool, "closeAll">,
+  pool: Pick<import("../browser/index.js").BrowserPool, "closeAll">,
+  serverPool: Pick<import("../harness/index.js").ServerPool, "closeAll">,
   timeoutMs: number = FATAL_EXIT_WATCHDOG_MS,
 ): Promise<void> {
   // Promise.resolve().then(...) turns a hostile closeAll() that throws
@@ -101,8 +101,8 @@ export function terminationExitCode(signal: NodeJS.Signals): number {
 }
 
 type ClosablePools = {
-  pool: Pick<import("./measure.js").BrowserPool, "closeAll">;
-  serverPool: Pick<import("./harness.js").ServerPool, "closeAll">;
+  pool: Pick<import("../browser/index.js").BrowserPool, "closeAll">;
+  serverPool: Pick<import("../harness/index.js").ServerPool, "closeAll">;
 };
 
 // The one teardown every abrupt exit path shares. Directories go first: that
@@ -1462,7 +1462,7 @@ async function main(): Promise<void> {
   if (args.version) {
     const pkg = JSON.parse(
       fs.readFileSync(
-        path.resolve(import.meta.dirname ?? __dirname, "../package.json"),
+        path.resolve(import.meta.dirname ?? __dirname, "../../package.json"),
         "utf-8",
       ),
     );
@@ -1560,7 +1560,7 @@ async function main(): Promise<void> {
     : [args.jsonPath];
   let anyFail = false;
   // M50: collected across the sweep so both formats describe the whole run.
-  const ciReports: import("./report.js").Report[] = [];
+  const ciReports: import("../report/index.js").Report[] = [];
   // M117 A1: where this sweep's baselines and harness directories can be, one
   // entry per distinct project the components belong to.
   const projectRoots = new Set<string>();
@@ -1710,14 +1710,14 @@ async function runOne(
   componentPath: string,
   jsonPath: string,
   args: CliArgs,
-  browserPool?: import("./measure.js").BrowserPool,
-  serverPool?: import("./harness.js").ServerPool,
+  browserPool?: import("../browser/index.js").BrowserPool,
+  serverPool?: import("../harness/index.js").ServerPool,
   // M101: every phase boundary is a liveness heartbeat for the run watchdog.
   // Review A2 follow-up: it rides `onPhase`, which analyze fires before the
   // --ci gate that silences console progress, so a CI run is bounded per phase
   // like any other instead of by a bare total.
   onPhase?: () => void,
-): Promise<import("./report.js").Report> {
+): Promise<import("../report/index.js").Report> {
   return analyze(componentPath, {
       ...(onPhase ? { onPhase } : {}),
       // Item A: threads this run's warnings out to the same accumulator
@@ -1954,9 +1954,8 @@ export function nodePathReader(): PathReader {
 
 // Invoked last: every module-level declaration above is initialized before
 // main() can run, so the direct-run path can never hit a temporal dead zone.
-const isDirectRun =
-  process.argv[1] &&
-  (process.argv[1].endsWith("cli.js") || process.argv[1].endsWith("cli.ts"));
+const entryPath = (process.argv[1] ?? "").replace(/\\/g, "/");
+const isDirectRun = entryPath.endsWith("cli/main.js") || entryPath.endsWith("cli/main.ts");
 
 if (isDirectRun) {
   // M79 (behavior 2). Registered only on the real CLI process, never when

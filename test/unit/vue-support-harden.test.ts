@@ -9,24 +9,24 @@ import {
   sfcProducesComponent,
   vueComponentName,
   SFC_NO_COMPONENT,
-} from "../../src/harness.js";
+} from "../../src/harness/index.js";
 import {
   loadVueCompiler,
   parseSfcScript,
   resetVueCompilerCache,
   type VueSfcCompiler,
-} from "../../src/vue-sfc.js";
+} from "../../src/project/index.js";
 import {
   detectScalingProps,
   extractProps,
   projectSourceFiles,
   resetExtractionCache,
-} from "../../src/prop-gen.js";
-import { generateScalingCombos } from "../../src/prop-gen-values.js";
-import { applyPropPresets, loadPropPresets, detectPropPresets } from "../../src/prop-presets.js";
-import { runPreflight, recognizeTransform } from "../../src/preflight.js";
-import { computeSourceFingerprint } from "../../src/budget.js";
-import { strictModeUnsupported } from "../../src/isolation.js";
+} from "../../src/props/index.js";
+import { generateScalingCombos } from "../../src/props/index.js";
+import { applyPropPresets, loadPropPresets, detectPropPresets } from "../../src/props/index.js";
+import { runPreflight, recognizeTransform } from "../../src/project/index.js";
+import { computeSourceFingerprint } from "../../src/report/index.js";
+import { strictModeUnsupported } from "../../src/analysis/index.js";
 import { withProductionResolution } from "../node-resolution.js";
 
 const VUE = path.resolve("fixtures/vue-project");

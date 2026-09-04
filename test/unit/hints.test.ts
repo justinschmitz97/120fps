@@ -6,9 +6,9 @@ import {
   formatHints,
   MEASUREMENT_BASIS_LINE,
   type HintId,
-} from "../../src/hints.js";
-import { formatTable, DEFAULT_THRESHOLDS, type ComboReport, type Report } from "../../src/report.js";
-import { helpText } from "../../src/cli.js";
+} from "../../src/report/index.js";
+import { formatTable, DEFAULT_THRESHOLDS, type ComboReport, type Report } from "../../src/report/index.js";
+import { helpText } from "../../src/cli/index.js";
 
 function combo(overrides: Partial<ComboReport> = {}): ComboReport {
   return {

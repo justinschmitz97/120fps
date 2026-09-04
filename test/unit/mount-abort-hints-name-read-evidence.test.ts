@@ -1,10 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { formatMountAbortHints, hintsForMountAbort } from "../../src/hints.js";
-import { SFC_INJECT_READ_FAILED_WARNING, viteConfigIgnoredKeys } from "../../src/analyze.js";
+import { formatMountAbortHints, hintsForMountAbort } from "../../src/report/index.js";
+import { SFC_INJECT_READ_FAILED_WARNING, viteConfigIgnoredKeys } from "../../src/pipeline/index.js";
 import {
   VITE_CONFIG_IGNORED_WARNING,
   VITE_CONFIG_PREPROCESSOR_OPTION_WARNING,
-} from "../../src/harness.js";
+} from "../../src/harness/index.js";
 
 // ark-F2: `at Proxy._sfc_render` matched the optional `$` in the proxy-frame
 // signature, so a plain provide/inject failure was reported as a missing Vue

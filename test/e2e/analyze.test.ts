@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import { sharedAnalyze as analyze } from "./shared-analyze.js";
-import type { Report } from "../../src/report.js";
+import type { Report } from "../../src/report/index.js";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";

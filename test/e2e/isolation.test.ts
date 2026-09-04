@@ -1,10 +1,10 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
-import { analyze, type AnalyzeOptions } from "../../src/analyze.js";
-import type { Baseline } from "../../src/budget.js";
-import type { Report } from "../../src/report.js";
-import { DEGENERATE_COMBO_WARNING, MEMORY_SKIPPED_WARNING } from "../../src/isolation.js";
+import { analyze, type AnalyzeOptions } from "../../src/pipeline/index.js";
+import type { Baseline } from "../../src/report/index.js";
+import type { Report } from "../../src/report/index.js";
+import { DEGENERATE_COMBO_WARNING, MEMORY_SKIPPED_WARNING } from "../../src/analysis/index.js";
 
 const OUT_DIR = path.resolve(`.m28-isolation-${process.pid}`);
 

@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
-import { buildAndServe, collectStaticPreBuildWarnings } from "../../src/harness.js";
+import { buildAndServe, collectStaticPreBuildWarnings } from "../../src/harness/index.js";
 
 const PROJECT = path.resolve("fixtures/vite-config-project");
 const COMPONENT = path.join(PROJECT, "src", "widget.tsx");

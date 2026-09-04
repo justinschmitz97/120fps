@@ -10,9 +10,9 @@ import {
   type ComboReport,
   type Report,
   type Thresholds,
-} from "../../src/report.js";
-import { buildReport, type BuildReportInput } from "../../src/analyze.js";
-import { parseArgs } from "../../src/cli.js";
+} from "../../src/report/index.js";
+import { buildReport, type BuildReportInput } from "../../src/pipeline/index.js";
+import { parseArgs } from "../../src/cli/index.js";
 
 // --- helpers ---
 

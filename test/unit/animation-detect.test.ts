@@ -6,9 +6,9 @@ import {
   TIER_BUDGETS,
   type ComboReport,
   type Report,
-} from "../../src/report.js";
-import { buildReport, type BuildReportInput } from "../../src/analyze.js";
-import { detectAnimations } from "../../src/measure.js";
+} from "../../src/report/index.js";
+import { buildReport, type BuildReportInput } from "../../src/pipeline/index.js";
+import { detectAnimations } from "../../src/browser/index.js";
 
 // --- helpers ---
 

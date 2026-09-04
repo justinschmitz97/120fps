@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { parseArgs } from "../../src/cli.js";
-import { generateEntry, generateComposedEntry, renderTreeHelper } from "../../src/harness.js";
-import { generateProbeEntry } from "../../src/react-profiler.js";
-import { classifyEnv, compareBaseline, type BaselineEntry, type EnvFingerprintInput } from "../../src/budget.js";
-import { buildEnvFingerprint } from "../../src/budget.js";
+import { parseArgs } from "../../src/cli/index.js";
+import { generateEntry, generateComposedEntry, renderTreeHelper } from "../../src/harness/index.js";
+import { generateProbeEntry } from "../../src/analysis/index.js";
+import { classifyEnv, compareBaseline, type BaselineEntry, type EnvFingerprintInput } from "../../src/report/index.js";
+import { buildEnvFingerprint } from "../../src/report/index.js";
 import {
   buildTimingWithCV,
   formatTable,
@@ -12,10 +12,10 @@ import {
   type Report,
   type ScalingCurveReport,
   type Thresholds,
-} from "../../src/report.js";
-import type { CompositionTree } from "../../src/composition.js";
-import type { HarnessResult } from "../../src/harness.js";
-import type { MountResult, RerenderResult } from "../../src/measure.js";
+} from "../../src/report/index.js";
+import type { CompositionTree } from "../../src/props/index.js";
+import type { HarnessResult } from "../../src/harness/index.js";
+import type { MountResult, RerenderResult } from "../../src/browser/index.js";
 
 // runHarnessSession is stubbed per label so the three browser runners resolve to
 // canned samples; measureMount/measureRerender are spied to assert the options
@@ -30,8 +30,8 @@ const canned = {
 const measureMountSpy = vi.fn();
 const measureRerenderSpy = vi.fn();
 
-vi.mock("../../src/measure.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../src/measure.js")>();
+vi.mock("../../src/browser/measure.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../src/browser/measure.js")>();
   return {
     ...actual,
     measureMount: (...args: unknown[]) => measureMountSpy(...args),
@@ -64,8 +64,8 @@ const {
   LEAK_BYTES_PER_CYCLE,
   DEGENERATE_COMBO_WARNING,
   MEMORY_SKIPPED_WARNING,
-} = await import("../../src/isolation.js");
-type IsolationReport = import("../../src/isolation.js").IsolationReport;
+} = await import("../../src/analysis/index.js");
+type IsolationReport = import("../../src/analysis/index.js").IsolationReport;
 
 const HARNESS = {} as HarnessResult;
 
@@ -93,7 +93,7 @@ function rerenderResult(overrides: Partial<RerenderResult> = {}): RerenderResult
 
 function runOptions(overrides: Record<string, unknown> = {}) {
   return {
-    phases: ["mount"] as import("../../src/isolation.js").IsolationPhase[],
+    phases: ["mount"] as import("../../src/analysis/index.js").IsolationPhase[],
     comboA: { variant: "primary" },
     comboB: { variant: "ghost" },
     degenerate: false,

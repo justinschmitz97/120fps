@@ -12,24 +12,24 @@ import {
   generateEntry,
   loadTailwindVitePlugin,
   scanExternalDeps,
-} from "../../src/harness.js";
+} from "../../src/harness/index.js";
 import {
   FONT_SETTLE_TIMEOUT_MS,
   FONT_SETTLE_WARNING,
   needsStyleSettle,
   settleStyles,
-} from "../../src/measure.js";
-import { resolveCssFiles } from "../../src/analyze.js";
-import { buildEnvFingerprint, classifyEnv } from "../../src/budget.js";
+} from "../../src/browser/index.js";
+import { resolveCssFiles } from "../../src/pipeline/index.js";
+import { buildEnvFingerprint, classifyEnv } from "../../src/report/index.js";
 import {
   DEFAULT_THRESHOLDS,
   formatTable,
   type CssReport,
   type Report,
-} from "../../src/report.js";
-import { KNOWN_FLAGS, helpText, parseArgs } from "../../src/cli.js";
+} from "../../src/report/index.js";
+import { KNOWN_FLAGS, helpText, parseArgs } from "../../src/cli/index.js";
 import { withProductionResolution } from "../node-resolution.js";
-import type { CompositionTree } from "../../src/composition.js";
+import type { CompositionTree } from "../../src/props/index.js";
 
 let tmpDir: string;
 
@@ -572,20 +572,20 @@ describe("settle gate wiring", () => {
     fs.readFileSync(path.resolve("src", name), "utf-8");
 
   it("is called from every browser session", () => {
-    const measure = src("measure.ts");
+    const measure = src("browser/measure.ts");
     const callsIn = (text: string) => text.split("await settleStyles(").length - 1;
     // measureMount, measureRerender and every isolation phase pass enter the
     // harness through measure.ts's shared enterHarness preamble.
     expect(callsIn(measure)).toBe(1);
     expect(measure).toContain("export async function enterHarness(");
-    expect(callsIn(src("analyze.ts"))).toBe(1);
-    expect(callsIn(src("explorer.ts"))).toBe(1);
-    expect(callsIn(src("react-profiler.ts"))).toBe(1);
+    expect(callsIn(src("pipeline/analyze.ts"))).toBe(1);
+    expect(callsIn(src("analysis/explorer.ts"))).toBe(1);
+    expect(callsIn(src("analysis/react-profiler.ts"))).toBe(1);
   });
 
   it("has exactly one implementation", () => {
-    expect(src("measure.ts")).toContain("export async function settleStyles(");
-    for (const file of ["analyze.ts", "explorer.ts", "react-profiler.ts", "harness.ts"]) {
+    expect(src("browser/measure.ts")).toContain("export async function settleStyles(");
+    for (const file of ["pipeline/analyze.ts", "analysis/explorer.ts", "analysis/react-profiler.ts", "harness/build.ts"]) {
       expect(src(file)).not.toContain("function settleStyles(");
     }
   });

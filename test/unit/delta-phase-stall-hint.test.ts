@@ -7,7 +7,7 @@ import {
   HARNESS_STALL_HINT,
   DELTA_PHASE_STALL_HINT,
   RERENDER_PHASE_STALL_HINT,
-} from "../../src/page-errors.js";
+} from "../../src/browser/index.js";
 
 // M89 gap (taxonomy control failure): a stall inside the delta pass's own
 // extra mount/rerender calls used to surface --no-attribution, a flag that
@@ -143,7 +143,7 @@ describe("M89 gap: delta-phase stall hint", () => {
 
 describe("M89 gap: analyze.ts wiring (source-level check)", () => {
   it("measureStandardPropDeltas's extra-measurement calls are wrapped and retagged as delta", () => {
-    const src = fs.readFileSync(path.resolve("src", "analyze.ts"), "utf-8");
+    const src = fs.readFileSync(path.resolve("src", "pipeline/analyze.ts"), "utf-8");
     const fn = src.slice(
       src.indexOf("async function measureStandardPropDeltas("),
       src.indexOf("const propDeltas = pairs.map"),

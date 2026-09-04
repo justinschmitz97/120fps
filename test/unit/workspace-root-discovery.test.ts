@@ -9,7 +9,7 @@ import {
   declaredPackages,
   isPackageAvailable,
   detectPnP,
-} from "../../src/project-model.js";
+} from "../../src/project/index.js";
 
 let tmpDir: string;
 

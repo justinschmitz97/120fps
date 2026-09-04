@@ -7,7 +7,7 @@ import {
   isOutsideRoot,
   fsAllowDirs,
   resolveWrapper,
-} from "../../src/harness.js";
+} from "../../src/harness/index.js";
 
 // path.win32 and path.posix are driven directly so drive-letter behavior is
 // observable on any host.

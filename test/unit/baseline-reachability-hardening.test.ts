@@ -8,15 +8,15 @@ import {
   resolveCurveOption,
   resolveMatrixOption,
   type CliArgs,
-} from "../../src/cli.js";
+} from "../../src/cli/index.js";
 import {
   MATRIX_BASELINE_WARNING,
   baselineWorkflowRequested,
   optionsAllowVerdictReuse,
   type AnalyzeOptions,
-} from "../../src/analyze.js";
-import { buildEnvFingerprint, sameMachineIdentity } from "../../src/budget.js";
-import type { EnvFingerprint, MachineInfo } from "../../src/report.js";
+} from "../../src/pipeline/index.js";
+import { buildEnvFingerprint, sameMachineIdentity } from "../../src/report/index.js";
+import type { EnvFingerprint, MachineInfo } from "../../src/report/index.js";
 
 const MACHINE: MachineInfo = {
   cpu: "Test CPU",

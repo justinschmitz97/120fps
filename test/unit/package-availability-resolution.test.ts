@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import Module, { createRequire } from "node:module";
-import { isPackageAvailable, isPackageDeclared } from "../../src/project-model.js";
+import { isPackageAvailable, isPackageDeclared } from "../../src/project/index.js";
 
 let tmpDir: string;
 

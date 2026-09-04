@@ -8,7 +8,7 @@ import {
   detectReactCompiler,
   detectProjectTransforms,
   HOISTED_TRANSFORM_WARNING,
-} from "../../src/harness.js";
+} from "../../src/harness/index.js";
 
 let tmpDir: string;
 

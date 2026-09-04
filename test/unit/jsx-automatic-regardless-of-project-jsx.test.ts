@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { transformWithEsbuild } from "vite";
-import { harnessEsbuildOptions, harnessServerCompileOptions } from "../../src/harness.js";
+import { harnessEsbuildOptions, harnessServerCompileOptions } from "../../src/harness/index.js";
 
 const JSX_PRESERVE = path.resolve("fixtures/tsconfig-shapes/jsx-preserve");
 const BADGE = path.join(JSX_PRESERVE, "src", "badge.tsx");

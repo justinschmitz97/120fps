@@ -5,12 +5,12 @@ import {
   parseArgs,
   resolveCurveOption,
   resolveMatrixOption,
-} from "../../src/cli.js";
+} from "../../src/cli/index.js";
 import {
   MATRIX_BASELINE_WARNING,
   baselineWorkflowRequested,
   optionsAllowVerdictReuse,
-} from "../../src/analyze.js";
+} from "../../src/pipeline/index.js";
 
 // D1: a matrix run returns before applyBaselineWorkflow, so every baseline flag
 // on it is a no-op. The run must say so.

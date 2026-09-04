@@ -7,12 +7,12 @@ import {
   splitTargetSpec,
   formatWallClock,
   helpText,
-} from "../../src/cli.js";
+} from "../../src/cli/index.js";
 import {
   explainProps,
   formatExplainProps,
   resolveProgressReporter,
-} from "../../src/analyze.js";
+} from "../../src/pipeline/index.js";
 import {
   runPreflight,
   detectProviderImport,
@@ -21,11 +21,11 @@ import {
   providersFromEntry,
   isDirectProviderHit,
   HARD_REMEDY,
-} from "../../src/preflight.js";
-import { detectComponentExport, BUNDLER_PREACT_ALIAS_WARNING } from "../../src/harness.js";
-import { extractPropsDetailed } from "../../src/prop-gen.js";
-import { formatHints } from "../../src/hints.js";
-import type { Report } from "../../src/report.js";
+} from "../../src/project/index.js";
+import { detectComponentExport, BUNDLER_PREACT_ALIAS_WARNING } from "../../src/harness/index.js";
+import { extractPropsDetailed } from "../../src/props/index.js";
+import { formatHints } from "../../src/report/index.js";
+import type { Report } from "../../src/report/index.js";
 
 const fixture = (rel: string): string => path.resolve("fixtures", rel);
 

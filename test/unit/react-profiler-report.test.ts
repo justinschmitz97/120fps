@@ -4,8 +4,8 @@ import {
   DEFAULT_THRESHOLDS,
   type ComboReport,
   type Report,
-} from "../../src/report.js";
-import type { ReactOptimizations } from "../../src/react-profiler.js";
+} from "../../src/report/index.js";
+import type { ReactOptimizations } from "../../src/analysis/index.js";
 
 // --- helpers ---
 

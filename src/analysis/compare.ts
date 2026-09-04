@@ -3,9 +3,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import { buildAndServe, findProjectRoot, type HarnessResult } from "./harness.js";
-import { extractProps } from "./prop-gen.js";
-import { generateCombinations, selectRepresentativeCombos, type PropCombination } from "./prop-gen-values.js";
+import { buildAndServe, findProjectRoot, type HarnessResult } from "../harness/index.js";
+import { extractProps } from "../props/index.js";
+import { generateCombinations, selectRepresentativeCombos, type PropCombination } from "../props/index.js";
 import {
   createBrowserPool,
   enterHarness,
@@ -14,7 +14,7 @@ import {
   computeMedian,
   type BrowserPool,
   type MeasurementSession,
-} from "./measure.js";
+} from "../browser/index.js";
 
 export interface CompareSideMetrics {
   mountSamples: number[];

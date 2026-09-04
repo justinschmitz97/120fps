@@ -3,7 +3,7 @@ import {
   CALLBACK_PROPS_SOURCE,
   computeCallbackIdentityDelta,
   generateProbeEntry,
-} from "../../src/react-profiler.js";
+} from "../../src/analysis/index.js";
 
 const MARKER = "__120fps_fn__";
 

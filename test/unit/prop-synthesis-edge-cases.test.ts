@@ -6,7 +6,7 @@ import {
   detectScalingProps,
   resetExtractionCache,
   type PropSchema,
-} from "../../src/prop-gen.js";
+} from "../../src/props/index.js";
 import {
   comboKey,
   countCombinationSpace,
@@ -14,8 +14,8 @@ import {
   generateCombinations,
   generateDeltaPairs,
   selectRepresentativeCombos,
-} from "../../src/prop-gen-values.js";
-import { applyPropPresets } from "../../src/prop-presets.js";
+} from "../../src/props/index.js";
+import { applyPropPresets } from "../../src/props/index.js";
 
 const M60 = path.resolve("./fixtures/m60");
 const fixture = (name: string): string => path.join(M60, name);

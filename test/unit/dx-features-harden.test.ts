@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
-import { parseArgs, splitTargetSpec, formatWallClock, expandComponentPaths, nodePathReader } from "../../src/cli.js";
+import { parseArgs, splitTargetSpec, formatWallClock, expandComponentPaths, nodePathReader } from "../../src/cli/index.js";
 import {
   explainProps,
   formatExplainProps,
@@ -10,12 +10,12 @@ import {
   analyze,
   TARGET_WITH_FIXTURE_ERROR,
   ZERO_PROPS_WARNING,
-} from "../../src/analyze.js";
-import { runPreflight, providerCandidateLabels } from "../../src/preflight.js";
-import { detectComponentExport } from "../../src/harness.js";
-import { extractPropsDetailed } from "../../src/prop-gen.js";
-import { formatHints } from "../../src/hints.js";
-import type { Report } from "../../src/report.js";
+} from "../../src/pipeline/index.js";
+import { runPreflight, providerCandidateLabels } from "../../src/project/index.js";
+import { detectComponentExport } from "../../src/harness/index.js";
+import { extractPropsDetailed } from "../../src/props/index.js";
+import { formatHints } from "../../src/report/index.js";
+import type { Report } from "../../src/report/index.js";
 
 const fixture = (rel: string): string => path.resolve("fixtures", rel);
 const FIXTURE_ROOT = path.resolve("fixtures");

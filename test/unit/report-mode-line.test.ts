@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { describeMode } from "../../src/report.js";
-import type { Report } from "../../src/report.js";
+import { describeMode } from "../../src/report/index.js";
+import type { Report } from "../../src/report/index.js";
 
 function report(overrides: Partial<Report> = {}): Report {
   return {

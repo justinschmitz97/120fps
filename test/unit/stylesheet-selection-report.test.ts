@@ -2,9 +2,9 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { resolveCssFiles } from "../../src/analyze.js";
-import { buildEnvFingerprint } from "../../src/budget.js";
-import { DEFAULT_THRESHOLDS, formatTable, type CssReport, type Report } from "../../src/report.js";
+import { resolveCssFiles } from "../../src/pipeline/index.js";
+import { buildEnvFingerprint } from "../../src/report/index.js";
+import { DEFAULT_THRESHOLDS, formatTable, type CssReport, type Report } from "../../src/report/index.js";
 
 let tmpDir: string;
 

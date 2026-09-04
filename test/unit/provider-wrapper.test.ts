@@ -10,17 +10,17 @@ import {
   scanExternalDeps,
   WRAPPER_CANDIDATES,
   type HarnessResult,
-} from "../../src/harness.js";
-import { generateProbeEntry } from "../../src/react-profiler.js";
-import { parseArgs } from "../../src/cli.js";
+} from "../../src/harness/index.js";
+import { generateProbeEntry } from "../../src/analysis/index.js";
+import { parseArgs } from "../../src/cli/index.js";
 import {
   attachWrapperReport,
   formatTable,
   DEFAULT_THRESHOLDS,
   type Report,
   type WrapperReport,
-} from "../../src/report.js";
-import type { CompositionTree } from "../../src/composition.js";
+} from "../../src/report/index.js";
+import type { CompositionTree } from "../../src/props/index.js";
 
 // --- helpers ---
 

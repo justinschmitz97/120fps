@@ -2,7 +2,7 @@ import ts from "typescript";
 import os from "node:os";
 import fs from "node:fs";
 import path from "node:path";
-import { buildAndServe, collectStaticPreBuildWarnings, detectComponentExport, detectProjectTransforms, discoverGlobalCss, detectScaleExport, detectWrapper, findProjectRoot, resolveReactCompilerState, assertReactDomClient, assertRendererSupported, rendererFor, detectBundlerReactDomAlias, BUNDLER_PREACT_ALIAS_WARNING, stylesheetRuleCount, hasAnyEnvFile, NO_ENV_FILE_REMEDY_NOTE, presentBundlerFailure, stylesheetReadFailureTarget, CSS_UNREADABLE_DROPPED_WARNING, SUPPORTED_TRANSFORM_PLUGINS, VITE_CONFIG_IGNORED_WARNING, readViteConfigData, type HarnessResult, type ReactCompilerState, type ViteConfigData } from "./harness.js";
+import { buildAndServe, collectStaticPreBuildWarnings, detectComponentExport, detectProjectTransforms, discoverGlobalCss, detectScaleExport, detectWrapper, findProjectRoot, resolveReactCompilerState, assertReactDomClient, assertRendererSupported, rendererFor, detectBundlerReactDomAlias, BUNDLER_PREACT_ALIAS_WARNING, stylesheetRuleCount, hasAnyEnvFile, NO_ENV_FILE_REMEDY_NOTE, presentBundlerFailure, stylesheetReadFailureTarget, CSS_UNREADABLE_DROPPED_WARNING, SUPPORTED_TRANSFORM_PLUGINS, VITE_CONFIG_IGNORED_WARNING, readViteConfigData, type HarnessResult, type ReactCompilerState, type ViteConfigData } from "../harness/index.js";
 import {
   attachPageErrorCapture,
   gotoWithErrorContext,
@@ -11,14 +11,14 @@ import {
   renderDrain,
   retagPhaseError,
   waitForReadyOrFatal,
-} from "./page-errors.js";
-import { extractProps, extractPropsDetailed, extractExports, extractAllProps, detectScalingProps, projectSourceFiles, isVuePropsScopeExclusionWarning, isVueUnresolvedPropsTypeWarning, isUntypedJsComponentWarning, projectCompilerOptions, type PropSchema, type ScalingPropMatch } from "./prop-gen.js";
-import { hintsForReport, formatHints, formatMountAbortHints } from "./hints.js";
+} from "../browser/index.js";
+import { extractProps, extractPropsDetailed, extractExports, extractAllProps, detectScalingProps, projectSourceFiles, isVuePropsScopeExclusionWarning, isVueUnresolvedPropsTypeWarning, isUntypedJsComponentWarning, projectCompilerOptions, type PropSchema, type ScalingPropMatch } from "../props/index.js";
+import { hintsForReport, formatHints, formatMountAbortHints } from "../report/index.js";
 import {
   probeMachineNoise,
   buildNoiseReport,
   formatNoiseWarning,
-} from "./noise.js";
+} from "../browser/index.js";
 import {
   detectPropPresets,
   describePresetSibling,
@@ -27,7 +27,7 @@ import {
   isPresetRef,
   PRESET_SHAPE_WARNING,
   UNKNOWN_PRESET_PROPS_WARNING,
-} from "./prop-presets.js";
+} from "../props/index.js";
 import {
   runPreflight,
   preflightFailureMessage,
@@ -39,7 +39,7 @@ import {
   PREFLIGHT_BYPASSED_WARNING,
   PreflightHardRejectionError,
   classifyProjectTransformHits,
-} from "./preflight.js";
+} from "../project/index.js";
 import {
   inferComposition,
   shouldRollbackComposition,
@@ -53,10 +53,10 @@ import {
   UNCOMPOSED_SIBLINGS_WARNING,
   type CompositionTree,
   type ExportInfo,
-} from "./composition.js";
-import { detectFramework, runReactAnalysis, hasReactWarning, type ReactOptimizations } from "./react-profiler.js";
-import { findWorkspaceRoot } from "./project-model.js";
-import { isVueFile, loadVueCompiler, parseSfcScript, VUE_COMPILER_MISSING } from "./vue-sfc.js";
+} from "../props/index.js";
+import { detectFramework, runReactAnalysis, hasReactWarning, type ReactOptimizations } from "../analysis/index.js";
+import { findWorkspaceRoot } from "../project/index.js";
+import { isVueFile, loadVueCompiler, parseSfcScript, VUE_COMPILER_MISSING } from "../project/index.js";
 import {
   generateCombinations,
   generateDeltaPairs,
@@ -72,15 +72,15 @@ import {
   DEFAULT_MEASURED_COMBOS,
   type DeltaPair,
   type PropCombination,
-} from "./prop-gen-values.js";
-import { applyWrapperViewport, createBrowserPool, measuredOnly, measureMount, measureRerender, measureWrapperOverhead, openMeasurementSession, settleStyles, reportFontSettle, suspendThrottle, CONTEXT_RETRY_WARNING, HARNESS_NAV_WAIT, type BrowserPool, type MeasurementSession, type MountResult, type RerenderResult } from "./measure.js";
+} from "../props/index.js";
+import { applyWrapperViewport, createBrowserPool, measuredOnly, measureMount, measureRerender, measureWrapperOverhead, openMeasurementSession, settleStyles, reportFontSettle, suspendThrottle, CONTEXT_RETRY_WARNING, HARNESS_NAV_WAIT, type BrowserPool, type MeasurementSession, type MountResult, type RerenderResult } from "../browser/index.js";
 import {
   explore,
   restoreComboIndices,
   EXPLORE_BUDGET_WARNING,
   VOLATILE_DOM_NOTICE,
   type ExploreResult,
-} from "./explorer.js";
+} from "../analysis/index.js";
 import {
   createCalibrationTrace,
   computeScalingCurve,
@@ -89,7 +89,7 @@ import {
   isDomFlat,
   SCALING_NO_EFFECT_WARNING,
   type ScalingCurve,
-} from "./metrics.js";
+} from "../analysis/index.js";
 import {
   loadBudgetConfig,
   loadBaseline,
@@ -110,7 +110,7 @@ import {
   type BaselineEntry,
   type BaselineEnvPolicy,
   type BaselineMetrics,
-} from "./budget.js";
+} from "../report/index.js";
 import {
   computeIsolationVerdict,
   isolationBaselineMetrics,
@@ -120,7 +120,7 @@ import {
   strictModeUnsupported,
   DEFAULT_MEMORY_CYCLES,
   VUE_STRICTMODE_ERROR,
-} from "./isolation.js";
+} from "../analysis/index.js";
 import {
   attachWrapperReport,
   buildTimingWithCV,
@@ -159,7 +159,7 @@ import {
   type PhaseTimings,
   type ReactCompilerReport,
   dedupeWarnings,
-} from "./report.js";
+} from "../report/index.js";
 
 // M40: the numbers are real, but they describe a transient scene. Warn, never
 // fail: the defect would be presenting the skeleton's cost as the whole story.
@@ -184,7 +184,7 @@ export {
   PROJECT_TRANSFORM_WARNING,
   PREFLIGHT_BYPASSED_WARNING,
   TRANSFORM_RECOGNIZERS,
-} from "./preflight.js";
+} from "../project/index.js";
 
 export const COMBO_CAP_WARNING = (kept: number, total: number): string =>
   `measured ${kept} of ${total} prop combos; ${total - kept} were dropped to bound the run. ` +
@@ -398,7 +398,7 @@ export interface AnalyzeOptions {
   browserPool?: BrowserPool;
   // M38: share one dev server per config tuple across a sweep. analyze()
   // never creates or closes one: single-component runs gain nothing.
-  serverPool?: import("./harness.js").ServerPool;
+  serverPool?: import("../harness/index.js").ServerPool;
   // M39: force measurement even when a fingerprinted baseline would allow
   // reusing the stored verdict.
   noCache?: boolean;
@@ -479,7 +479,7 @@ export interface BuildReportInput {
   explicitThresholds?: Partial<Record<keyof TierBudget, boolean>>;
   skipAttribution?: boolean;
   autoComposition?: boolean;
-  compositionTree?: import("./composition.js").CompositionTree;
+  compositionTree?: import("../props/index.js").CompositionTree;
   // M80: a combo rendered something, but not the whole component. Applied
   // once, after the per-combo loop, to every combo without a renderHealth
   // value already: renderHealth already fully discloses the combo's shape,
@@ -491,7 +491,7 @@ export interface BuildReportInput {
   measuredWithoutProps?: boolean;
   nextJsShims?: string[];
   scalingCurveReport?: ScalingCurveReport;
-  matrixReport?: import("./report.js").MatrixReport;
+  matrixReport?: import("../report/index.js").MatrixReport;
   // M85: consumed to attribute a fatal render crash to a harness-synthesized
   // value rather than the component (see detectHarnessFault). Optional and
   // read defensively — `provenance` is Lane B's field (src/prop-gen.ts,
@@ -2288,7 +2288,7 @@ function resolveRelativeJsxChild(fromFile: string, specifier: string): string | 
 function composedChildPreflightHits(
   targetFile: string,
   projectRoot: string,
-): import("./preflight.js").PreflightHit[] {
+): import("../project/index.js").PreflightHit[] {
   if (isVueFile(targetFile)) return [];
   let sourceText: string;
   try {
@@ -2300,7 +2300,7 @@ function composedChildPreflightHits(
   if (composed.length === 0) return [];
 
   const targetRel = path.relative(projectRoot, targetFile).replace(/\\/g, "/");
-  const hits: import("./preflight.js").PreflightHit[] = [];
+  const hits: import("../project/index.js").PreflightHit[] = [];
   for (const { specifier } of composed) {
     const resolved = resolveRelativeJsxChild(targetFile, specifier);
     if (!resolved || isVueFile(resolved)) continue;
@@ -3247,7 +3247,7 @@ export function formatExplainProps(explained: PropsExplanation): string {
 // already edited.
 function writeFixtureScaffold(
   componentPath: string,
-  exports: import("./composition.js").ExportInfo[],
+  exports: import("../props/index.js").ExportInfo[],
   tree: CompositionTree,
 ): string {
   const target = fixtureScaffoldPath(componentPath);
@@ -3348,7 +3348,7 @@ export function remedyNamesLoadedPreset(warning: string, presetFile: string): st
 // composition is a fallback signal, not a run failure.
 async function trialMountComposition(
   page: import("playwright").Page,
-): Promise<import("./composition.js").CompositionTrial> {
+): Promise<import("../props/index.js").CompositionTrial> {
   try {
     await page.evaluate(() => (window as any).__120fps.mount({}));
     const rootElements = await page.evaluate(
@@ -3627,7 +3627,7 @@ export async function analyze(
   const rendererIsVue = isVueFile(componentPath);
 
   let compositionTree: CompositionTree | undefined;
-  let componentExports: import("./composition.js").ExportInfo[] | undefined;
+  let componentExports: import("../props/index.js").ExportInfo[] | undefined;
   // M80: set when a run's combos measured less than the whole component
   // (radix's dual-family/bare-alias shape, base-ui's cross-file parts, or
   // Vue's Options-API prop exclusion). Held locally until `runWarnings`
@@ -3735,7 +3735,7 @@ export async function analyze(
   // see isDirectProviderHit (src/preflight.ts) and report.ts's own comment.
   let transitiveProviderCandidates: string[] = [];
   // M48: kept outside the try so a failure on the way out can still name them.
-  let transformHits: import("./preflight.js").PreflightHit[] = [];
+  let transformHits: import("../project/index.js").PreflightHit[] = [];
   let activeTransforms: string[] | undefined;
   // M117 C4: applied to every harness build, so a rebuilt harness cannot bring
   // back a note about a plugin this run applies itself.
@@ -4073,7 +4073,7 @@ export async function analyze(
       }
     }
 
-    const baseHarnessOpts: import("./harness.js").BuildHarnessOptions = {
+    const baseHarnessOpts: import("../harness/index.js").BuildHarnessOptions = {
       ...(options.noShims ? { noShims: true } : {}),
       ...(wrapPath ? { wrapPath } : {}),
       ...(resolvedCss.files.length > 0 ? { cssFiles: resolvedCss.files } : {}),
@@ -4083,7 +4083,7 @@ export async function analyze(
       ...(options.noTransforms ? { noTransforms: true } : {}),
       ...(options.target ? { target: options.target } : {}),
     };
-    const composedHarnessOpts: import("./harness.js").BuildHarnessOptions = {
+    const composedHarnessOpts: import("../harness/index.js").BuildHarnessOptions = {
       ...baseHarnessOpts,
       ...(useComposition ? { composition: compositionTree!, exports: componentExports } : {}),
     };
@@ -4294,7 +4294,7 @@ export async function analyze(
     await msession.close();
     msession = undefined;
 
-    let schemas: import("./prop-gen.js").PropSchema[] | undefined;
+    let schemas: import("../props/index.js").PropSchema[] | undefined;
     const fixtureHasScale = useFixture && detectScaleExport(path.resolve(harnessPath));
 
     const ctx: ModeContext = {

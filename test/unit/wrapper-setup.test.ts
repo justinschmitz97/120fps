@@ -5,9 +5,9 @@ import {
   setupBlock,
   setupApiBlock,
   WRAPPER_SETUP_TIMEOUT_MS,
-} from "../../src/harness.js";
-import { generateProbeEntry } from "../../src/react-profiler.js";
-import type { CompositionTree } from "../../src/composition.js";
+} from "../../src/harness/index.js";
+import { generateProbeEntry } from "../../src/analysis/index.js";
+import type { CompositionTree } from "../../src/props/index.js";
 
 const WRAP = "120fps.setup.tsx";
 

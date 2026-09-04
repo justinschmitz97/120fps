@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
-import * as nextNavigation from "../../src/shims/next-navigation.js";
-import * as nextImage from "../../src/shims/next-image.js";
-import * as nextHeaders from "../../src/shims/next-headers.js";
+import * as nextNavigation from "../../src/harness/shims/next-navigation.js";
+import * as nextImage from "../../src/harness/shims/next-image.js";
+import * as nextHeaders from "../../src/harness/shims/next-headers.js";
 
 // M96 harden: adversarial hypotheses against the new shim exports.
 

@@ -9,13 +9,13 @@ import path from "node:path";
 // refuse outright. The compiler resolves from any directory under the test
 // runner, so the missing one is supplied by a module mock rather than a
 // fixture.
-vi.mock("../../src/vue-sfc.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../src/vue-sfc.js")>();
+vi.mock("../../src/project/vue-sfc.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../src/project/vue-sfc.js")>();
   return { ...actual, loadVueCompiler: async () => undefined };
 });
 
-const { explainProps } = await import("../../src/analyze.js");
-const { VUE_COMPILER_MISSING } = await import("../../src/vue-sfc.js");
+const { explainProps } = await import("../../src/pipeline/index.js");
+const { VUE_COMPILER_MISSING } = await import("../../src/project/index.js");
 
 const tmpDirs: string[] = [];
 

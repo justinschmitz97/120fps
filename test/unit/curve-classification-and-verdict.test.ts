@@ -5,7 +5,7 @@ import {
   isSuperlinearGrowth,
   SUPERLINEAR_MIN_EXPONENT,
   SUPERLINEAR_RESIDUAL_SHARE,
-} from "../../src/metrics.js";
+} from "../../src/analysis/index.js";
 import {
   buildCurveReport,
   computeCurveVerdict,
@@ -19,9 +19,9 @@ import {
   type ScalingCurveReport,
   type ScalingPoint,
   type Thresholds,
-} from "../../src/report.js";
-import type { MountResult, RerenderResult } from "../../src/measure.js";
-import type { ExploreResult } from "../../src/explorer.js";
+} from "../../src/report/index.js";
+import type { MountResult, RerenderResult } from "../../src/browser/index.js";
+import type { ExploreResult } from "../../src/analysis/index.js";
 
 const THRESHOLDS: Thresholds = {
   mountMs: 50,

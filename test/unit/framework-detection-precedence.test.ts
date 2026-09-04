@@ -2,8 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { detectFramework, FRAMEWORK_MANIFEST_UNREADABLE } from "../../src/react-profiler.js";
-import { resolveFramework, FRAMEWORK_FLAG_NO_MOUNT_EFFECT_WARNING } from "../../src/analyze.js";
+import { detectFramework, FRAMEWORK_MANIFEST_UNREADABLE } from "../../src/analysis/index.js";
+import { resolveFramework, FRAMEWORK_FLAG_NO_MOUNT_EFFECT_WARNING } from "../../src/pipeline/index.js";
 
 let tmpDir: string;
 

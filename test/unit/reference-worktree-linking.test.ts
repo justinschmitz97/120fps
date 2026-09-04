@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import { nodeModulesLinkDirs, linkNodeModules, unlinkNodeModules } from "../../src/compare.js";
+import { nodeModulesLinkDirs, linkNodeModules, unlinkNodeModules } from "../../src/analysis/index.js";
 
 function git(args: string[], cwd: string): string {
   return execFileSync("git", args, { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] }).trim();

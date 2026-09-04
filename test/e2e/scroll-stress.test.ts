@@ -1,8 +1,8 @@
 import { describe, it, expect, afterAll } from "vitest";
 import { chromium, type Browser, type Page } from "playwright";
-import { buildAndServe, type HarnessResult } from "../../src/harness.js";
-import { discoverInteractions } from "../../src/discovery.js";
-import { executeStressPattern, resolveStressPattern } from "../../src/stress-patterns.js";
+import { buildAndServe, type HarnessResult } from "../../src/harness/index.js";
+import { discoverInteractions } from "../../src/browser/index.js";
+import { executeStressPattern, resolveStressPattern } from "../../src/analysis/index.js";
 
 let browser: Browser;
 

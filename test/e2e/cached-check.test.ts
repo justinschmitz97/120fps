@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
-import { analyze, type AnalyzeOptions } from "../../src/analyze.js";
-import { parseBaselineKey, type Baseline, type BaselineEntry } from "../../src/budget.js";
+import { analyze, type AnalyzeOptions } from "../../src/pipeline/index.js";
+import { parseBaselineKey, type Baseline, type BaselineEntry } from "../../src/report/index.js";
 
 const PROJECT_DIR = path.resolve(`.m39-cached-check-${process.pid}`);
 const COMPONENT = path.join(PROJECT_DIR, "static-card.tsx");

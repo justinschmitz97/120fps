@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseArgs, defaultJsonPathFor, resolveReportPaths } from "../../src/cli.js";
+import { parseArgs, defaultJsonPathFor, resolveReportPaths } from "../../src/cli/index.js";
 
 describe("D12: multi-path parsing", () => {
   it("collects multiple component paths in order", () => {

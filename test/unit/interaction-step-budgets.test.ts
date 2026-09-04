@@ -7,9 +7,9 @@ import {
   TIER_BUDGETS,
   type ComboReport,
   type InteractionReport,
-} from "../../src/report.js";
-import { countPatternEvents, resolveStressPattern } from "../../src/stress-patterns.js";
-import type { InteractionDescriptor } from "../../src/discovery.js";
+} from "../../src/report/index.js";
+import { countPatternEvents, resolveStressPattern } from "../../src/analysis/index.js";
+import type { InteractionDescriptor } from "../../src/browser/index.js";
 
 function timing(median: number) {
   return { samples: [median], median, p95: median, cv: 0, unstable: false };

@@ -6,8 +6,8 @@ import {
   UNCOMPOSED_SIBLINGS_WARNING,
   type ExportInfo,
   type CompositionTree,
-} from "../../src/composition.js";
-import type { PropSchema } from "../../src/prop-gen.js";
+} from "../../src/props/index.js";
+import type { PropSchema } from "../../src/props/index.js";
 
 function makeExports(...names: string[]): ExportInfo[] {
   return names.map((name, i) => ({ name, isDefault: i === 0 }));

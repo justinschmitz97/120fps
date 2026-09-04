@@ -9,9 +9,9 @@ import {
   selectMeasuredExport,
   extractPropsDetailed,
   isSynthesizedRequiredObjectWarning,
-} from "../../src/prop-gen.js";
+} from "../../src/props/index.js";
 // Read-only use of another lane's module: the point is that the two answers agree.
-import { detectComponentExport } from "../../src/harness.js";
+import { detectComponentExport } from "../../src/harness/index.js";
 
 const FIXTURES = path.resolve(__dirname, "../../fixtures/own-props-rank");
 const cleanupDirs: string[] = [];

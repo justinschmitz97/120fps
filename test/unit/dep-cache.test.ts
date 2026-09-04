@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, it, expect } from "vitest";
-import { unionCachedDeps } from "../../src/harness.js";
+import { unionCachedDeps } from "../../src/harness/index.js";
 
 // M34: optimizeDeps.include must converge to a stable superset per project, so
 // the per-component scan variation stops invalidating Vite's dep cache hash.
@@ -52,7 +52,7 @@ describe("unionCachedDeps", () => {
 // module loads (~9s of the ~11s first navigation on a Next.js project).
 describe("harness server does not watch files", () => {
   it("passes watch: null to the dev server", () => {
-    const src = fs.readFileSync(path.resolve("src", "harness.ts"), "utf-8");
+    const src = fs.readFileSync(path.resolve("src", "harness/build.ts"), "utf-8");
     const serverBlock = src.slice(
       src.indexOf("server: {"),
       src.indexOf("resolve: {"),

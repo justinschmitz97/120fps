@@ -9,14 +9,14 @@ import {
   buildBaselineEntry,
   DEFAULT_PHASE_ESTIMATE,
   type PropsExplanation,
-} from "../../src/analyze.js";
+} from "../../src/pipeline/index.js";
 import {
   saveBaseline,
   loadBaseline,
   selectPhaseTimingEntry,
   type BaselineEntry,
-} from "../../src/budget.js";
-import type { PhaseTimings } from "../../src/report.js";
+} from "../../src/report/index.js";
+import type { PhaseTimings } from "../../src/report/index.js";
 
 const FIXTURE = path.resolve(__dirname, "../../fixtures/phase-timings");
 

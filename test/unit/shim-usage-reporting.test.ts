@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { scanExternalDeps } from "../../src/harness.js";
+import { scanExternalDeps } from "../../src/harness/index.js";
 
 // M62: activeShims/report.nextJsShims was always undefined because a shim
 // alias's replacement resolves to a real local file, so the import got

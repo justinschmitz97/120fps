@@ -4,8 +4,8 @@ import {
   extractProps,
   detectScalingProps,
   resetExtractionCache,
-} from "../../src/prop-gen.js";
-import { detectComponentName } from "../../src/analyze.js";
+} from "../../src/props/index.js";
+import { detectComponentName } from "../../src/pipeline/index.js";
 
 const M58 = path.resolve("./fixtures/m58");
 const fixture = (name: string): string => path.join(M58, name);

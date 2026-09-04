@@ -1,12 +1,12 @@
 import { describe, it, expect } from "vitest";
 import path from "node:path";
-import { extractProps, type PropSchema } from "../../src/prop-gen.js";
+import { extractProps, type PropSchema } from "../../src/props/index.js";
 import {
   generatePropMatrix,
   matrixAxesFor,
   matrixHeldAbsentProps,
   matrixValues,
-} from "../../src/prop-gen-values.js";
+} from "../../src/props/index.js";
 
 const DIALOG = path.resolve(__dirname, "../../fixtures/controlled-pair/Dialog.tsx");
 const DIALOG_DEFAULTS = path.resolve(

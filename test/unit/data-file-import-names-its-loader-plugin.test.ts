@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { runPreflight, recognizeTransform, declaredTransformOwner } from "../../src/preflight.js";
+import { runPreflight, recognizeTransform, declaredTransformOwner } from "../../src/project/index.js";
 
 // directus: `app/src/lang/translations/en-US.yaml` is loaded by the
 // `@rollup/plugin-yaml` its own vite.config declares. Vite cannot parse a YAML

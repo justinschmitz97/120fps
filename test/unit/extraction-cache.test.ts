@@ -6,7 +6,7 @@ import {
   extractAllProps,
   resetExtractionCache,
   extractionCacheStats,
-} from "../../src/prop-gen.js";
+} from "../../src/props/index.js";
 
 beforeEach(() => {
   resetExtractionCache();

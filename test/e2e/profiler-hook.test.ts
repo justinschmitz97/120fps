@@ -3,7 +3,7 @@ import path from "node:path";
 import fs from "node:fs";
 import os from "node:os";
 import { chromium, type Browser } from "playwright";
-import { injectProfilerHook } from "../../src/react-profiler.js";
+import { injectProfilerHook } from "../../src/analysis/index.js";
 import { sharedAnalyze as analyze } from "./shared-analyze.js";
 
 let browser: Browser | undefined;

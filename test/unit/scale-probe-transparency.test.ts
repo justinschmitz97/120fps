@@ -7,11 +7,11 @@ import {
   SCALE_PROBE_GATE_MS,
   boundScalePointsByProbeCost,
   type BuildReportInput,
-} from "../../src/analyze.js";
-import { formatTable, describeMode, type Report, type ComboReport } from "../../src/report.js";
-import { selectMatrixCombos, type PropCombination } from "../../src/prop-gen-values.js";
-import type { MountResult, RerenderResult } from "../../src/measure.js";
-import type { ExploreResult, StateGraph } from "../../src/explorer.js";
+} from "../../src/pipeline/index.js";
+import { formatTable, describeMode, type Report, type ComboReport } from "../../src/report/index.js";
+import { selectMatrixCombos, type PropCombination } from "../../src/props/index.js";
+import type { MountResult, RerenderResult } from "../../src/browser/index.js";
+import type { ExploreResult, StateGraph } from "../../src/analysis/index.js";
 
 // --- Helpers ---
 

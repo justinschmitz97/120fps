@@ -3,7 +3,7 @@ import {
   STYLESHEET_MATCH_STATS_SOURCE,
   stylesheetMatchStatsBlock,
   generateEntry,
-} from "../../src/harness.js";
+} from "../../src/harness/index.js";
 
 type Stats = Array<{ file: string; rules: number; matched: number }>;
 

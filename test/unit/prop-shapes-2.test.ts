@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { extractProps } from "../../src/prop-gen.js";
-import { generateCombinations } from "../../src/prop-gen-values.js";
+import { extractProps } from "../../src/props/index.js";
+import { generateCombinations } from "../../src/props/index.js";
 
 // H11: Class component
 describe("H11: class component", () => {

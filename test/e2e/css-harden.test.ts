@@ -4,9 +4,9 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { chromium, type Browser, type Page } from "playwright";
-import { buildAndServe, type HarnessResult } from "../../src/harness.js";
-import { FONT_SETTLE_WARNING } from "../../src/measure.js";
-import { attachPageErrorCapture, type PageErrorCapture } from "../../src/page-errors.js";
+import { buildAndServe, type HarnessResult } from "../../src/harness/index.js";
+import { FONT_SETTLE_WARNING } from "../../src/browser/index.js";
+import { attachPageErrorCapture, type PageErrorCapture } from "../../src/browser/index.js";
 import { sharedAnalyze as analyze } from "./shared-analyze.js";
 
 let browser: Browser | undefined;

@@ -7,7 +7,7 @@ import {
   runPreflight,
   PROJECT_TRANSFORM_WARNING,
   transformFailureNote,
-} from "../../src/preflight.js";
+} from "../../src/project/index.js";
 
 const tmpDirs: string[] = [];
 

@@ -15,7 +15,7 @@ import {
   type BaselineEntry,
   type ResolvedTolerance,
   selectBaselineEntry,
-} from "../../src/budget.js";
+} from "../../src/report/index.js";
 import {
   formatTable,
   buildTimingWithCV,
@@ -23,8 +23,8 @@ import {
   type EnvFingerprint,
   type Report,
   type Thresholds,
-} from "../../src/report.js";
-import { parseArgs, KNOWN_FLAGS } from "../../src/cli.js";
+} from "../../src/report/index.js";
+import { parseArgs, KNOWN_FLAGS } from "../../src/cli/index.js";
 
 // M45: entries are keyed by component x environment slot; selectBaselineEntry
 // resolves the slot for us so these assertions stay about the entry, not the key.
@@ -448,7 +448,7 @@ describe("E4 --baseline-env flag", () => {
   });
 
   it("appears in the help text", async () => {
-    const { helpText } = await import("../../src/cli.js");
+    const { helpText } = await import("../../src/cli/index.js");
     expect(helpText()).toContain("--baseline-env");
   });
 });

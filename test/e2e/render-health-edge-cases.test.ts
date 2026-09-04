@@ -2,8 +2,8 @@ import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { analyze, type AnalyzeOptions } from "../../src/analyze.js";
-import { formatTable } from "../../src/report.js";
+import { analyze, type AnalyzeOptions } from "../../src/pipeline/index.js";
+import { formatTable } from "../../src/report/index.js";
 
 function tmpJson(): string {
   return path.join(os.tmpdir(), `120fps-m59h-${Date.now()}-${Math.random().toString(36).slice(2)}.json`);

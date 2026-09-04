@@ -1,14 +1,14 @@
 import { describe, it, expect, afterAll } from "vitest";
 import { chromium, type Browser, type Page } from "playwright";
-import { buildAndServe, type HarnessResult } from "../../src/harness.js";
+import { buildAndServe, type HarnessResult } from "../../src/harness/index.js";
 import {
   installMeasuredStateProbe,
   readNetworkProbe,
   probeLateMutation,
   detectAnimations,
   MEASURED_STATE_HOLD_MS,
-} from "../../src/measure.js";
-import { analyze, type AnalyzeOptions } from "../../src/analyze.js";
+} from "../../src/browser/index.js";
+import { analyze, type AnalyzeOptions } from "../../src/pipeline/index.js";
 
 let browser: Browser;
 

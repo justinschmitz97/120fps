@@ -2,8 +2,8 @@ import { describe, it, expect, afterAll } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { abortRun } from "../../src/cli.js";
-import { createHarnessDir, removeActiveHarnessDirs, sweepActiveHarnessDirs } from "../../src/harness.js";
+import { abortRun } from "../../src/cli/index.js";
+import { createHarnessDir, removeActiveHarnessDirs, sweepActiveHarnessDirs } from "../../src/harness/index.js";
 
 const roots: string[] = [];
 

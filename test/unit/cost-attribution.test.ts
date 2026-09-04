@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { attributeCost, type CostAttribution, type CostBucket } from "../../src/metrics.js";
-import type { TraceEvent } from "../../src/measure.js";
+import { attributeCost, type CostAttribution, type CostBucket } from "../../src/analysis/index.js";
+import type { TraceEvent } from "../../src/browser/index.js";
 
 function makeEvent(
   name: string,

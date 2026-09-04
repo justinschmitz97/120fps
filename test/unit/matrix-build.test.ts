@@ -6,7 +6,7 @@ import {
   type InteractionReport,
   type MatrixAxis,
   type PropDelta,
-} from "../../src/report.js";
+} from "../../src/report/index.js";
 
 function makeCombo(
   comboIndex: number,

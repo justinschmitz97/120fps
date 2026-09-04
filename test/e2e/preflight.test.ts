@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import path from "node:path";
-import { analyze, type AnalyzeOptions } from "../../src/analyze.js";
+import { analyze, type AnalyzeOptions } from "../../src/pipeline/index.js";
 
 const FAST: AnalyzeOptions = {
   samples: 2,

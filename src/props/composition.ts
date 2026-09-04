@@ -1,7 +1,7 @@
 import ts from "typescript";
 import path from "node:path";
-import type { PropSchema } from "./prop-gen.js";
-import type { PropCombination } from "./prop-gen-values.js";
+import type { PropSchema } from "./extract.js";
+import type { PropCombination } from "./values.js";
 
 export interface ExportInfo {
   name: string;

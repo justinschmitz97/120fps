@@ -2,8 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { builtinModules } from "node:module";
 import ts from "typescript";
-import { projectCompilerOptions } from "./prop-gen.js";
-import { setImportCycleReported } from "./page-errors.js";
+import { projectCompilerOptions } from "../props/index.js";
+import { setImportCycleReported } from "../browser/index.js";
 import { isVueFile, parseSfcScript, type VueSfcCompiler } from "./vue-sfc.js";
 import {
   detectPnP,
@@ -11,12 +11,12 @@ import {
   installedPackageDir,
   isPackageDeclared,
   workspaceLevels,
-} from "./project-model.js";
+} from "./model.js";
 // M110 (I3): the loadable-plugin probe the classifier below filters against.
 // harness.ts imports this module in turn; the call sits inside a function body,
 // so the binding is resolved when the classifier runs, never while either
 // module is still evaluating.
-import { detectProjectTransforms, SUPPORTED_TRANSFORM_PLUGINS } from "./harness.js";
+import { detectProjectTransforms, SUPPORTED_TRANSFORM_PLUGINS } from "../harness/index.js";
 
 // The marker package a server module imports to make the boundary explicit.
 // M72: "next/server-only" was never a real module (Next.js re-exports the

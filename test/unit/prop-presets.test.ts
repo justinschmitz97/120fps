@@ -6,14 +6,14 @@ import {
   applyPropPresets,
   isPresetRef,
   UNKNOWN_PRESET_PROPS_WARNING,
-} from "../../src/prop-presets.js";
+} from "../../src/props/index.js";
 import {
   presetImportLine,
   presetResolverBlock,
   presetResolveStatement,
   generateEntry,
-} from "../../src/harness.js";
-import type { PropSchema } from "../../src/prop-gen.js";
+} from "../../src/harness/index.js";
+import type { PropSchema } from "../../src/props/index.js";
 
 const ROOT = path.resolve("fixtures");
 const CARD = path.join(ROOT, "m44-preset-card.tsx");

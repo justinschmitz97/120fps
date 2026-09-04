@@ -2,21 +2,21 @@ import fs from "node:fs";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { chromium, type Browser, type CDPSession, type Page } from "playwright";
-import { renderTreeHelper, setupApiBlock, setupBlock, wrapImportLine, type HarnessResult } from "./harness.js";
+import { renderTreeHelper, setupApiBlock, setupBlock, wrapImportLine, type HarnessResult } from "../harness/index.js";
 import {
   declaredPackages,
   findWorkspaceRoot,
   isPackageAvailable,
   isPackageDeclared,
   readProjectManifest,
-} from "./project-model.js";
-import type { PropCombination } from "./prop-gen-values.js";
-import { applyWrapperViewport, collectTrace, createPhaseTracker, parseTraceDuration, settleStyles, reportFontSettle, tryCollectGarbage, computeMedian, HARNESS_NAV_WAIT } from "./measure.js";
+} from "../project/index.js";
+import type { PropCombination } from "../props/index.js";
+import { applyWrapperViewport, collectTrace, createPhaseTracker, parseTraceDuration, settleStyles, reportFontSettle, tryCollectGarbage, computeMedian, HARNESS_NAV_WAIT } from "../browser/index.js";
 import {
   attachPageErrorCapture,
   enrichTimeoutError,
   gotoWithErrorContext,
-} from "./page-errors.js";
+} from "../browser/index.js";
 
 export interface FiberInfo {
   name: string;
@@ -586,7 +586,7 @@ export interface ReactAnalysisOptions {
   warmupRuns?: number;
   fnPropNames?: string[];
   // M37: reuse the pooled vsync browser (fresh context per pass).
-  pool?: import("./measure.js").BrowserPool;
+  pool?: import("../browser/index.js").BrowserPool;
   // M70: this pass settles fonts on its own probe page, independently of the
   // mount/rerender passes; a timeout here needs its own way out.
   onWarning?: (warning: string) => void;

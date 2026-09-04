@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { buildAndServe, type HarnessResult } from "../../src/harness.js";
-import { discoverInteractions, type InteractionDescriptor } from "../../src/discovery.js";
+import { buildAndServe, type HarnessResult } from "../../src/harness/index.js";
+import { discoverInteractions, type InteractionDescriptor } from "../../src/browser/index.js";
 import { chromium, type Browser, type Page } from "playwright";
 
 let harness: HarnessResult | undefined;

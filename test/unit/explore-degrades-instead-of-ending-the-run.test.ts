@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { EXPLORE_STALLED_WARNING } from "../../src/explorer.js";
-import { executeStressPattern, resolveStressPattern } from "../../src/stress-patterns.js";
+import { EXPLORE_STALLED_WARNING } from "../../src/analysis/index.js";
+import { executeStressPattern, resolveStressPattern } from "../../src/analysis/index.js";
 import type { Page } from "playwright-core";
 
 // calcom-F3: a Radix Popover trigger drew `open-close-10` (20 clicks, each

@@ -5,12 +5,12 @@ import {
   SCALE_PROBE_GATE_MS,
   MATRIX_CELL_CAP_WARNING,
   type BuildReportInput,
-} from "../../src/analyze.js";
-import { formatTable, describeMode, type Report, type ComboReport } from "../../src/report.js";
-import { selectMatrixCombos, type PropCombination } from "../../src/prop-gen-values.js";
-import { loadBaseline, computeEnvKey } from "../../src/budget.js";
-import type { MountResult, RerenderResult } from "../../src/measure.js";
-import type { ExploreResult, StateGraph } from "../../src/explorer.js";
+} from "../../src/pipeline/index.js";
+import { formatTable, describeMode, type Report, type ComboReport } from "../../src/report/index.js";
+import { selectMatrixCombos, type PropCombination } from "../../src/props/index.js";
+import { loadBaseline, computeEnvKey } from "../../src/report/index.js";
+import type { MountResult, RerenderResult } from "../../src/browser/index.js";
+import type { ExploreResult, StateGraph } from "../../src/analysis/index.js";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

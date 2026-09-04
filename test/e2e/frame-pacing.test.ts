@@ -1,12 +1,12 @@
 import { describe, it, expect } from "vitest";
 import { chromium } from "playwright";
-import { buildAndServe } from "../../src/harness.js";
+import { buildAndServe } from "../../src/harness/index.js";
 import {
   measureMount,
   measureRerender,
   createFramePump,
   MEASUREMENT_BROWSER_ARGS,
-} from "../../src/measure.js";
+} from "../../src/browser/index.js";
 
 async function doubleRafMedian(args: string[], pumped: boolean): Promise<number> {
   const browser = await chromium.launch({ headless: true, args });

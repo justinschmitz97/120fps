@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { suspendThrottle } from "../../src/measure.js";
+import { suspendThrottle } from "../../src/browser/index.js";
 
 interface SentCommand {
   method: string;

@@ -3,8 +3,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import ts from "typescript";
-import { runPreflight } from "../../src/preflight.js";
-import { scanExternalDeps } from "../../src/harness.js";
+import { runPreflight } from "../../src/project/index.js";
+import { scanExternalDeps } from "../../src/harness/index.js";
 
 // Two entry components over one shared chain: the second walk must answer from
 // what the first read, and a sweep must not pay for the chain per component.

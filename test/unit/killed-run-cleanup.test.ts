@@ -10,15 +10,15 @@ import {
   RUN_WATCHDOG_ABORT_ERROR,
   runWatchdogBudgetMs,
   terminationExitCode,
-} from "../../src/cli.js";
-import { resolveProgressReporter } from "../../src/analyze.js";
+} from "../../src/cli/index.js";
+import { resolveProgressReporter } from "../../src/pipeline/index.js";
 import {
   createHarnessDir,
   HARNESS_PID_FILE,
   LIVE_PID_HARNESS_MAX_AGE_MS,
   refreshHarnessDirMarkers,
   sweepStaleHarnessDirs,
-} from "../../src/harness.js";
+} from "../../src/harness/index.js";
 
 const roots: string[] = [];
 
@@ -69,7 +69,8 @@ describe("exit code for a signalled run", () => {
 describe("processes a run is responsible for", () => {
   it("starts no second node process of its own", () => {
     const sources = fs
-      .readdirSync(path.resolve("src"))
+      .readdirSync(path.resolve("src"), { recursive: true })
+      .map((name) => String(name).replace(/\\/g, "/"))
       .filter((name) => name.endsWith(".ts"))
       .map((name) => [name, fs.readFileSync(path.resolve("src", name), "utf-8")] as const);
     const spawners = sources.filter(
@@ -84,11 +85,12 @@ describe("processes a run is responsible for", () => {
 
   it("uses child_process only for the synchronous git calls of --compare", () => {
     const users = fs
-      .readdirSync(path.resolve("src"))
+      .readdirSync(path.resolve("src"), { recursive: true })
+      .map((name) => String(name).replace(/\\/g, "/"))
       .filter((name) => name.endsWith(".ts"))
       .filter((name) => /node:child_process/.test(fs.readFileSync(path.resolve("src", name), "utf-8")));
-    expect(users).toEqual(["compare.ts"]);
-    expect(fs.readFileSync(path.resolve("src", "compare.ts"), "utf-8")).toContain("execFileSync");
+    expect(users).toEqual(["analysis/compare.ts"]);
+    expect(fs.readFileSync(path.resolve("src", "analysis/compare.ts"), "utf-8")).toContain("execFileSync");
   });
 });
 

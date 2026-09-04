@@ -4,7 +4,7 @@ import {
   UNRESOLVED_SPRITE_REFS_SOURCE,
   COMPONENT_NODE_COUNT_EXPRESSION,
   UNRESOLVED_SPRITE_REFS_EXPRESSION,
-} from "../../src/measure.js";
+} from "../../src/browser/index.js";
 
 interface FakeElement {
   tagName: string;

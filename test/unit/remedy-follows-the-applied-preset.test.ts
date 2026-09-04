@@ -5,8 +5,8 @@ import {
   presetAnswersRemedy,
   presetShapeDisclosure,
   remedyNamesLoadedPreset,
-} from "../../src/analyze.js";
-import { PRESET_SHAPE_WARNING } from "../../src/prop-presets.js";
+} from "../../src/pipeline/index.js";
+import { PRESET_SHAPE_WARNING } from "../../src/props/index.js";
 
 // radix-themes-F1, epic-stack-F3, logto-F4: a sibling that carries a preset's
 // name without its shape was dropped in silence, and the remedy that named it

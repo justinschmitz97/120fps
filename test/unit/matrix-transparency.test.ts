@@ -6,7 +6,7 @@ import {
   MATRIX_AUTO_ACTIVATED_NOTICE,
   MATRIX_NO_AXES_WARNING,
   MATRIX_SUPPRESSED_BY_CURVE_WARNING,
-} from "../../src/analyze.js";
+} from "../../src/pipeline/index.js";
 
 const src = (name: string) => fs.readFileSync(path.resolve("src", name), "utf-8");
 
@@ -59,7 +59,7 @@ describe("MATRIX_AUTO_ACTIVATED_NOTICE", () => {
 // gated correctly, matching the pattern used elsewhere in this suite (see
 // m28-isolation-harden.test.ts's `src()` helper).
 describe("matrix branch wiring", () => {
-  const analyzeSrc = src("analyze.ts");
+  const analyzeSrc = src("pipeline/analyze.ts");
   const branch = analyzeSrc.slice(
     analyzeSrc.indexOf("async function runMatrixMode("),
     analyzeSrc.indexOf("function computeMedianFromSamples("),
@@ -116,7 +116,7 @@ describe("MATRIX_SUPPRESSED_BY_CURVE_WARNING", () => {
 
 describe("M83 #4a: curve-vs-matrix dispatch wiring", () => {
   it("checks options.matrixMode before returning runCurveMode, and pushes the warning first", () => {
-    const fullSrc = src("analyze.ts");
+    const fullSrc = src("pipeline/analyze.ts");
     const dispatchBranch = fullSrc.slice(
       fullSrc.indexOf("// --- Curve mode check ---"),
       fullSrc.indexOf("// --- Matrix mode check ---"),

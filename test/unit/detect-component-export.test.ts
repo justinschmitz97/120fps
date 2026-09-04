@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { detectComponentExport } from "../../src/harness.js";
+import { detectComponentExport } from "../../src/harness/index.js";
 
 let tmpDir: string;
 

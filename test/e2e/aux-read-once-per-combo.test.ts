@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { buildAndServe } from "../../src/harness.js";
-import { measureMount } from "../../src/measure.js";
+import { buildAndServe } from "../../src/harness/index.js";
+import { measureMount } from "../../src/browser/index.js";
 
 // M34: domNodeCount and hasAnimation are read once per combo (first sample):
 // not during warmup and not on later samples. The fixture counts every

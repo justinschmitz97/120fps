@@ -1,15 +1,15 @@
 import { describe, it, expect } from "vitest";
-import { computeP95, computeMedian, warmupsForPosition } from "../../src/measure.js";
-import { computeCV, buildTimingWithCV } from "../../src/report.js";
-import { computeScalingCurve } from "../../src/metrics.js";
+import { computeP95, computeMedian, warmupsForPosition } from "../../src/browser/index.js";
+import { computeCV, buildTimingWithCV } from "../../src/report/index.js";
+import { computeScalingCurve } from "../../src/analysis/index.js";
 import {
   computeChurnDegradation,
   buildChurnTiming,
   buildRerenderIsolation,
   computeIsolationVerdict,
   CHURN_DEGRADATION_LIMIT,
-} from "../../src/isolation.js";
-import { computeEffectiveSamples } from "../../src/analyze.js";
+} from "../../src/analysis/index.js";
+import { computeEffectiveSamples } from "../../src/pipeline/index.js";
 
 const GROWTH_CLASSES = ["constant", "linear", "quadratic", "exponential", "inconclusive"];
 

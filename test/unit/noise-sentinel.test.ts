@@ -13,7 +13,7 @@ import {
   NOISY_BASELINE_NOTE,
   HOSTILE_BASELINE_NOTE,
   type NoiseSignals,
-} from "../../src/noise.js";
+} from "../../src/browser/index.js";
 
 function signals(overrides: Partial<NoiseSignals> = {}): NoiseSignals {
   return {

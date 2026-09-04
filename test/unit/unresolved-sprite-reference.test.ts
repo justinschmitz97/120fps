@@ -1,9 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { buildReport, UNRESOLVED_SPRITE_REFS_WARNING, type BuildReportInput } from "../../src/analyze.js";
-import { hintsForReport, formatHints, HINTS } from "../../src/hints.js";
-import { formatTable, type CalibrationResult, type Report, type Thresholds } from "../../src/report.js";
-import type { MountResult } from "../../src/measure.js";
-import type { ExploreResult, StateGraph } from "../../src/explorer.js";
+import { buildReport, UNRESOLVED_SPRITE_REFS_WARNING, type BuildReportInput } from "../../src/pipeline/index.js";
+import { hintsForReport, formatHints, HINTS } from "../../src/report/index.js";
+import { formatTable, type CalibrationResult, type Report, type Thresholds } from "../../src/report/index.js";
+import type { MountResult } from "../../src/browser/index.js";
+import type { ExploreResult, StateGraph } from "../../src/analysis/index.js";
 
 // calcom-F5: `Icon.tsx` renders `<svg><use href="#calendar">`. The sprite that
 // defines `#calendar` lives in `apps/web/app/layout.tsx`, never in the

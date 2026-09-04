@@ -2,8 +2,8 @@ import { describe, it, expect, afterAll } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { findCompilerConfig } from "../../src/project-model.js";
-import { loadTsconfigAliases } from "../../src/harness.js";
+import { findCompilerConfig } from "../../src/project/index.js";
+import { loadTsconfigAliases } from "../../src/harness/index.js";
 
 const cleanupDirs: string[] = [];
 

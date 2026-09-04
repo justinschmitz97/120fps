@@ -10,8 +10,8 @@ import {
   type ComboReport,
   type Report,
   type Thresholds,
-} from "../../src/report.js";
-import { buildReport, type BuildReportInput } from "../../src/analyze.js";
+} from "../../src/report/index.js";
+import { buildReport, type BuildReportInput } from "../../src/pipeline/index.js";
 
 function makeCombo(overrides: Partial<ComboReport> = {}): ComboReport {
   return {
@@ -280,4 +280,4 @@ describe("H15: interaction at exactly T2's per-event budget passes", () => {
   });
 });
 
-import { parseArgs } from "../../src/cli.js";
+import { parseArgs } from "../../src/cli/index.js";

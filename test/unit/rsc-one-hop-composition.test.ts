@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { analyze, explainProps } from "../../src/analyze.js";
+import { analyze, explainProps } from "../../src/pipeline/index.js";
 
 // M91 (commerce-F3): a sync component's JSX can compose an async Server
 // Component one hop away — the import-graph walk only asks whether

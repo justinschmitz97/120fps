@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { generateDeltaPairs } from "../../src/prop-gen-values.js";
-import { formatTable, type Report, type PropDelta } from "../../src/report.js";
-import type { PropSchema } from "../../src/prop-gen.js";
+import { generateDeltaPairs } from "../../src/props/index.js";
+import { formatTable, type Report, type PropDelta } from "../../src/report/index.js";
+import type { PropSchema } from "../../src/props/index.js";
 
 describe("generateDeltaPairs hardening", () => {
   it("H2: union with single value produces 0 pairs", () => {

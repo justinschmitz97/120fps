@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { scanExternalDeps } from "../../src/harness.js";
+import { scanExternalDeps } from "../../src/harness/index.js";
 
 // epic-stack-F1: `#app/utils/misc.tsx` is a Node subpath import declared in the
 // measured package's own `imports` map. Classified as a bare package it becomes

@@ -13,7 +13,7 @@ import {
   tracingTimeoutDegradedWarning,
   targetClosedRetryWarning,
   targetClosedDegradedWarning,
-} from "../../src/measure.js";
+} from "../../src/browser/index.js";
 
 // M89: taxonomy's control — button.tsx dies in the delta pass with
 // `frame starvation: rAF fence exceeded 10000ms`, and the fence had no

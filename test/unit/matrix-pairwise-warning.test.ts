@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { generatePropMatrix } from "../../src/prop-gen-values.js";
-import { MATRIX_PAIRWISE_COVER_WARNING } from "../../src/analyze.js";
-import type { PropSchema } from "../../src/prop-gen.js";
+import { generatePropMatrix } from "../../src/props/index.js";
+import { MATRIX_PAIRWISE_COVER_WARNING } from "../../src/pipeline/index.js";
+import type { PropSchema } from "../../src/props/index.js";
 
 function unionSchema(name: string, count: number): PropSchema {
   return { name, kind: "union", required: true, values: Array.from({ length: count }, (_, i) => `${name}${i}`) };

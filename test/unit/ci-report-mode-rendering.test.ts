@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { formatMarkdown, formatJUnit } from "../../src/ci-report.js";
+import { formatMarkdown, formatJUnit } from "../../src/report/index.js";
 import {
   DEFAULT_THRESHOLDS,
   type Report,
@@ -7,13 +7,13 @@ import {
   type ScalingCurveReport,
   type ScalingPoint,
   type TimingWithCV,
-} from "../../src/report.js";
-import type { ScalingCurve } from "../../src/metrics.js";
+} from "../../src/report/index.js";
+import type { ScalingCurve } from "../../src/analysis/index.js";
 import {
   type IsolationReport,
   LEAK_BYTES_PER_CYCLE,
   CHURN_DEGRADATION_LIMIT,
-} from "../../src/isolation.js";
+} from "../../src/analysis/index.js";
 
 // M55: curve, isolation, and cached reports ship `combos: []`; formatMarkdown
 // and formatJUnit must render their real data instead of "—ms" placeholders

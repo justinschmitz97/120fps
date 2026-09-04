@@ -1,9 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { buildReport, type BuildReportInput } from "../../src/analyze.js";
-import { formatTable, type CalibrationResult, type Report, type Thresholds, type PropProvenance } from "../../src/report.js";
-import type { MountResult, RerenderResult } from "../../src/measure.js";
-import type { ExploreResult, StateGraph } from "../../src/explorer.js";
-import type { PropSchema } from "../../src/prop-gen.js";
+import { buildReport, type BuildReportInput } from "../../src/pipeline/index.js";
+import { formatTable, type CalibrationResult, type Report, type Thresholds, type PropProvenance } from "../../src/report/index.js";
+import type { MountResult, RerenderResult } from "../../src/browser/index.js";
+import type { ExploreResult, StateGraph } from "../../src/analysis/index.js";
+import type { PropSchema } from "../../src/props/index.js";
 
 // The rerender pass measures combo `ci` and then, in the same loop body,
 // rerenders into `combos[ci+1]`'s props to price the prop delta. Errors from

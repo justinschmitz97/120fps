@@ -1,5 +1,5 @@
 import type { Page } from "playwright";
-import type { InteractionDescriptor } from "./discovery.js";
+import type { InteractionDescriptor } from "../browser/index.js";
 
 export interface StressStep {
   action: "click" | "type" | "fill" | "keyboard" | "hover" | "focus" | "select" | "pointer-drag" | "scroll";

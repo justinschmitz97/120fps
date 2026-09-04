@@ -6,8 +6,8 @@ import {
   type ScalingCurveReport,
   type ScalingPoint,
   type InteractionReport,
-} from "../../src/report.js";
-import type { ScalingCurve } from "../../src/metrics.js";
+} from "../../src/report/index.js";
+import type { ScalingCurve } from "../../src/analysis/index.js";
 
 function makeTiming(median: number) {
   return buildTimingWithCV([median, median, median]);

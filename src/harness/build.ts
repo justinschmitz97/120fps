@@ -5,14 +5,14 @@ import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
-import type { CompositionTree, CompositionNode, ExportInfo } from "./composition.js";
-import { scanExports, normalizeComponentName, selectMeasuredExport } from "./prop-gen.js";
+import type { CompositionTree, CompositionNode, ExportInfo } from "../props/index.js";
+import { scanExports, normalizeComponentName, selectMeasuredExport } from "../props/index.js";
 import {
   isVueFile,
   loadVueCompiler,
   templateHasUnconditionalRoot,
   type VueSfcCompiler,
-} from "./vue-sfc.js";
+} from "../project/index.js";
 import {
   detectPnP,
   findCompilerConfig,
@@ -26,18 +26,18 @@ import {
   isPackageDeclared,
   readProjectManifest,
   workspaceLevels,
-} from "./project-model.js";
+} from "../project/index.js";
 import {
   declaredTransformOwner,
   detectMissingInstall,
   hardRemedyFor,
   recognizeVirtualNamespace,
-} from "./preflight.js";
+} from "../project/index.js";
 // Import cycle (harness -> react-profiler -> measure -> harness), safe by
 // construction: every cross-module binding on all three edges is read inside a
 // function body, never during module evaluation, so no partially-initialized
 // namespace is ever observed.
-import { detectFramework } from "./react-profiler.js";
+import { detectFramework } from "../analysis/index.js";
 
 export { findProjectRoot };
 
@@ -3823,7 +3823,7 @@ export function diagnoseUnbuiltWorkspacePackage(
 // stack is real application debugging information, not bundler noise), so
 // removing every "at" line unconditionally is no longer correct.
 function installRoot(): string {
-  return path.resolve(import.meta.dirname ?? __dirname, "..").replace(/\\/g, "/");
+  return path.resolve(import.meta.dirname ?? __dirname, "../..").replace(/\\/g, "/");
 }
 
 function stripBundlerStackFrames(message: string): string {

@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { buildCurveReport, formatTable, type CalibrationResult, type Report, type Thresholds } from "../../src/report.js";
-import { hintsForReport } from "../../src/hints.js";
-import type { MountResult, RerenderResult } from "../../src/measure.js";
-import type { ExploreResult, StateGraph } from "../../src/explorer.js";
+import { buildCurveReport, formatTable, type CalibrationResult, type Report, type Thresholds } from "../../src/report/index.js";
+import { hintsForReport } from "../../src/report/index.js";
+import type { MountResult, RerenderResult } from "../../src/browser/index.js";
+import type { ExploreResult, StateGraph } from "../../src/analysis/index.js";
 
 // commerce-F2: VariantSelector's N=1 point measured the component's own
 // `return null` short-circuit and was fitted as an ordinary point under

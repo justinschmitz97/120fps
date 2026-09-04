@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { buildAndServe } from "../../src/harness.js";
-import { measureMount } from "../../src/measure.js";
+import { buildAndServe } from "../../src/harness/index.js";
+import { measureMount } from "../../src/browser/index.js";
 
 // M34 hardening: the aux-read hoist must not collapse per-combo DOM facts, and
 // throttle suspension must survive the identity throttle rate.

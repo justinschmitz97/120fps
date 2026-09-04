@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
 import path from "node:path";
-import { scanExports } from "../../src/prop-gen.js";
+import { scanExports } from "../../src/props/index.js";
 import fs from "node:fs";
-import { detectComponentExport } from "../../src/harness.js";
+import { detectComponentExport } from "../../src/harness/index.js";
 
 const FIXTURES = path.resolve(__dirname, "../../fixtures");
 

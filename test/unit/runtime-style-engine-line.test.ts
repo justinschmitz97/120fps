@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { formatStylesheetsLine, type CssReport } from "../../src/report.js";
+import { formatStylesheetsLine, type CssReport } from "../../src/report/index.js";
 
 // fluentui-F3: a Griffel-styled component reported "no stylesheet found". An
 // engine the list names and one it does not must never read alike, so the

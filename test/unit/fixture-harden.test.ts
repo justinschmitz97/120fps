@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { parseArgs } from "../../src/cli.js";
-import { isFixturePath } from "../../src/analyze.js";
-import { formatTable, type Report } from "../../src/report.js";
+import { parseArgs } from "../../src/cli/index.js";
+import { isFixturePath } from "../../src/pipeline/index.js";
+import { formatTable, type Report } from "../../src/report/index.js";
 
 // H1: .fixture.ts (not .tsx) extension detected
 describe("H1: .fixture.ts extension", () => {

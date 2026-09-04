@@ -8,7 +8,7 @@ import {
   detectUnsupportedStyleEngines,
   findPostcssConfigAbove,
   resolveStyleTooling,
-} from "../../src/harness.js";
+} from "../../src/harness/index.js";
 
 let tmpDir: string;
 

@@ -10,8 +10,8 @@ import {
   discoverGlobalCss,
   largestStylesheet,
   validateCssFiles,
-} from "../../src/harness.js";
-import { resolveCssFiles } from "../../src/analyze.js";
+} from "../../src/harness/index.js";
+import { resolveCssFiles } from "../../src/pipeline/index.js";
 
 let tmpDir: string;
 

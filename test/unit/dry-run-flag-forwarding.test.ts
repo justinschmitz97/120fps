@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseArgs, explainPropsOptions } from "../../src/cli.js";
+import { parseArgs, explainPropsOptions } from "../../src/cli/index.js";
 
 // element-plus: `--framework vue --explain-props` was byte-identical to
 // `--explain-props`, while the same flag on a real run printed the

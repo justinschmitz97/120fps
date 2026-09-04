@@ -3,12 +3,12 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
-import { analyze, type AnalyzeOptions } from "../../src/analyze.js";
-import { baselineKey, computeEnvKey, parseBaselineKey, type Baseline, type BaselineEntry } from "../../src/budget.js";
-import type { Report } from "../../src/report.js";
+import { analyze, type AnalyzeOptions } from "../../src/pipeline/index.js";
+import { baselineKey, computeEnvKey, parseBaselineKey, type Baseline, type BaselineEntry } from "../../src/report/index.js";
+import type { Report } from "../../src/report/index.js";
 
 const execFileAsync = promisify(execFile);
-const CLI_PATH = path.resolve("dist/cli.js");
+const CLI_PATH = path.resolve("dist/cli/main.js");
 
 // A package.json inside the repo makes this directory its own project root, so
 // the baseline lands here instead of at the repo root, while node resolution

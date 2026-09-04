@@ -1,9 +1,9 @@
 import { describe, it, expect, afterAll } from "vitest";
 import path from "node:path";
 import { chromium, type Browser, type Page } from "playwright";
-import { buildAndServe, type HarnessResult } from "../../src/harness.js";
-import { applyWrapperViewport, measureWrapperOverhead } from "../../src/measure.js";
-import { attachPageErrorCapture, type PageErrorCapture } from "../../src/page-errors.js";
+import { buildAndServe, type HarnessResult } from "../../src/harness/index.js";
+import { applyWrapperViewport, measureWrapperOverhead } from "../../src/browser/index.js";
+import { attachPageErrorCapture, type PageErrorCapture } from "../../src/browser/index.js";
 
 let browser: Browser | undefined;
 

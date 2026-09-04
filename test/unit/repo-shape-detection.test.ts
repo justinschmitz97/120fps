@@ -1,13 +1,13 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
-import { runPreflight, preflightFailureMessage } from "../../src/preflight.js";
+import { runPreflight, preflightFailureMessage } from "../../src/project/index.js";
 import {
   findCompilerConfig,
   findWorkspaceRoot,
   isPackageDeclared,
-} from "../../src/project-model.js";
-import { loadTsconfigAliases } from "../../src/harness.js";
+} from "../../src/project/index.js";
+import { loadTsconfigAliases } from "../../src/harness/index.js";
 
 const SOLID = path.resolve("fixtures/solid-project");
 const PREACT = path.resolve("fixtures/preact-project");

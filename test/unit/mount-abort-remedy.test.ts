@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { hintsForMountAbort, formatHints } from "../../src/hints.js";
+import { hintsForMountAbort, formatHints } from "../../src/report/index.js";
 
 // primevue-F2: two different root causes, one symptom — a bare browser stack
 // with zero remediation text. `hintsForReport` consumes a built report, and a

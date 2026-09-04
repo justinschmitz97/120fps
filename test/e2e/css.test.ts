@@ -3,11 +3,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { chromium, type Browser, type Page } from "playwright";
-import { buildAndServe, type HarnessResult } from "../../src/harness.js";
-import { needsStyleSettle, settleStyles } from "../../src/measure.js";
-import { attachPageErrorCapture, type PageErrorCapture } from "../../src/page-errors.js";
+import { buildAndServe, type HarnessResult } from "../../src/harness/index.js";
+import { needsStyleSettle, settleStyles } from "../../src/browser/index.js";
+import { attachPageErrorCapture, type PageErrorCapture } from "../../src/browser/index.js";
 import { sharedAnalyze as analyze } from "./shared-analyze.js";
-import type { CompositionTree } from "../../src/composition.js";
+import type { CompositionTree } from "../../src/props/index.js";
 
 let browser: Browser | undefined;
 

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { CALLBACK_PROPS_SOURCE, computeCallbackIdentityDelta } from "../../src/react-profiler.js";
+import { CALLBACK_PROPS_SOURCE, computeCallbackIdentityDelta } from "../../src/analysis/index.js";
 
 const MARKER = "__120fps_fn__";
 function loadBuilder() {

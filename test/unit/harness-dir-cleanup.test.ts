@@ -2,7 +2,7 @@ import { describe, it, expect, afterAll } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { createHarnessDir, sweepStaleHarnessDirs, sweepActiveHarnessDirs } from "../../src/harness.js";
+import { createHarnessDir, sweepStaleHarnessDirs, sweepActiveHarnessDirs } from "../../src/harness/index.js";
 
 const cleanupDirs: string[] = [];
 

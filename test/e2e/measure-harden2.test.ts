@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { buildAndServe } from "../../src/harness.js";
-import { measureMount } from "../../src/measure.js";
+import { buildAndServe } from "../../src/harness/index.js";
+import { measureMount } from "../../src/browser/index.js";
 
 // H53: heavy computation during mount: timing should be non-trivial
 describe("H53: heavy computation mount", () => {

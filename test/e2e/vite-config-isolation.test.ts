@@ -1,6 +1,6 @@
 import { describe, it, expect, afterAll } from "vitest";
 import { chromium, type Browser } from "playwright";
-import { buildAndServe } from "../../src/harness.js";
+import { buildAndServe } from "../../src/harness/index.js";
 
 let browser: Browser;
 

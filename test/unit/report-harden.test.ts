@@ -6,8 +6,8 @@ import {
   DEFAULT_THRESHOLDS,
   type ComboReport,
   type Report,
-} from "../../src/report.js";
-import { buildReport, type BuildReportInput } from "../../src/analyze.js";
+} from "../../src/report/index.js";
+import { buildReport, type BuildReportInput } from "../../src/pipeline/index.js";
 
 function makeReport(overrides: Partial<Report> = {}): Report {
   return {
@@ -127,7 +127,7 @@ describe("H8: zero combos in formatTable", () => {
 
 describe("H9: CLI --samples 0 produces error", () => {
   it("parseArgs rejects 0", async () => {
-    const { parseArgs } = await import("../../src/cli.js");
+    const { parseArgs } = await import("../../src/cli/index.js");
     const result = parseArgs(["./Button.tsx", "--samples", "0"]);
     expect(result.error).toBeTruthy();
   });
@@ -135,7 +135,7 @@ describe("H9: CLI --samples 0 produces error", () => {
 
 describe("H10: CLI duplicate flags", () => {
   it("last --samples wins", async () => {
-    const { parseArgs } = await import("../../src/cli.js");
+    const { parseArgs } = await import("../../src/cli/index.js");
     const result = parseArgs(["./Button.tsx", "--samples", "3", "--samples", "7"]);
     expect(result.samples).toBe(7);
   });

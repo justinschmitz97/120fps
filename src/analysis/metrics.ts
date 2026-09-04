@@ -1,5 +1,5 @@
 import type { CDPSession, Page } from "playwright";
-import { collectTrace, countComponentNodes, totalComponentNodes, type TraceEvent } from "./measure.js";
+import { collectTrace, countComponentNodes, totalComponentNodes, type TraceEvent } from "../browser/index.js";
 
 export interface LongTask {
   startTime: number;

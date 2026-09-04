@@ -4,7 +4,7 @@ import {
   growthExponent,
   isSuperlinearGrowth,
   type ScalingCurve,
-} from "../../src/metrics.js";
+} from "../../src/analysis/index.js";
 import {
   evaluateCurve,
   formatCurveViolation,
@@ -14,8 +14,8 @@ import {
   type ScalingCurveReport,
   type ScalingPoint,
   type Thresholds,
-} from "../../src/report.js";
-import { hintsForReport } from "../../src/hints.js";
+} from "../../src/report/index.js";
+import { hintsForReport } from "../../src/report/index.js";
 
 const THRESHOLDS: Thresholds = {
   mountMs: 50,

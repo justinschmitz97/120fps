@@ -1,8 +1,8 @@
 import { describe, it, expect, afterAll } from "vitest";
 import path from "node:path";
 import { chromium, type Browser } from "playwright";
-import { buildAndServe } from "../../src/harness.js";
-import { analyze, type AnalyzeOptions } from "../../src/analyze.js";
+import { buildAndServe } from "../../src/harness/index.js";
+import { analyze, type AnalyzeOptions } from "../../src/pipeline/index.js";
 
 let browser: Browser | undefined;
 

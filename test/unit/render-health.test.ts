@@ -6,13 +6,13 @@ import {
   enrichTimeoutError,
   gotoWithErrorContext,
   HARNESS_STALL_HINT,
-} from "../../src/page-errors.js";
-import { buildReport, type BuildReportInput } from "../../src/analyze.js";
-import type { MountResult, RerenderResult } from "../../src/measure.js";
-import type { ExploreResult, StateGraph } from "../../src/explorer.js";
-import { formatTable, type CalibrationResult, type Report, type Thresholds } from "../../src/report.js";
-import { hintsForReport } from "../../src/hints.js";
-import { formatJUnit } from "../../src/ci-report.js";
+} from "../../src/browser/index.js";
+import { buildReport, type BuildReportInput } from "../../src/pipeline/index.js";
+import type { MountResult, RerenderResult } from "../../src/browser/index.js";
+import type { ExploreResult, StateGraph } from "../../src/analysis/index.js";
+import { formatTable, type CalibrationResult, type Report, type Thresholds } from "../../src/report/index.js";
+import { hintsForReport } from "../../src/report/index.js";
+import { formatJUnit } from "../../src/report/index.js";
 
 // ====================================================================
 // Fakes

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { collectTrace } from "../../src/measure.js";
+import { collectTrace } from "../../src/browser/index.js";
 
 interface Sent {
   method: string;

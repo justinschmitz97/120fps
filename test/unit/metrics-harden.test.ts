@@ -4,8 +4,8 @@ import {
   computeINP,
   computeScalingCurve,
   isDomFlat,
-} from "../../src/metrics.js";
-import { parseTraceDuration, type TraceEvent } from "../../src/measure.js";
+} from "../../src/analysis/index.js";
+import { parseTraceDuration, type TraceEvent } from "../../src/browser/index.js";
 
 describe("H1: zero-duration events", () => {
   it("does not count as long tasks", () => {

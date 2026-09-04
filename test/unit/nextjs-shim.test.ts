@@ -6,15 +6,15 @@ import {
   detectNextJs,
   SHIM_MODULES,
   buildShimAliases,
-} from "../../src/harness.js";
-import { parseArgs } from "../../src/cli.js";
-import { buildReport, type BuildReportInput } from "../../src/analyze.js";
+} from "../../src/harness/index.js";
+import { parseArgs } from "../../src/cli/index.js";
+import { buildReport, type BuildReportInput } from "../../src/pipeline/index.js";
 import {
   formatTable,
   DEFAULT_THRESHOLDS,
   type ComboReport,
   type Report,
-} from "../../src/report.js";
+} from "../../src/report/index.js";
 
 // --- helpers ---
 
@@ -264,7 +264,7 @@ describe("formatTable with nextJsShims", () => {
 
 describe("shim files exist on disk", () => {
   it("all shim .js files exist in dist/shims/", () => {
-    const shimDir = path.resolve(__dirname, "../../dist/shims");
+    const shimDir = path.resolve(__dirname, "../../dist/harness/shims");
     for (const entry of SHIM_MODULES) {
       const shimPath = path.join(shimDir, entry.shimFile);
       expect(fs.existsSync(shimPath), `Missing shim: ${entry.shimFile}`).toBe(true);

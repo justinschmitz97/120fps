@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import { pruneStaleWorktrees } from "../../src/compare.js";
+import { pruneStaleWorktrees } from "../../src/analysis/index.js";
 
 // M70: a hard-killed --compare leaves <repo>/.git/worktrees/<name> registered
 // with no working directory behind it; nothing today sweeps that. These use a

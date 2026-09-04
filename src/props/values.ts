@@ -1,4 +1,4 @@
-import type { PropSchema, ScalingPropMatch } from "./prop-gen.js";
+import type { PropSchema, ScalingPropMatch } from "./extract.js";
 
 export type PropCombination = Record<string, unknown>;
 

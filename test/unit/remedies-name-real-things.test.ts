@@ -9,12 +9,12 @@ import {
   findLikelyGenerateCommand,
   packageManagerRunCommand,
   VITE_CONFIG_WORKSPACE_ROOT_ALIAS_WARNING,
-} from "../../src/harness.js";
+} from "../../src/harness/index.js";
 import {
   attachPageErrorCapture,
   enrichTimeoutError,
   waitForReadyOrFatal,
-} from "../../src/page-errors.js";
+} from "../../src/browser/index.js";
 
 const roots: string[] = [];
 

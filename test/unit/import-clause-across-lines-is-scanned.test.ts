@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { scanExternalDeps } from "../../src/harness.js";
+import { scanExternalDeps } from "../../src/harness/index.js";
 
 // gutenberg: `packages/element/src/serialize.ts` imports `@wordpress/escape-html`
 // with the clause spread over three lines. The single-line-only pattern skipped

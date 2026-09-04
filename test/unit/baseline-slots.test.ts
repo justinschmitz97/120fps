@@ -17,7 +17,7 @@ import {
   PRUNED_SLOTS_NOTICE,
   type BaselineEntry,
   type EnvFingerprintInput,
-} from "../../src/budget.js";
+} from "../../src/report/index.js";
 
 let tmpDir: string;
 let file: string;

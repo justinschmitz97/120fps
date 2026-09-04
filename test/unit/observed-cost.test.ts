@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { observedInteractionMs, type ObservedWindow, type ObservedEvent } from "../../src/observers.js";
+import { observedInteractionMs, type ObservedWindow, type ObservedEvent } from "../../src/browser/index.js";
 
 function evt(partial: Partial<ObservedEvent>): ObservedEvent {
   return {

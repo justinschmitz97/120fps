@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { presentBundlerFailure } from "../../src/harness.js";
+import { presentBundlerFailure } from "../../src/harness/index.js";
 
 // epic-stack-F1 and primer-react-F1: `Missing "X" specifier in "Y" package` is
 // Node's package-imports/exports resolver, not a Nuxt signal. Two repositories

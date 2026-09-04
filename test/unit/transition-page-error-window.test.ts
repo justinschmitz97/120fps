@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { runWithSplitErrorWindows, nextComboIndex, type RerenderResult } from "../../src/measure.js";
-import type { PageErrorDrain } from "../../src/page-errors.js";
+import { runWithSplitErrorWindows, nextComboIndex, type RerenderResult } from "../../src/browser/index.js";
+import type { PageErrorDrain } from "../../src/browser/index.js";
 
 // The rerender pass mounts combo `ci`'s props and then rerenders into
 // `combos[ci+1]`'s props. A single error window over both made every error the

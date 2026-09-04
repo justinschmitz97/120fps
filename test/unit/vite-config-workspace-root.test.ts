@@ -6,7 +6,7 @@ import {
   readViteConfigData,
   VITE_CONFIG_WORKSPACE_ROOT_ALIAS_WARNING,
   VITE_CONFIG_WORKSPACE_ROOT_CONDITIONS_WARNING,
-} from "../../src/harness.js";
+} from "../../src/harness/index.js";
 
 let tmpDir: string;
 

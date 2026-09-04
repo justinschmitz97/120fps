@@ -7,8 +7,8 @@ import {
   RE_EXPORT_MEASURED_DISCLOSURE,
   UNRESOLVED_RE_EXPORT_WARNING,
   ZERO_PROPS_WARNING,
-} from "../../src/analyze.js";
-import { extractPropsDetailed } from "../../src/prop-gen.js";
+} from "../../src/pipeline/index.js";
+import { extractPropsDetailed } from "../../src/props/index.js";
 
 // gutenberg-F2 and react-spectrum-F3: a barrel printed `Props (0):` and then
 // the generic "extraction may have failed" sentence, whose floated malfunction

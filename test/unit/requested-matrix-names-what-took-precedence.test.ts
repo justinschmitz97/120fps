@@ -6,7 +6,7 @@ import {
   MATRIX_SUPPRESSED_BY_CURVE_WARNING,
   MATRIX_SUPPRESSED_BY_COMPOSITION_WARNING,
   MATRIX_SUPPRESSED_BY_FIXTURE_WARNING,
-} from "../../src/analyze.js";
+} from "../../src/pipeline/index.js";
 
 // calcom-R1: an explicit --matrix that lost to an auto-composed scene printed
 // nothing at all -- the curve branch has warned about exactly this since M83,
@@ -119,7 +119,7 @@ describe("the remedy each fixture provenance can actually run", () => {
 // (analyze() needs a browser), so the wiring is pinned at source level -- the
 // pattern matrix-transparency.test.ts already uses for this branch.
 describe("the run path's own suppression push", () => {
-  const analyzeSrc = fs.readFileSync(path.resolve("src/analyze.ts"), "utf-8");
+  const analyzeSrc = fs.readFileSync(path.resolve("src/pipeline/analyze.ts"), "utf-8");
   const dispatch = analyzeSrc.slice(analyzeSrc.indexOf("const matrixAutoActivated = activateMatrix"));
 
   it("pushes the same two constants the dry run pushes", () => {

@@ -1,8 +1,8 @@
 import { describe, it, expect, afterEach } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
-import { initFixtureOutcome } from "../../src/analyze.js";
-import { buildUncomposedFixtureScaffold, fixtureScaffoldPath } from "../../src/composition.js";
+import { initFixtureOutcome } from "../../src/pipeline/index.js";
+import { buildUncomposedFixtureScaffold, fixtureScaffoldPath } from "../../src/props/index.js";
 
 // radix-themes-F3: `--init-fixture` was accepted on the never-composed path --
 // the path whose own warning recommends it -- and wrote nothing, said nothing.

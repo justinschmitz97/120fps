@@ -6,7 +6,7 @@ import {
   preflightFailureMessage,
   setPreflightBypassed,
   type PreflightHit,
-} from "../../src/preflight.js";
+} from "../../src/project/index.js";
 
 afterEach(() => {
   setPreflightBypassed(false);

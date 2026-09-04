@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach, afterAll } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { extractProps } from "../../src/prop-gen.js";
+import { extractProps } from "../../src/props/index.js";
 
 const cleanupDirs: string[] = [];
 
