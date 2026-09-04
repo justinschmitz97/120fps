@@ -110,7 +110,7 @@ describe("M79 gap: hintsForReport reads renderErrorPoints structurally (no warni
 // section), so the population site is pinned by source content instead.
 describe("M79 gap: runCurveMode populates renderErrorPoints", () => {
   it("sets curveReport.renderErrorPoints at the same point CURVE_RENDER_ERROR_WARNING is pushed", () => {
-    const analyzeSrc = src("pipeline/analyze.ts");
+    const analyzeSrc = src("pipeline/modes/curve.ts");
     const fn = analyzeSrc.slice(
       analyzeSrc.indexOf("async function runCurveMode("),
       analyzeSrc.indexOf("const curveVerdict = computeCurveVerdict("),

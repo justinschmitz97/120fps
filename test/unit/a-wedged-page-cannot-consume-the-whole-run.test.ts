@@ -19,7 +19,18 @@ import type { DeltaPair } from "../../src/props/index.js";
 // combo, is measuring the page's failure, not the component.
 
 const measureSrc = fs.readFileSync(path.resolve("src", "browser/measure.ts"), "utf-8");
-const analyzeSrc = fs.readFileSync(path.resolve("src", "pipeline/analyze.ts"), "utf-8");
+// The delta passes live in the pipeline stage's mode files; the guard below is
+// about every one of them, so the whole stage is read as one text.
+const pipelineSrc = (dir: string): string =>
+  fs
+    .readdirSync(dir, { withFileTypes: true })
+    .map((e) =>
+      e.isDirectory()
+        ? pipelineSrc(path.join(dir, e.name))
+        : fs.readFileSync(path.join(dir, e.name), "utf-8"),
+    )
+    .join("\n");
+const analyzeSrc = pipelineSrc(path.resolve("src", "pipeline"));
 
 describe("a pass stops once the page has stopped measuring anything", () => {
   it("tolerates degraded combos below the bound", () => {

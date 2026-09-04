@@ -59,11 +59,8 @@ describe("MATRIX_AUTO_ACTIVATED_NOTICE", () => {
 // gated correctly, matching the pattern used elsewhere in this suite (see
 // m28-isolation-harden.test.ts's `src()` helper).
 describe("matrix branch wiring", () => {
-  const analyzeSrc = src("pipeline/analyze.ts");
-  const branch = analyzeSrc.slice(
-    analyzeSrc.indexOf("async function runMatrixMode("),
-    analyzeSrc.indexOf("function computeMedianFromSamples("),
-  );
+  const matrixSrc = src("pipeline/modes/matrix.ts");
+  const branch = matrixSrc.slice(matrixSrc.indexOf("async function runMatrixMode("));
 
   it("only announces auto-activation, never a forced --matrix run", () => {
     expect(branch).toContain("matrixAutoActivated");
@@ -79,7 +76,9 @@ describe("matrix branch wiring", () => {
   });
 
   it("the plain-combo path uses the same computeEffectiveSamples helper", () => {
-    expect(analyzeSrc).toContain("const effectiveSamples = computeEffectiveSamples(combos.length, samples);");
+    expect(src("pipeline/modes/combo.ts")).toContain(
+      "const effectiveSamples = computeEffectiveSamples(combos.length, samples);",
+    );
   });
 
   // M83 #4c (commerce-F5): an explicit --matrix with zero eligible axes must
