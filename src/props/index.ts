@@ -6,6 +6,7 @@ export * from "./extract.js";
 export * from "./presets.js";
 export * from "./program.js";
 export * from "./schema.js";
+export * from "./serialize.js";
 export * from "./synthesize.js";
 export * from "./values.js";
 export * from "./vue.js";

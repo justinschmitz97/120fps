@@ -12,6 +12,7 @@ export {
   SOLID_AND_REACT_DECLARED,
 } from "../project/index.js";
 import type { PropCombination } from "../props/index.js";
+import { FUNCTION_MARKER, serializeProps } from "../props/index.js";
 import { applyWrapperViewport, collectTrace, createPhaseTracker, parseTraceDuration, settleStyles, reportFontSettle, tryCollectGarbage, HARNESS_NAV_WAIT } from "../browser/index.js";
 import { computeMedian } from "../shared/index.js";
 import {
@@ -639,20 +640,6 @@ export const REACT_DOM_NOT_REACT_WARNING = (identity: ReactDomIdentity | undefin
 export const REACT_DOM_VERSION_RANGE_WARNING = (version: string): string =>
   `react-dom ${version} is outside 120fps's tested range (16.5-19); the fiber profiler hardcodes ` +
   "React's internal WorkTag numbers for that range and may misreport render counts or durations.";
-
-const FUNCTION_MARKER = "__120fps_fn__";
-
-function serializeProps(props: PropCombination): Record<string, unknown> {
-  const result: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(props)) {
-    if (typeof value === "function") {
-      result[key] = FUNCTION_MARKER;
-    } else {
-      result[key] = value;
-    }
-  }
-  return result;
-}
 
 async function mountAndWaitProbe(page: Page, props: PropCombination): Promise<void> {
   await page.evaluate(() => (window as any).__120fps.unmount());

@@ -2,7 +2,7 @@ import path from "node:path";
 import type { CDPSession, Page } from "playwright";
 import type { HarnessResult } from "../harness/index.js";
 import type { PropCombination } from "../props/index.js";
-import { extractProps, generateCombinations } from "../props/index.js";
+import { extractProps, generateCombinations, FUNCTION_MARKER, serializeProps } from "../props/index.js";
 import {
   hasPageErrors,
   mergeDrains,
@@ -200,20 +200,6 @@ export async function measureWrapperOverhead(
 // an explicit opt-out is honoured.
 export function warmupsForPosition(position: number, warmupRuns: number): number {
   return position === 0 ? warmupRuns : Math.min(1, warmupRuns);
-}
-
-const FUNCTION_MARKER = "__120fps_fn__";
-
-function serializeProps(props: PropCombination): Record<string, unknown> {
-  const result: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(props)) {
-    if (typeof value === "function") {
-      result[key] = FUNCTION_MARKER;
-    } else {
-      result[key] = value;
-    }
-  }
-  return result;
 }
 
 async function traceMount(

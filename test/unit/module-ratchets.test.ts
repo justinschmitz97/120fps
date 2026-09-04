@@ -11,8 +11,8 @@ const SRC = path.resolve("src");
 const LINE_LIMIT = 800;
 
 const LINE_CAPS: Record<string, number> = {
-  "analysis/explorer.ts": 909,
-  "analysis/react-profiler.ts": 903,
+  "analysis/explorer.ts": 899,
+  "analysis/react-profiler.ts": 890,
   "browser/discovery.ts": 823,
   "props/values.ts": 822,
   "report/budget.ts": 809,
@@ -107,7 +107,6 @@ const COMMENT_TOKENS: Record<string, number> = {
 
 const DUPLICATE_FUNCTIONS: Record<string, string[]> = {
   componentStem: ["cli/paths.ts", "props/candidates.ts"],
-  serializeProps: ["analysis/explorer.ts", "analysis/react-profiler.ts", "browser/measure.ts"],
 };
 
 const HISTORY_TOKEN = /\bM\d{2,3}\b|used to|no longer|previously/g;

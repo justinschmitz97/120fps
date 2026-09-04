@@ -4,6 +4,7 @@ import type { HarnessResult } from "../harness/index.js";
 import type { PropCombination } from "../props/index.js";
 import { extractProps } from "../props/index.js";
 import { generateCombinations, selectRepresentativeCombos } from "../props/index.js";
+import { FUNCTION_MARKER, serializeProps } from "../props/index.js";
 import {
   discoverInteractions,
   type InteractionDescriptor,
@@ -184,16 +185,6 @@ function shuffleArray<T>(arr: T[], rng: () => number): T[] {
 }
 
 // --- Browser helpers ---
-
-const FUNCTION_MARKER = "__120fps_fn__";
-
-function serializeProps(props: PropCombination): Record<string, unknown> {
-  const result: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(props)) {
-    result[key] = typeof value === "function" ? FUNCTION_MARKER : value;
-  }
-  return result;
-}
 
 async function mountComponent(
   page: Page,
