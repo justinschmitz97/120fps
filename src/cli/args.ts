@@ -6,7 +6,7 @@ const ISOLATE_USAGE_ERROR =
 
 export interface CliArgs {
   componentPath?: string;
-  // M65: export names from `<file>#Export`, keyed by the path as typed.
+  // Export names from `<file>#Export`, keyed by the path as typed.
   targets?: Record<string, string>;
   explainProps?: boolean;
   fixturePath?: string;
@@ -110,7 +110,7 @@ export const KNOWN_FLAGS = new Set([
 
 const IDENTIFIER = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
 
-// M65: `<file>#Export`. Decided from the text alone, so a path containing `#`
+// `<file>#Export`. Decided from the text alone, so a path containing `#`
 // never depends on whether the file happens to exist yet. An export name is an
 // identifier: it can hold neither `.` nor a separator: and the left side must
 // already look like a component file, so `C:\p\c#1\B.tsx` and `C:\p\B#2.tsx`
@@ -601,8 +601,8 @@ function parseCurveArg(arg: string): { propName: string; propKind: "array" | "nu
 
 // --no-curve / --no-matrix win over their enables, matching --no-isolate and
 // --no-react-compiler. `false` is not `undefined`: a disable is fingerprinted
-// as the combo mode it resolves to, so it stays eligible for verdict reuse
-// (M54), while an absent flag leaves auto-activation free to run.
+// as the combo mode it resolves to, so it stays eligible for verdict reuse,
+// while an absent flag leaves auto-activation free to run.
 export function resolveCurveOption(
   args: Pick<CliArgs, "curve" | "noCurve">,
 ): boolean | { propName: string; propKind: "array" | "number" } | undefined {

@@ -1,16 +1,16 @@
 import fs from "node:fs";
 import path from "node:path";
 
-// M74 (E5): the tool writes 120fps-report*.json and 120fps-baseline.json
-// straight into the user's repo with no gitignore awareness. This is a hint,
-// never a file edit: nothing below ever writes to .gitignore.
+// The tool writes 120fps-report*.json and 120fps-baseline.json straight
+// into the user's repo with no gitignore awareness. This is a hint, never
+// a file edit: nothing below ever writes to .gitignore.
 export const GITIGNORE_SUGGESTED_PATTERNS = [
   "120fps-report*.json",
   "120fps-baseline.json",
   ".120fps-harness-*",
 ];
 
-// M117 A2: the tip names the patterns the paths that fired it need, so a run
+// The tip names the patterns the paths that fired it need, so a run
 // that only wrote a report does not ask for the baseline and harness patterns
 // it never produced. No patterns, no tip.
 export function formatGitignoreTip(patterns: string[]): string {
@@ -68,11 +68,10 @@ function suggestedPatternFor(writtenPath: string): string | undefined {
   return undefined;
 }
 
-// M117 A1 (shadcn-admin/dialog-real2.log:67): the gate mapped every written
-// report through path.basename, so a report written to a directory outside the
-// repository still counted as written into it. The resolved path decides now: a
-// file this run wrote outside the repository is not that repository's hygiene
-// problem, whatever it is called.
+// The resolved path decides whether a written file counts as inside the
+// repository, not just its basename: a file this run wrote outside the
+// repository is not that repository's hygiene problem, whatever it is
+// called.
 export function gitignoreTipPatterns(gitRoot: string, writtenPaths: string[]): string[] {
   const asked = new Set<string>();
   for (const written of writtenPaths) {
