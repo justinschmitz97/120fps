@@ -572,20 +572,20 @@ describe("settle gate wiring", () => {
     fs.readFileSync(path.resolve("src", name), "utf-8");
 
   it("is called from every browser session", () => {
-    const measure = src("browser/measure.ts");
+    const session = src("browser/session.ts");
     const callsIn = (text: string) => text.split("await settleStyles(").length - 1;
     // measureMount, measureRerender and every isolation phase pass enter the
-    // harness through measure.ts's shared enterHarness preamble.
-    expect(callsIn(measure)).toBe(1);
-    expect(measure).toContain("export async function enterHarness(");
+    // harness through session.ts's shared enterHarness preamble.
+    expect(callsIn(session)).toBe(1);
+    expect(session).toContain("export async function enterHarness(");
     expect(callsIn(src("pipeline/analyze.ts"))).toBe(1);
     expect(callsIn(src("analysis/explorer.ts"))).toBe(1);
     expect(callsIn(src("analysis/react-profiler.ts"))).toBe(1);
   });
 
   it("has exactly one implementation", () => {
-    expect(src("browser/measure.ts")).toContain("export async function settleStyles(");
-    for (const file of ["pipeline/analyze.ts", "analysis/explorer.ts", "analysis/react-profiler.ts", "harness/build.ts"]) {
+    expect(src("browser/settle.ts")).toContain("export async function settleStyles(");
+    for (const file of ["pipeline/analyze.ts", "analysis/explorer.ts", "analysis/react-profiler.ts", "harness/build.ts", "browser/measure.ts", "browser/session.ts"]) {
       expect(src(file)).not.toContain("function settleStyles(");
     }
   });

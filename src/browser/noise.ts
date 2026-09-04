@@ -1,5 +1,5 @@
 import type { Page } from "playwright";
-import { computeMedian } from "./measure.js";
+import { computeMedian } from "./trace.js";
 
 export type NoiseLevel = "quiet" | "noisy" | "hostile";
 
