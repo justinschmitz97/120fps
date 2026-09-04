@@ -290,6 +290,20 @@ reads them today.
   analysis`. Duplicate names: `componentStem` (cli/paths, props/candidates), `serializeProps`
   (analysis/explorer, analysis/react-profiler, browser/measure).
 
+Verified in the main checkout at 9d7910e (2026-09-04): `tsc --noEmit` exit 0; build exit 0 with
+`dist/{analysis,browser,cli,harness,pipeline,project,props,report}` and 20 files in
+`dist/harness/shims`; unit `Test Files 1 failed | 328 passed (329)`, `Tests 1 failed | 4803 passed
+| 1 skipped (4805)`, the failure being the baseline `vue-setup-inject-evidence` case; e2e
+`cli`, `shim-detect`, `baseline-env`, `cli-path-expansion`: 27 passed; boundary and ratchet tests
+8 passed. Behaviour snapshot for later diffs, `node dist/cli/main.js fixtures/button.tsx
+--explain-props` (exit 0): `Component: Button`, `binding: fixtures/button.tsx:11`, `Props (5)`
+label/variant/disabled/onClick/children with values `"test"`, `"primary", "secondary", "ghost"`,
+`true, false`, `(no values)`, `(no values)`; `Composition: would measure Button alone`; `Curve mode:
+would not activate: no array or numeric scaling prop`; `Matrix mode: would auto-activate`;
+`Estimated real run: ~1m 12s (6 combos x 10 samples; …)`; one stylesheet warning naming
+`fixtures/css-font/app/globals.css` as the largest-stylesheet fallback; the dry-run closing
+paragraph.
+
 ## Wave 3: shared helpers, cycles, comments, surface
 
 Ordered task list (sequential in the main checkout, one commit each, tsc + the stage's tests per
