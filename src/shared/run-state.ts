@@ -1,7 +1,7 @@
-// Review A3: the note used to assert a cycle it never checked, and to
-// cross-reference a warning that need not have been printed (a --no-preflight
-// run prints none at all). `runPreflight` sets this when it actually reports an
-// import-cycle hit, and clears it when it walks a graph without one.
+// `runPreflight` sets this when it reports an import-cycle hit and clears it
+// when it walks a graph without one; a --no-preflight run leaves it unset.
+// `page-errors.ts` reads it to decide whether a page error can be blamed on
+// the cycle.
 let importCycleReported = false;
 
 export function setImportCycleReported(reported: boolean): void {

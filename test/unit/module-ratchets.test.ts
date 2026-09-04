@@ -103,7 +103,6 @@ const COMMENT_TOKENS: Record<string, number> = {
   "report/terminal-modes.ts": 20,
   "report/terminal.ts": 19,
   "report/types.ts": 51,
-  "shared/run-state.ts": 1,
 };
 
 const DUPLICATE_FUNCTIONS: Record<string, string[]> = {
