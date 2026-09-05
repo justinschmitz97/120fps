@@ -1,12 +1,8 @@
 import { describe, it, expect } from "vitest";
 import path from "node:path";
-import { explainProps, formatExplainProps } from "../../src/analyze.js";
+import { explainProps, formatExplainProps } from "../../src/pipeline/index.js";
 
-// calcom-F2: extraction has carried `defaultValue`/`defaultSource` since I8 --
-// calcom Button declares six of them inside the measured 32 -- and
-// `--explain-props` printed no default column at all, so the tool knew the
-// defaults and never said so. This goes through `explainProps`, the path the
-// CLI actually calls, rather than through `extractProps` alone.
+// calcom-F2: --explain-props omitted a default column though extraction already carried it.
 
 const FIXTURE = path.resolve("fixtures/own-props-rank/DefaultsButton.tsx");
 

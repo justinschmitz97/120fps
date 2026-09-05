@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { formatMarkdown, formatJUnit } from "../../src/ci-report.js";
+import { formatMarkdown, formatJUnit } from "../../src/report/index.js";
 import {
   DEFAULT_THRESHOLDS,
   type Report,
@@ -7,18 +7,12 @@ import {
   type ScalingCurveReport,
   type ScalingPoint,
   type TimingWithCV,
-} from "../../src/report.js";
-import type { ScalingCurve } from "../../src/metrics.js";
-import {
-  type IsolationReport,
-  LEAK_BYTES_PER_CYCLE,
-  CHURN_DEGRADATION_LIMIT,
-} from "../../src/isolation.js";
+} from "../../src/report/index.js";
+import type { ScalingCurve } from "../../src/report/index.js";
+import { LEAK_BYTES_PER_CYCLE, CHURN_DEGRADATION_LIMIT } from "../../src/report/index.js";
+import { type IsolationReport } from "../../src/analysis/index.js";
 
-// M55: curve, isolation, and cached reports ship `combos: []`; formatMarkdown
-// and formatJUnit must render their real data instead of "—ms" placeholders
-// and a bare "failed" JUnit body. Fixtures below mirror how src/analyze.ts
-// populates each shape (read-only reference, not modified by this suite).
+// M55: curve/isolation/cached reports ship combos: []; renderers must show real data.
 
 const machine = {
   cpu: "Test CPU", cores: 8, ramMb: 16384,
@@ -96,7 +90,6 @@ function report(overrides: Partial<Report> = {}): Report {
   };
 }
 
-// --- curve fixtures ---
 
 const CURVE_PASS = report({
   componentPath: "./src/List.tsx",
@@ -125,7 +118,6 @@ const CURVE_SINGLE_POINT = report({
   }),
 });
 
-// --- isolation fixtures ---
 
 const ISO_MOUNT_ONLY: IsolationReport = { mount: timing(6) };
 
@@ -190,7 +182,6 @@ const ISOLATION_STRICT_WARN = report({
   isolation: ISO_STRICT_WARN,
 });
 
-// --- cached fixtures ---
 
 const CACHED_PASS = report({
   componentPath: "./src/CachedGood.tsx",
@@ -206,7 +197,6 @@ const CACHED_FAIL = report({
   cached: true,
 });
 
-// --- unrecognized empty-combos fixture ---
 
 const EMPTY_FAIL = report({
   componentPath: "./src/Unknown.tsx",
@@ -304,17 +294,14 @@ describe("formatMarkdown/formatJUnit: unrecognized empty-combos shape", () => {
   });
 });
 
-// --- Harden: numbered hypotheses ---
 
 describe("formatMarkdown/formatJUnit: mode-dispatch edge cases", () => {
-  // H1
   it("H1: a curve report with a single scale point renders without crashing and without a redundant range", () => {
     const text = formatMarkdown([CURVE_SINGLE_POINT]);
     expect(text).toContain("6.00ms");
     expect(text).not.toContain("6.00ms → 6.00ms");
   });
 
-  // H2
   it("H2: isolation with only one phase run shows just that phase, no crash on missing phases", () => {
     const text = formatMarkdown([ISOLATION_PASS]);
     expect(text).toContain("Mount: 6.00ms");
@@ -323,7 +310,6 @@ describe("formatMarkdown/formatJUnit: mode-dispatch edge cases", () => {
     expect(text).not.toContain("StrictMode:");
   });
 
-  // H3
   it("H3: a cached report that failed still marks _(cached)_ and shows dashes, not fabricated numbers", () => {
     const text = formatMarkdown([CACHED_FAIL]);
     expect(text).toContain("_(cached)_");
@@ -331,7 +317,6 @@ describe("formatMarkdown/formatJUnit: mode-dispatch edge cases", () => {
     expect(text).toMatch(/\| — \| — \|/);
   });
 
-  // H4
   it("H4: combined signals (StrictMode warn + a run warning) both surface without one swallowing the other", () => {
     const combined = report({
       componentPath: "./src/Combined.tsx",
@@ -345,14 +330,12 @@ describe("formatMarkdown/formatJUnit: mode-dispatch edge cases", () => {
     expect(text).toContain("StrictMode: +122.0%");
   });
 
-  // H5
   it("H5: a component path containing a pipe does not break the markdown table", () => {
     const piped = report({ componentPath: "./src/A|B.tsx" });
     const text = formatMarkdown([piped]);
     expect(text).toContain("A\\|B.tsx");
   });
 
-  // H6
   it("H6: XML-unsafe characters in a curve prop name are escaped in the JUnit failure body", () => {
     const unsafe = report({
       componentPath: "./src/Unsafe.tsx",
@@ -369,7 +352,6 @@ describe("formatMarkdown/formatJUnit: mode-dispatch edge cases", () => {
     expect(xml).not.toContain("<script>");
   });
 
-  // H7
   it("H7: a multi-component sweep mixing every mode renders all rows and correct totals", () => {
     const sweep = [
       report(), // combo, pass
@@ -384,13 +366,11 @@ describe("formatMarkdown/formatJUnit: mode-dispatch edge cases", () => {
     expect(xml).toContain('tests="4" failures="2"');
   });
 
-  // H8
   it("H8: an empty report list produces well-formed, non-crashing output in both formats", () => {
     expect(formatMarkdown([])).toContain("0 components");
     expect(formatJUnit([])).toContain('tests="0" failures="0"');
   });
 
-  // H9
   it("H9: worstVerdict precedence is fail over warn: a failing isolation report with a StrictMode warn signal still shows FAIL", () => {
     const failAndWarn = report({
       componentPath: "./src/FailAndWarn.tsx",
@@ -403,7 +383,6 @@ describe("formatMarkdown/formatJUnit: mode-dispatch edge cases", () => {
     expect(text).not.toMatch(/\| warn \|/);
   });
 
-  // H10
   it("H10: a report with combos AND a scalingCurveReport populated renders as standard (combo wins dispatch)", () => {
     const both = report({
       componentPath: "./src/Both.tsx",
@@ -412,18 +391,15 @@ describe("formatMarkdown/formatJUnit: mode-dispatch edge cases", () => {
     });
     const text = formatMarkdown([both]);
     expect(text).toContain("4.00ms");
-    // Mode detail is curve/isolation-only; a combo-dispatched report must not
-    // pull in the curve's per-point breakdown.
+    // Mode detail is curve/isolation-only; a combo-dispatched report must not pull it in.
     expect(text).not.toContain("N=1: mount");
   });
 
-  // H11
   it("H11: a passing cached report never fabricates timings even though the row is otherwise unremarkable", () => {
     const text = formatMarkdown([CACHED_PASS]);
     expect(text).toMatch(/\| — \| — \|/);
   });
 
-  // H12
   it("H12: JUnit leaves a passing isolation/curve/cached report without a failure body", () => {
     const xml = formatJUnit([CURVE_PASS, ISOLATION_PASS, CACHED_PASS]);
     expect(xml).not.toContain("<failure");

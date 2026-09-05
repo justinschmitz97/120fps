@@ -6,7 +6,7 @@ import {
   MATRIX_AUTO_ACTIVATED_NOTICE,
   MATRIX_NO_AXES_WARNING,
   MATRIX_SUPPRESSED_BY_CURVE_WARNING,
-} from "../../src/analyze.js";
+} from "../../src/pipeline/index.js";
 
 const src = (name: string) => fs.readFileSync(path.resolve("src", name), "utf-8");
 
@@ -36,8 +36,7 @@ describe("computeEffectiveSamples", () => {
   });
 
   it("applies identically for a matrix-sized combo count as for a plain combo count", () => {
-    // Parity: one function, so a 256-cell forced matrix and a 256-combo plain
-    // run throttle identically by construction.
+    // Parity: one function computes both, so a 256-cell matrix throttles like a 256-combo run.
     const matrixCells = 256;
     const plainCombos = 256;
     expect(computeEffectiveSamples(matrixCells, 10)).toBe(computeEffectiveSamples(plainCombos, 10));
@@ -53,17 +52,10 @@ describe("MATRIX_AUTO_ACTIVATED_NOTICE", () => {
   });
 });
 
-// Source-level wiring checks: buildReport-style behavioral tests can't reach
-// the matrix branch without a real browser/harness (analyze() is an
-// integration entry point), so these confirm the specific lines exist and are
-// gated correctly, matching the pattern used elsewhere in this suite (see
-// m28-isolation-harden.test.ts's `src()` helper).
+// analyze() needs a real browser to reach the matrix branch, so these check wiring via src().
 describe("matrix branch wiring", () => {
-  const analyzeSrc = src("analyze.ts");
-  const branch = analyzeSrc.slice(
-    analyzeSrc.indexOf("async function runMatrixMode("),
-    analyzeSrc.indexOf("function computeMedianFromSamples("),
-  );
+  const matrixSrc = src("pipeline/modes/matrix.ts");
+  const branch = matrixSrc.slice(matrixSrc.indexOf("async function runMatrixMode("));
 
   it("only announces auto-activation, never a forced --matrix run", () => {
     expect(branch).toContain("matrixAutoActivated");
@@ -79,11 +71,12 @@ describe("matrix branch wiring", () => {
   });
 
   it("the plain-combo path uses the same computeEffectiveSamples helper", () => {
-    expect(analyzeSrc).toContain("const effectiveSamples = computeEffectiveSamples(combos.length, samples);");
+    expect(src("pipeline/modes/combo.ts")).toContain(
+      "const effectiveSamples = computeEffectiveSamples(combos.length, samples);",
+    );
   });
 
-  // M83 #4c (commerce-F5): an explicit --matrix with zero eligible axes must
-  // not silently print an unexplained "Prop Matrix ()".
+  // M83 #4c: an explicit --matrix with zero eligible axes must not silently print "Prop Matrix ()".
   it("warns when matrixAxes is empty, right alongside the pairwise-cover check", () => {
     expect(branch).toContain("if (matrixAxes.length === 0)");
     expect(branch).toContain("MATRIX_NO_AXES_WARNING");
@@ -103,8 +96,7 @@ describe("MATRIX_NO_AXES_WARNING", () => {
   });
 });
 
-// M83 #4a (twenty-F6): an explicit --matrix must not silently lose to an
-// auto-activated curve mode.
+// M83 #4a: an explicit --matrix must not silently lose to an auto-activated curve mode.
 describe("MATRIX_SUPPRESSED_BY_CURVE_WARNING", () => {
   it("names the winning prop and the escape hatch", () => {
     const msg = MATRIX_SUPPRESSED_BY_CURVE_WARNING("items");
@@ -116,10 +108,10 @@ describe("MATRIX_SUPPRESSED_BY_CURVE_WARNING", () => {
 
 describe("M83 #4a: curve-vs-matrix dispatch wiring", () => {
   it("checks options.matrixMode before returning runCurveMode, and pushes the warning first", () => {
-    const fullSrc = src("analyze.ts");
+    const fullSrc = src("pipeline/analyze.ts");
     const dispatchBranch = fullSrc.slice(
-      fullSrc.indexOf("// --- Curve mode check ---"),
-      fullSrc.indexOf("// --- Matrix mode check ---"),
+      fullSrc.indexOf("const curveMatch = await resolveCurveMatch(ctx)"),
+      fullSrc.indexOf("const matrixEligible = options.matrixMode !== false"),
     );
     expect(dispatchBranch).toContain("options.matrixMode === true");
     expect(dispatchBranch).toContain("MATRIX_SUPPRESSED_BY_CURVE_WARNING(curveMatch.schema.name)");

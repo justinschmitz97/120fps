@@ -2,8 +2,8 @@ import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { analyze, type AnalyzeOptions } from "../../src/analyze.js";
-import { formatTable } from "../../src/report.js";
+import { analyze, type AnalyzeOptions } from "../../src/pipeline/index.js";
+import { formatTable } from "../../src/report/index.js";
 
 function tmpJson(): string {
   return path.join(os.tmpdir(), `120fps-m59-${Date.now()}-${Math.random().toString(36).slice(2)}.json`);
@@ -55,8 +55,7 @@ describe("a component that renders null legitimately", () => {
   it("annotates the empty render and still passes", async () => {
     const report = await run("./fixtures/m59-renders-nothing.tsx");
 
-    // The synthetic scale probe wraps its copies, so it contributes a node even
-    // when the component itself renders nothing; the real combos render zero.
+    // The scale probe wraps its copies, contributing a node even when the component is empty.
     const empty = report.combos.filter((c) => c.domNodeCount === 0);
     expect(empty.length).toBeGreaterThan(0);
     for (const combo of report.combos) {

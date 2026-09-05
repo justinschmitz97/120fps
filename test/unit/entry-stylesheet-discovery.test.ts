@@ -8,7 +8,7 @@ import {
   discoverGlobalCss,
   entryStylesheetImports,
   findProjectEntry,
-} from "../../src/harness.js";
+} from "../../src/harness/index.js";
 
 let tmpDir: string;
 
@@ -237,10 +237,7 @@ describe("discovery on a create-vite shaped project", () => {
   });
 });
 
-// A wrapper module the harness mounts through is an entry for stylesheet
-// purposes: its own side-effect imports are loaded on every measured run, and
-// a package with no application entry of its own (a monorepo library member)
-// otherwise fell straight to the size-ranked guess.
+// A wrapper module is an entry for stylesheets too; a library member has no application entry.
 describe("stylesheets a mounted wrapper module imports", () => {
   it("reads a wrapper's own stylesheet imports when the package has no entry", () => {
     write("package.json", JSON.stringify({ name: "lib" }));

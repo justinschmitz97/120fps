@@ -1,11 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { buildAndServe } from "../../src/harness.js";
-import { measureMount } from "../../src/measure.js";
+import { buildAndServe } from "../../src/harness/index.js";
+import { measureMount } from "../../src/browser/index.js";
 
-// M34 hardening: the aux-read hoist must not collapse per-combo DOM facts, and
-// throttle suspension must survive the identity throttle rate.
-
-// HH4: domNodeCount is a per-combo fact: every combo still gets its own read.
+// M34 hardening: aux-read hoist keeps per-combo DOM facts; throttle suspension survives at rate 1.
 describe("HH4: per-combo domNodeCount survives the aux hoist", () => {
   it("reports distinct counts for distinct combos", async () => {
     const harness = await buildAndServe("./fixtures/large-dom.tsx");
@@ -24,8 +21,7 @@ describe("HH4: per-combo domNodeCount survives the aux hoist", () => {
   }, 120000);
 });
 
-// HH5: --cpu-throttle 1 makes suspend and restore the same rate; the sample
-// loop must run unchanged.
+// HH5: --cpu-throttle 1 makes suspend and restore the same rate; the sample loop must not change.
 describe("HH5: throttle suspension at rate 1", () => {
   it("measures normally when cpuThrottle is 1", async () => {
     const harness = await buildAndServe("./fixtures/large-dom.tsx");

@@ -5,7 +5,7 @@ import {
   createRetryBudget,
   CONTEXT_RETRY_WARNING,
   DEFAULT_RETRY_BUDGET,
-} from "../../src/measure.js";
+} from "../../src/browser/index.js";
 
 describe("a dev-server reload does not kill a run", () => {
   it("recognizes a destroyed execution context", () => {
@@ -22,9 +22,7 @@ describe("a dev-server reload does not kill a run", () => {
     ).toBe(true);
   });
 
-  // CDP session recovery (see test/unit/cdp-session-recovery.test.ts) made
-  // this retryable again: `enter` now replaces the wedged CDP session
-  // instead of only re-navigating.
+  // cdp-session-recovery.test.ts: `enter` replaces the wedged CDP session, not just re-navigates.
   it("treats a tracing timeout as a retryable context loss", () => {
     expect(isContextLostError(new Error("Tracing.tracingComplete timed out"))).toBe(true);
   });

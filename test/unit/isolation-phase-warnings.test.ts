@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { phaseSessionOptions } from "../../src/isolation.js";
+import { phaseSessionOptions } from "../../src/analysis/index.js";
 
 describe("warning sink for an isolated phase session", () => {
   it("forwards the caller's sink, so a font-settle warning survives the phase", () => {

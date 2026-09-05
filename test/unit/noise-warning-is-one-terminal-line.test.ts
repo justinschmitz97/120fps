@@ -1,17 +1,14 @@
 import { describe, it, expect } from "vitest";
-import { formatTable, type Report, type Thresholds, buildTimingWithCV } from "../../src/report.js";
+import { formatTable, type Report, type Thresholds, buildTimingWithCV } from "../../src/report/index.js";
 import {
   formatNoiseWarning,
   HOSTILE_RUN_WARNING,
   NOISY_RUN_WARNING,
   HOSTILE_BASELINE_NOTE,
   type NoiseReport,
-} from "../../src/noise.js";
+} from "../../src/browser/index.js";
 
-// M117 C5, C6, C7 (dx-audit item 7): the terminal spent four sentences on a
-// machine fact, listed both signals whether or not either crossed its
-// threshold, and named no flag. One line, only the signals that fired, the one
-// flag that helps; the long form stays in the JSON.
+// Terminal names crossed signals and the flag that helps; JSON keeps the full four-sentence form.
 
 const THRESHOLDS: Thresholds = { mountMs: 50, interactionMs: 400, relativeMount: 2, rerenderMs: 16 };
 

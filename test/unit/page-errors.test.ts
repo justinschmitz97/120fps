@@ -8,9 +8,7 @@ import {
   extractThrowingModule,
   waitForReadyOrFatal,
   type PageErrorCapture,
-} from "../../src/page-errors.js";
-
-// --- helpers ---
+} from "../../src/browser/index.js";
 
 function makeFakePage(): { page: Page; emitter: EventEmitter } {
   const emitter = new EventEmitter();
@@ -18,8 +16,7 @@ function makeFakePage(): { page: Page; emitter: EventEmitter } {
 }
 
 function makeConsoleMessage(type: string, text: string) {
-  // M114 A6: a real ConsoleMessage always exposes its arguments; a message
-  // logged without a format string has the rendered text as its only one.
+  // M114 A6: a real ConsoleMessage exposes args(); a plain-text message's only arg is the text.
   return { type: () => type, text: () => text, args: () => [{ toString: () => text }] };
 }
 
@@ -44,10 +41,6 @@ function makeResponse(status: number, method: string, url: string) {
     request: () => ({ method: () => method, url: () => url }),
   };
 }
-
-// ====================================================================
-// attachPageErrorCapture
-// ====================================================================
 
 describe("attachPageErrorCapture", () => {
   it("records pageerror messages", () => {
@@ -189,10 +182,6 @@ describe("attachPageErrorCapture", () => {
   });
 });
 
-// ====================================================================
-// network failure capture
-// ====================================================================
-
 describe("attachPageErrorCapture: network failures", () => {
   it("records a failed request with its method, url and error text", () => {
     const { page, emitter } = makeFakePage();
@@ -284,14 +273,7 @@ describe("attachPageErrorCapture: network failures", () => {
   });
 });
 
-// ====================================================================
-// M83 #2 (element-plus-F3): the harness must not blame the component for
-// its own noise. A synthesized string placeholder ("test") landing in an
-// <img src> relative-resolves against the harness's own serving root and
-// 404s; that 404 is caused by the harness's own synthesis, not the
-// component, and must not reach per-combo attribution.
-// ====================================================================
-
+// M83 #2 (element-plus-F3): a synthesized <img> placeholder's own 404 must not blame the component.
 describe("isHarnessInternalNoise", () => {
   it("is true for a bare, extension-less direct child of the harness root", () => {
     expect(
@@ -376,10 +358,6 @@ describe("attachPageErrorCapture: harness-internal noise attribution", () => {
   });
 });
 
-// ====================================================================
-// enrichTimeoutError
-// ====================================================================
-
 describe("enrichTimeoutError", () => {
   function makeCaptureWith(errors: string[]): PageErrorCapture {
     const { page, emitter } = makeFakePage();
@@ -457,15 +435,7 @@ describe("enrichTimeoutError", () => {
   });
 });
 
-// ====================================================================
-// M79 gap 3b (taxonomy-F1): a synchronous throw during module evaluation
-// (e.g. next.config.mjs's env-validation) fires page.on("pageerror") almost
-// immediately, but nothing used to race that against the 30s readiness gate:
-// the run waited out the full timeout before ever reading what the capture
-// already had within the first second. waitForFatal/waitForReadyOrFatal make
-// the fatal signal preemptive instead of merely diagnostic-after-the-fact.
-// ====================================================================
-
+// M79 gap 3b (taxonomy-F1): a synchronous throw must fail fast, not wait out the full timeout.
 describe("PageErrorCapture.waitForFatal", () => {
   it("resolves with the message and stack when a pageerror fires", async () => {
     const { page, emitter } = makeFakePage();
@@ -629,8 +599,7 @@ describe("waitForReadyOrFatal", () => {
       "component harness",
       () => "No .env or .env.local found; only NEXT_PUBLIC_*/VITE_* keys reach the page.",
     );
-    // M108 A9: the line attaches to an error that names an environment
-    // variable, which is what this remedy answers for.
+    // M108 A9: the remedy attaches only when the captured error names an environment variable.
     emitter.emit("pageerror", new Error("createEnv failed: process.env.DATABASE_URL is required"));
     await expect(pending).rejects.toThrow(/NEXT_PUBLIC_/);
   });

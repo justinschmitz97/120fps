@@ -9,8 +9,8 @@ import {
   resolveStyleTooling,
   resolveTailwind3Config,
   writeAnchoredTailwind3Config,
-} from "../../src/harness.js";
-import { resolveGoverningTsconfig } from "../../src/project-model.js";
+} from "../../src/harness/index.js";
+import { resolveGoverningTsconfig } from "../../src/project/index.js";
 
 const FIXTURE_ROOT = path.resolve(__dirname, "..", "..", "fixtures", "tailwind3-monorepo");
 const FIXTURE_MEMBER = path.join(FIXTURE_ROOT, "packages", "ui");
@@ -117,9 +117,7 @@ const FAKE_TAILWIND_INDEX = 'module.exports = (options) => ({ postcssPlugin: "ta
 const FAKE_LOAD_CONFIG = "module.exports = (file) => require(file);\n";
 const FAKE_AUTOPREFIXER = 'module.exports = () => ({ postcssPlugin: "autoprefixer" });\n';
 
-// The member's own Tailwind and autoprefixer, written locally: this repo's own
-// tailwindcss is v4 and carries no `loadConfig` entry, and the assertion is
-// about which plugins come back, not about what those plugins do.
+// Fakes, not this repo's v4 tailwindcss (no loadConfig): the assertion checks plugin identity only.
 function tailwind3Member(files: Record<string, string>): string {
   const { member } = workspace({
     "package.json": JSON.stringify({ name: "ui", devDependencies: { tailwindcss: "^3.4.19" } }),

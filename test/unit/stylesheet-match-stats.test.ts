@@ -3,7 +3,7 @@ import {
   STYLESHEET_MATCH_STATS_SOURCE,
   stylesheetMatchStatsBlock,
   generateEntry,
-} from "../../src/harness.js";
+} from "../../src/harness/index.js";
 
 type Stats = Array<{ file: string; rules: number; matched: number }>;
 
@@ -13,8 +13,7 @@ interface FakeRule {
 }
 
 function loadCounter(): (specifiers: string[], doc: unknown, root: unknown) => Stats {
-  // The same source string the generated entry carries, exercised directly:
-  // the page's own copy runs against a real CSSOM, this one against a fake.
+  // The same source string the generated entry carries, run here against a fake CSSOM, not real.
   return new Function(
     `${STYLESHEET_MATCH_STATS_SOURCE}\nreturn __120fpsStylesheetMatchStats;`,
   )() as (specifiers: string[], doc: unknown, root: unknown) => Stats;
@@ -36,9 +35,7 @@ function root(matching: string[]): unknown {
   };
 }
 
-// excalidraw: every rule in the injected stylesheet is nested under
-// `.excalidraw`, an ancestor class the harness never renders, so the run
-// measured an entirely unstyled button and printed PASS.
+// excalidraw: rules nested under an ancestor the harness never renders measured unstyled, yet PASS.
 describe("counting how many injected rules reach the rendered tree", () => {
   it("counts every rule and the ones that match under the root", () => {
     const stats = loadCounter()(

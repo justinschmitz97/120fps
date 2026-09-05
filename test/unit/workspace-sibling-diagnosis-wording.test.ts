@@ -8,7 +8,7 @@ import {
   TYPES_ONLY_WORKSPACE_PACKAGE_WARNING,
   UNBUILT_WORKSPACE_PACKAGE_WARNING,
   UNBUILT_WORKSPACE_PACKAGE_NO_SOURCE_WARNING,
-} from "../../src/harness.js";
+} from "../../src/harness/index.js";
 
 const cleanupDirs: string[] = [];
 
@@ -128,8 +128,7 @@ describe("the needs-a-build diagnosis is withheld when a package has its source 
     expect(diagnosis).toBe(UNBUILT_WORKSPACE_PACKAGE_WARNING("@w/nosource", "dist/index.js"));
   });
 
-  // A5: the build-step diagnosis carries no dist/ claim of its own; the only
-  // dist/ it may print is one the followed entry itself names.
+  // A5: the diagnosis prints a dist/ path only when the followed entry itself names one.
   it("names the declared build output instead of inventing a dist/", () => {
     const { workspaceRoot, member } = mkWorkspace();
     linkSibling(workspaceRoot, member, "@w/gutenbergish", { main: "./build-module/index.mjs" }, {});

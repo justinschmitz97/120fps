@@ -7,19 +7,25 @@ import {
   measurementAbandonedWarning,
   type MountResult,
   type RerenderResult,
-} from "../../src/measure.js";
-import { buildReport, propDeltasFromMeasured, type BuildReportInput } from "../../src/analyze.js";
-import type { DeltaPair } from "../../src/prop-gen-values.js";
+} from "../../src/browser/index.js";
+import { buildReport, propDeltasFromMeasured, type BuildReportInput } from "../../src/pipeline/index.js";
+import type { DeltaPair } from "../../src/props/index.js";
 
-// midday-F1, end-game fix-up. `withFrameStarvationRetry` bounds one combo;
-// nothing bounded a pass. On midday's button the renderer wedged during the
-// delta pass, so all ~40 of its combos starved through three bounded retries
-// each: 20 minutes with no phase line, then the run watchdog killed the run
-// with no report at all. A pass whose combos stop measuring, combo after
-// combo, is measuring the page's failure, not the component.
+// midday-F1: a wedged page starved every remaining combo through full retries with no report.
 
-const measureSrc = fs.readFileSync(path.resolve("src", "measure.ts"), "utf-8");
-const analyzeSrc = fs.readFileSync(path.resolve("src", "analyze.ts"), "utf-8");
+const measureSrc = fs.readFileSync(path.resolve("src", "browser/measure.ts"), "utf-8");
+const retrySrc = fs.readFileSync(path.resolve("src", "browser/retry.ts"), "utf-8");
+// Delta passes live across the pipeline stage's mode files; read the whole stage as one text.
+const pipelineSrc = (dir: string): string =>
+  fs
+    .readdirSync(dir, { withFileTypes: true })
+    .map((e) =>
+      e.isDirectory()
+        ? pipelineSrc(path.join(dir, e.name))
+        : fs.readFileSync(path.join(dir, e.name), "utf-8"),
+    )
+    .join("\n");
+const analyzeSrc = pipelineSrc(path.resolve("src", "pipeline"));
 
 describe("a pass stops once the page has stopped measuring anything", () => {
   it("tolerates degraded combos below the bound", () => {
@@ -81,16 +87,12 @@ describe("both measurement passes are bounded by it", () => {
   });
 
   it("keeps the per-combo retry bound it composes with", () => {
-    expect(measureSrc).toContain("export const MAX_FRAME_STARVATION_RETRIES = 2;");
+    expect(retrySrc).toContain("export const MAX_FRAME_STARVATION_RETRIES = 2;");
     expect(MAX_CONSECUTIVE_DEGRADED_COMBOS).toBe(3);
   });
 });
 
-// The pass loops in measure.ts need a browser to run, so this stands in for
-// one: the same bound, the same `new Array(total)` results array written by
-// index, the same break. It is here to execute what the bound does to the run
-// downstream -- holes in the results array -- which the source greps above
-// cannot.
+// Stands in for measure.ts's pass loop (needs a browser) to exercise the bound's effect: holes.
 function runBoundedPass(
   phase: "mount" | "rerender",
   total: number,

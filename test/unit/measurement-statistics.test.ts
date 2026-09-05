@@ -1,17 +1,17 @@
 import { describe, it, expect } from "vitest";
-import { computeP95, computeMedian, warmupsForPosition } from "../../src/measure.js";
-import { computeCV, buildTimingWithCV } from "../../src/report.js";
-import { computeScalingCurve } from "../../src/metrics.js";
+import { warmupsForPosition } from "../../src/browser/index.js";
+import { computeCV, computeMedian, computeP95 } from "../../src/shared/index.js";
+import { buildTimingWithCV } from "../../src/report/index.js";
+import { computeScalingCurve } from "../../src/report/index.js";
 import {
   computeChurnDegradation,
   churnParitySeries,
   buildRerenderIsolation,
-} from "../../src/isolation.js";
-import { computeEffectiveSamples, EFFECTIVE_SAMPLES_WARNING } from "../../src/analyze.js";
-import { buildEnvFingerprint, classifyEnv } from "../../src/budget.js";
+} from "../../src/analysis/index.js";
+import { computeEffectiveSamples, EFFECTIVE_SAMPLES_WARNING } from "../../src/pipeline/index.js";
+import { buildEnvFingerprint, classifyEnv } from "../../src/report/index.js";
 
-// Type-7 (R/numpy default) reference values, computed independently:
-// h = (n-1)*0.95, value = x[floor(h)] + (h-floor(h)) * (x[ceil(h)] - x[floor(h)]).
+// Expected values computed independently via the type-7 (R/numpy default) formula.
 describe("computeP95: interpolated quantile", () => {
   it("does not return the sample maximum at n=10", () => {
     const samples = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
@@ -58,8 +58,7 @@ describe("computeP95: interpolated quantile", () => {
 
 describe("computeCV: sample standard deviation", () => {
   it("uses the n-1 denominator", () => {
-    // [2,4,4,4,5,5,7,9]: mean 5, sum of squared deviations 32.
-    // population sd 2 (CV 40%), sample sd sqrt(32/7) = 2.1381 (CV 42.76%).
+    // [2,4,4,4,5,5,7,9]: population sd 2 (CV 40%), sample sd sqrt(32/7)≈2.1381 (CV 42.76%).
     expect(computeCV([2, 4, 4, 4, 5, 5, 7, 9])).toBeCloseTo(42.7618, 3);
   });
 
@@ -141,8 +140,7 @@ describe("effective sample count", () => {
   });
 });
 
-// measureChurn records B,A,B,A…: even indices rerender into propsB, odd into
-// propsA. A first-vs-last comparison across the mix measures the A/B gap.
+// measureChurn alternates B,A,B,A…: even indices are propsB, odd are propsA.
 describe("churn: parity-aware aggregation", () => {
   const alternating = Array.from({ length: 20 }, (_, i) => (i % 2 === 0 ? 10 : 20));
 
@@ -195,9 +193,7 @@ describe("churn: parity-aware aggregation", () => {
 
 describe("computeScalingCurve: one response variable for every candidate", () => {
   it("does not pick a fit that explains raw y worse than its rivals", () => {
-    // log y is near-perfectly linear (r² 0.987), but the back-transformed
-    // exponential misses the largest point by ~1855 and explains only 46% of
-    // raw variance, against 88% for the quadratic candidate.
+    // Back-transformed exponential explains only 46% of raw variance vs 88% for quadratic.
     const points = [
       { n: 1, metric: 1 },
       { n: 2, metric: 10 },
@@ -239,8 +235,7 @@ describe("computeScalingCurve: one response variable for every candidate", () =>
   });
 
   it("never lets a non-finite back-transform win", () => {
-    // exp() of the fitted log-line overflows at these magnitudes; a candidate
-    // that explains nothing must not be selected by an arithmetic accident.
+    // exp() of the fitted log-line overflows here; a broken fit must not win by accident.
     const points = [
       { n: 1, metric: 1 },
       { n: 400, metric: 1e60 },

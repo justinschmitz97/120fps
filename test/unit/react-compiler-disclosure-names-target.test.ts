@@ -1,11 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { buildReactCompilerReport } from "../../src/analyze.js";
+import { buildReactCompilerReport } from "../../src/pipeline/index.js";
 import {
   DEFAULT_THRESHOLDS,
   formatTable,
   type ReactCompilerReport,
   type Report,
-} from "../../src/report.js";
+} from "../../src/report/index.js";
 
 function makeReport(overrides: Partial<Report> = {}): Report {
   return {

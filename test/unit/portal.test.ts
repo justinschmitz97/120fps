@@ -5,8 +5,8 @@ import {
   type ComboReport,
   type Report,
   DEFAULT_THRESHOLDS,
-} from "../../src/report.js";
-import { buildTimingWithCV } from "../../src/report.js";
+} from "../../src/report/index.js";
+import { buildTimingWithCV } from "../../src/report/index.js";
 
 describe("formatTable portal suffix", () => {
   function makeReport(interactions: InteractionReport[]): Report {

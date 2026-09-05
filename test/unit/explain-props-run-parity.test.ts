@@ -1,18 +1,14 @@
 import { describe, it, expect } from "vitest";
-import type { PropSchema, ScalingPropMatch } from "../../src/prop-gen.js";
+import type { PropSchema, ScalingPropMatch } from "../../src/props/index.js";
 import {
   generateCombinations,
   generateDeltaPairs,
   generateScalingCombos,
   generatePropMatrix,
-} from "../../src/prop-gen-values.js";
-import { applyPropPresets, type PropPresets } from "../../src/prop-presets.js";
+} from "../../src/props/index.js";
+import { applyPropPresets, type PropPresets } from "../../src/props/index.js";
 
-// M81 section 4: --explain-props and the run consume the same
-// `schema.degenerate` flag. This is exercised at the four combo generators
-// the run actually calls, so a degenerate prop never reaches the browser as
-// a fabricated `{}`/placeholder in ANY generation path, matching what
-// --explain-props already prints for the same schema.
+// M81 section 4: all four combo generators must skip a degenerate prop, like --explain-props.
 const degenerateObject: PropSchema = {
   name: "config",
   kind: "object",

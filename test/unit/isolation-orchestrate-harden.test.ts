@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import { withProductionResolution } from "../node-resolution.js";
-import { parseArgs, resolveIsolationOption } from "../../src/cli.js";
+import { parseArgs, resolveIsolationOption } from "../../src/cli/index.js";
 import {
   parseIsolationPhases,
   selectIsolationCombos,
@@ -10,7 +10,7 @@ import {
   buildMemoryReport,
   computeChurnDegradation,
   isolationBaselineMetrics,
-} from "../../src/isolation.js";
+} from "../../src/analysis/index.js";
 import {
   buildTimingWithCV,
   classifyTier,
@@ -18,9 +18,9 @@ import {
   TIER_BUDGETS,
   type Report,
   type Thresholds,
-} from "../../src/report.js";
-import { compareBaseline, buildEnvFingerprint, type BaselineEntry } from "../../src/budget.js";
-import { reactJsxRuntimeDeps } from "../../src/harness.js";
+} from "../../src/report/index.js";
+import { compareBaseline, buildEnvFingerprint, type BaselineEntry } from "../../src/report/index.js";
+import { reactJsxRuntimeDeps } from "../../src/project/index.js";
 
 const THRESHOLDS: Thresholds = { mountMs: 50, interactionMs: 400, relativeMount: 2, rerenderMs: 16 };
 
@@ -107,7 +107,7 @@ describe("H6: --no-isolate overrides --isolate", () => {
 // H7: analyze rejects a zero-phase isolation option
 describe("H7: analyze with an empty phase list", () => {
   it("guards before any measurement runs", () => {
-    const analyzeSrc = src("analyze.ts");
+    const analyzeSrc = src("pipeline/modes/isolation.ts");
     expect(analyzeSrc).toContain("--isolate requires at least one phase");
     const guardIdx = analyzeSrc.indexOf("--isolate requires at least one phase");
     const runIdx = analyzeSrc.indexOf("await runIsolationPhases(");
@@ -157,7 +157,7 @@ describe("H11: churn degradation at the limit", () => {
 // H12: the mount budget the verdict actually uses
 describe("H12: mount budget selection", () => {
   it("takes the flat threshold when --flat-thresholds or an explicit threshold is set", () => {
-    const analyzeSrc = src("analyze.ts");
+    const analyzeSrc = src("pipeline/modes/isolation.ts");
     expect(analyzeSrc).toContain(
       "options.flatThresholds || options.thresholds?.mountMs !== undefined",
     );
@@ -175,11 +175,8 @@ describe("H13: no portal signal in isolation mode", () => {
   });
 
   it("passes hasPortal: false from the isolation branch", () => {
-    const analyzeSrc = src("analyze.ts");
-    const branch = analyzeSrc.slice(
-      analyzeSrc.indexOf("async function runIsolationMode("),
-      analyzeSrc.indexOf("function writeReportJson("),
-    );
+    const isolationSrc = src("pipeline/modes/isolation.ts");
+    const branch = isolationSrc.slice(isolationSrc.indexOf("async function runIsolationMode("));
     expect(branch).toContain("hasPortal: false");
     expect(branch).toContain("Discovery does not run in isolation mode");
   });
@@ -187,11 +184,9 @@ describe("H13: no portal signal in isolation mode", () => {
 
 // H14: isolation mode never runs the standard pipeline stages
 describe("H14: isolation branch scope", () => {
-  const analyzeSrc = src("analyze.ts");
-  const branch = analyzeSrc.slice(
-    analyzeSrc.indexOf("async function runIsolationMode("),
-    analyzeSrc.indexOf("function writeReportJson("),
-  );
+  const analyzeSrc = src("pipeline/analyze.ts");
+  const isolationSrc = src("pipeline/modes/isolation.ts");
+  const branch = isolationSrc.slice(isolationSrc.indexOf("async function runIsolationMode("));
 
   it("does not explore, profile React, or compute deltas", () => {
     expect(branch).not.toContain("explore(");
@@ -201,8 +196,14 @@ describe("H14: isolation branch scope", () => {
   });
 
   it("returns before the curve and matrix decisions", () => {
-    expect(analyzeSrc.indexOf("// --- Isolation mode ---"))
-      .toBeLessThan(analyzeSrc.indexOf("// --- Curve mode check ---"));
+    const isolationIdx = analyzeSrc.indexOf("return await runIsolationMode(ctx, options.isolation)");
+    const curveIdx = analyzeSrc.indexOf("const curveMatch = await resolveCurveMatch(ctx)");
+    const matrixIdx = analyzeSrc.indexOf("shouldAutoActivateMatrix(await ctx.getSchemas())");
+    expect(isolationIdx).toBeGreaterThan(-1);
+    expect(curveIdx).toBeGreaterThan(-1);
+    expect(matrixIdx).toBeGreaterThan(-1);
+    expect(isolationIdx).toBeLessThan(curveIdx);
+    expect(isolationIdx).toBeLessThan(matrixIdx);
     expect(branch).toContain("return report;");
   });
 });
@@ -281,8 +282,7 @@ describe("H16: multiple warnings in isolation output", () => {
   });
 });
 
-// H18b: the automatic JSX runtime must be pre-bundled, or Vite full-reloads
-// the harness page mid-measurement the first time a project is measured.
+// H18b: the automatic JSX runtime must be pre-bundled, or Vite full-reloads the harness page.
 describe("H18b: automatic JSX runtime is declared", () => {
   it("resolves both runtime entry points from the project", () => {
     expect(reactJsxRuntimeDeps(path.resolve("."))).toEqual([
@@ -292,19 +292,14 @@ describe("H18b: automatic JSX runtime is declared", () => {
   });
 
   it("returns nothing for a project that cannot resolve them", () => {
-    // The filesystem root has no node_modules above it on any OS; a literal
-    // "C:/" is a relative path on POSIX and resolves inside the repo, where
-    // react is a real dependency.
+    // Filesystem root has no node_modules above; on POSIX "C:/" is relative and resolves in-repo.
     const fsRoot = path.parse(process.cwd()).root;
     expect(withProductionResolution(() => reactJsxRuntimeDeps(fsRoot))).toEqual([]);
   });
 
   it("feeds optimizeDeps.include from buildAndServe", () => {
-    // M34 routes the list through unionCachedDeps as `stableInclude`; the
-    // runtime deps must feed that list, and the list must feed optimizeDeps.
-    // M57 moved the per-renderer half of the list into `rendererDeps`, which
-    // stableInclude spreads; the runtime deps still have to reach it.
-    const harnessSrc = src("harness.ts");
+    // M34/M57: runtime deps must reach optimizeDeps through rendererDeps and stableInclude.
+    const harnessSrc = src("harness/build.ts");
     const rendererBlock = harnessSrc.slice(
       harnessSrc.indexOf("const rendererDeps ="),
       harnessSrc.indexOf("const stableInclude = unionCachedDeps("),
@@ -323,10 +318,7 @@ describe("H18b: automatic JSX runtime is declared", () => {
   });
 });
 
-// M83 #3 (element-plus-F4): report.pass must not be computed before
-// report.noise exists in the same function — a hostile machine's noise
-// classification has to be available to the verdict, not seventeen lines
-// too late.
+// M83 #3 (element-plus-F4): report.pass must be computed after report.noise exists, not before.
 describe("M83 #3: computeIsolationVerdict respects the noise classification", () => {
   it("suppresses a leak-only FAIL when the run's own noise sentinel says hostile", () => {
     const leaking = { memory: { leakSuspected: true, heapGrowth: 1, heapGrowthPerCycle: 1, gcPressure: 0 } };
@@ -364,11 +356,8 @@ describe("M83 #3: computeIsolationVerdict respects the noise classification", ()
 
 describe("M83 #3: runIsolationMode computes report.pass after report.noise exists", () => {
   it("calls attachHarnessContext before assigning report.pass from computeIsolationVerdict", () => {
-    const analyzeSrc = src("analyze.ts");
-    const branch = analyzeSrc.slice(
-      analyzeSrc.indexOf("async function runIsolationMode("),
-      analyzeSrc.indexOf("function writeReportJson("),
-    );
+    const isolationSrc = src("pipeline/modes/isolation.ts");
+    const branch = isolationSrc.slice(isolationSrc.indexOf("async function runIsolationMode("));
     const attachIdx = branch.indexOf("ctx.attachHarnessContext(report)");
     const passIdx = branch.indexOf("report.pass = computeIsolationVerdict(");
     expect(attachIdx).toBeGreaterThan(-1);
@@ -377,20 +366,14 @@ describe("M83 #3: runIsolationMode computes report.pass after report.noise exist
   });
 
   it("passes report.noise?.level into computeIsolationVerdict", () => {
-    const analyzeSrc = src("analyze.ts");
-    const branch = analyzeSrc.slice(
-      analyzeSrc.indexOf("async function runIsolationMode("),
-      analyzeSrc.indexOf("function writeReportJson("),
-    );
+    const isolationSrc = src("pipeline/modes/isolation.ts");
+    const branch = isolationSrc.slice(isolationSrc.indexOf("async function runIsolationMode("));
     expect(branch).toMatch(/report\.pass = computeIsolationVerdict\([^)]*report\.noise\?\.level/s);
   });
 
   it("names the noise-qualified suppression in report.warnings when it applies", () => {
-    const analyzeSrc = src("analyze.ts");
-    const branch = analyzeSrc.slice(
-      analyzeSrc.indexOf("async function runIsolationMode("),
-      analyzeSrc.indexOf("function writeReportJson("),
-    );
+    const isolationSrc = src("pipeline/modes/isolation.ts");
+    const branch = isolationSrc.slice(isolationSrc.indexOf("async function runIsolationMode("));
     expect(branch).toContain("LEAK_VERDICT_NOISE_QUALIFIED_WARNING");
   });
 });

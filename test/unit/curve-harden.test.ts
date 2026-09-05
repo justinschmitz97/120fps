@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseArgs } from "../../src/cli.js";
+import { parseArgs } from "../../src/cli/index.js";
 import {
   buildCurveReport,
   computeCurveVerdict,
@@ -8,10 +8,10 @@ import {
   type Report,
   type ScalingCurveReport,
   type ScalingPoint,
-} from "../../src/report.js";
-import type { ScalingCurve } from "../../src/metrics.js";
-import type { MountResult, RerenderResult } from "../../src/measure.js";
-import type { ExploreResult } from "../../src/explorer.js";
+} from "../../src/report/index.js";
+import type { ScalingCurve } from "../../src/report/index.js";
+import type { MountResult, RerenderResult } from "../../src/browser/index.js";
+import type { ExploreResult } from "../../src/analysis/index.js";
 
 function makeMountResult(comboIndex: number, mountMedian: number, unmountMedian: number, dom: number, heap: number): MountResult {
   return {

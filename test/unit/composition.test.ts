@@ -6,8 +6,8 @@ import {
   UNCOMPOSED_SIBLINGS_WARNING,
   type ExportInfo,
   type CompositionTree,
-} from "../../src/composition.js";
-import type { PropSchema } from "../../src/prop-gen.js";
+} from "../../src/props/index.js";
+import type { PropSchema } from "../../src/props/index.js";
 
 function makeExports(...names: string[]): ExportInfo[] {
   return names.map((name, i) => ({ name, isDefault: i === 0 }));
@@ -27,7 +27,6 @@ function schemasWithChildren(...names: string[]): Map<string, PropSchema[]> {
   return map;
 }
 
-// ─── Phase 1: Prefix Grouping ───
 
 describe("Phase 1: prefix grouping", () => {
   it("identifies root as shortest shared prefix among exports", () => {
@@ -78,7 +77,6 @@ describe("Phase 1: prefix grouping", () => {
   });
 });
 
-// ─── Phase 2: Nesting Inference ───
 
 describe("Phase 2: suffix taxonomy", () => {
   it("builds item-based template: Accordion pattern", () => {
@@ -91,7 +89,6 @@ describe("Phase 2: suffix taxonomy", () => {
     expect(result!.repeatNode).toBe("AccordionItem");
     expect(result!.repeatCount).toBe(3);
 
-    // Structure: Accordion > Item × 3 > [Trigger, Content]
     const root = result!.structure[0];
     expect(root.component).toBe("Accordion");
     expect(root.children.length).toBe(3);
@@ -111,7 +108,6 @@ describe("Phase 2: suffix taxonomy", () => {
     expect(result).not.toBeNull();
     expect(result!.root).toBe("Tabs");
 
-    // Structure: Tabs > [TabsList > TabsTrigger × N, TabsContent × N]
     const root = result!.structure[0];
     expect(root.component).toBe("Tabs");
 
@@ -138,11 +134,9 @@ describe("Phase 2: suffix taxonomy", () => {
     const root = result!.structure[0];
     expect(root.component).toBe("Dialog");
 
-    // Trigger is direct child
     const trigger = root.children.find((c) => c.component === "DialogTrigger");
     expect(trigger).toBeDefined();
 
-    // Portal wraps overlay + content
     const portal = root.children.find((c) => c.component === "DialogPortal");
     expect(portal).toBeDefined();
 
@@ -152,7 +146,6 @@ describe("Phase 2: suffix taxonomy", () => {
     const content = portal!.children.find((c) => c.component === "DialogContent");
     expect(content).toBeDefined();
 
-    // Title, Description, Close inside Content
     expect(content!.children.find((c) => c.component === "DialogTitle")).toBeDefined();
     expect(content!.children.find((c) => c.component === "DialogDescription")).toBeDefined();
     expect(content!.children.find((c) => c.component === "DialogClose")).toBeDefined();
@@ -217,7 +210,6 @@ describe("Phase 2: suffix taxonomy", () => {
   });
 });
 
-// ─── Template Selection ───
 
 describe("template selection", () => {
   it("selects list-based when *List export exists", () => {
@@ -225,7 +217,6 @@ describe("template selection", () => {
     const exports = makeExports(...names);
     const result = inferComposition(exports, schemasWithChildren(...names));
     expect(result).not.toBeNull();
-    // List-based: TabsList wraps triggers, content is sibling
     const root = result!.structure[0];
     const list = root.children.find((c) => c.component === "TabsList");
     expect(list).toBeDefined();
@@ -265,7 +256,6 @@ describe("template selection", () => {
     const result = inferComposition(exports, schemasWithChildren(...names));
     expect(result).not.toBeNull();
     const root = result!.structure[0];
-    // Overlay should be direct child of root
     expect(root.children.find((c) => c.component === "AlertDialogOverlay")).toBeDefined();
   });
 
@@ -280,7 +270,6 @@ describe("template selection", () => {
   });
 });
 
-// ─── RepeatNode + RepeatCount ───
 
 describe("repeatNode and repeatCount", () => {
   it("sets repeatNode to *Item component when item-based", () => {
@@ -319,7 +308,6 @@ describe("repeatNode and repeatCount", () => {
   });
 });
 
-// ─── Props from schemas ───
 
 describe("props from schemas", () => {
   it("marks components without children prop as leaves", () => {
@@ -355,13 +343,10 @@ describe("props from schemas", () => {
   });
 });
 
-// ─── M80: declared composition siblings (disclosure signal) ───
 
 describe("declaredCompositionSiblings: radix shape (same-file bare aliases)", () => {
   it("finds sibling roles from prefixed exports and bare Radix aliases, deduped by role", () => {
-    // radix's tabs.tsx: `Tabs` binds as the root (per detectComponentExport's
-    // stem match); the file also exports the prefixed family AND bare
-    // Radix-convention aliases of the same values from the same export block.
+    // radix's tabs.tsx exports both the prefixed family and bare Radix-convention aliases.
     const siblingExports: ExportInfo[] = [
       { name: "TabsList", isDefault: false },
       { name: "TabsTrigger", isDefault: false },
@@ -374,19 +359,16 @@ describe("declaredCompositionSiblings: radix shape (same-file bare aliases)", ()
     const siblings = declaredCompositionSiblings("Tabs", siblingExports, []);
     const roles = siblings.map((s) => s.role).sort();
     expect(roles).toEqual(["content", "list", "trigger"]);
-    // First-seen name wins per role: the prefixed export precedes its bare
-    // alias in the export list, so it is what gets named in the warning.
+    // First-seen name wins per role: the prefixed export precedes its bare alias in the list.
     expect(siblings.find((s) => s.role === "list")?.name).toBe("TabsList");
     expect(siblings.find((s) => s.role === "trigger")?.name).toBe("TabsTrigger");
     expect(siblings.find((s) => s.role === "content")?.name).toBe("TabsContent");
-    // "Root" is a bare alias of Tabs itself, not a sibling part: it shares no
-    // stem-derived suffix recognized by SUFFIX_MAP and must not appear.
+    // "Root" is a bare alias of Tabs itself, not a sibling part, and must not appear.
     expect(siblings.find((s) => s.name === "Root")).toBeUndefined();
   });
 
   it("classifies a bare alias by its own name even with zero shared prefix with the root", () => {
-    // classifySuffix's fixed-length slice would misread "List" against a
-    // 4-char root as "" -> unknown; the stem function must not.
+    // classifySuffix's fixed-length slice would misread "List" against a 4-char root as unknown.
     const siblings = declaredCompositionSiblings("Tabs", [{ name: "List", isDefault: false }], []);
     expect(siblings).toEqual([{ name: "List", role: "list" }]);
   });
@@ -394,22 +376,14 @@ describe("declaredCompositionSiblings: radix shape (same-file bare aliases)", ()
 
 describe("declaredCompositionSiblings: base-ui shape (single export, parts in adjacent files)", () => {
   it("surfaces sibling roles from same-file type-only relative imports alone", () => {
-    // base-ui's TabsRoot.tsx exports exactly one component (TabsRoot); no
-    // sibling export exists in the file. TabsTab/TabsPanel are only named via
-    // same-file type-only relative imports, which this milestone treats as
-    // the same kind of evidence a same-file export would be. "Tab" is not a
-    // SUFFIX_MAP suffix (only "Panel" is), so TabsTab stays unclassified and
-    // TabsPanel (stem "Tabs", suffix "Panel") is the one entry that surfaces
-    // -- still a nonempty result, which is what the disclosure gate checks.
+    // A type-only relative import counts as evidence too; "Tab" isn't a suffix, "Panel" is.
     const siblings = declaredCompositionSiblings("TabsRoot", [], ["TabsTab", "TabsPanel"]);
     expect(siblings).toEqual([{ name: "TabsPanel", role: "content" }]);
     expect(siblings.find((s) => s.name === "TabsTab")).toBeUndefined();
   });
 
   it("never names TabsList or TabsIndicator: they are not imported even for their types", () => {
-    // Does NOT include: cross-file sibling discovery beyond a same-file
-    // relative type-only import. TabsRoot.tsx never imports TabsList or
-    // TabsIndicator, so the signal must not name them.
+    // Cross-file sibling discovery beyond a same-file type-only import is out of scope.
     const siblings = declaredCompositionSiblings("TabsRoot", [], ["TabsTab", "TabsPanel"]);
     expect(siblings.map((s) => s.name)).not.toContain("TabsList");
     expect(siblings.map((s) => s.name)).not.toContain("TabsIndicator");
@@ -418,9 +392,7 @@ describe("declaredCompositionSiblings: base-ui shape (single export, parts in ad
 
 describe("declaredCompositionSiblings: control case (single-part leaf)", () => {
   it("returns [] for radix's separator.tsx shape: Root classifies as unknown, same as classifySuffix", () => {
-    // separator.tsx exports only Separator/Root; Root shares no recognized
-    // SUFFIX_MAP suffix against either name, exactly as classifySuffix
-    // already treats it today.
+    // separator.tsx exports only Separator/Root; Root matches no recognized SUFFIX_MAP suffix.
     const siblings = declaredCompositionSiblings("Separator", [{ name: "Root", isDefault: false }], []);
     expect(siblings).toEqual([]);
   });
@@ -462,7 +434,6 @@ describe("UNCOMPOSED_SIBLINGS_WARNING", () => {
   });
 });
 
-// ─── Determinism ───
 
 describe("determinism", () => {
   it("produces same tree for same inputs", () => {

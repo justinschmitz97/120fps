@@ -1,32 +1,25 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
-import { runPreflight, preflightFailureMessage } from "../../src/preflight.js";
+import { runPreflight, preflightFailureMessage } from "../../src/project/index.js";
 import {
   findCompilerConfig,
   findWorkspaceRoot,
   isPackageDeclared,
-} from "../../src/project-model.js";
-import { loadTsconfigAliases } from "../../src/harness.js";
+} from "../../src/project/index.js";
+import { loadTsconfigAliases } from "../../src/project/index.js";
 
 const SOLID = path.resolve("fixtures/solid-project");
 const PREACT = path.resolve("fixtures/preact-project");
 const JSCONFIG = path.resolve("fixtures/jsconfig-project");
 
-// M78: these fixtures test framework-name detection, not install state, and
-// (like every node_modules directory) are gitignored, so a fresh checkout has
-// neither. An empty node_modules keeps them decoupled from the new
-// not-installed preflight check (src/preflight.ts detectMissingInstall),
-// which is directory existence only.
+// M78: empty node_modules decouples these fixtures from the directory-existence-only install check.
 beforeAll(() => {
   fs.mkdirSync(path.join(SOLID, "node_modules"), { recursive: true });
   fs.mkdirSync(path.join(PREACT, "node_modules"), { recursive: true });
 });
 
-// Every fixture here sits inside this repository, whose root declares react and
-// react-dom. The two framework fixtures carry their own lockfile so
-// findWorkspaceRoot stops at them; without it they would inherit a React
-// declaration and the case each exists to test would be unconstructable.
+// Each fixture carries its own lockfile so findWorkspaceRoot stops there, not at this repo's react.
 describe("a Solid project on disk", () => {
   it("governs its own install rather than inheriting this repository's", () => {
     expect(findWorkspaceRoot(SOLID)).toBe(SOLID);
@@ -64,9 +57,7 @@ describe("a Preact project on disk", () => {
     expect(result.hard).toEqual([]);
   });
 
-  // The blind spot M72 documented: an npm: alias keeps the react-dom key, so a
-  // manifest read cannot tell this project from a React one. Only the resolved
-  // package's own name can, which needs an install.
+  // M72: an npm: alias keeps the react-dom key; only the resolved package name tells them apart.
   it("reads as declaring react-dom although the alias points at preact", () => {
     expect(isPackageDeclared("react-dom", PREACT)).toBe(true);
     expect(isPackageDeclared("preact", PREACT)).toBe(true);

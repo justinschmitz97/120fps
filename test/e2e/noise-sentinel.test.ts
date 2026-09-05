@@ -1,7 +1,8 @@
 import { describe, it, expect, afterAll } from "vitest";
 import { chromium, type Browser } from "playwright";
-import { probeMachineNoise, computeCvPercent, NOISE_PROBE_SAMPLES } from "../../src/noise.js";
-import { analyze, type AnalyzeOptions } from "../../src/analyze.js";
+import { probeMachineNoise, NOISE_PROBE_SAMPLES } from "../../src/browser/index.js";
+import { computeCvPercent } from "../../src/shared/index.js";
+import { analyze, type AnalyzeOptions } from "../../src/pipeline/index.js";
 
 let browser: Browser | undefined;
 
@@ -37,8 +38,7 @@ describe("busy-loop probe", () => {
     browser ??= await chromium.launch({ headless: true });
     const page = await browser.newPage();
     try {
-      // Not an assertion about this machine's quietness: only that the probe
-      // itself does not manufacture dispersion out of nothing.
+      // Not an assertion about this machine's quietness: the probe must not manufacture dispersion.
       const timings = await probeMachineNoise(page, 9);
       expect(computeCvPercent(timings)).toBeLessThan(100);
     } finally {

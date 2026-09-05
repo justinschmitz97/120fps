@@ -2,9 +2,9 @@ import { describe, it, expect, vi, afterAll } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { closePoolsBounded } from "../../src/cli.js";
-import { loadTsconfigAliases } from "../../src/harness.js";
-import { loadVueCompiler, templateHasUnconditionalRoot, type VueSfcCompiler } from "../../src/vue-sfc.js";
+import { closePoolsBounded } from "../../src/cli/index.js";
+import { loadTsconfigAliases } from "../../src/project/index.js";
+import { loadVueCompiler, templateHasUnconditionalRoot, type VueSfcCompiler } from "../../src/project/index.js";
 
 const cleanupDirs: string[] = [];
 afterAll(() => {
@@ -121,8 +121,7 @@ describe("H10-H12: closePoolsBounded resilience", () => {
     const pool = { closeAll: vi.fn().mockResolvedValue(undefined) };
     const serverPool = { closeAll: vi.fn().mockResolvedValue(undefined) };
     await closePoolsBounded(pool as never, serverPool as never, 0);
-    // Both may or may not have been awaited to completion depending on the
-    // race outcome at 0ms, but the call must never throw or hang.
+    // Completion order is racy at 0ms; the only guarantee under test is no throw and no hang.
     expect(true).toBe(true);
   });
 });

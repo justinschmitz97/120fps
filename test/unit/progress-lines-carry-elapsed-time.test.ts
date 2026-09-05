@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { resolveProgressReporter } from "../../src/analyze.js";
-import { createPhaseClock, formatElapsedClock } from "../../src/report.js";
+import { resolveProgressReporter } from "../../src/pipeline/index.js";
+import { createPhaseClock, formatElapsedClock } from "../../src/report/index.js";
 
 // A clock the test advances by hand: no real time enters an assertion.
 function fakeClock(): { now: () => number; advance: (ms: number) => void } {

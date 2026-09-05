@@ -6,7 +6,7 @@ import {
   buildStrictModeReport,
   buildRerenderIsolation,
   type IsolationPhase,
-} from "../../src/isolation.js";
+} from "../../src/analysis/index.js";
 
 describe("parseIsolationPhases", () => {
   it("parses single phase", () => {

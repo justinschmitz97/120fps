@@ -2,12 +2,82 @@
 
 ## Unreleased
 
+Field-test run 6 remediation: ten milestones closing run-6 smoke clusters 1 through 9 (cluster 9,
+twenty's unbuilt-workspace-sibling subpath, by M126) plus the callback-identity performance finding,
+closed.
+The harness now loads a project's PostCSS config the way Next.js loads it: a string plugin name, a
+`[name, options]` tuple, and a config re-exported from a shared tooling package all resolve, each
+plugin resolved from the directory that actually declares it, so a shape `postcss-load-config`
+rejects no longer ends the run as a harness-ready timeout (M119). A late `@import` — Tailwind 4's own
+`@import 'tailwindcss'` followed later by a second import after some `@custom-variant` lines — is
+hoisted ahead of the statements Vite's inliner already allows before an import, so the theme it
+points at still reaches the compiler instead of being silently deleted (M120). A stylesheet candidate
+whose Tailwind dialect contradicts the installed Tailwind major is skipped before it is ever injected,
+and every injected stylesheet is compiled once, bounded at 20 s: one that throws is dropped and
+reported with the compiler's error, one that "did not compile within 20 s" is dropped and reported as
+such, both ending in the harness's existing "the component may render unstyled" disclosure instead of
+an unexplained ready timeout (M121). A readiness timeout now names the global it waited for
+(`window.__120fps`), the seconds it waited, the two usual causes, and `FPS120_READY_TIMEOUT_MS` as the
+way to raise the bound, instead of the bare sentence "did not become ready within timeout." on its own
+(M125). A workspace sibling's `exports` subpath that builds flat into a nested output layout (twenty:
+15 of its 20 export keys) resolves to its own source the same way the sibling's root entry already
+does, instead of stopping the run on an unaliased subpath (M126). A component whose import graph
+reaches `react-native` is measured through `react-native-web` when it is installed, and the run stops
+naming React Native and the importing file instead of ending in a wall of raw esbuild errors when it
+is not; a `.d.ts` entry a tsconfig's `customConditions` selects is never handed to the dependency
+pre-bundle either way (M127). The callback-identity pass, previously 97% of the React analysis phase,
+now measures each distinct prop set once instead of up to four times and skips a `*Capture` prop whose
+bubble twin it already probes, so the analysis phase runs roughly 4x faster on both profiled repos;
+`renderAttribution` is measured in its own reset-mount-rerender window instead of accumulating across
+every callback arm (M128).
+
+**Upgrading:** `FPS120_READY_TIMEOUT_MS` is a new environment variable, read as a positive whole
+number of milliseconds; an unset, non-positive or unparseable value keeps the default of 90000 and is
+disclosed once per process. `renderAttribution`'s `renderCount` and durations are redefined as a
+single reset-mount-rerender window (M128) rather than an accumulation across every callback-identity
+arm: values are smaller by design and not comparable against a 0.6.0 baseline for that field alone;
+every other reported field is unaffected. `sass` is now a dependency of 120fps itself (install size
+grows; a project's own sass still wins whenever it resolves from the measured package or its
+workspace root). A `babel-macro` import that used to print as a warning and let the run continue is
+now a hard preflight refusal before the browser; `--no-preflight` bypasses it the same way it bypasses
+every other preflight hit.
+
+A `.scss`/`.sass` import in a project that declares no Sass implementation now compiles with the Sass
+120fps ships instead of dying 30 s later on Vite's raw install hint, and the run says so once, in the
+dry run and the real run with the same words, naming the version; a `.less` or `.styl`/`.stylus`
+import whose implementation resolves from neither the project nor 120fps is a named refusal before the
+browser, carrying the install command for this repository's own package manager (M122). A Nuxt project
+whose generated `.nuxt/` directory is missing a file its own tsconfig names is refused before the
+browser, identical in the dry run, naming the `nuxi prepare` remedy; a readiness timeout that captured
+no page error at all now names the stylesheet the run injected as the first suspect, with `--no-css`
+and `--css <file>` as the two commands that decide whether it is the cause — a ranked suspect, never a
+verdict (M123). A component whose import graph reaches a Babel macro import 120fps cannot compile
+(`*/macro`, `*.macro`, `babel-plugin-macros`) is refused before the browser, with the same message in
+the dry run and the real run, naming the importer, the macro and the compiler the project declares for
+it; `--no-preflight` bypasses the refusal and runs the rest of the pipeline unchanged (M124).
+
+Module layout (M118, ADR 0005): `src/` is nine stage directories (`cli`, `pipeline`, `analysis`,
+`report`, `browser`, `harness`, `props`, `project`, `shared`) with one-responsibility files of at
+most 800 lines, value imports pointing one way through stage `index.ts` files, one helper per fact
+in `src/shared/`, and comments that state the invariant instead of the milestone. Two unit tests
+enforce the layout. No measured behaviour changes: the unit suite reports the same passing set before
+and after, and `--explain-props` output is byte-identical.
+
+**Upgrading:** the CLI binary is `dist/cli/main.js` (the `120fps` bin entry follows; `npx 120fps`
+is unchanged). The package's programmatic surface is now the curated set in `src/index.ts`
+(`analyze`, `buildReport`, the Report types, `formatMarkdown`, `formatJUnit`, `loadBudgetConfig`,
+`validateBudgetConfig`, `hintsForReport`, `formatHints`, `HINTS`, `parseArgs`, `PropSchema`,
+`PropCombination`). This is breaking for anyone who imported 120fps programmatically beyond that
+set: 325 runtime values and 106 types the 0.6.0 barrel re-exported (`measureMount`, `explore`,
+`extractProps`, `buildAndServe`, `runPreflight` and the rest) are no longer reachable from the
+package root. The capability was real but never documented.
+
 Field-test run 5 remediation: the thirty confirmed findings against 0.6.0, closed.
 
 **Upgrading:** preset lookup now checks `<stem>.120fps.props.tsx` and `<stem>.120fps.props.ts` before the
 existing `<stem>.props.tsx`/`.props.ts` names; both old names keep working. `phaseTimings` is a new field on
 the report and on `--save-baseline` entries; a baseline recorded before this release just reads as "no phase
-timings recorded". Nothing forces a re-record, and `METRICS_REVISION` (`src/budget.ts:489`) is unchanged, so
+timings recorded". Nothing forces a re-record, and `METRICS_REVISION` (`src/report/budget.ts`) is unchanged, so
 no baseline invalidates.
 
 Resolution:

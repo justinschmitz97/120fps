@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
+import { computeCV } from "../../src/shared/index.js";
 import {
-  computeCV,
   buildTimingWithCV,
   computeVerdict,
   formatTable,
@@ -9,7 +9,7 @@ import {
   type Report,
   type Thresholds,
   DEFAULT_THRESHOLDS,
-} from "../../src/report.js";
+} from "../../src/report/index.js";
 
 describe("computeCV", () => {
   it("returns 0 for empty array", () => {
@@ -25,7 +25,6 @@ describe("computeCV", () => {
   });
 
   it("computes correct CV for known values", () => {
-    // samples: [2, 4, 4, 4, 5, 5, 7, 9]
     // mean = 5, sample stddev = sqrt(32/7) = 2.1381, CV = 42.76%
     const cv = computeCV([2, 4, 4, 4, 5, 5, 7, 9]);
     expect(cv).toBeCloseTo(42.76, 1);
@@ -47,7 +46,6 @@ describe("buildTimingWithCV", () => {
   });
 
   it("marks unstable when CV > 15", () => {
-    // Wide spread: CV will be high
     const t = buildTimingWithCV([1, 1, 1, 1, 100]);
     expect(t.unstable).toBe(true);
   });

@@ -2,14 +2,13 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { findProjectRoot } from "../../src/harness.js";
-import { resolveProjectPaths, legacyBaselineWarning, resolveFramework } from "../../src/analyze.js";
+import { findProjectRoot } from "../../src/harness/index.js";
+import { resolveProjectPaths, legacyBaselineWarning, resolveFramework } from "../../src/pipeline/index.js";
 import { saveBaseline, loadBaseline, loadBudgetConfig,
   selectBaselineEntry,
-} from "../../src/budget.js";
+} from "../../src/report/index.js";
 
-// M45: entries are keyed by component x environment slot; selectBaselineEntry
-// resolves the slot for us so these assertions stay about the entry, not the key.
+// M45: entries key on component x environment; selectBaselineEntry resolves the slot for us.
 function entryOf(baseline: any, componentPath: string) {
   return selectBaselineEntry(baseline, componentPath, "unused")!.entry;
 }
@@ -176,8 +175,7 @@ describe("D4 call-site: resolveFramework precedence", () => {
     expect(resolveFramework("auto", tmpDir)).toBe("react");
   });
 
-  // M57: vue is now a framework of its own, so the no-framework case is a
-  // manifest that names neither.
+  // M57: vue is its own framework; the no-framework case is a manifest naming neither.
   it("auto detects vue when the project depends on vue and not react", () => {
     makeTree({ "package.json": JSON.stringify({ dependencies: { vue: "^3.0.0" } }) });
     expect(resolveFramework("auto", tmpDir)).toBe("vue");

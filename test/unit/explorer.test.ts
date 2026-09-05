@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { fnv1aHash, createRng, restoreComboIndices } from "../../src/explorer.js";
+import { fnv1aHash, createRng, restoreComboIndices } from "../../src/analysis/index.js";
 
 describe("restoreComboIndices", () => {
   it("translates subset positions back into full combo indices", () => {

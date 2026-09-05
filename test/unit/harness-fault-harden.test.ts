@@ -1,13 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { buildReport, type BuildReportInput } from "../../src/analyze.js";
-import { formatTable, type CalibrationResult, type Report, type Thresholds, type PropProvenance } from "../../src/report.js";
-import { hintsForReport } from "../../src/hints.js";
-import type { MountResult } from "../../src/measure.js";
-import type { ExploreResult, StateGraph } from "../../src/explorer.js";
-import type { PropSchema } from "../../src/prop-gen.js";
+import { buildReport, type BuildReportInput } from "../../src/pipeline/index.js";
+import { formatTable, type CalibrationResult, type Report, type Thresholds, type PropProvenance } from "../../src/report/index.js";
+import { hintsForReport } from "../../src/report/index.js";
+import type { MountResult } from "../../src/browser/index.js";
+import type { ExploreResult, StateGraph } from "../../src/analysis/index.js";
+import type { PropSchema } from "../../src/props/index.js";
 
-// M85 harden: 10 adversarial hypotheses against detectHarnessFault, see
-// report table in the milestone's final write-up.
+// M85 harden: 10 adversarial hypotheses against detectHarnessFault (see milestone write-up).
 
 type Schema = PropSchema & { provenance?: PropProvenance };
 
@@ -110,8 +109,7 @@ describe("M85 harden", () => {
     expect(report.combos[0].harnessFault?.propName).toBe("asChild");
   });
 
-  // #5: a report with one genuine failure and one harness-fault combo keeps
-  // both hints (they are not mutually exclusive at the report level).
+  // #5: a report with one genuine failure and one harness-fault combo keeps both hints.
   it("#5 a mixed report shows both renderError and harnessFault hints", () => {
     const schemas: Schema[] = [{ name: "asChild", kind: "boolean", required: false, values: [true], provenance: "contract" }];
     const report = build({
@@ -127,8 +125,7 @@ describe("M85 harden", () => {
     expect(report.pass).toBe(false); // combo 1's genuine failure still fails the run
   });
 
-  // #6: a capped, deduped pageErrors array (the "(+N more dropped)" suffix)
-  // still lets the detector match against what survived the cap.
+  // #6: a capped, deduped pageErrors array still lets the detector match what survived the cap.
   it("#6 matches against a deduped/capped pageErrors array", () => {
     const schemas: Schema[] = [{ name: "src", kind: "string", required: false, values: ["test"], provenance: "placeholder" }];
     const report = build({
@@ -188,8 +185,7 @@ describe("M85 harden", () => {
     expect(report.combos[0].harnessFault).toBeUndefined();
   });
 
-  // #10: schemas present but none reference any prop actually in this combo
-  // (a schema list from a different component / stale schema) never fires.
+  // #10: schemas that reference no prop in this combo (stale/foreign schema list) never fire.
   it("#10 a schema whose name is absent from the combo's own props never fires", () => {
     const schemas: Schema[] = [{ name: "notInThisCombo", kind: "boolean", required: false, values: [true], provenance: "contract" }];
     const report = build({

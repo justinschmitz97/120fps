@@ -1,20 +1,14 @@
 import { describe, it, expect } from "vitest";
 import path from "node:path";
-import { discoverGlobalCss } from "../../src/harness.js";
+import { discoverGlobalCss } from "../../src/harness/index.js";
 import {
   STYLESHEET_MATCHED_NOTHING_WARNING,
   buildCssReport,
   resolveCssFiles,
-} from "../../src/analyze.js";
-import { formatStylesheetsLine, type CssReport } from "../../src/report.js";
+} from "../../src/pipeline/index.js";
+import { formatStylesheetsLine, type CssReport } from "../../src/report/index.js";
 
-// shadcn-ui-F3: a stylesheet dropped because it could not be read left
-// `layer: "unreadable"` with an empty `details`, which a JSON reader cannot
-// tell apart from a project that had no stylesheet at all.
-// excalidraw-F2: `css/styles.scss` is scoped entirely under an `.excalidraw`
-// ancestor the harness never renders, so every rule was injected and none
-// applied — the report described a styled render that was measured unstyled.
-
+// shadcn-ui-F3: unreadable stylesheet must not report empty details, indistinguishable from none.
 describe("a dropped stylesheet stays on the record that named it", () => {
   it("keeps one detail entry per dropped file, naming the path tried and the reason", () => {
     // The shape analyze()'s unreadable branch produces.
@@ -37,14 +31,14 @@ describe("a dropped stylesheet stays on the record that named it", () => {
   });
 });
 
+// excalidraw-F2: a sheet whose rules matched nothing must not be reported as a styled render.
 describe("a stylesheet that matched nothing is named as such", () => {
   it("names the file, the rule count, and what the measurement therefore describes", () => {
     const warning = STYLESHEET_MATCHED_NOTHING_WARNING("css/styles.scss", 1183);
     expect(warning).toContain("css/styles.scss");
     expect(warning).toContain("1183 rules");
     expect(warning).toContain("--wrap");
-    // C-8: the probe cannot see :root/html/body rules, so the sentence must
-    // not assert "unstyled" as the only reading.
+    // C-8: the probe cannot see :root/html/body rules; message must not call it simply unstyled.
     expect(warning).toContain("custom properties on :root");
     expect(warning).not.toMatch(/^.*the measurement describes an unstyled render/);
   });
@@ -67,11 +61,7 @@ describe("css details are built for every discovered file", () => {
   });
 });
 
-// M102 / I7: the probe's own contract, isolated from a browser. The stats the
-// generated entry returns are matched to `css.details` by file path (the entry
-// reports the specifier it injected, the report holds the project-relative
-// path), and only a sheet with rules of its own that matched none of them is
-// worth a warning.
+// M102 / I7: stats match `css.details` by file path; only sheets with unmatched rules warn.
 describe("match stats reach the details entry they describe", () => {
   function apply(
     details: Array<{ file: string; bytes: number; rules: number; matchedRules?: number }>,
@@ -110,10 +100,7 @@ describe("match stats reach the details entry they describe", () => {
   });
 });
 
-// heroui-F1: the pick resolves through the package's own
-// `exports["./styles"]` -> `src/styles.css` -> `@import "@heroui/styles/index.css"`.
-// "matched a conventional filename" would be false of it: nothing about the
-// filename was consulted, the package declared it.
+// heroui-F1: the package's own exports resolved this pick, not a conventional filename match.
 describe("a stylesheet the package itself declared is labelled as such", () => {
   it("does not claim a filename convention decided it", () => {
     const line = formatStylesheetsLine({
@@ -136,8 +123,7 @@ describe("a stylesheet the package itself declared is labelled as such", () => {
   });
 });
 
-// radix-themes-F2 / M112 C4: the package's own package.json declared a
-// stylesheet the build had not produced yet, and the run said "none found".
+// specs/milestones/m112-presets-and-remedies-name-real-files.md: must not read "none found" here.
 describe("a stylesheet the package declared but never built", () => {
   it("is named on the Stylesheets line instead of 'none found'", () => {
     const line = formatStylesheetsLine({
@@ -216,8 +202,7 @@ describe("a stylesheet the package declared but never built", () => {
   });
 
   it("adds no declaredMissing key to a report built from a real discovery", () => {
-    // The producer, not a cast literal: a project with nothing declared must
-    // not grow an empty array in every report.
+    // The producer, not a cast literal: nothing declared must not grow an empty array here.
     const discovered = discoverGlobalCss(path.resolve("fixtures/css-font"), undefined);
     const report = buildCssReport(discovered, path.resolve("fixtures/css-font"));
     expect(Object.prototype.hasOwnProperty.call(report, "declaredMissing")).toBe(false);
@@ -237,10 +222,7 @@ describe("a stylesheet the package declared but never built", () => {
   });
 });
 
-// radix-themes-F2 / C4: the whole path, producer to printed line. Lane A's
-// discovery records the declaration; the report carries it; the line names the
-// field, the missing file and the script that builds it. A cast literal cannot
-// catch a break anywhere along that path.
+// radix-themes-F2 / C4: this exercises the whole path so a cast literal cannot hide a break.
 describe("a declared-but-unbuilt stylesheet from discovery to the printed line", () => {
   const DECLARED_ABSENT = path.resolve("fixtures/declared-absent-style");
 
@@ -249,8 +231,7 @@ describe("a declared-but-unbuilt stylesheet from discovery to the printed line",
       resolveCssFiles({}, DECLARED_ABSENT, []),
       DECLARED_ABSENT,
     );
-    // The package manager is read from the checkout, so the command is the
-    // only part of the sentence that is not fixed.
+    // The package manager is read from the checkout; only the build command varies here.
     expect(formatStylesheetsLine(report)).toMatch(
       /^Stylesheets: none injected — package\.json "style" declares styles\.css, which is not built yet; run `[^`]+ build` in that package, then re-run$/,
     );

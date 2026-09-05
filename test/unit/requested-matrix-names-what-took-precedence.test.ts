@@ -6,12 +6,9 @@ import {
   MATRIX_SUPPRESSED_BY_CURVE_WARNING,
   MATRIX_SUPPRESSED_BY_COMPOSITION_WARNING,
   MATRIX_SUPPRESSED_BY_FIXTURE_WARNING,
-} from "../../src/analyze.js";
+} from "../../src/pipeline/index.js";
 
-// calcom-R1: an explicit --matrix that lost to an auto-composed scene printed
-// nothing at all -- the curve branch has warned about exactly this since M83,
-// the compose and fixture branches fell through to "mode: prop combos" in
-// silence. The dry run and the real run push the same string.
+// calcom-R1: compose/fixture branches must warn like the curve branch (M83), not stay silent.
 
 const COMPOUND = path.resolve("fixtures/m30-strict-compound.tsx");
 const FIXTURE_OWNED = path.resolve("fixtures/accordion-root.tsx");
@@ -32,9 +29,7 @@ describe("a --matrix the dispatcher cannot honour", () => {
     );
   });
 
-  // The dispatcher consults a sibling fixture only when no --target was given
-  // (analyze(): `else if (!fixturePath && !options.target)`), so naming one
-  // here would name a file the real run ignores.
+  // analyze() consults a sibling fixture only without --target: `!fixturePath && !options.target`.
   it("ignores a sibling fixture the real run would not read, under --target", async () => {
     const { warnings, predictedMode } = await explainProps(FIXTURE_OWNED, {
       target: "Accordion",
@@ -72,9 +67,6 @@ describe("a --matrix the dispatcher cannot honour", () => {
   });
 });
 
-// M110 review: `--target` throws TARGET_WITH_FIXTURE_ERROR against an explicit
-// --fixture and against a fixture input, so the `<file>#Export` remedy is
-// only a command the sibling case can actually run.
 describe("the remedy each fixture provenance can actually run", () => {
   it("offers <file>#Export only for the auto-detected sibling", async () => {
     const { warnings } = await explainProps(FIXTURE_OWNED, { matrixMode: true });
@@ -115,11 +107,9 @@ describe("the remedy each fixture provenance can actually run", () => {
   });
 });
 
-// The run path pushes these same two lines, and no unit test can reach it
-// (analyze() needs a browser), so the wiring is pinned at source level -- the
-// pattern matrix-transparency.test.ts already uses for this branch.
+// analyze() needs a browser; wiring is pinned at source level, as matrix-transparency.test.ts does.
 describe("the run path's own suppression push", () => {
-  const analyzeSrc = fs.readFileSync(path.resolve("src/analyze.ts"), "utf-8");
+  const analyzeSrc = fs.readFileSync(path.resolve("src/pipeline/analyze.ts"), "utf-8");
   const dispatch = analyzeSrc.slice(analyzeSrc.indexOf("const matrixAutoActivated = activateMatrix"));
 
   it("pushes the same two constants the dry run pushes", () => {

@@ -5,13 +5,9 @@ import {
   attachPageErrorCapture,
   gotoWithErrorContext,
   waitForReadyOrFatal,
-} from "../../src/page-errors.js";
+} from "../../src/browser/index.js";
 
-// documenso-F1: a Babel macro throws during module evaluation, before
-// `waitForReadyOrFatal` registers its waiter. The throw was dropped, the run
-// reported "did not become ready within timeout", and appended an
-// environment-file remedy to an error that never mentioned an environment
-// variable ("Unable to determine current node version").
+// documenso-F1: a throw before the waiter registered was dropped, masked as a timeout.
 const ENV_REMEDY = "No .env or .env.local found: add it to a .env file.";
 
 function makeFakePage(): { page: Page; emitter: EventEmitter } {
@@ -145,9 +141,7 @@ describe("the environment-file remedy", () => {
   });
 });
 
-// M108 review: enterHarness re-runs the readiness wait after a mid-session
-// navigation, and only drain() cleared the captured fatal. A fatal captured
-// after the last drain would lead the NEXT segment's unrelated timeout.
+// M108 review: a fatal after the last drain() must not leak into the next segment's timeout.
 describe("a page error captured before the last navigation", () => {
   it("does not lead the readiness failure of the document that followed it", async () => {
     const { page, emitter } = makeFakePage();

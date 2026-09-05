@@ -1,8 +1,8 @@
 import { describe, it, expect, afterAll } from "vitest";
 import { chromium, type Browser, type Page } from "playwright";
-import { buildAndServe, type HarnessResult } from "../../src/harness.js";
-import { discoverInteractions } from "../../src/discovery.js";
-import { executeStressPattern, resolveStressPattern } from "../../src/stress-patterns.js";
+import { buildAndServe, type HarnessResult } from "../../src/harness/index.js";
+import { discoverInteractions } from "../../src/browser/index.js";
+import { executeStressPattern, resolveStressPattern } from "../../src/analysis/index.js";
 
 let browser: Browser;
 
@@ -163,7 +163,6 @@ describe("sweep execution", () => {
   }, 90000);
 });
 
-// H1..H5: hardening.
 describe("hardening", () => {
   it("H1: a selector that matches nothing does not throw", async () => {
     const { page, harness } = await mounted("./fixtures/m43-scroll-container.tsx");

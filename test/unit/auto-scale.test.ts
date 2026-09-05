@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { detectScalingProps, type ScalingPropMatch } from "../../src/prop-gen.js";
-import { generateScalingCombos } from "../../src/prop-gen-values.js";
-import type { PropSchema } from "../../src/prop-gen.js";
+import { detectScalingProps, type ScalingPropMatch } from "../../src/props/index.js";
+import { generateScalingCombos } from "../../src/props/index.js";
+import type { PropSchema } from "../../src/props/index.js";
 
 describe("detectScalingProps", () => {
   it("detects array prop with items-like name", () => {
@@ -91,8 +91,7 @@ describe("detectScalingProps", () => {
   });
 
   it("matches scaling numeric names", () => {
-    // M103 (base-ui-F3): `max` alone left this list — it denotes a bound, not
-    // a quantity of rendered things. `maxItems` and the rest still match.
+    // M103 (base-ui-F3): `max` alone denotes a bound, not a quantity, and stays off this list.
     for (const name of ["count", "size", "length", "limit", "total", "depth", "level", "columns", "rows", "pages"]) {
       const schemas: PropSchema[] = [
         { name, kind: "number", required: true, values: [] },

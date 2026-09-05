@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { attributeCost } from "../../src/metrics.js";
-import type { TraceEvent } from "../../src/measure.js";
+import { attributeCost } from "../../src/report/index.js";
+import type { TraceEvent } from "../../src/browser/index.js";
 
 function ev(name: string, durUs: number, tsUs: number, url?: string): TraceEvent {
   return {
@@ -13,8 +13,7 @@ function ev(name: string, durUs: number, tsUs: number, url?: string): TraceEvent
   };
 }
 
-// One mount window: 3ms of a package, 2ms of user code, plus a 1ms layout event
-// that attribution never claims.
+// One mount window: 3ms package, 2ms user code, plus a 1ms layout event attribution never claims.
 function window(offsetUs: number): TraceEvent[] {
   return [
     ev("FunctionCall", 3000, offsetUs + 1000,

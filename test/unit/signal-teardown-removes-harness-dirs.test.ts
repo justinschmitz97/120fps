@@ -2,8 +2,8 @@ import { describe, it, expect, afterAll } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { abortRun } from "../../src/cli.js";
-import { createHarnessDir, removeActiveHarnessDirs, sweepActiveHarnessDirs } from "../../src/harness.js";
+import { abortRun } from "../../src/cli/index.js";
+import { createHarnessDir, removeActiveHarnessDirs, sweepActiveHarnessDirs } from "../../src/harness/index.js";
 
 const roots: string[] = [];
 
@@ -21,10 +21,7 @@ function busy(): NodeJS.ErrnoException {
   return Object.assign(new Error("EBUSY: resource busy or locked"), { code: "EBUSY" });
 }
 
-// base-ui-R1: the SIGTERM handler ran (exit 143) and the harness directory was
-// still there afterwards, with the creation mtime on every file in it. The
-// removal ran at the one moment Chromium, the dev server and its esbuild
-// workers still held handles on it, and nothing tried again after they closed.
+// base-ui-R1: removal ran while Chromium/dev-server/esbuild held handles, no retry after close.
 describe("teardown of a run stopped by a signal", () => {
   it("removes the harness directories again after both pools have closed", async () => {
     const order: string[] = [];
@@ -59,8 +56,7 @@ describe("teardown of a run stopped by a signal", () => {
       },
       { sweep: () => order.push("dirs"), exit: () => order.push("exit"), timeoutMs: 20 },
     );
-    // The deadline exit and the pass after the close race here only because
-    // the injected exit returns; the real one never does.
+    // The deadline exit and post-close sweep race here only because the injected exit() returns.
     expect(order.filter((step) => step === "dirs")).toHaveLength(2);
     expect(order.filter((step) => step === "exit")).toHaveLength(1);
   });

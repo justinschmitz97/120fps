@@ -3,11 +3,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { chromium, type Browser, type Page } from "playwright";
-import { buildAndServe, type HarnessResult } from "../../src/harness.js";
-import { needsStyleSettle, settleStyles } from "../../src/measure.js";
-import { attachPageErrorCapture, type PageErrorCapture } from "../../src/page-errors.js";
+import { buildAndServe, type HarnessResult } from "../../src/harness/index.js";
+import { needsStyleSettle, settleStyles } from "../../src/browser/index.js";
+import { attachPageErrorCapture, type PageErrorCapture } from "../../src/browser/index.js";
 import { sharedAnalyze as analyze } from "./shared-analyze.js";
-import type { CompositionTree } from "../../src/composition.js";
+import type { CompositionTree } from "../../src/props/index.js";
 
 let browser: Browser | undefined;
 
@@ -43,9 +43,7 @@ function waitForHarness(page: Page): Promise<unknown> {
   );
 }
 
-// Vite's dep optimizer can force a full page reload right after the first load
-// when it discovers a module outside optimizeDeps.include; that destroys the
-// execution context mid-call. One retry after re-waiting for the harness.
+// Vite's dep optimizer can reload the page after first load, killing the context; retry once.
 async function mount(page: Page, props: Record<string, unknown>): Promise<void> {
   try {
     await page.evaluate((p) => (window as any).__120fps.mount(p), props);
@@ -66,7 +64,7 @@ function tmpJson(): string {
 const TAILWIND_COMPONENT = "./fixtures/css-tailwind/app/Card.tsx";
 const TAILWIND_CSS = path.resolve("fixtures/css-tailwind/app/globals.css");
 
-// --- C4: the project's own PostCSS toolchain runs ---
+// C4: the project's own PostCSS toolchain runs.
 
 describe("css e2e: PostCSS toolchain", () => {
   it("runs the project's postcss.config.mjs and applies Tailwind output", async () => {
@@ -154,7 +152,7 @@ describe("css e2e: PostCSS toolchain", () => {
   }, 120000);
 });
 
-// --- C2: injection shape ---
+// C2: injection shape.
 
 describe("css e2e: injection", () => {
   it("applies multiple stylesheets in the given cascade order", async () => {
@@ -246,7 +244,7 @@ describe("css e2e: injection", () => {
   }, 60000);
 });
 
-// --- C5: settle gate ---
+// C5: settle gate.
 
 describe("css e2e: settle gate", () => {
   it("settles and reports success for an injected stylesheet with a webfont", async () => {
@@ -349,7 +347,7 @@ describe("css e2e: settle gate", () => {
   }, 120000);
 });
 
-// --- C6/C7: full pipeline ---
+// C6/C7: full pipeline.
 
 describe("css e2e: full pipeline", () => {
   it("auto-detects app/globals.css and reports it", async () => {

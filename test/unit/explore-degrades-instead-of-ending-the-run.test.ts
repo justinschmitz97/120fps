@@ -1,17 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { EXPLORE_STALLED_WARNING } from "../../src/explorer.js";
-import { executeStressPattern, resolveStressPattern } from "../../src/stress-patterns.js";
+import { EXPLORE_STALLED_WARNING } from "../../src/analysis/index.js";
+import { executeStressPattern, resolveStressPattern } from "../../src/analysis/index.js";
 import type { Page } from "playwright-core";
 
-// calcom-F3: a Radix Popover trigger drew `open-close-10` (20 clicks, each
-// with a 3 s page.click timeout). Radix's `modal` variant sets
-// `body { pointer-events: none }` while the portal is open, so 19 of the 20
-// clicks time out — 57 s inside a 60 s tracing window, on a phase whose
-// --explore-budget had already been spent. The run ended at exit 2 with no
-// report, and the printed remedy (--no-attribution) was measured ineffective.
+// calcom-F3: pointer-events:none on an open Radix Popover blocked clicks until budget was spent.
 
-// A page that never resolves a click within the caller's own budget: the
-// smallest reproduction of a pointer-events-blocked trigger.
+// Smallest repro of a pointer-events-blocked trigger: a click that never resolves within budget.
 function blockedPage(clickMs: number): Page {
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
   return {

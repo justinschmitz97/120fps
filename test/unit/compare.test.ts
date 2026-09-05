@@ -6,8 +6,8 @@ import {
   formatCompare,
   DEPENDENCY_DRIFT_ERROR,
   type CompareReport,
-} from "../../src/compare.js";
-import { parseArgs } from "../../src/cli.js";
+} from "../../src/analysis/index.js";
+import { parseArgs } from "../../src/cli/index.js";
 
 // C1: the heuristic: only non-overlapping spreads say anything survived noise.
 describe("distinguishability", () => {
@@ -123,8 +123,7 @@ describe("formatting", () => {
   });
 });
 
-// C6: measuring one side against another side's dependencies compares the
-// wrong thing.
+// C6: measuring one side against the other side's dependencies compares the wrong thing.
 describe("dependency drift", () => {
   it("explains what to do about it", () => {
     const message = DEPENDENCY_DRIFT_ERROR("HEAD~5");

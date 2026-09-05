@@ -1,13 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { hintsForReport, formatHints, PROVIDER_HINT_LINE, PROVIDER_HINT_LINE_TRANSITIVE } from "../../src/hints.js";
-import type { Report } from "../../src/report.js";
+import { hintsForReport, formatHints, PROVIDER_HINT_LINE, PROVIDER_HINT_LINE_TRANSITIVE } from "../../src/report/index.js";
+import type { Report } from "../../src/report/index.js";
 
-// M79 (4a, base-ui-F2). extraHintLines used to map every providerCandidates
-// entry to PROVIDER_HINT_LINE whenever a render error was found, regardless
-// of what the captured page-error text actually said. Base UI's own
-// render-prop crash text names its own cause; the auto-hint still guessed a
-// Context/Provider it never touched. Fix: gate the guess on the captured
-// text actually looking provider/context-shaped.
+// M79 (4a, base-ui-F2): gate the provider/context guess on the captured error text itself.
 
 function comboModeReport(pageErrors: string[] | undefined, providerCandidates: string[]): Report {
   return {
@@ -30,9 +25,7 @@ describe("M79 4a: provider hint gated on captured error text (combo mode)", () =
     const ids = hintsForReport(report);
     expect(ids).toContain("renderError");
     const text = formatHints(ids, report);
-    // The base renderError hint text always mentions --wrap (a static line);
-    // the discriminator under test is the per-candidate "component imports"
-    // line, which only PROVIDER_HINT_LINE emits.
+    // --wrap is always in the base hint; only PROVIDER_HINT_LINE adds "component imports".
     expect(text).not.toContain("component imports");
   });
 
@@ -68,10 +61,7 @@ describe("M79 4a: provider hint gated on captured error text (combo mode)", () =
   });
 });
 
-// M92 (dub button.tsx): a captured error naming a specific symbol
-// ("`Tooltip` must be used within `TooltipProvider`") should have a matching
-// candidate lead the guess when more than one real candidate exists, instead
-// of an unrelated one winning purely by discovery order.
+// M92 (dub button.tsx): a named symbol in the error ranks its matching candidate first.
 describe("M92: a named symbol in the error ranks its matching candidate first", () => {
   it("moves the matching candidate to the front", () => {
     const report = comboModeReport(
@@ -152,11 +142,7 @@ describe("M79 4a: provider hint gated on captured error text (curve mode)", () =
   });
 });
 
-// M92 gap 3 (dub tooltip.tsx -> rich-text-provider.tsx, verified against
-// real source): a candidate reached only transitively (an intermediate file
-// the component imports is what actually imports it, not the component
-// itself) must not be worded "component imports X" -- that overclaims a
-// direct relationship the run never observed.
+// M92 gap 3: a transitive candidate must not say "component imports X" -- that overclaims.
 describe("M92 gap 3: transitive-reach candidates get honest wording", () => {
   function reportWith(providerCandidates: string[], transitiveProviderCandidates: string[]): Report {
     return {

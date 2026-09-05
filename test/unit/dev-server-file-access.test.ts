@@ -2,7 +2,7 @@ import { describe, it, expect, afterAll } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { fsAllowDirs } from "../../src/harness.js";
+import { fsAllowDirs } from "../../src/harness/index.js";
 
 const cleanupDirs: string[] = [];
 
@@ -23,9 +23,7 @@ function mkWorkspace(): { root: string; member: string; shared: string } {
 
 const fwd = (p: string) => p.replace(/\\/g, "/");
 
-// Vite refuses to serve a file outside its allow list, and the harness root is
-// the member package: an alias pointing at a sibling package is exactly the
-// path that a monorepo needs and a single-package repo never has.
+// Vite refuses files outside its allow list; a sibling-package alias is what a monorepo needs.
 describe("dev server file access for alias targets", () => {
   it("keeps Vite's defaults when every alias target is inside the member root", () => {
     const { member } = mkWorkspace();

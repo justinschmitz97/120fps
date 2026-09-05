@@ -1,9 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { formatStylesheetsLine, type CssReport } from "../../src/report.js";
+import { formatStylesheetsLine, type CssReport } from "../../src/report/index.js";
 
-// fluentui-F3: a Griffel-styled component reported "no stylesheet found". An
-// engine the list names and one it does not must never read alike, so the
-// reader can tell a recognised runtime engine from a guess.
+// fluentui-F3: a recognised engine must not read like an unrecognised one in this line.
 const css = (extra: Partial<CssReport>): CssReport => ({ files: [], ...extra }) as CssReport;
 
 describe("the Stylesheets line for styling generated at runtime", () => {

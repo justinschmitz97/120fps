@@ -4,8 +4,8 @@ import {
   buildTimingWithCV,
   type Report,
   type Thresholds,
-} from "../../src/report.js";
-import type { IsolationReport } from "../../src/isolation.js";
+} from "../../src/report/index.js";
+import type { IsolationReport } from "../../src/analysis/index.js";
 
 const THRESHOLDS: Thresholds = { mountMs: 50, interactionMs: 400, relativeMount: 2, rerenderMs: 16 };
 

@@ -6,7 +6,7 @@ import {
   scanExternalDeps,
   UNBUILT_WORKSPACE_SOURCE_ALIAS_WARNING,
   UNALIASED_WORKSPACE_SUBPATH_WARNING,
-} from "../../src/harness.js";
+} from "../../src/harness/index.js";
 
 const cleanupDirs: string[] = [];
 
@@ -14,9 +14,7 @@ afterAll(() => {
   for (const dir of cleanupDirs) fs.rmSync(dir, { recursive: true, force: true });
 });
 
-// Same temp-workspace shape unbuilt-workspace-source-alias.test.ts uses:
-// isWorkspaceSibling requires the installed location's realpath to resolve
-// outside every node_modules segment, which only a genuine link produces.
+// Same as unbuilt-workspace-source-alias.test.ts: needs a genuine link for the realpath check.
 function mkWorkspace(): {
   workspaceRoot: string;
   member: string;
@@ -110,8 +108,7 @@ describe("an unbuilt workspace sibling is aliased to the source its own package.
         exists: false,
       }),
     );
-    // A5, pinned literally: a rewrite of the builder that dropped the field
-    // name would keep the comparison above green.
+    // A5, pinned literally: a builder rewrite dropping the field name would otherwise still pass.
     expect(warnings.find((w) => w.includes("@w/utils"))).toContain(
       'whose exports["."] names ./dist/shared/index.js, which does not exist on disk',
     );

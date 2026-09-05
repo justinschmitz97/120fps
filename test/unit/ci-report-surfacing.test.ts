@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { formatMarkdown, formatJUnit } from "../../src/ci-report.js";
-import { DEFAULT_THRESHOLDS, type Report, type ComboReport } from "../../src/report.js";
-import { parseArgs } from "../../src/cli.js";
+import { formatMarkdown, formatJUnit } from "../../src/report/index.js";
+import { DEFAULT_THRESHOLDS, type Report, type ComboReport } from "../../src/report/index.js";
+import { parseArgs } from "../../src/cli/index.js";
 
 const machine = {
   cpu: "Test CPU", cores: 8, ramMb: 16384,
@@ -162,7 +162,6 @@ describe("formatJUnit: XML output", () => {
   });
 });
 
-// C3: the flags.
 describe("parseArgs: report-path flags", () => {
   it("takes a path for each format", () => {
     const args = parseArgs(["./Button.tsx", "--report-md", "out.md", "--report-junit", "out.xml"]);

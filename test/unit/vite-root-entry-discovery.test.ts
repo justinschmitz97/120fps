@@ -5,7 +5,7 @@ import {
   discoverGlobalCss,
   findProjectEntry,
   readViteConfigData,
-} from "../../src/harness.js";
+} from "../../src/harness/index.js";
 
 const ROOT_PROJECT = path.resolve("fixtures/vite-root-project");
 const COMPUTED_ROOT_PROJECT = path.resolve("fixtures/vite-root-computed");

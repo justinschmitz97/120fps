@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import path from "node:path";
-import { extractProps, resetExtractionCache } from "../../src/prop-gen.js";
+import { extractProps, resetExtractionCache } from "../../src/props/index.js";
 
 const M81 = path.resolve("./fixtures/m81");
 const fixture = (name: string): string => path.join(M81, name);
@@ -15,13 +15,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-// M81 section 2 (the SEPARATE fix from cap ordering, per the archived M76-M83 map's
-// correction to ant-design-F3): `isNoiseProp`'s `isAmbientNoiseDeclaration`
-// branch fully deletes any prop whose every declaration lives in
-// `@types/react`, regardless of member name — `onClick` and `children` as
-// readily as `aria-activedescendant`. This fixture stays well under the
-// 32-prop cap, so a name reappearing here is proof the noise filter itself
-// changed, not that ranking rescued it from a cap it never approached.
+// ant-design-F3: fixture stays under the cap; survival here proves the filter changed, not ranking.
 describe("M81 section 2: noise filter stops deleting real component surface", () => {
   it("onClick and children survive extraction with no cap ever in play", async () => {
     const stderr = captureStderr();
@@ -43,7 +37,6 @@ describe("M81 section 2: noise filter stops deleting real component surface", ()
   });
 });
 
-// Regression: the milestone explicitly does not touch aria-*/data-* handling.
 describe("M81 does not include: aria-*/data-* stay a hard, silent, pre-cap filter", () => {
   it("an aria-* prop is still removed even when declared locally", async () => {
     const schemas = await extractProps(fixture("aria-noise-local.tsx"));

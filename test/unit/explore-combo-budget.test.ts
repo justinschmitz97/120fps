@@ -4,7 +4,7 @@ import {
   EXPLORE_BUDGET_WARNING,
   DEFAULT_MAX_COMBOS,
   DEFAULT_TOTAL_WALL_CLOCK_MS,
-} from "../../src/explorer.js";
+} from "../../src/analysis/index.js";
 
 describe("exploration has a run-level budget", () => {
   it("explores every combo when the count is within the cap", () => {

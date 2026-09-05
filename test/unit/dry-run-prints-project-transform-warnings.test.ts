@@ -2,17 +2,14 @@ import { describe, it, expect, afterEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { explainProps } from "../../src/analyze.js";
+import { explainProps } from "../../src/pipeline/index.js";
 import {
   runPreflight,
   classifyProjectTransformHits,
   PROJECT_TRANSFORM_WARNING,
-} from "../../src/preflight.js";
+} from "../../src/project/index.js";
 
-// logto-F3: `runPreflight` returns `transforms` on both paths, and only the
-// real run read it -- the dry run stayed silent about the 13
-// `[transform:css-preprocessor]` lines the real run printed one minute later
-// from the same files on disk. One classifier now answers for both.
+// logto-F3: dry run stayed silent on transform hits the real run printed later; one classifier now.
 
 const tmpDirs: string[] = [];
 
@@ -28,8 +25,7 @@ function isolatedProject(files: Record<string, string>): string {
     fs.mkdirSync(path.dirname(abs), { recursive: true });
     fs.writeFileSync(abs, content);
   }
-  // The version gate throws before any of this function's later probes run,
-  // so the project needs a react-dom the gate accepts.
+  // Version gate throws before later probes run, so the project needs a react-dom it accepts.
   const reactDom = path.join(root, "node_modules", "react-dom");
   fs.mkdirSync(reactDom, { recursive: true });
   fs.writeFileSync(
@@ -41,8 +37,7 @@ function isolatedProject(files: Record<string, string>): string {
   return root;
 }
 
-// What the run path pushes: the classifier's answer, in its own order, run
-// through the one warning constant.
+// Mirrors what the run path pushes: classifier's answer, same order, one warning constant.
 function runPathTransformWarnings(
   projectRoot: string,
   entry: string,
@@ -100,11 +95,9 @@ describe("the transform decisions a dry run makes from the same files the real r
   });
 });
 
-// The run path's half of the same parity: analyze() needs a browser, so what
-// is pinned here is that it reads the shared classifier and forwards
-// --no-transforms into it, instead of filtering the hits inline again.
+// analyze() needs a browser; this pins that it reads the classifier and forwards --no-transforms.
 describe("the run path's own transform warnings", () => {
-  const analyzeSrc = fs.readFileSync(path.resolve("src/analyze.ts"), "utf-8");
+  const analyzeSrc = fs.readFileSync(path.resolve("src/pipeline/phases.ts"), "utf-8");
   const block = analyzeSrc.slice(
     analyzeSrc.indexOf("const loadableTransforms = new Set("),
     analyzeSrc.indexOf("if (loadableTransforms.size > 0)"),
@@ -114,8 +107,7 @@ describe("the run path's own transform warnings", () => {
     expect(block).toContain("classifyProjectTransformHits(projectRoot, preflight.transforms, {");
     expect(block).toContain("for (const { hit, availability } of candidateTransformHits)");
     expect(block).toContain("runWarnings.push(PROJECT_TRANSFORM_WARNING(hit, availability));");
-    // No second, independent filter: the dry run and the run path cannot
-    // disagree about which hits are worth a warning.
+    // No second, independent filter: dry run and run path cannot disagree on which hits warn.
     expect(block).not.toContain("preflight.transforms.filter");
   });
 
@@ -124,9 +116,7 @@ describe("the run path's own transform warnings", () => {
     expect(classifyProjectTransformHits(path.resolve("."), [], { noTransforms: true })).toEqual([]);
   });
 
-  // I3: one exported classifier, no second copy anywhere. A duplicate is how
-  // the two modes drifted apart in the first place. Which hits each mode
-  // prints is pinned by the observable parity tests above, not here.
+  // I3: one exported classifier; a duplicate is how the two modes drifted apart before.
   it("declares no second classifier of its own", () => {
     expect(analyzeSrc).not.toContain("function classifiedProjectTransformHits");
   });

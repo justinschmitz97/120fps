@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach, afterAll } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { extractProps, type PropSchema } from "../../src/prop-gen.js";
+import { extractProps, type PropSchema } from "../../src/props/index.js";
 
 const REFERENCES = path.resolve("fixtures/tsconfig-shapes/project-references");
 const BUTTON = path.join(REFERENCES, "src", "components", "Button.tsx");
@@ -34,10 +34,7 @@ function shape(props: PropSchema[]): Array<{ name: string; kind: string; require
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
-// The control: the same sources under a root that inlines the compilerOptions
-// the referenced config declares. It is what a user is told to do by hand
-// today, and it is the answer prop extraction has to match without the hand
-// edit.
+// Control: the manual inline-compilerOptions fix a user is told to do; extraction must match it.
 function controlTree(): string {
   const dir = mkProject({
     "package.json": JSON.stringify({ name: "control", private: true, type: "module" }),
@@ -58,10 +55,7 @@ function controlTree(): string {
   return path.join(dir, "src", "components", "Button.tsx");
 }
 
-// coordinator-F1: a `npm create vite` root declares `{ "files": [],
-// "references": [...] }` and puts `paths` in tsconfig.app.json. Prop
-// extraction read the nearest config, found no `paths`, and reported only the
-// props the component declares in its own file.
+// coordinator-F1: vite's split tsconfig (paths in tsconfig.app.json) hid aliased props.
 describe("prop extraction reads the config that governs the component", () => {
   it("resolves an alias only the referenced config declares, so the aliased props appear", async () => {
     const props = await extractProps(BUTTON);

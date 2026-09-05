@@ -1,17 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { buildReport, type BuildReportInput } from "../../src/analyze.js";
-import { formatTable, type CalibrationResult, type Report, type Thresholds, type PropProvenance } from "../../src/report.js";
-import type { MountResult, RerenderResult } from "../../src/measure.js";
-import type { ExploreResult, StateGraph } from "../../src/explorer.js";
-import type { PropSchema } from "../../src/prop-gen.js";
+import { buildReport, type BuildReportInput } from "../../src/pipeline/index.js";
+import { formatTable, type CalibrationResult, type Report, type Thresholds, type PropProvenance } from "../../src/report/index.js";
+import type { MountResult, RerenderResult } from "../../src/browser/index.js";
+import type { ExploreResult, StateGraph } from "../../src/analysis/index.js";
+import type { PropSchema } from "../../src/props/index.js";
 
-// The rerender pass measures combo `ci` and then, in the same loop body,
-// rerenders into `combos[ci+1]`'s props to price the prop delta. Errors from
-// that second render belong to the transition, not to combo `ci`: radix
-// `label.tsx` combos #1 and #6 carry no `asChild` at all and were printed with
-// a Slot error only `asChild: true` can raise, and base UI `SelectRoot`
-// combo #0 (controlled) was printed with a controlled-to-uncontrolled warning
-// that combo #0 alone never triggers.
+// Errors from rerendering into the next combo's props belong to the transition, not combo `ci`.
 
 type Schema = PropSchema & { provenance?: PropProvenance };
 
@@ -70,8 +64,7 @@ function build(overrides: Partial<BuildReportInput>): Report {
 const SLOT_ERROR =
   "Primitive.label failed to slot onto its children. Expected a single React element child or `Slottable`. (×10)";
 
-// The radix shape: combo #0 has no `asChild`, its successor #1 does, and the
-// Slot error was raised while rerendering into #1's props.
+// combo #0 has no `asChild`; #1 does. The Slot error fires while rerendering into #1's props.
 function radixShapedReport(): Report {
   return build({
     mounts: [
@@ -115,8 +108,7 @@ describe("a page error from the prop-change rerender is attributed to the transi
         }),
       ],
     });
-    // Nothing rendered and nothing that this combo itself threw: "empty" is
-    // legal, "error" is a fail.
+    // Nothing rendered and nothing this combo threw itself: "empty" is legal, not a failure.
     expect(report.combos[0].renderHealth).toBe("empty");
     expect(report.combos[0].verdict).not.toBe("fail");
   });
@@ -267,9 +259,7 @@ describe("a harness fault on a contract prop requires the error text to evidence
   });
 
 
-  // C-3 false negatives: the two most common Slot failures name neither
-  // `asChild` nor `slot`, so a value the harness synthesized was being charged
-  // to the component.
+  // C-3 false negatives: Slot errors that name neither prop must still resolve to `asChild`.
   it("fires on React.Children.only, the shape Slot raises for a multi-child body", () => {
     const report = crashed(
       { asChild: true },
@@ -288,8 +278,7 @@ describe("a harness fault on a contract prop requires the error text to evidence
     expect(report.combos[0].harnessFault?.propName).toBe("asChild");
   });
 
-  // C-3 false positives: ordinary JS failure prose was exonerating the
-  // component and turning a FAIL into a PASS.
+  // C-3 false positives: ordinary JS failure prose must not exonerate the component into a PASS.
   it("does not read a property-read message as evidence about a render prop", () => {
     const schemas: Schema[] = [
       { name: "render", kind: "function", required: false, values: [undefined], provenance: "contract" },

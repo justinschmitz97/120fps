@@ -2,7 +2,7 @@ import { describe, it, expect, afterAll } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { assertRendererSupported } from "../../src/harness.js";
+import { assertRendererSupported } from "../../src/harness/index.js";
 
 const dirs: string[] = [];
 
@@ -21,9 +21,7 @@ function mkProject(files: Record<string, string>): string {
   return dir;
 }
 
-// element-plus/packages/components: vue in peerDependencies and
-// devDependencies, no react and no react-dom anywhere, and a component
-// authored as a Vue render function in a `.tsx`.
+// Mirrors the real component layout in element-plus/packages/components.
 function vueProject(extraManifest: Record<string, unknown> = {}): string {
   return mkProject({
     "package.json": JSON.stringify({

@@ -12,9 +12,8 @@ import {
   selectBaselineEntry,
   baselineKey,
   computeEnvKey,
-} from "../../src/budget.js";
-// M45: entries are keyed by component x environment slot; selectBaselineEntry
-// resolves the slot for us so these assertions stay about the entry, not the key.
+} from "../../src/report/index.js";
+// M45: selectBaselineEntry resolves the component x env key so assertions stay on the entry.
 function entryOf(baseline: any, componentPath: string) {
   return selectBaselineEntry(baseline, componentPath, "unused")!.entry;
 }

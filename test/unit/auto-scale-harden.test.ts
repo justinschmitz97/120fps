@@ -1,9 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { detectScalingProps } from "../../src/prop-gen.js";
-import { generateScalingCombos } from "../../src/prop-gen-values.js";
-import { parseArgs } from "../../src/cli.js";
-import { formatTable, type Report } from "../../src/report.js";
-import type { PropSchema, ScalingPropMatch } from "../../src/prop-gen.js";
+import { detectScalingProps } from "../../src/props/index.js";
+import { generateScalingCombos } from "../../src/props/index.js";
+import { parseArgs } from "../../src/cli/index.js";
+import { formatTable, type Report } from "../../src/report/index.js";
+import type { PropSchema, ScalingPropMatch } from "../../src/props/index.js";
 
 function makeReport(overrides: Partial<Report> = {}): Report {
   return {
@@ -71,7 +71,6 @@ describe("H5: n vs name: false positive", () => {
       { name: "name", kind: "number", required: true, values: [] },
     ];
     const matches = detectScalingProps(schemas);
-    // "name" doesn't match ^n$ or ^num, and doesn't match scaling pattern
     expect(matches).toHaveLength(0);
   });
 });
@@ -134,7 +133,6 @@ describe("H12: partial match on items-like name", () => {
       { name: "optionsProvider", kind: "array", required: true, values: [] },
     ];
     const matches = detectScalingProps(schemas);
-    // The regex tests /options/i which matches substring
     expect(matches).toHaveLength(1);
     expect(matches[0].reason).toBe("array prop with items-like name");
   });
@@ -176,7 +174,6 @@ describe("H15: formatTable with autoScalingProp but no scaling curve", () => {
       }],
     });
     const output = formatTable(report);
-    // No scaling curve → scaling column shows "-", no auto suffix
     expect(output).not.toContain("auto: items");
   });
 });

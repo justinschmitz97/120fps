@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { extractExports, extractAllProps } from "../../src/prop-gen.js";
+import { extractExports, extractAllProps } from "../../src/props/index.js";
 
 let tmpDir: string;
 
@@ -84,8 +84,6 @@ describe("extractExports", () => {
       expect(exports).toHaveLength(0);
     });
   });
-
-  // ─── M24 D2: additional export forms, parse-only ───
 
   it("recognizes export default <Identifier>; (export assignment)", () => {
     const filePath = writeFixture("assign.tsx", `

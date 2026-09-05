@@ -2,7 +2,8 @@ import { describe, it, expect, afterAll } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { loadTsconfigAliases, ALIAS_SHAPE_WARNING, scanExternalDeps } from "../../src/harness.js";
+import { scanExternalDeps } from "../../src/harness/index.js";
+import { loadTsconfigAliases, ALIAS_SHAPE_WARNING } from "../../src/project/index.js";
 
 const cleanupDirs: string[] = [];
 
@@ -28,9 +29,7 @@ function mkProject(paths: Record<string, string[]>, extraFiles: Record<string, s
 
 const fwd = (p: string) => p.replace(/\\/g, "/");
 
-// M93: mantine's real shape -- pattern wildcard trailing, target wildcard
-// mid-path (not the whole trailing segment). buildPathAliasEntry previously
-// discarded this and warned with a factually wrong message.
+// M93: mantine's shape has a trailing wildcard pattern but a mid-path wildcard target.
 describe("wildcard capture-group aliases (M93)", () => {
   it("builds a working alias for a mid-path target wildcard", () => {
     const dir = mkProject(
@@ -96,20 +95,13 @@ describe("wildcard capture-group aliases (M93)", () => {
   });
 
   it("ALIAS_SHAPE_WARNING text describes the real mismatch, not a fixed 'one side has a star' claim", () => {
-    // mantine's own pattern: both sides carry exactly one wildcard, so this
-    // exact call must never be what buildPathAliasEntry actually emits for
-    // that shape -- but the function itself must still produce truthful text
-    // for a genuine mismatch when asked directly.
+    // This exact call never matches mantine's shape; it isolates a genuine wildcard-count mismatch.
     const text = ALIAS_SHAPE_WARNING("@utils", "./src/*");
     expect(text).not.toMatch(/one side has a "\*" and the other does not/);
   });
 });
 
-// M93 MUST NOT: a workspace-sibling package with an unbuilt dist but live,
-// resolvable source must not be classified type-only once its own alias
-// resolves it locally -- mantine-F3. Proven directly: once the wildcard
-// alias above resolves @mantine/hooks as a local import, scanExternalDeps's
-// bare-package fallback (the M77 type-only check) never even sees it.
+// M93 MUST NOT: the wildcard alias hides @mantine/hooks from scanExternalDeps's type-only fallback.
 describe("wildcard-rescued workspace packages never reach the type-only exclusion (mantine-F3)", () => {
   it("@mantine/hooks resolves locally via the alias and is not added to externalPkgs", () => {
     const dir = mkProject(

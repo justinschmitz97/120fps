@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { resolveStressPattern } from "../../src/stress-patterns.js";
-import type { InteractionDescriptor } from "../../src/discovery.js";
+import { resolveStressPattern } from "../../src/analysis/index.js";
+import type { InteractionDescriptor } from "../../src/browser/index.js";
 
 function makeDescriptor(
   overrides: Partial<InteractionDescriptor> = {},

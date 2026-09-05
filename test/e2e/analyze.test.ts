@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import { sharedAnalyze as analyze } from "./shared-analyze.js";
-import type { Report } from "../../src/report.js";
+import type { Report } from "../../src/report/index.js";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
@@ -32,13 +32,11 @@ describe("analyze e2e", () => {
 
     expect(report.pass).toBe(typeof report.pass === "boolean" ? report.pass : true);
 
-    // JSON file written
     expect(fs.existsSync(jsonPath)).toBe(true);
     const parsed = JSON.parse(fs.readFileSync(jsonPath, "utf-8"));
     expect(parsed.version).toBe(1);
     expect(parsed.componentName).toBe("StaticButtons");
 
-    // Cleanup
     fs.unlinkSync(jsonPath);
   }, 120000);
 
@@ -78,9 +76,7 @@ describe("analyze e2e", () => {
   }, 120000);
 
   describe("matrix mode", () => {
-    // Four assertions about two analyses, not four analyses: a matrix pass on
-    // this fixture is ~120s, and running it per assertion put 480s on the
-    // suite's critical path.
+    // Shared beforeAll: a matrix pass costs ~120s; one per assertion would add 480s.
     let report: Report;
     let strictReport: Report;
 
@@ -95,9 +91,7 @@ describe("analyze e2e", () => {
       ]);
     }, 400000);
 
-    // Matrix mode explores only the hottest cells. `explore` numbers its results
-    // against the subset it was handed, so without an index restore the
-    // interactions land on cells 0..4 whatever was actually measured.
+    // Without index restore, `explore`'s local numbering would map interactions to cells 0..4.
     it("attaches interactions to the cells that were explored, not the first five", () => {
       const mr = report.matrixReport;
       expect(mr).toBeDefined();
@@ -128,8 +122,7 @@ describe("analyze e2e", () => {
       }
     });
 
-    // Tiered budgets are the default, and the matrix branch used to drop
-    // explicitThresholds, so a user-supplied budget was silently ignored.
+    // Guards a regression: the matrix branch dropped explicitThresholds, ignoring a user's budget.
     it("applies an explicit interaction threshold under tiered budgets", () => {
       const interactive = strictReport.combos.filter((c) => c.interactions.length > 0);
       expect(interactive.length).toBeGreaterThan(0);

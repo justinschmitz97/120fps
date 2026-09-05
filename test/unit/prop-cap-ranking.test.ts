@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import path from "node:path";
-import { extractProps, resetExtractionCache } from "../../src/prop-gen.js";
+import { extractProps, resetExtractionCache } from "../../src/props/index.js";
 
 const M81 = path.resolve("./fixtures/m81");
 const fixture = (name: string): string => path.join(M81, name);
@@ -15,10 +15,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-// M81 section 1: heroui-F1. Zero-declaration `variant`/`size` (reached
-// through VariantProps<typeof x>, itself computed from a mapped type) must
-// rank ahead of ~35 declared-in-node_modules passthrough props from a
-// third-party (non-react-types) package, surviving the 32-prop cap.
+// heroui-F1 (M81): variant/size are zero-declaration, reached via VariantProps<typeof x>.
 describe("M81 section 1: cap ordering ranks zero-declaration variant props ahead of node_modules passthrough", () => {
   it("variant and size survive the 32-prop cap", async () => {
     const stderr = captureStderr();
@@ -43,8 +40,7 @@ describe("M81 section 1: cap ordering ranks zero-declaration variant props ahead
   });
 });
 
-// Positive control: a prop already `declaredHere: true` today (locally
-// re-declared indexed access) must be unaffected by the tier-rank change.
+// Positive control: this variant is already declaredHere via a re-declared indexed access.
 describe("M81 section 1: positive control is unaffected by the rank change", () => {
   it("a locally re-declared indexed-access variant prop is still extracted", async () => {
     const schemas = await extractProps(fixture("table-indexed-variant.tsx"));
@@ -56,13 +52,7 @@ describe("M81 section 1: positive control is unaffected by the rank change", () 
   });
 });
 
-// M81 sections 1+2 interaction: the ant-design cap-ordering fix. Once the
-// noise filter (section 2) stops deleting the DOM surface, the cap has real
-// work to do and must fire an honest, uncapped total naming the true count —
-// not the artificially low pre-filter count. This is the SEPARATE fix from
-// the noise-filter-only test in prop-inheritance-disclosure.test.ts: this one
-// is about the cap/ranking mechanism correctly absorbing the larger `kept`
-// set, not about the filter itself.
+// Not the filter-only test in prop-inheritance-disclosure.test.ts: cap must report the true total.
 describe("M81 cap ordering + noise-filter interaction: ant-design's Button", () => {
   it("onClick and disabled survive the cap and warnPropCap names the true total", async () => {
     const stderr = captureStderr();
@@ -78,10 +68,7 @@ describe("M81 cap ordering + noise-filter interaction: ant-design's Button", () 
     const match = warning?.match(/(\d+) props were extracted/);
     expect(match).toBeTruthy();
     const total = Number(match?.[1]);
-    // 42 real @types/react-declared members (Pick-preserved, so still
-    // attributed to node_modules/@types/react) in this fixture. A total at or
-    // under 32 here would mean the noise filter is still silently dropping
-    // some of the surface before the cap ever counts it.
+    // 42 real @types/react members; <=32 would mean the noise filter hid surface before the cap.
     expect(total).toBe(42);
   });
 });

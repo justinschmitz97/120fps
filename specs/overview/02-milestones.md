@@ -3,7 +3,7 @@ kind: overview
 status: approved
 ---
 
-# Milestone summaries (M1–M117)
+# Milestone summaries (M1–M128)
 
 One entry per milestone: about, why this way, achievement. One line each.
 
@@ -714,3 +714,69 @@ One entry per milestone: about, why this way, achievement. One line each.
 - **About:** a run that rebuilt its harness printed the same static vite-config warning twice, that note named the key `plugins` and never the plugins it dropped, the noise line spent four sentences on a machine fact and named no flag, the `.gitignore` tip fired for a report written outside the repository, and the markdown report dropped the warnings the README promises.
 - **Why this way:** a warning whose text repeats one already recorded for the same component report is recorded once and printed with the page-error ` (×N)` suffix, and the JSON holds one entry per distinct text in first-occurrence order; the markdown report carries one `<details>` fold per component that has warnings; the vite-config note names each declared plugin as the config writes it, in the config's own order, leaving out any plugin whose transform this run applied and disappearing when the list empties; the terminal noise line names only the signals that crossed their thresholds and the one flag that helps, while the JSON keeps the long sentences; the `.gitignore` tip prints once per process and only for paths inside the git root that the repository's `.gitignore` leaves uncovered.
 - **Achievement:** shadcn-admin's Dialog run went from two "cannot honor" lines to one reading `tanstackRouter, react, tailwindcss` and from the four-sentence machine paragraph to "machine: hostile (probe CV 60%); raise --samples to measure through it." with the long form kept in the JSON, ark's note names `dts, react` once in the real run and once under `--explain-props`, shadcn-admin's toolbar tip narrowed to the single `.120fps-harness-*` pattern that applied, and every `Result:` line kept its wording.
+
+### M118: the source tree says what each file is for: done
+
+- **About:** `src/` was 26 flat files and 33,348 lines after M107-M117; `harness.ts` alone held 7,215 lines and 25 responsibilities, `analyze()` spanned 911 lines, one helper was written two or three times in different files, comments cited 1,250 milestone numbers, and `src/index.ts` re-exported about 470 names. Lane ownership by file serialised agents and each remediation landed in the nearest file.
+- **Why this way:** ADR 0005 puts the code in nine stage directories (`cli`, `pipeline`, `analysis`, `report`, `browser`, `harness`, `props`, `project`, `shared`) with value imports pointing one way through stage `index.ts` files, one responsibility and at most 800 lines per file, one helper per fact in `shared/`, comments that state the invariant, and a curated root barrel. The refactor ran as pure `git mv` moves first (35 renames), then per-directory splits in parallel worktrees, then de-duplication, comment cleanup and surface curation, each step gated on `tsc` and the unit suite; two unit tests (`module-boundaries`, `module-ratchets`) enforce the layout with allowlists that shrank to empty. Behaviour stayed frozen: the same passing set before and after, byte-identical `--explain-props` output, and an independent adversarial review of the whole diff found no runtime-reachable change.
+- **Achievement:** 116 files, largest 783 lines, zero boundary exceptions, zero history tokens in comments, zero duplicate function names, 12 runtime exports at the package root, unit suite `4803 passed | 1 skipped | 1 pre-existing failure` at 9ee7058, e2e `cli`, `shim-detect`, `baseline-env` 24 passed. Future milestone maps assign lanes by directory.
+
+### M119: The harness loads the project's PostCSS config itself: done
+
+- **About:** create-next-app's Tailwind 4 `plugins: ["@tailwindcss/postcss"]` and a Next.js `[name, options]` tuple like `postcss-preset-env` are shapes `postcss-load-config` does not accept, so Vite died at the first stylesheet request and the run ended as a harness-ready timeout; a workspace package that owns the config also owns the plugin dependency, so resolving it from the member root failed even when the shape was valid.
+- **Why this way:** the harness finds the config the way Vite would (member root first, then upward), loads it itself, normalizes every entry shape (string, tuple, object-map with `false` entries disabled, instance, factory), resolves each named plugin with `createRequire` from the directory that actually declares it, and hands Vite `{ plugins, ...configOptions }` so `postcss-load-config` never runs; an unresolved plugin is dropped and named once, never replaced by a default, and the Tailwind 3 pipeline keeps precedence when it applies.
+- **Spec:** `specs/milestones/m119-the-harness-loads-the-projects-postcss-config-itself.md`
+
+### M120: A late `@import` still reaches the compiler: done
+
+- **About:** a Tailwind 4 stylesheet with `@import 'tailwindcss'` on line 1, a few `@custom-variant` lines, then a second `@import` for its theme file loses that second import under Vite's vendored postcss-import, which deletes any `@import` that does not precede every other statement, so the theme's utilities become unknown classes and the stylesheet 500s.
+- **Why this way:** before Vite's CSS plugin sees a `.css` module, the harness hoists a disallowed later `@import` to the end of the sheet's leading import block, preserving relative order, while `@charset`, a body-less `@layer`, comments and already-leading imports keep their place; only `@import` at brace depth zero counts, and a sheet whose imports already lead comes back unchanged with the plugin returning `null`.
+- **Spec:** `specs/milestones/m120-a-late-css-import-still-reaches-the-compiler.md`
+
+### M121: A stylesheet the app never loads does not end the run: done
+
+- **About:** a guessed stylesheet used to cost the whole run when it was wrong: tooljet's pick was a Tailwind 4 sheet in a Tailwind 3 project, plane's was a fragment that only exists to be `@import`ed by the sheet the app really loads, and nuxt.com's never finished compiling — all three ended at an unexplained harness-ready timeout.
+- **Why this way:** a candidate whose Tailwind dialect contradicts the installed Tailwind major is skipped before injection unless the project's own entry or manifest names it; after the dev server starts, each injected stylesheet is compiled once, bounded at 20 s, and a sheet that throws or "did not compile within 20 s" is dropped and reported, ending in the existing "the component may render unstyled" disclosure, with the entry rewritten and `cssFiles` updated so the run's own disclosure matches what was actually injected.
+- **Spec:** `specs/milestones/m121-a-stylesheet-the-app-never-loads-does-not-end-the-run.md`
+
+### M122: A sass import compiles, with a disclosed compiler: done
+
+- **About:** Vite's own preprocessor loader has exactly two search bases (a `node_modules` walk-up from the CSS root, then one from Vite's own install) and no config lever; logto's `sass` existed only inside Vite's own pnpm store copy and vue-vben-admin's only inside an internal tooling package, neither on the measured app's own resolution chain, and the hit preflight already classified was only ever warned about, so both runs died 30 s later on Vite's raw `npm install -D sass-embedded` hint, naming the wrong package in the wrong package manager.
+- **Why this way:** 120fps now declares `sass` as its own dependency so Vite's fallback base resolves it; when the project's own sass resolves on the member's or workspace root's chain nothing changes and nothing is disclosed, when neither does and 120fps's bundled sass does the run prints one disclosure, identical in the dry run and the real run, naming the importing file, its chain and the bundled version, and a `.less`/`.styl`/`.stylus` import whose implementation resolves from neither base is a hard preflight refusal naming the packages searched, the directories, and the member-scoped install command in the repository's own package manager.
+- **Spec:** `specs/milestones/m122-a-sass-import-compiles-with-a-disclosed-compiler.md`
+
+### M123: A Nuxt app is refused, or reaches the first measurement: done
+
+- **About:** neither Nuxt app in the run-6 corpus reached a measurement, and neither said why: nocodb's tsconfig extends a `.nuxt/tsconfig.json` that `nuxi prepare` never finished writing, and esbuild's generic 500 could not match the existing Nuxt diagnosis; nuxt.com's `.nuxt/` was complete, and its run instead stalled on the largest-stylesheet fallback's Tailwind 4 sheet blocking the harness entry's whole module graph with an empty page-error capture at the readiness timeout.
+- **Why this way:** a project that declares Nuxt or ships a `nuxt.config.*`, whose own tsconfig chain names a file under `.nuxt/` that is not on disk, is a hard preflight refusal identical in the dry run, naming the config, the missing file and the `nuxi prepare` remedy, while a project whose `.nuxt/` holds every file its tsconfig names is not refused; a readiness failure that captured no page error, in a run that injected a stylesheet, now names that stylesheet as a ranked suspect, never a verdict, and points at `--no-css`/`--css <file>` as the two commands that decide whether it is the cause.
+- **Spec:** `specs/milestones/m123-a-nuxt-app-is-refused-or-reaches-the-first-measurement.md`
+
+### M124: A Babel macro import is refused before the browser: done
+
+- **About:** a `babel-macro` import (documenso's `@lingui/react/macro`) was already classified by preflight and printed as a warning, but `babel-macro` was never in the set of codes the promotion loop hardens into a refusal, so the run continued past a complete diagnosis into the browser and died on an unrelated-looking `Unable to determine current node version` — the macro's own module reaching the browser unexpanded, a run-5 finding reappearing one layer later.
+- **Why this way:** a `project-transform` hit whose `transformCode` is `babel-macro` is now a hard preflight hit, refused before the browser with an identical message in the dry run, naming the importer, the macro specifier, the full chain and the declared macro compiler (or saying none is declared); the remedy is to write the macro call out by hand, measure a component whose graph does not reach it, or pass `--no-preflight`, which still runs the rest of the pipeline unchanged.
+- **Spec:** `specs/milestones/m124-a-babel-macro-import-is-refused-before-the-browser.md`
+
+### M125: the readiness wait says what it waited for and how long: done
+
+- **About:** two run-6 lanes stopped at ~30 s with only "component harness did not become ready within timeout. No page errors were captured.", naming no global, no bound and no cause; the 30 s bound was a literal repeated at four call sites with no environment override, and nothing measured the wait.
+- **Why this way:** `waitForReadyOrFatal` now owns one deadline, `FPS120_READY_TIMEOUT_MS` (default 90000 ms, one shared export), re-entering a wait that ended before the deadline unless it gave up in under 100 ms; the appended sentence names the global (`window.__120fps`), the measured seconds waited, the two usual causes as possibilities, and the environment variable, without naming a specific module or file the run did not itself observe; an invalid value keeps the default with a once-per-process disclosure.
+- **Spec:** `specs/milestones/m125-the-readiness-wait-says-what-it-waited-for-and-how-long.md`
+
+### M126: an exports subpath of an unbuilt sibling resolves to its source: done
+
+- **About:** M107 rescues an unbuilt workspace sibling's root entry by deriving a source path beside its declared build output, but a package that builds flat into `dist/` from a nested `src/` tree keeps none of its subpaths rescued that way; twenty is that shape (15 of 20 export keys), and measuring a component that imports one of them stopped the run on an unaliased subpath.
+- **Why this way:** a declared `exports` subpath whose target does not exist on disk now resolves to the sibling's own source using the same derivation the root entry uses (the declared path, that path with its leading segment dropped, and either under `src/`), is aliased and queued into the import walk so its own imports are scanned too, adding no new disclosure beyond the package's existing rescue warning; a subpath with no source candidate keeps today's dropped-and-warned behaviour, and no already-resolving layout changes.
+- **Spec:** `specs/milestones/m126-an-exports-subpath-of-an-unbuilt-sibling-resolves-to-its-source.md`
+
+### M127: a React Native app renders through react-native-web: done
+
+- **About:** bluesky-social-app ships both `react-native` and `react-native-web` and aliases one to the other in its own webpack config, a substitution the harness made nowhere, so Vite's dependency optimizer pre-bundled `react-native` itself (a tsconfig `customConditions` value even selected a `.d.ts` entry for it) and the run ended in 147 raw esbuild errors with no diagnosis.
+- **Why this way:** with `react-native` in the component's import graph and `react-native-web` resolvable, the harness aliases `react-native` to `react-native-web`, drops it from the pre-bundle list in favor of the alias, and discloses the substitution once; with no `react-native-web` installed, or with other packages in the graph that declare `react-native` as their own dependency and ship native-only code the substitution can't reach, the run stops naming React Native, the count of such modules and the importing file instead of surfacing esbuild's own output; a project with no `react-native` in its graph is unchanged.
+- **Spec:** `specs/milestones/m127-a-react-native-app-renders-through-react-native-web.md`
+
+### M128: the callback-identity pass measures each prop set once: done
+
+- **About:** the callback-identity pass was 97% of the React analysis phase (62 s median at `--samples 3 --max-combos 2` across a 50-repo smoke pass) because it re-measured the same prop set up to four times — the explorer's scale probes all pass `{}` — and probed a capture-phase prop beside its bubble twin (`onCopyCapture` next to `onCopy`), two multipliers that carried no information.
+- **Why this way:** the pass now runs at most once per distinct serialized prop set (counting a `__120fps_scaleN` trigger as absent), skips an `X + "Capture"` prop when `X` is already in the list, collects garbage once per probed prop instead of once per arm, and measures `renderAttribution` in its own reset-mount-rerender window so its `renderCount` and durations describe the component instead of the pass; `memoBailout`, `contextFanOut` and `portalOrphans` stay measured per combo index unchanged, and median analysis time fell about 77% on both profiled repos (ai-chatbot 62.8 s to 14.5 s, memos 64.0 s to 15.3 s).
+- **Spec:** `specs/milestones/m128-the-callback-identity-pass-measures-each-prop-set-once.md`

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { buildAndServe } from "../../src/harness.js";
-import { runReactAnalysis } from "../../src/react-profiler.js";
+import { buildAndServe } from "../../src/harness/index.js";
+import { runReactAnalysis } from "../../src/analysis/index.js";
 
 async function analyze(fixture: string, fnProp: string) {
   const harness = await buildAndServe(fixture);
@@ -22,8 +22,7 @@ describe("callback identity", () => {
     const deltas = opts?.callbackIdentityDeltas ?? [];
     expect(deltas).toHaveLength(1);
     expect(deltas[0].propName).toBe("onAction");
-    // The stable arm lets the memoized subtree bail out, so the effect is the
-    // whole subtree render rather than a few percent of drift.
+    // Stable callback lets the memoized child bail out, so fresh vs. stable spans a whole render.
     expect(deltas[0].freshMs!).toBeGreaterThan(deltas[0].stableMs! * 3);
   }, 240_000);
 

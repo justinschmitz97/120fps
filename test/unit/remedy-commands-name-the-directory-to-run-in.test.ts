@@ -7,7 +7,7 @@ import {
   findLikelyGenerateCommand,
   packageManagerRunCommand,
   packageScriptCommand,
-} from "../../src/harness.js";
+} from "../../src/harness/index.js";
 
 const roots: string[] = [];
 

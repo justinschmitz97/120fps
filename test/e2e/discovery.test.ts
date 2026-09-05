@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { buildAndServe, type HarnessResult } from "../../src/harness.js";
-import { discoverInteractions, type InteractionDescriptor } from "../../src/discovery.js";
+import { buildAndServe, type HarnessResult } from "../../src/harness/index.js";
+import { discoverInteractions, type InteractionDescriptor } from "../../src/browser/index.js";
 import { chromium, type Browser, type Page } from "playwright";
 
 let harness: HarnessResult | undefined;
@@ -185,7 +185,6 @@ describe("discoverInteractions e2e", () => {
     const p = await setup("./fixtures/interactive-basic.tsx");
     const descriptors = await discoverInteractions(p);
 
-    // Verify order by checking positions in DOM
     const positions = await p.evaluate((sels: string[]) => {
       const all = Array.from(document.querySelectorAll("*"));
       return sels.map((s) => {

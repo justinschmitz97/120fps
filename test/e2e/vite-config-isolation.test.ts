@@ -1,6 +1,6 @@
 import { describe, it, expect, afterAll } from "vitest";
 import { chromium, type Browser } from "playwright";
-import { buildAndServe } from "../../src/harness.js";
+import { buildAndServe } from "../../src/harness/index.js";
 
 let browser: Browser;
 
@@ -8,9 +8,7 @@ afterAll(async () => {
   if (browser) await browser.close();
 });
 
-// F1: the target's vite.config is not ours to run. The fixture project
-// registers a plugin that throws in `transform`; if the config is loaded the
-// entry 500s and the harness never becomes ready.
+// F1: the fixture's vite.config throws in transform; if loaded, the entry 500s and never readies.
 describe("project vite.config is not loaded", () => {
   it("serves the harness entry for a project whose config would break every transform", async () => {
     browser = await chromium.launch({ headless: true });

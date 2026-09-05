@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseArgs, type CliArgs } from "../../src/cli.js";
+import { parseArgs, type CliArgs } from "../../src/cli/index.js";
 
 describe("parseArgs", () => {
   it("parses component path as first positional arg", () => {

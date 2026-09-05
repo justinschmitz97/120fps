@@ -2,14 +2,10 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { runPreflight, PROJECT_TRANSFORM_WARNING } from "../../src/preflight.js";
-import { presentBundlerFailure } from "../../src/harness.js";
+import { runPreflight, PROJECT_TRANSFORM_WARNING } from "../../src/project/index.js";
+import { presentBundlerFailure } from "../../src/harness/index.js";
 
-// hoppscotch-F2: `~icons/lucide/eye` has no file behind it; the run fell through
-// to the generic unresolved-import remedy ("run that package's own build
-// first"), which names a build the repository does not have. documenso-F1:
-// `@lingui/react/macro` is a Babel macro the real app compiles away, invisible
-// to preflight, so the dry run was clean and the real run died elsewhere.
+// hoppscotch-F2's virtual import, documenso-F1's macro import: both must surface as preflight hits.
 const FIXTURES = path.resolve(import.meta.dirname, "..", "..", "fixtures");
 const VIRTUAL_FIXTURE = path.join(FIXTURES, "virtual-namespace-project");
 const MACRO_FIXTURE = path.join(FIXTURES, "macro-import-project");
@@ -120,9 +116,7 @@ describe("a Babel-macro import", () => {
   });
 });
 
-// M108 review. Both recognizers key off specifier shape, and both end the walk
-// at the edge they claim, so a false positive both prints an untrue transform
-// note and hides everything the real file imports.
+// specs/milestones/m108-a-diagnosis-names-the-layer-that-failed.md: false positives hide imports.
 describe("a specifier that only looks like a transform", () => {
   it("does not treat a relative ./macro as a Babel macro, and still walks it", () => {
     fs.writeFileSync(path.join(tmpDir, "package.json"), JSON.stringify({ name: "p" }));

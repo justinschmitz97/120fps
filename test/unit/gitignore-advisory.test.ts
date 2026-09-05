@@ -2,17 +2,15 @@ import { describe, it, expect, afterEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { findGitRoot } from "../../src/shared/index.js";
 import {
-  findGitRoot,
   gitignoreCoversFile,
   needsGitignoreAdvisory,
   formatGitignoreTip,
   GITIGNORE_SUGGESTED_PATTERNS,
-} from "../../src/cli.js";
+} from "../../src/cli/index.js";
 
-// M74 (E5): the tool writes 120fps-report*.json and 120fps-baseline.json into
-// the user's repo with no gitignore awareness. This is a hint, never a file
-// edit: nothing here ever writes to .gitignore.
+// M74 (E5): writes report/baseline JSON into the user's repo; only a hint, never edits .gitignore.
 
 describe("findGitRoot", () => {
   const tmpDirs: string[] = [];
@@ -44,8 +42,7 @@ describe("findGitRoot", () => {
   });
 
   it("returns undefined when no ancestor has .git", () => {
-    // A bare temp dir under the OS temp root has no .git ancestor short of
-    // walking all the way to the filesystem root, which also lacks one.
+    // A bare temp dir has no .git ancestor even walking up to the filesystem root.
     const dir = makeDir();
     expect(findGitRoot(dir)).toBeUndefined();
   });
@@ -144,8 +141,7 @@ describe("needsGitignoreAdvisory", () => {
   });
 });
 
-// M117 review: the assertions read the text a run that triggered every pattern
-// prints, not a constant no caller reaches.
+// specs/milestones/m117-output-that-respects-the-reader.md: asserts printed text, not a constant.
 describe("the tip a run that triggered every pattern prints", () => {
   it("names every suggested pattern", () => {
     const tip = formatGitignoreTip(GITIGNORE_SUGGESTED_PATTERNS);

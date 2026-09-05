@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { selectRepresentativeCombos, DEFAULT_MEASURED_COMBOS } from "../../src/prop-gen-values.js";
-import { selectExploreCombos } from "../../src/explorer.js";
-import { COMBO_CAP_WARNING } from "../../src/analyze.js";
+import { selectRepresentativeCombos, DEFAULT_MEASURED_COMBOS } from "../../src/props/index.js";
+import { selectExploreCombos } from "../../src/analysis/index.js";
+import { COMBO_CAP_WARNING } from "../../src/pipeline/index.js";
 
 describe("measured combos are capped representatively", () => {
   it("keeps everything when the count is within the cap", () => {

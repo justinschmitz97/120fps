@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { classifyEnv, describeEnvDiff, buildEnvFingerprint, METRICS_REVISION } from "../../src/budget.js";
-import type { EnvFingerprint } from "../../src/report.js";
+import { classifyEnv, describeEnvDiff, buildEnvFingerprint, METRICS_REVISION } from "../../src/report/index.js";
+import type { EnvFingerprint } from "../../src/report/index.js";
 
 function fingerprint(overrides: Partial<EnvFingerprint> = {}): EnvFingerprint {
   return {

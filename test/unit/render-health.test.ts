@@ -6,17 +6,13 @@ import {
   enrichTimeoutError,
   gotoWithErrorContext,
   HARNESS_STALL_HINT,
-} from "../../src/page-errors.js";
-import { buildReport, type BuildReportInput } from "../../src/analyze.js";
-import type { MountResult, RerenderResult } from "../../src/measure.js";
-import type { ExploreResult, StateGraph } from "../../src/explorer.js";
-import { formatTable, type CalibrationResult, type Report, type Thresholds } from "../../src/report.js";
-import { hintsForReport } from "../../src/hints.js";
-import { formatJUnit } from "../../src/ci-report.js";
-
-// ====================================================================
-// Fakes
-// ====================================================================
+} from "../../src/browser/index.js";
+import { buildReport, type BuildReportInput } from "../../src/pipeline/index.js";
+import type { MountResult, RerenderResult } from "../../src/browser/index.js";
+import type { ExploreResult, StateGraph } from "../../src/analysis/index.js";
+import { formatTable, type CalibrationResult, type Report, type Thresholds } from "../../src/report/index.js";
+import { hintsForReport } from "../../src/report/index.js";
+import { formatJUnit } from "../../src/report/index.js";
 
 type Handler = (payload: any) => void;
 
@@ -108,10 +104,6 @@ function build(overrides: Partial<BuildReportInput>): Report {
   };
   return buildReport(input);
 }
-
-// ====================================================================
-// C1: page errors reach the combo that produced them
-// ====================================================================
 
 describe("C1 drain()", () => {
   it("returns only the events recorded since the previous drain", () => {
@@ -243,10 +235,6 @@ describe("C1 combo attachment", () => {
   });
 });
 
-// ====================================================================
-// C2: render-health gate
-// ====================================================================
-
 describe("C2 render-health gate", () => {
   it("fails a combo that rendered no DOM nodes while the page threw", () => {
     const report = build({
@@ -332,10 +320,7 @@ describe("C2 render-health gate", () => {
   });
 });
 
-// ====================================================================
-// M80: disclosureReason must never overwrite an honest renderHealth combo
-// ====================================================================
-
+// M80: disclosureReason must never overwrite an honest renderHealth combo.
 describe("M80 disclosure vs. render-health precedence", () => {
   it("preserves the honest DialogRoot case: an empty render keeps renderHealth, gets no disclosureReason", () => {
     const report = build({
@@ -387,10 +372,6 @@ describe("M80 disclosure vs. render-health precedence", () => {
     expect(out).toContain("[props excluded]");
   });
 });
-
-// ====================================================================
-// C2: terminal surfacing
-// ====================================================================
 
 describe("C2 terminal output", () => {
   const errored = () =>
@@ -472,10 +453,6 @@ describe("C2 hints and CI serializers", () => {
   });
 });
 
-// ====================================================================
-// C3: page.goto enrichment
-// ====================================================================
-
 describe("C3 gotoWithErrorContext", () => {
   function stubPage(err?: unknown) {
     return {
@@ -531,10 +508,6 @@ describe("C3 gotoWithErrorContext", () => {
   });
 });
 
-// ====================================================================
-// C4: phase context on harness crashes
-// ====================================================================
-
 describe("C4 enrichPhaseError", () => {
   it("names phase, combo and component on a tracing timeout", () => {
     const err = enrichPhaseError(new Error("Tracing.tracingComplete timed out"), {
@@ -559,10 +532,7 @@ describe("C4 enrichPhaseError", () => {
   });
 
   it("adds the hint for frame starvation and a crashed target", () => {
-    // M89 defect 2: "rerender" is excluded here -- it gets its own hint
-    // (RERENDER_PHASE_STALL_HINT, naming --samples/--max-combos, not
-    // --no-attribution) per test/unit/delta-phase-stall-hint.test.ts. "mount"
-    // is unaffected by this milestone and still keeps HARNESS_STALL_HINT.
+    // M89 defect 2: rerender has its own hint (delta-phase-stall-hint.test.ts); mount unaffected.
     for (const message of ["frame starvation: rAF fence exceeded 10000ms", "Target crashed"]) {
       const err = enrichPhaseError(new Error(message), { phase: "mount", comboIndex: 1 });
       expect(err.message).toContain(HARNESS_STALL_HINT);

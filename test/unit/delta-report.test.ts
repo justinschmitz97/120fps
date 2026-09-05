@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { formatTable, type Report, type PropDelta } from "../../src/report.js";
+import { formatTable, type Report, type PropDelta } from "../../src/report/index.js";
 
 describe("PropDelta in Report", () => {
   function makeReport(propDeltas?: PropDelta[]): Report {

@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach, afterAll } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { loadTsconfigAliases, TYPES_ONLY_ALIAS_WARNING } from "../../src/harness.js";
+import { loadTsconfigAliases, TYPES_ONLY_ALIAS_WARNING } from "../../src/project/index.js";
 
 const cleanupDirs: string[] = [];
 
@@ -150,9 +150,7 @@ describe("loadTsconfigAliases", () => {
     expect(aliases[0].replacement).toBe(`${fwd(dir)}/src/utils/index.ts`);
   });
 
-  // M69: paths absent AND baseUrl absent. With a baseUrl set, the entries under
-  // it become aliases; test/unit/base-url-import-resolution.test.ts owns that
-  // case.
+  // M69: paths and baseUrl both absent; baseUrl-set case is in base-url-import-resolution.test.ts.
   it("returns [] when paths is absent", () => {
     const dir = mkProject({
       "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true } }),
@@ -187,11 +185,7 @@ describe("loadTsconfigAliases", () => {
   });
 });
 
-// M76: a second, additive layer probing workspaceRoot's own tsconfig for
-// patterns the member does not declare. Every fixture above is a bare tmpdir
-// with no ancestor lockfile, so workspaceRoot === projectRoot there and this
-// layer never engages — these fixtures build a real two-level workspace so it
-// does.
+// M76: workspaceRoot's own tsconfig is a second layer; bare-tmpdir fixtures above never engage it.
 function mkWorkspaceMember(
   rootFiles: Record<string, string>,
   memberFiles: Record<string, string>,
@@ -255,13 +249,7 @@ describe("loadTsconfigAliases: workspace-root fallback (M76)", () => {
   });
 
   it("does NOT fall back to the workspace root for a member that declares baseUrl and deliberately no paths", () => {
-    // M76 "Does NOT include": baseUrl-only workspace-root fallback is out of
-    // scope — "No field-test finding is shaped this way; extending the
-    // fallback to baseUrl without evidence would be guessing." A member with
-    // an empty `memberPatterns` set here means "declared nothing usable" in
-    // the no-tsconfig-at-all case above, but must not be conflated with "has
-    // baseUrl, deliberately no paths": that member's own answer is silence,
-    // and the root's paths must stay unmerged.
+    // M76: baseUrl-only fallback is out of scope, distinct from the no-tsconfig case above.
     const { member } = mkWorkspaceMember(
       {
         "tsconfig.json": JSON.stringify({
@@ -286,10 +274,7 @@ describe("loadTsconfigAliases: workspace-root fallback (M76)", () => {
   });
 
   it("member's own wildcard pattern wins over the workspace root's, even when the member's own target does not resolve to anything on disk", () => {
-    // The M77 loadable-entry check is scoped to the non-wildcard branch only
-    // (a directory prefix has no single "load" to check), so this precedence
-    // rule holds for a wildcard pattern regardless of which milestone's checks
-    // are active.
+    // M77's loadable-entry check scopes only the non-wildcard branch; precedence still holds here.
     const { member } = mkWorkspaceMember(
       {
         "tsconfig.json": JSON.stringify({
@@ -331,9 +316,7 @@ describe("loadTsconfigAliases: workspace-root fallback (M76)", () => {
   });
 });
 
-// M77: a non-wildcard `paths` target with no runtime entry (an @types/* stub,
-// a .d.ts-only package, any other location TypeScript resolves but a bundler
-// cannot load) never becomes a Vite alias.
+// M77: a non-wildcard paths target with no runtime entry never becomes a Vite alias.
 describe("loadTsconfigAliases: types-only paths targets (M77)", () => {
   it("skips a paths entry whose target has only .d.ts files and no package.json main/module/exports", () => {
     const dir = mkProject({

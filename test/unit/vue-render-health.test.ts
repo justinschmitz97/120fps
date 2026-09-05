@@ -1,12 +1,12 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import path from "node:path";
-import { generateEntry } from "../../src/harness.js";
+import { generateEntry } from "../../src/harness/index.js";
 import {
   loadVueCompiler,
   resetVueCompilerCache,
   templateHasUnconditionalRoot,
   type VueSfcCompiler,
-} from "../../src/vue-sfc.js";
+} from "../../src/project/index.js";
 
 const VUE_ROOT = path.resolve("fixtures/vue-project");
 
@@ -17,9 +17,7 @@ beforeAll(async () => {
   compiler = await loadVueCompiler(VUE_ROOT);
 });
 
-// M87: primevue's Accordion.vue crashes with `TypeError: this.$slots.default
-// is not a function` because the harness mounts with no slots object at all,
-// so `$slots.default` is undefined rather than an empty, callable function.
+// M87: primevue's Accordion.vue crashed with "$slots.default is not a function" (no slots object).
 describe("generateVueEntry: default slot is always callable", () => {
   const opts = {
     componentRelative: "Accordion.vue",
@@ -31,9 +29,7 @@ describe("generateVueEntry: default slot is always callable", () => {
 
   it("passes a slots object with a callable default to h()", () => {
     const entry = generateEntry(opts);
-    // The component's own h() call site must carry a third (slots) argument
-    // whose default entry is a function, not merely an h() call with props
-    // as its only argument.
+    // The h() call must carry a slots argument with a callable default, not just props.
     expect(entry).toMatch(/h\(Accordion,\s*\{\s*\.\.\.props\s*\}\s*,\s*\{\s*default:\s*\(\)\s*=>/);
   });
 
@@ -44,11 +40,7 @@ describe("generateVueEntry: default slot is always callable", () => {
   });
 });
 
-// M87: element-plus's button.vue root is `<component :is="tag">`, unconditional
-// -- the combo phase must report nonzero DOM the same way scale-probe already
-// does, achieved by wrapping the bare render in the same stable container
-// shape scale-probe already uses (proven correct by the N+1 DOM-count pattern
-// in the field-test evidence: 2/6/21/51 for N=1/5/20/50).
+// M87: element-plus's button.vue root gets the same stable-container wrap scale-probe uses.
 describe("generateVueEntry: unconditional root renders inside a stable container in the combo phase", () => {
   const baseOpts = {
     componentRelative: "DynamicRoot.vue",

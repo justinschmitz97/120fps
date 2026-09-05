@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { buildReport, type BuildReportInput } from "../../src/analyze.js";
-import { formatMarkdown } from "../../src/ci-report.js";
-import { buildCurveReport } from "../../src/report.js";
-import type { MountResult, TraceEvent } from "../../src/measure.js";
+import { buildReport, type BuildReportInput } from "../../src/pipeline/index.js";
+import { formatMarkdown } from "../../src/report/index.js";
+import { buildCurveReport } from "../../src/report/index.js";
+import type { MountResult, TraceEvent } from "../../src/browser/index.js";
 import {
   createPhaseClock,
   formatPhaseBreakdown,
@@ -11,7 +11,7 @@ import {
   type PhaseTimings,
   type Report,
   type Thresholds,
-} from "../../src/report.js";
+} from "../../src/report/index.js";
 
 function fakeClock(): { now: () => number; advance: (ms: number) => void } {
   let t = 500_000;

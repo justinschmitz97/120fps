@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { extractProps, detectScalingProps, type PropSchema } from "../../src/prop-gen.js";
-import { fillArray, generateScalingCombos, generateCombinations } from "../../src/prop-gen-values.js";
+import { extractProps, detectScalingProps, type PropSchema } from "../../src/props/index.js";
+import { fillArray, generateScalingCombos, generateCombinations } from "../../src/props/index.js";
 
 const FIXTURE = "./fixtures/m30-typed-arrays.tsx";
 const EDGES = "./fixtures/m30-array-edges.tsx";

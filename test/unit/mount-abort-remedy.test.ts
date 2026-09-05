@@ -1,10 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { hintsForMountAbort, formatHints } from "../../src/hints.js";
+import { hintsForMountAbort, formatHints } from "../../src/report/index.js";
 
-// primevue-F2: two different root causes, one symptom — a bare browser stack
-// with zero remediation text. `hintsForReport` consumes a built report, and a
-// mount-phase abort throws before any report exists, so the hint catalog's own
-// entry for exactly this case was unreachable.
+// primevue-F2: `hintsForReport` needs a built report, but a mount abort throws before one exists.
 
 const PRIMEVUE_SELECT_ABORT =
   "mount phase failed on combo 0 of Select.vue: page.evaluate: TypeError: Cannot read properties " +
@@ -56,10 +53,7 @@ describe("a mount-phase abort names a remedy for the cause its own text shows", 
   });
 });
 
-// C-4: M105's MUST NOT ("Guess") stated as tests. A mount abort routinely
-// carries browser-lifecycle text, and the old provider signature (/provider|
-// context/i) matched every one of these — then printed renderError's copy,
-// which talks about timings and a page-error block a mount abort never has.
+// Lifecycle-only text must never get a provider guess or renderError's timings/page-error copy.
 describe("a mount abort is never given a provider guess by lifecycle text", () => {
   const lifecycle = [
     "mount phase failed on combo 0 of Button.tsx: page.evaluate: Execution context was destroyed, most likely because of a navigation.",

@@ -1,15 +1,10 @@
-import { analyze, type AnalyzeOptions } from "../../src/analyze.js";
-import type { Report } from "../../src/report.js";
+import { analyze, type AnalyzeOptions } from "../../src/pipeline/index.js";
+import type { Report } from "../../src/report/index.js";
 
-// A full analyze pass costs 15-120s of throttled browser work, and e2e files
-// routinely run the same one several times to assert different fields of the
-// same report. vitest gives each file its own worker, so memoising per process
-// collapses exactly those duplicates and nothing else.
-//
-// The returned report is shared, not copied: assertions must read it, not
-// mutate it.
+// Each file gets its own vitest worker; memoizing per process collapses repeated ~15-120s passes.
 const inFlight = new Map<string, Promise<Report>>();
 
+// The returned report is shared: treat it as read-only.
 export function sharedAnalyze(
   componentPath: string,
   options: AnalyzeOptions = {},

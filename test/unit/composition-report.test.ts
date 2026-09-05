@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { buildReport, type BuildReportInput } from "../../src/analyze.js";
-import { DEFAULT_THRESHOLDS } from "../../src/report.js";
+import { buildReport, type BuildReportInput } from "../../src/pipeline/index.js";
+import { DEFAULT_THRESHOLDS } from "../../src/report/index.js";
 
 function makeInput(overrides?: Partial<BuildReportInput>): BuildReportInput {
   return {
@@ -35,7 +35,6 @@ describe("Report autoComposition fields", () => {
   it("report includes autoComposition when set in input", () => {
     const input = makeInput();
     const report = buildReport(input);
-    // Default: no autoComposition
     expect(report.autoComposition).toBeUndefined();
   });
 
@@ -63,8 +62,6 @@ describe("Report autoComposition fields", () => {
     expect(report.compositionTree).toEqual(tree);
   });
 });
-
-// ─── M80: disclosureReason downgrades a confident PASS to WARN ───
 
 describe("BuildReportInput.disclosureReason", () => {
   it("is absent by default: no disclosureReason and no verdict change", () => {

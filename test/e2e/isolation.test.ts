@@ -1,15 +1,14 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
-import { analyze, type AnalyzeOptions } from "../../src/analyze.js";
-import type { Baseline } from "../../src/budget.js";
-import type { Report } from "../../src/report.js";
-import { DEGENERATE_COMBO_WARNING, MEMORY_SKIPPED_WARNING } from "../../src/isolation.js";
+import { analyze, type AnalyzeOptions } from "../../src/pipeline/index.js";
+import type { Baseline } from "../../src/report/index.js";
+import type { Report } from "../../src/report/index.js";
+import { DEGENERATE_COMBO_WARNING, MEMORY_SKIPPED_WARNING } from "../../src/analysis/index.js";
 
 const OUT_DIR = path.resolve(`.m28-isolation-${process.pid}`);
 
-// A package.json makes this directory its own project root, so --save-baseline
-// lands here instead of at the repo root.
+// A package.json makes this its own project root, so --save-baseline lands here.
 const PROJECT_DIR = path.resolve(`.m28-isolation-project-${process.pid}`);
 const PROJECT_COMPONENT = path.join(PROJECT_DIR, "static-panel.tsx");
 const PROJECT_BASELINE = path.join(PROJECT_DIR, "120fps-baseline.json");
@@ -208,10 +207,6 @@ describe("degenerate combo selection", () => {
   }, 300000);
 });
 
-// ====================================================================
-// Hardening
-// ====================================================================
-
 describe("H19: gcPressure discriminates", () => {
   it("counts unreclaimed checks for a leak and none for a clean component", async () => {
     const leaking = await run("./fixtures/leaky-mount.tsx", {
@@ -248,9 +243,7 @@ describe("H20: explicit thresholds and --flat-thresholds", () => {
 });
 
 describe("H21: churn against a component that throws on the second prop set", () => {
-  // React surfaces the render failure asynchronously, so the run completes with
-  // the full sample count rather than aborting. It must not hang, and the
-  // failing renders must not read as a degrading rerender path.
+  // React surfaces render failures asynchronously; the run must not hang or read as degrading.
   it("completes without hanging and produces a full churn series", async () => {
     const report = await run("./fixtures/churn-throws.tsx", {
       isolation: { phases: ["rerender"] },
@@ -315,9 +308,7 @@ describe("isolation baselines", () => {
   }, 600000);
 
   it("classifies a combo baseline checked from isolation mode as incompatible", async () => {
-    // M45 gives each mode its own slot, so the previous test's isolation slot
-    // would otherwise satisfy this check exactly. Start from a file whose only
-    // slot is the combo one, which is the situation this test is about.
+    // M45 gives each mode its own slot; start from a baseline with only the combo slot.
     fs.rmSync(PROJECT_BASELINE, { force: true });
 
     await analyze(PROJECT_COMPONENT, {

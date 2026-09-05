@@ -2,12 +2,9 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { scanExternalDeps } from "../../src/harness.js";
+import { scanExternalDeps } from "../../src/harness/index.js";
 
-// gutenberg: `packages/element/src/serialize.ts` imports `@wordpress/escape-html`
-// with the clause spread over three lines. The single-line-only pattern skipped
-// that edge, so the sibling behind it was never reached and the run died on a
-// Vite parse error instead of being rescued or reported.
+// gutenberg: a multi-line import clause skipped the single-line scan, killing the parse.
 let tmpDir: string;
 
 beforeEach(() => {
@@ -62,9 +59,7 @@ describe("an import clause spread over several lines", () => {
     ).toContain("@wordpress/components");
   });
 
-  // Review: the clause class must not scan past the end of a statement. A
-  // comment, a JSX string and a template literal each sit behind an `export`
-  // keyword and each contain `from "…"`; none of them is an import.
+  // A comment, JSX text, or template literal after export can hold `from "x"` but isn't an import.
   it("stops at prose in a comment below an export keyword", () => {
     expect(scan('export function useX() {\n  // pulled from "the store"\n  return 1;\n}\n')).toEqual(
       [],

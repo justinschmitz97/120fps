@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { buildReport, type BuildReportInput } from "../../src/analyze.js";
-import { formatTable, type ComboReport, type Report } from "../../src/report.js";
-import type { TraceEvent } from "../../src/measure.js";
+import { buildReport, type BuildReportInput } from "../../src/pipeline/index.js";
+import { formatTable, type ComboReport, type Report } from "../../src/report/index.js";
+import type { TraceEvent } from "../../src/browser/index.js";
 
 function makeEvent(
   name: string,

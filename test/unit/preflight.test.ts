@@ -10,7 +10,7 @@ import {
   NODE_BUILTIN_WARNING,
   PREFLIGHT_BYPASSED_WARNING,
   HARD_REMEDY,
-} from "../../src/preflight.js";
+} from "../../src/project/index.js";
 
 const ROOT = path.resolve("fixtures/m42-server");
 
@@ -22,10 +22,7 @@ function check(file: string, componentName?: string) {
   });
 }
 
-// M72: solid-js and Yarn PnP rejection both key off package.json/workspace
-// markers that must not be polluted by this repo's own react devDependency
-// or pnpm workspace, so each gets an isolated os.tmpdir() root rather than a
-// fixture nested under this repository (matching workspace-root-discovery.test.ts).
+// M72: isolated tmpdir keeps this repo's react dep and pnpm workspace out of solid-js/PnP checks.
 const tmpDirs: string[] = [];
 
 afterEach(() => {
@@ -34,10 +31,7 @@ afterEach(() => {
   }
 });
 
-// M78: every existing caller here is testing solid-js/PnP detection, not the
-// new not-installed check, so the default fixture is "installed" (an empty
-// node_modules is enough: the check is directory existence only). Callers
-// that specifically want the not-installed shape pass installed: false.
+// M78: existing callers test solid-js/PnP, not not-installed, so the default fixture is installed.
 function makeIsolatedRoot(
   prefix: string,
   files: Record<string, string>,
@@ -133,7 +127,6 @@ describe("failure message", () => {
   });
 });
 
-// H1..H6: hardening.
 describe("hardening", () => {
   it("H1: a non-existent entry does not throw", () => {
     expect(() => check("does-not-exist.tsx")).not.toThrow();
@@ -169,9 +162,7 @@ describe("hardening", () => {
   });
 });
 
-// M72: solid-js declared without react cannot be measured; declared alongside
-// react it is a mixed repo and only warns (see detectFramework in
-// react-profiler.test.ts for that half).
+// M72: solid-js can't be measured; with react, mixed repo, warn-only (react-profiler.test.ts).
 describe("solid-js rejection", () => {
   it("rejects a project that declares solid-js and no react", () => {
     const { root, entry } = makeIsolatedRoot("120fps-preflight-solid-", {
@@ -208,11 +199,7 @@ describe("solid-js rejection", () => {
     expect(message).not.toContain("Extract the client part");
   });
 
-  // M72 post-review fix: the gate keys on declared packages (M27's rule for
-  // consequential decisions; M68's isPackageDeclared vs isPackageAvailable
-  // split), not merely resolvable ones — a Vue/vanilla project with some
-  // unrelated dependency's transitive, hoisted solid-js must not be rejected,
-  // and the failure message's "declares solid-js" claim must stay true.
+  // M72: gate keys on declared packages, not resolvable; transitive solid-js isn't rejected.
   it("does not reject a transitively available but undeclared solid-js", () => {
     const { root, entry } = makeIsolatedRoot("120fps-preflight-transitive-solid-", {
       "package.json": JSON.stringify({ dependencies: { lodash: "^4.0.0" } }),
@@ -242,8 +229,7 @@ describe("solid-js rejection", () => {
   });
 });
 
-// M72: PnP swaps node_modules for a virtual filesystem this harness cannot
-// resolve through; unconditional, no mixed-repo exception.
+// M72: PnP's virtual fs replaces node_modules; unresolvable here, no mixed-repo exception.
 describe("Yarn PnP rejection", () => {
   it("rejects a workspace carrying .pnp.cjs", () => {
     const { root, entry } = makeIsolatedRoot("120fps-preflight-pnp-cjs-", {
@@ -280,9 +266,7 @@ describe("Yarn PnP rejection", () => {
   });
 });
 
-// M78: no node_modules anywhere from the member up through the workspace
-// root. Gated behind the PnP check (a legitimate PnP project never has
-// node_modules by design) so the two are never confused.
+// M78: no node_modules from member to workspace root; gated behind PnP so the two aren't confused.
 describe("not-installed rejection", () => {
   it("rejects a project with no node_modules anywhere", () => {
     const { root, entry } = makeIsolatedRoot(
@@ -341,8 +325,7 @@ describe("not-installed rejection", () => {
   });
 });
 
-// M72: "next/server-only" was never a real module; a stale entry here would
-// hard-reject an import that could not have caused the problem it claims to.
+// M72: next/server-only isn't real; a stale entry would reject an unrelated import.
 describe("dead SERVER_ONLY_PACKAGES entry removed", () => {
   it("does not treat next/server-only as the server-only marker", () => {
     const { root, entry } = makeIsolatedRoot("120fps-preflight-next-server-only-", {

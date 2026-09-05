@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { generateDeltaPairs, countDeltaPairSpace, MAX_DELTA_PAIRS } from "../../src/prop-gen-values.js";
-import { DELTA_PAIR_CAP_WARNING } from "../../src/analyze.js";
-import type { PropSchema } from "../../src/prop-gen.js";
+import { generateDeltaPairs, countDeltaPairSpace, MAX_DELTA_PAIRS } from "../../src/props/index.js";
+import { DELTA_PAIR_CAP_WARNING } from "../../src/pipeline/index.js";
+import type { PropSchema } from "../../src/props/index.js";
 
 function boolSchema(name: string): PropSchema {
   return { name, kind: "boolean", required: true, values: [] };

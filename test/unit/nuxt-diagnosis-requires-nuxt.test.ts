@@ -2,11 +2,9 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { presentBundlerFailure } from "../../src/harness.js";
+import { presentBundlerFailure } from "../../src/harness/index.js";
 
-// epic-stack-F1 and primer-react-F1: `Missing "X" specifier in "Y" package` is
-// Node's package-imports/exports resolver, not a Nuxt signal. Two repositories
-// that declare no `nuxt` were told to run `nuxi prepare`.
+// epic-stack-F1, primer-react-F1: Missing X specifier is Node's resolver noise, not a Nuxt signal.
 const IMPORTS_FIXTURE = path.resolve(
   import.meta.dirname,
   "..",
@@ -91,8 +89,7 @@ describe("a package-imports miss in a repository without Nuxt", () => {
     expect(presented).toContain("antd");
   });
 
-  // M108 review: the prefix test needs a segment boundary. "#appsettings/x" is
-  // an ordinary imports-map miss that shares three letters with "#app".
+  // Guards a false positive: #appsettings/x shares a prefix with #app but is a distinct segment.
   it("stays generic for a #-specifier that only shares a prefix with #app", () => {
     declare({ nuxt: "3.13.0" });
     const presented = presentBundlerFailure(

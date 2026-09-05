@@ -4,13 +4,9 @@ import {
   collectStaticPreBuildWarnings,
   scanExternalDeps,
   UNRESOLVED_PREBUNDLE_ENTRY_WARNING,
-} from "../../src/harness.js";
+} from "../../src/harness/index.js";
 
-// epic-stack-F2: `#app/root` in a package whose manifest declares no `imports`
-// map resolves to no file, no package and no alias. The scan used to walk past
-// it without a word, so `--explain-props` promised a run the dev server killed
-// at dep-optimization one minute later. `clsx` is the same failure one layer
-// out: an ordinary bare package installed nowhere the fixture can reach.
+// epic-stack-F2: silent pass-through let a run promise success before crashing at dep-optimization.
 const FIXTURE = path.resolve(import.meta.dirname, "..", "..", "fixtures", "unresolvable-include");
 const ENTRY = path.join(FIXTURE, "app", "widget.tsx");
 
@@ -60,8 +56,7 @@ describe("a pre-bundle candidate that resolves to nothing", () => {
     expect(warnings.filter((w) => w.includes('"clsx"'))).toEqual([
       UNRESOLVED_PREBUNDLE_ENTRY_WARNING("clsx", "app/widget.tsx"),
     ]);
-    // M77/M94: the entry itself stays; a package this scanner cannot see is
-    // still one Vite may resolve per request.
+    // M77/M94: entry stays in externals; a package the scanner misses may still resolve for Vite.
     expect(externals).toContain("clsx");
   });
 

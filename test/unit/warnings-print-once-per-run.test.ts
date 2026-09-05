@@ -1,12 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { formatTable, dedupeWarnings, type Report, type Thresholds } from "../../src/report.js";
-import { buildTimingWithCV } from "../../src/report.js";
-import { formatMarkdown } from "../../src/ci-report.js";
+import { formatTable, dedupeWarnings, type Report, type Thresholds } from "../../src/report/index.js";
+import { buildTimingWithCV } from "../../src/report/index.js";
+import { formatMarkdown } from "../../src/report/index.js";
 
-// M117 C1, C2 (dx-audit item 6): a run that rebuilds its harness appended the
-// same static pre-build warning list a second time, so the terminal printed one
-// identical sentence twice. One text is one line, counted when it recurred, and
-// the markdown report carries the same list the README promises it does.
+// specs/milestones/m117-output-that-respects-the-reader.md: a rebuild doubled one warning line.
 
 const THRESHOLDS: Thresholds = { mountMs: 50, interactionMs: 400, relativeMount: 2, rerenderMs: 16 };
 

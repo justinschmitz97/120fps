@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { CALLBACK_PROPS_SOURCE, computeCallbackIdentityDelta } from "../../src/react-profiler.js";
+import { CALLBACK_PROPS_SOURCE, computeCallbackIdentityDelta } from "../../src/analysis/index.js";
 
 const MARKER = "__120fps_fn__";
 function loadBuilder() {
@@ -28,9 +28,7 @@ describe("callback identity gate edge cases", () => {
   });
 
   it("reports the medians it compared, not the extremes", () => {
-    // Skewed arrays so the median differs from both the mean and the extremes:
-    // stable [10,11,30] has median 11 (mean 17, extremes 10/30); fresh
-    // [70,90,91] has median 90 (mean ~83.67, extremes 70/91).
+    // Skewed so the median differs from both mean and extremes on each side.
     const r = computeCallbackIdentityDelta([10, 11, 30], [70, 90, 91])!;
     expect(r.stableMs).toBe(11);
     expect(r.freshMs).toBe(90);
@@ -39,8 +37,7 @@ describe("callback identity gate edge cases", () => {
 });
 
 describe("callback props builder edge cases", () => {
-  // H13: a string prop that collides with the marker becomes a callback. Known
-  // and pre-existing: the marker is the only channel functions have across CDP.
+  // H13: a colliding string becomes a callback; known, the marker is the only channel across CDP.
   it("converts a prop whose string value collides with the marker", () => {
     const out = loadBuilder()({ label: MARKER }, new Map(), MARKER, null, false);
     expect(typeof out.label).toBe("function");

@@ -2,30 +2,20 @@ import { describe, it, expect, beforeEach, afterEach, afterAll, vi } from "vites
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import {
-  buildAndServe,
-  VITE_START_FAILED,
-  REACT_COMPILER_PACKAGE,
-  resolveReactCompilerState,
-  sweepStaleTmpDirs,
-  TMP_SWEEP_MAX_REMOVALS,
-  createServerPool,
-  type ServerPool,
-} from "../../src/harness.js";
+import { buildAndServe, VITE_START_FAILED, sweepStaleTmpDirs, TMP_SWEEP_MAX_REMOVALS, createServerPool, type ServerPool } from "../../src/harness/index.js";
+import { REACT_COMPILER_PACKAGE, resolveReactCompilerState } from "../../src/project/index.js";
 import {
   withContextRetry,
   createRetryBudget,
   RETRY_BUDGET_EXHAUSTED_NOTE,
-} from "../../src/measure.js";
+} from "../../src/browser/index.js";
 import { withProductionResolution } from "../node-resolution.js";
 
 const pkgJson = JSON.parse(
   fs.readFileSync(path.resolve(__dirname, "../../package.json"), "utf-8"),
 );
 
-// ====================================================================
-// a) Vite dev-server startup failure names cause + harness dir
-// ====================================================================
+// a) Vite dev-server startup failure names cause + harness dir.
 
 function poolThatThrows(err: unknown): ServerPool {
   return {
@@ -98,10 +88,6 @@ describe("a) Vite dev-server startup failure", () => {
   });
 });
 
-// ====================================================================
-// b) --react-compiler requested-but-unresolved names the fix
-// ====================================================================
-
 describe("b) --react-compiler requested-but-unresolved names the fix", () => {
   let tmpDir: string;
 
@@ -125,17 +111,14 @@ describe("b) --react-compiler requested-but-unresolved names the fix", () => {
       thrown = err as Error;
     }
     expect(thrown).toBeDefined();
-    // Preserves the existing spec message as a substring (other tests assert
-    // on it) while adding the fix.
+    // Preserves the existing spec message as a substring (other tests assert on it), adds the fix.
     expect(thrown!.message).toContain(`${REACT_COMPILER_PACKAGE} not found in ${tmpDir}`);
     expect(thrown!.message).toContain(`install ${REACT_COMPILER_PACKAGE}`);
     expect(thrown!.message).toContain("--react-compiler");
   });
 });
 
-// ====================================================================
-// c) Retry-budget exhaustion states the environment, not the component
-// ====================================================================
+// c) Retry-budget exhaustion states the environment, not the component.
 
 describe("c) retry-budget exhaustion", () => {
   it("states repeated dev-server reloads (environment) are the likely cause", async () => {
@@ -173,7 +156,7 @@ describe("c) retry-budget exhaustion", () => {
     const budget = createRetryBudget(0);
     await expect(
       withContextRetry(async () => {}, async () => {
-        // eslint-disable-next-line @typescript-eslint/no-throw-literal
+        // eslint-disable-next-line @typescript-eslint/no-throw-literal -- testing a non-Error throw
         throw "Execution context was destroyed";
       }, { budget }),
     ).rejects.toThrow(/repeated dev-server reloads \(environment\)/);
@@ -197,10 +180,6 @@ describe("c) retry-budget exhaustion", () => {
     expect(attempts).toBe(2);
   });
 });
-
-// ====================================================================
-// d) Temp hygiene sweep
-// ====================================================================
 
 describe("d) sweepStaleTmpDirs", () => {
   const cleanupDirs: string[] = [];
@@ -330,8 +309,7 @@ describe("d) sweepStaleTmpDirs", () => {
     age(stubborn, 48);
     age(removable, 48);
 
-    // Force one removal to fail regardless of what the underlying filesystem
-    // actually enforces, so the per-entry try/catch is genuinely exercised.
+    // Forces one removal to fail regardless of the filesystem, exercising the per-entry try/catch.
     const originalRmSync = fs.rmSync.bind(fs);
     const spy = vi.spyOn(fs, "rmSync").mockImplementation((target: any, opts: any) => {
       if (String(target) === stubborn) {
@@ -359,9 +337,7 @@ describe("d) sweepStaleTmpDirs", () => {
     try {
       fs.symlinkSync(outsideTarget, link, process.platform === "win32" ? "junction" : "dir");
     } catch {
-      // Some environments refuse symlink creation even for junctions; the
-      // guarantee under test (entry.isSymbolicLink() is skipped) still holds
-      // by construction, so skip rather than fail the suite on that.
+      // Some environments refuse symlink creation; the guarantee holds by construction, so skip.
       return;
     }
     age(link, 48);
@@ -392,10 +368,6 @@ describe("d) sweepStaleTmpDirs", () => {
     expect(() => createServerPool()).not.toThrow();
   });
 });
-
-// ====================================================================
-// e) package.json test scripts
-// ====================================================================
 
 describe("e) package.json test scripts", () => {
   it("test runs the unit suite (matches CI)", () => {

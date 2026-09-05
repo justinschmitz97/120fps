@@ -2,13 +2,13 @@ import { describe, it, expect, afterAll } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { sweepHarnessDirsAfterClose } from "../../src/cli.js";
+import { sweepHarnessDirsAfterClose } from "../../src/cli/index.js";
 import {
   createHarnessDir,
   HARNESS_DIR_REMOVAL_MIN_ATTEMPTS,
   removeHarnessDirWithRetries,
   sweepStaleHarnessDirs,
-} from "../../src/harness.js";
+} from "../../src/harness/index.js";
 
 const roots: string[] = [];
 
@@ -26,9 +26,7 @@ function busy(): NodeJS.ErrnoException {
   return Object.assign(new Error("EBUSY: resource busy or locked"), { code: "EBUSY" });
 }
 
-// The handle Chromium holds on entry.tsx is gone milliseconds later, so the
-// first EBUSY says nothing about the second attempt. One attempt is what left
-// base-ui with a directory in `git status`.
+// base-ui left a directory in git status: one attempt isn't enough while Chromium holds it.
 describe("removing a harness directory a handle still holds open", () => {
   it("attempts again until the handle is gone", () => {
     let attempts = 0;

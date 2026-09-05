@@ -2,9 +2,9 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { resolveCssFiles } from "../../src/analyze.js";
-import { buildEnvFingerprint } from "../../src/budget.js";
-import { DEFAULT_THRESHOLDS, formatTable, type CssReport, type Report } from "../../src/report.js";
+import { resolveCssFiles } from "../../src/pipeline/index.js";
+import { buildEnvFingerprint } from "../../src/report/index.js";
+import { DEFAULT_THRESHOLDS, formatTable, type CssReport, type Report } from "../../src/report/index.js";
 
 let tmpDir: string;
 
@@ -164,10 +164,7 @@ describe("formatTable's Stylesheets line is always disclosed, keyed on layer", (
     expect(formatTable(makeReport({ css }))).toContain("Stylesheets: none (--no-css)");
   });
 
-  // M89 defect 3: a discovered stylesheet dropped mid-run because it could
-  // not be read (e.g. its own internal @import chain pointed at a file that
-  // does not exist) -- distinct wording from "disabled" (--no-css), since
-  // the user never asked for this; the run degraded to it.
+  // M89 defect 3: unreadable must read differently from disabled (--no-css); user never opted out.
   it("unreadable", () => {
     const css: CssReport = { files: [], autoDetected: true, layer: "unreadable" };
     const out = formatTable(makeReport({ css }));
@@ -193,12 +190,7 @@ describe("formatTable's Stylesheets line is always disclosed, keyed on layer", (
   });
 });
 
-// Fingerprint-identity: M82 makes cssReport always-present (never undefined),
-// even for a project with zero CSS. buildEnvFingerprint's css guard changed
-// from a truthy check on cssReport to a files.length>0 check specifically so
-// this stays true across that change: a no-CSS project's fingerprint bytes
-// must be byte-identical to the pre-M82 shape, or every saved baseline for a
-// no-CSS project would silently invalidate.
+// Fingerprint-identity (M82): cssReport is always-present; no-CSS bytes must still match exactly.
 describe("no-CSS fingerprint identity survives cssReport becoming always-present", () => {
   const base = {
     machine: {
@@ -217,9 +209,7 @@ describe("no-CSS fingerprint identity survives cssReport becoming always-present
 
   it("an always-present, empty-files css list produces the identical fingerprint to omitting css entirely", () => {
     const withoutCssKey = buildEnvFingerprint(base);
-    // This is exactly what ctx.cssReport.files.length > 0 ? {css: ...} : {}
-    // degrades to for a no-CSS project: an empty array reaching the same
-    // guarded call as before this milestone.
+    // This is exactly what ctx.cssReport.files.length > 0 ? {css: ...} : {} degrades to for no CSS.
     const withEmptyCssReport = buildEnvFingerprint({ ...base, css: [] });
     expect(withEmptyCssReport).toEqual(withoutCssKey);
     expect(withEmptyCssReport.css).toBeUndefined();

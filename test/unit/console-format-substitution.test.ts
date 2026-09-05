@@ -1,16 +1,14 @@
 import { describe, it, expect } from "vitest";
 import { EventEmitter } from "node:events";
 import type { Page } from "playwright";
-import { attachPageErrorCapture, substituteConsoleFormat } from "../../src/page-errors.js";
+import { attachPageErrorCapture, substituteConsoleFormat } from "../../src/browser/index.js";
 
 function makeFakePage(): { page: Page; emitter: EventEmitter } {
   const emitter = new EventEmitter();
   return { page: emitter as unknown as Page, emitter };
 }
 
-// Playwright renders a console message as the format string followed by every
-// argument's preview, joined by a space, and exposes the same previews through
-// `args()`.
+// Playwright renders a console message as the format string plus each arg's preview, space-joined.
 function makeConsoleMessage(type: string, args: string[]) {
   return {
     type: () => type,

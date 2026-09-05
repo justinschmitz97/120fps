@@ -6,12 +6,8 @@ import {
   TRANSFORM_RECOGNIZERS,
   PROJECT_TRANSFORM_WARNING,
   transformFailureNote,
-} from "../../src/preflight.js";
-import {
-  detectProjectTransforms,
-  stripServerHooks,
-  SUPPORTED_TRANSFORM_PLUGINS,
-} from "../../src/harness.js";
+} from "../../src/project/index.js";
+import { detectProjectTransforms, stripServerHooks, SUPPORTED_TRANSFORM_PLUGINS } from "../../src/project/index.js";
 
 const ROOT = path.resolve("fixtures/m42-server");
 const PROJECT = path.resolve("fixtures/transform-project");
@@ -83,8 +79,7 @@ describe("transform recognition", () => {
     expect(recognizeTransform("./styles.css.ts")?.code).toBe("vanilla-extract");
   });
 
-  // The specifier alone cannot say: vanilla-extract is imported as
-  // "./styles.css" while the file on disk is "styles.css.ts".
+  // Specifier alone can't say it: "./styles.css" imports "styles.css.ts" on disk.
   it("recognizes one imported the way vanilla-extract is actually written", () => {
     expect(recognizeTransform("./styles.css", path.join(ROOT, "uses-vanilla-extract.tsx"))?.code)
       .toBe("vanilla-extract");

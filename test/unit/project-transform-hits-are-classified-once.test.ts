@@ -2,10 +2,9 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { classifyProjectTransformHits, type PreflightHit } from "../../src/preflight.js";
+import { classifyProjectTransformHits, type PreflightHit } from "../../src/project/index.js";
 
-// M110 I3: one classifier serves the real run and `--explain-props`, so the two
-// modes cannot drift on which transform they warn about or in which order.
+// M110 (I3): one classifier serves the real run and --explain-props, so the two can't drift.
 const FIXTURE = path.resolve(import.meta.dirname, "..", "..", "fixtures", "transform-project");
 
 const hit = (transformCode: string, specifier: string): PreflightHit => ({

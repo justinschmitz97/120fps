@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { buildAndServe } from "../../src/harness.js";
-import { measureMount } from "../../src/measure.js";
-import { attributeCost } from "../../src/metrics.js";
+import { buildAndServe } from "../../src/harness/index.js";
+import { measureMount } from "../../src/browser/index.js";
+import { attributeCost } from "../../src/report/index.js";
 
 async function attributionFor(fixture: string, options: { samples: number; warmupRuns: number }) {
   const harness = await buildAndServe(fixture);
@@ -26,8 +26,7 @@ describe("attribution window edge cases", () => {
     expect(total).toBeLessThanOrEqual(mount.mount.samples[0]);
   }, 240_000);
 
-  // H2: warmup renders are discarded before recording, so they must not
-  // inflate the divisor or the sum.
+  // H2: warmup renders are discarded before recording; they must not inflate the divisor or sum.
   it("warmups stay out of the window count", async () => {
     const { mount, attribution } = await attributionFor("./fixtures/large-dom.tsx", {
       samples: 3,

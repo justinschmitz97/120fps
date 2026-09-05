@@ -1,12 +1,12 @@
 import { describe, it, expect } from "vitest";
 import path from "node:path";
-import { extractProps, type PropSchema } from "../../src/prop-gen.js";
+import { extractProps, type PropSchema } from "../../src/props/index.js";
 import {
   generatePropMatrix,
   matrixAxesFor,
   matrixHeldAbsentProps,
   matrixValues,
-} from "../../src/prop-gen-values.js";
+} from "../../src/props/index.js";
 
 const DIALOG = path.resolve(__dirname, "../../fixtures/controlled-pair/Dialog.tsx");
 const DIALOG_DEFAULTS = path.resolve(
@@ -14,8 +14,7 @@ const DIALOG_DEFAULTS = path.resolve(
   "../../fixtures/controlled-pair/DialogDefaults.tsx",
 );
 
-// fluentui-F1: all four Dialog cells set `open` and `defaultOpen` together,
-// which `useControllableState` rejects, so every cell measured the error path.
+// fluentui-F1: all four Dialog cells set `open`/`defaultOpen` together, which the hook rejects.
 
 describe("a matrix over a controlled/uncontrolled prop pair", () => {
   let schemas: PropSchema[];
@@ -72,9 +71,7 @@ describe("the values a boolean axis is crossed over", () => {
   });
 });
 
-// M114 (review B-major): a twin that declares a default was routed through the
-// non-axis path, which held the declared value present in every cell -- the
-// pairing the milestone forbids, restored by the default the component wrote.
+// See specs/milestones/m114-disclosures-are-true-for-runtime-styling-props-and-page-errors.md B3.
 
 describe("a matrix over a pair whose twin declares a default", () => {
   let schemas: PropSchema[];

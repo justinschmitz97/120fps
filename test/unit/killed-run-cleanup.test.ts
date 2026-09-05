@@ -10,15 +10,15 @@ import {
   RUN_WATCHDOG_ABORT_ERROR,
   runWatchdogBudgetMs,
   terminationExitCode,
-} from "../../src/cli.js";
-import { resolveProgressReporter } from "../../src/analyze.js";
+} from "../../src/cli/index.js";
+import { resolveProgressReporter } from "../../src/pipeline/index.js";
 import {
   createHarnessDir,
   HARNESS_PID_FILE,
   LIVE_PID_HARNESS_MAX_AGE_MS,
   refreshHarnessDirMarkers,
   sweepStaleHarnessDirs,
-} from "../../src/harness.js";
+} from "../../src/harness/index.js";
 
 const roots: string[] = [];
 
@@ -44,8 +44,7 @@ function mkHarnessDir(root: string, name: string, pid?: number): string {
   return dir;
 }
 
-// A pid the OS will not have handed out again: 2^22 is above every default
-// pid_max, and Windows pids are multiples of 4 well below it.
+// A pid the OS won't reissue: 2^22 exceeds pid_max; Windows pids are multiples of 4 below it.
 const DEAD_PID = 4_194_303;
 
 const idlePools = {
@@ -61,15 +60,12 @@ describe("exit code for a signalled run", () => {
   });
 });
 
-// M101 Verification: "signal handler registered for all three signals".
-// calcom-R1 reported a node process with the run's own argv still alive after
-// a completed run. Nothing in this codebase starts one: a re-exec, a fork or a
-// worker pool would be a child no exit path reaps, so the absence is the
-// invariant worth pinning.
+// M101: calcom-R1 found a leftover node process; absence of a second process is the invariant.
 describe("processes a run is responsible for", () => {
   it("starts no second node process of its own", () => {
     const sources = fs
-      .readdirSync(path.resolve("src"))
+      .readdirSync(path.resolve("src"), { recursive: true })
+      .map((name) => String(name).replace(/\\/g, "/"))
       .filter((name) => name.endsWith(".ts"))
       .map((name) => [name, fs.readFileSync(path.resolve("src", name), "utf-8")] as const);
     const spawners = sources.filter(
@@ -84,11 +80,12 @@ describe("processes a run is responsible for", () => {
 
   it("uses child_process only for the synchronous git calls of --compare", () => {
     const users = fs
-      .readdirSync(path.resolve("src"))
+      .readdirSync(path.resolve("src"), { recursive: true })
+      .map((name) => String(name).replace(/\\/g, "/"))
       .filter((name) => name.endsWith(".ts"))
       .filter((name) => /node:child_process/.test(fs.readFileSync(path.resolve("src", name), "utf-8")));
-    expect(users).toEqual(["compare.ts"]);
-    expect(fs.readFileSync(path.resolve("src", "compare.ts"), "utf-8")).toContain("execFileSync");
+    expect(users).toEqual(["analysis/compare.ts"]);
+    expect(fs.readFileSync(path.resolve("src", "analysis/compare.ts"), "utf-8")).toContain("execFileSync");
   });
 });
 
@@ -149,8 +146,7 @@ describe("tearing down a run that was told to stop", () => {
     expect(codes).toEqual([130]);
   });
 
-  // A killed run must not exit 0 because the event loop drained while a pool
-  // close was still pending: the deadline timer is unref'd by design.
+  // A killed run must not exit 0 while a pool close is pending; the timer is unref'd by design.
   it("records the exit code before it starts waiting on the pools", async () => {
     const before = process.exitCode;
     let observed: number | string | undefined;
@@ -222,9 +218,7 @@ describe("a phase that stops making progress", () => {
   });
 });
 
-// Under --ci the progress reporter is a no-op by design, so no phase line
-// arrives and the budget bounds the whole run instead of one phase of it. The
-// abort text has to say which of the two it was.
+// --ci silences phase lines; the message must say whether it bounded a phase or the whole run.
 describe("what the run watchdog says it bounded", () => {
   it("reports a stalled phase when phase lines were arriving", () => {
     const message = RUN_WATCHDOG_ABORT_ERROR("Button.tsx", 20 * 60_000, "stalled");
@@ -240,9 +234,7 @@ describe("what the run watchdog says it bounded", () => {
   });
 });
 
-// Review A2 follow-up: --ci silences the console reporter, which used to be
-// the only thing re-arming the watchdog, so a healthy CI run was aborted at the
-// budget. The heartbeat now rides `onPhase`, which fires before that gate.
+// Review A2: onPhase re-arms the watchdog under --ci even though the console reporter is silent.
 describe("what re-arms the watchdog under --ci", () => {
   it("delivers a phase boundary to onPhase even when the console is silent", () => {
     const beats: string[] = [];
@@ -300,9 +292,7 @@ describe("a harness directory whose owner is gone", () => {
     expect(fs.existsSync(stuck)).toBe(false);
   });
 
-  // The directory's own mtime stops advancing the moment the build finishes
-  // writing entry.tsx, so a run longer than the gate looked abandoned while it
-  // was measuring. Liveness is the marker's own timestamp, refreshed per phase.
+  // mtime stops advancing once entry.tsx is written; liveness is the marker's refreshed timestamp.
   it("keeps a foreign live-pid directory whose marker is being refreshed", () => {
     const root = mkRoot();
     const dir = mkHarnessDir(root, ".120fps-harness-busy", 4);
@@ -333,8 +323,7 @@ describe("a harness directory whose owner is gone", () => {
     expect(fs.statSync(marker).mtimeMs).toBeGreaterThan(Date.now() - 60_000);
   });
 
-  // The dub leftover: a marker naming a foreign, *live* pid, two hours without
-  // a refresh, surviving three full runs on the same project root.
+  // Regression: a foreign live pid whose marker went stale two hours across three runs on one root.
   it("is removed when a foreign live pid let its marker go two hours stale", () => {
     const root = mkRoot();
     const dir = mkHarnessDir(root, ".120fps-harness-dub", 4);
@@ -350,8 +339,7 @@ describe("a harness directory whose owner is gone", () => {
     const root = mkRoot();
     const dir = mkHarnessDir(root, ".120fps-harness-locked", DEAD_PID);
     const warnings: string[] = [];
-    // A directory whose removal cannot succeed: the name exists as a file the
-    // recursive remove will refuse (stand-in for a Windows lock).
+    // Simulates an EBUSY lock: the dir name exists as a file the recursive remove will refuse.
     fs.rmSync(dir, { recursive: true, force: true });
     fs.mkdirSync(dir);
     fs.writeFileSync(path.join(dir, HARNESS_PID_FILE), String(DEAD_PID));

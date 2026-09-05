@@ -4,19 +4,14 @@ import {
   explainProps,
   formatExplainProps,
   MATRIX_SUPPRESSED_BY_COMPOSITION_WARNING,
-} from "../../src/analyze.js";
-import { CURVE_NOT_ACTIVATED_WARNING } from "../../src/report.js";
+} from "../../src/pipeline/index.js";
+import { CURVE_NOT_ACTIVATED_WARNING } from "../../src/report/index.js";
 
-// supabase-F3, calcom-R1: the dry run hard-coded `composed = false` and
-// promised a matrix over components the dispatcher auto-composes. Composition
-// is decided from export names and schemas, both of which the dry run already
-// reads, so the prediction can be the dispatcher's own answer.
+// supabase-F3, calcom-R1: composition comes from export names/schemas the dry run already reads.
 
 const COMPOUND = path.resolve("fixtures/m30-strict-compound.tsx");
 const SINGLE = path.resolve("fixtures/button.tsx");
-// Compound, and its root carries two matrix axes plus an array prop: the one
-// shape where the composed answer decides curve, matrix and the scale probe at
-// once.
+// Root carries two matrix axes plus an array prop: composition decides curve, matrix, scale probe.
 const COMPOUND_WITH_AXES = path.resolve("fixtures/m110-compound-with-axes.tsx");
 
 describe("what the dry run says about the scene the real run would build", () => {
@@ -34,8 +29,7 @@ describe("what the dry run says about the scene the real run would build", () =>
     expect(formatExplainProps(explained)).toContain("Composition:  would measure Button alone");
   });
 
-  // A fixture owns its whole scene, so "would measure <Name> alone" was untrue
-  // for every fixture-owned run.
+  // Guard: a fixture owns its whole scene, so "would measure X alone" must not describe it.
   it("names the fixture that would supply the scene", async () => {
     const explained = await explainProps(path.resolve("fixtures/accordion-root.tsx"), {});
     expect(explained.fixtureFile).toBe("fixtures/accordion-root.fixture.tsx");
@@ -57,8 +51,7 @@ describe("the mode the dry run predicts for a component the dispatcher composes"
     expect(explained.predictedMode).toBe("combo");
     expect(explained.matrixIneligibleReason).toBe("composed");
     const table = formatExplainProps(explained);
-    // Panel declares `children` only: the matrix predicate never matched, so
-    // the line names the flag that got the run here, not a predicate.
+    // Panel declares only `children`; predicate never matched, so the line names the flag, not it.
     expect(explained.matrixWouldActivate).toBe(false);
     expect(table).toContain(
       "Matrix mode:  --matrix was passed, but an auto-composed scene supplies the props, so this " +
@@ -103,8 +96,7 @@ describe("the mode the dry run predicts for a component the dispatcher composes"
   });
 });
 
-// M110 review: `resolveCurveMatch` returns undefined for a composed scene, so
-// a scaling prop on the composed root decides nothing about the real run.
+// M110: resolveCurveMatch returns undefined for a composed scene; its scaling prop decides nothing.
 describe("what a scaling prop on a composed root predicts", () => {
   it("predicts the composed scene's single combo, not a curve", async () => {
     const explained = await explainProps(COMPOUND_WITH_AXES, {});

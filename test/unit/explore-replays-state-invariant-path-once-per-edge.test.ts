@@ -1,14 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { explore, type StateGraph } from "../../src/explorer.js";
-import type { HarnessResult } from "../../src/harness.js";
-import type { BrowserPool } from "../../src/measure.js";
+import { explore, type StateGraph } from "../../src/analysis/index.js";
+import type { HarnessResult } from "../../src/harness/index.js";
+import type { BrowserPool } from "../../src/browser/index.js";
 
-// M116 C1-C5. A state-invariant stress pattern ends where it started, so the
-// path from the root cannot differ between samples 2..N -- yet the sample loop
-// replayed it every time, paying (depth+1) vsync double-rAF fences per sample.
-// These tests drive `explore` against a fake page and count what the replay
-// costs: one `__120fps.mount` per edge for a scroll sweep, still one per sample
-// for a click.
+// specs/milestones/m116-explore-replays-and-graph-walks-are-paid-for-once.md: replay once per edge.
 
 interface Recorder {
   mounts: number;
@@ -66,15 +61,11 @@ const OBSERVED_WINDOW = {
 
 interface FakeOptions {
   elements: RawElementSeed[];
-  // Which `readObservedWindow` call loses the target once, the way a crashed
-  // renderer does.
+  // Which readObservedWindow call loses the target once, like a crashed renderer.
   loseTargetOnRead?: number;
-  // Which `mouse.wheel` call throws once, the way an element that left the DOM
-  // mid-sweep does. `executeStressPattern` swallows it, so only `stepsFailed`
-  // tells the sample loop the sweep left the container somewhere arbitrary.
+  // Which mouse.wheel call throws once (element left DOM); stepsFailed marks the miss.
   failWheelOnCall?: number;
-  // Time the run the way the shipped default does: a real trace lifecycle
-  // instead of the PerformanceObserver window.
+  // True times the run like the shipped default: a real trace lifecycle, not PerformanceObserver.
   traceTiming?: boolean;
 }
 
@@ -112,10 +103,7 @@ function fakeHarnessRun(options: FakeOptions): {
     throw new Error(`unhandled page.evaluate in fake: ${src.slice(0, 120)}`);
   };
 
-  // M52's trace path is the shipped default, so it gets its own arm: a CDP fake
-  // that answers `Tracing.start`/`Tracing.end` and flushes one empty
-  // `dataCollected` chunk plus `tracingComplete`, as test/unit/trace-recovery
-  // does.
+  // M52: CDP fake answers Tracing.start/end; see test/unit/trace-recovery.test.ts.
   const listeners = new Map<string, ((arg: unknown) => void)[]>();
   const fire = (event: string, arg: unknown): void => {
     for (const fn of listeners.get(event) ?? []) fn(arg);
@@ -319,18 +307,14 @@ describe("the trace path -- the shipped default -- replays the same way", () => 
 
 describe("a sample whose pattern step failed does not hand its state on", () => {
   it("replays the path after a swallowed wheel failure, on both timing paths", async () => {
-    // The sweep is one step; a wheel that throws part-way aborts it and leaves
-    // the container at an arbitrary offset. `executeStressPattern` swallows the
-    // throw and still reports `stepsRun === stepsPlanned`, so `stepsFailed` is
-    // what invalidates the path.
+    // A thrown wheel aborts the sweep but stepsRun===stepsPlanned; stepsFailed marks the miss.
     for (const traceTiming of [false, true]) {
       const { graph, rec } = await exploreWithFake(
         { ...SCROLL_ONLY, failWheelOnCall: 5, traceTiming },
         5,
       );
       expect(graph.edges[0].samples).toHaveLength(5);
-      // Initial state, the edge's first replay, and the replay the failed step
-      // forces before sample 2. Samples 3..5 sweep cleanly and add none.
+      // Initial state, first replay, and the replay the failed step forces before sample 2.
       expect(rec.mounts).toBe(3);
     }
   });

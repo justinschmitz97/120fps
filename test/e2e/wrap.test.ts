@@ -3,9 +3,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { chromium, type Browser, type Page } from "playwright";
-import { buildAndServe, type HarnessResult } from "../../src/harness.js";
-import { applyWrapperViewport, measureMount, measureWrapperOverhead } from "../../src/measure.js";
-import { attachPageErrorCapture } from "../../src/page-errors.js";
+import { buildAndServe, type HarnessResult } from "../../src/harness/index.js";
+import { applyWrapperViewport, measureMount, measureWrapperOverhead } from "../../src/browser/index.js";
+import { attachPageErrorCapture } from "../../src/browser/index.js";
 import { sharedAnalyze as analyze } from "./shared-analyze.js";
 
 let browser: Browser | undefined;
@@ -176,8 +176,7 @@ describe("wrapper e2e: full pipeline", () => {
     expect(report.wrapper!.domNodes).toBe(0);
 
     const primary = report.combos[0];
-    // M31 C1: component DOM only, so the ~8 element chrome floor is gone and
-    // the wrapped component's own two elements are the whole count.
+    // M31 C1: DOM-only counting drops the chrome floor; two elements are the whole count here.
     expect(primary.domNodeCount).toBeGreaterThanOrEqual(2);
     expect(primary.interactions.length).toBeGreaterThan(0);
     expect(primary.reactOptimizations).toBeDefined();

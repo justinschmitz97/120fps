@@ -2,7 +2,7 @@ import { describe, it, expect, afterAll } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { abortRun } from "../../src/cli.js";
+import { abortRun } from "../../src/cli/index.js";
 import {
   beginHarnessDirTeardown,
   createHarnessDir,
@@ -12,7 +12,7 @@ import {
   HARNESS_PID_FILE,
   removeActiveHarnessDirs,
   sweepActiveHarnessDirsOnExit,
-} from "../../src/harness.js";
+} from "../../src/harness/index.js";
 
 const roots: string[] = [];
 
@@ -30,15 +30,7 @@ function harnessDirsIn(root: string): string[] {
   return fs.readdirSync(root).filter((name) => name.startsWith(".120fps-harness-"));
 }
 
-// The final re-test killed a run 6 s in, before the pools that own Chromium
-// and the dev server were published: exit 143, and the harness directory of
-// the run still in `packages/react`, with no retry and no line about it. The
-// teardown a signal reaches has to cover every directory this process created,
-// whether or not there is a pool to close first.
-//
-// abortRun latches the process-wide, one-way teardown, so the cases that need
-// an ordinary createHarnessDir stand ahead of it. The cases that need the
-// latch call beginHarnessDirTeardown themselves.
+// A signalled run killed before its pool existed once left its harness dir, unreported.
 describe("a signal that arrives before any browser pool exists", () => {
   it("counts a removal that left the directory on disk as a failure", () => {
     const root = mkRoot();
@@ -56,10 +48,7 @@ describe("a signal that arrives before any browser pool exists", () => {
   });
 
   it("is the exit handler a run takes when its pool close never settles", () => {
-    // abortRun's deadline timer and closePoolsBounded's own are both unref'd,
-    // so a signalled run whose closeAll never settles drains its loop and
-    // leaves through the exit event with the pass after the close never
-    // reached. That event has to spend the same budget.
+    // Unref'd deadline timers let an unsettled closeAll drain the loop into this exit listener.
     expect(process.listeners("exit")).toContain(sweepActiveHarnessDirsOnExit);
   });
 
@@ -67,8 +56,7 @@ describe("a signal that arrives before any browser pool exists", () => {
     const root = mkRoot();
     const dir = createHarnessDir(root);
     fs.writeFileSync(path.join(dir, "entry.tsx"), "export default null;");
-    // The Windows shape the retries exist for: the removal reports success
-    // and the directory is still on disk.
+    // The Windows shape the retries exist for: rmSync reports success while the directory stays.
     const rmSync = fs.rmSync;
     (fs as { rmSync: typeof fs.rmSync }).rmSync = (() => {}) as typeof fs.rmSync;
     const written: string[] = [];
@@ -139,13 +127,12 @@ describe("a signal that arrives before any browser pool exists", () => {
     expect(harnessDirsIn(root)).toEqual([]);
   });
 
+  // abortRun's teardown latch is one-way and process-wide: plain cases precede the latching ones.
   it("removes a harness directory created after the sweep started", () => {
     const root = mkRoot();
     beginHarnessDirTeardown();
 
-    // The build does not stop because a signal arrived: this is the directory
-    // the sweep above could not have seen. Its path is never handed back --
-    // it no longer exists -- so the build stops here with the real cause.
+    // createHarnessDir throws so a directory the sweep missed never lingers unexplained.
     expect(() => createHarnessDir(root)).toThrow(HARNESS_DIR_TEARDOWN_IN_PROGRESS);
 
     expect(harnessDirsIn(root)).toEqual([]);
@@ -156,8 +143,7 @@ describe("a signal that arrives before any browser pool exists", () => {
     beginHarnessDirTeardown();
     const markerSeen: boolean[] = [];
     const rmSync = fs.rmSync;
-    // The pending-delete shape: the removal reports success and the directory
-    // stays. What survives has to carry the owner marker already.
+    // The pending-delete shape: rmSync reports success but the directory must carry its marker.
     (fs as { rmSync: typeof fs.rmSync }).rmSync = ((target: fs.PathLike) => {
       markerSeen.push(fs.existsSync(path.join(String(target), HARNESS_PID_FILE)));
     }) as typeof fs.rmSync;

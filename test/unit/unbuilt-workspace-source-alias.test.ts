@@ -8,7 +8,7 @@ import {
   UNBUILT_WORKSPACE_SOURCE_ALIAS_WARNING,
   UNBUILT_WORKSPACE_PACKAGE_NO_SOURCE_WARNING,
   TYPE_ONLY_PACKAGE_WARNING,
-} from "../../src/harness.js";
+} from "../../src/harness/index.js";
 
 const cleanupDirs: string[] = [];
 
@@ -16,13 +16,7 @@ afterAll(() => {
   for (const dir of cleanupDirs) fs.rmSync(dir, { recursive: true, force: true });
 });
 
-// M94 (dub-F1/F2): a bare-imported workspace-sibling package whose main
-// points at an unbuilt dist/, imported as a real value (not type-only), used
-// to be excluded from optimizeDeps.include with a warning claiming that
-// exclusion prevents a crash -- it does not, because Vite's own per-request
-// resolution hits the same unresolvable bare specifier the moment the
-// browser loads the importing file. The fix redirects it to its own
-// resolvable source instead of merely excluding it.
+// M94: an unbuilt workspace-sibling import must redirect to source; excluding it leaves the crash.
 function mkWorkspace(): { workspaceRoot: string; member: string; write: (rel: string, c: string) => void } {
   const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "120fps-m94-unbuilt-"));
   cleanupDirs.push(workspaceRoot);
@@ -37,11 +31,7 @@ function mkWorkspace(): { workspaceRoot: string; member: string; write: (rel: st
   return { workspaceRoot, member, write };
 }
 
-// Same real-symlink-under-node_modules shape import-scanner-coverage.test.ts's
-// own "workspace-sibling subpath substitution" describe block already uses:
-// isWorkspaceSibling requires the installed location's realpath to resolve
-// outside any node_modules segment, which only a genuine link (not a plain
-// directory copy) produces.
+// isWorkspaceSibling needs a realpath outside node_modules; a symlink gives that, a copy does not.
 function linkSibling(workspaceRoot: string, member: string, scopedName: string): string {
   const [scope, name] = scopedName.split("/");
   const real = path.join(workspaceRoot, "packages", name);
@@ -78,14 +68,10 @@ describe("workspace-sibling packages with unbuilt dist but resolvable source (M9
     expect(deps).not.toContain("@dub/utils");
     expect(extraAliases).toHaveLength(1);
     expect(extraAliases[0].find.test("@dub/utils")).toBe(true);
-    // The realpath through the node_modules junction, not the link location:
-    // both point at the same file on disk (a Windows junction/symlink is
-    // transparent to fs.realpathSync), matching what isWorkspaceSibling
-    // itself already resolves through.
+    // realpathSync via the junction matches isWorkspaceSibling; a junction is transparent to it.
     const sourceEntry = fs.realpathSync(path.join(real, "src", "index.ts")).replace(/\\/g, "/");
     expect(extraAliases[0].replacement).toBe(sourceEntry);
-    // M107: the message names the field the derivation followed and the path
-    // that field declared, in place of the blanket "unbuilt dist/" claim.
+    // specs/milestones/m107-workspace-siblings-resolve-by-their-real-entry.md: names field + path.
     expect(warnings).toContain(
       UNBUILT_WORKSPACE_SOURCE_ALIAS_WARNING("@dub/utils", sourceEntry, {
         field: "main",
@@ -114,8 +100,7 @@ describe("workspace-sibling packages with unbuilt dist but resolvable source (M9
     const deps = scanExternalDeps(entryPath, member, [], undefined, warnings, workspaceRoot);
 
     expect(deps).not.toContain("@dub/utils");
-    // M111 A5: the package manager invocation of the script name, with the
-    // directory to run it in, in place of the raw script body.
+    // specs/milestones/m111-a-run-works-from-any-directory-in-the-workspace.md A5: script + dir.
     expect(warnings).toContain(
       UNBUILT_WORKSPACE_PACKAGE_NO_SOURCE_WARNING(
         "@dub/utils",

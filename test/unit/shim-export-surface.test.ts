@@ -1,25 +1,17 @@
 import { describe, it, expect } from "vitest";
-import * as nextNavigation from "../../src/shims/next-navigation.js";
-import * as nextHeaders from "../../src/shims/next-headers.js";
-import * as nextImage from "../../src/shims/next-image.js";
-import * as nextLink from "../../src/shims/next-link.js";
-import * as nextRouter from "../../src/shims/next-router.js";
-import * as nextScript from "../../src/shims/next-script.js";
-import * as nextDynamic from "../../src/shims/next-dynamic.js";
-import * as nextFontLocal from "../../src/shims/next-font-local.js";
-import * as nextHead from "../../src/shims/next-head.js";
+import * as nextNavigation from "../../src/harness/shims/next-navigation.js";
+import * as nextHeaders from "../../src/harness/shims/next-headers.js";
+import * as nextImage from "../../src/harness/shims/next-image.js";
+import * as nextLink from "../../src/harness/shims/next-link.js";
+import * as nextRouter from "../../src/harness/shims/next-router.js";
+import * as nextScript from "../../src/harness/shims/next-script.js";
+import * as nextDynamic from "../../src/harness/shims/next-dynamic.js";
+import * as nextFontLocal from "../../src/harness/shims/next-font-local.js";
+import * as nextHead from "../../src/harness/shims/next-head.js";
 
-// M96 (calcom-F2): cal.com's DatePicker hard-fails at build because
-// 120fps's own next-navigation shim is missing `ReadonlyURLSearchParams`, a
-// real (non-type-only) named export of `next/navigation`. This suite pins
-// each shim's export surface against the real module's documented public
-// API for the version range 120fps's shim set already targets, and adds a
-// dedicated regression fixture for the calcom shape.
+// M96 (calcom-F2): cal.com's DatePicker failed build on a missing ReadonlyURLSearchParams export.
 
-// One list per shimmed module: every named export the real module is
-// documented to provide, for the App/Pages Router surface this shim set
-// already targets. A shim exporting a strict superset (an extra runtime
-// helper) is fine; a name missing from `Object.keys(shim)` fails the test.
+// Each list is the real module's documented exports; extras are fine, a missing name fails.
 const REQUIRED_EXPORTS: Record<string, string[]> = {
   "next/navigation": [
     "useRouter",

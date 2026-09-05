@@ -1,15 +1,11 @@
-// M24 wave-2 hardening: D1 (tsconfig aliases), D2 (export detection),
-// D6 (prop-gen tsconfig warnings), D8 (stale harness sweep).
+// M24 wave-2: D1 tsconfig aliases, D2 export detection, D6 prop-gen warnings, D8 stale sweep.
 import { describe, it, expect, vi, afterEach, afterAll } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import {
-  loadTsconfigAliases,
-  detectComponentExport,
-  sweepStaleHarnessDirs,
-} from "../../src/harness.js";
-import { extractProps, extractExports } from "../../src/prop-gen.js";
+import { detectComponentExport, sweepStaleHarnessDirs } from "../../src/harness/index.js";
+import { loadTsconfigAliases } from "../../src/project/index.js";
+import { extractProps, extractExports } from "../../src/props/index.js";
 
 const cleanupDirs: string[] = [];
 
@@ -161,10 +157,7 @@ describe("H11: export default memo(X) call expression", () => {
 const Widget = () => null;
 export default memo(Widget);`,
     });
-    // M114 B1 / I9 (logto-F1): the wrapper chain names `Widget`, and it is the
-    // default export, so the default import stays valid while the header and
-    // the props table now describe the same binding. Before, the filename
-    // fallback named `Fancy`, a binding the file never declares.
+    // specs/milestones/m114-disclosures-are-true-for-runtime-styling-props-and-page-errors.md
     expect(detectComponentExport(path.join(dir, "fancy.tsx"))).toEqual({
       name: "Widget",
       isDefaultOnly: true,

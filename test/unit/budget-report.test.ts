@@ -7,7 +7,7 @@ import {
   type BaselineComparison,
   type Regression,
   type Improvement,
-} from "../../src/report.js";
+} from "../../src/report/index.js";
 
 const THRESHOLDS: Thresholds = { mountMs: 50, interactionMs: 400, relativeMount: 2, rerenderMs: 16 };
 

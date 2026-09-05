@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { resolveStressPattern } from "../../src/stress-patterns.js";
-import type { InteractionDescriptor } from "../../src/discovery.js";
+import { resolveStressPattern } from "../../src/analysis/index.js";
+import type { InteractionDescriptor } from "../../src/browser/index.js";
 
 function makeDescriptor(
   overrides: Partial<InteractionDescriptor> = {},
@@ -32,7 +32,6 @@ describe("H2: cursor pointer", () => {
   });
 });
 
-// H3: range input with aria-orientation=vertical gets vertical direction
 describe("H3: range input vertical orientation", () => {
   it("range input with aria-orientation=vertical produces vertical step", () => {
     const desc = makeDescriptor({
@@ -56,7 +55,6 @@ describe("H4: empty selector", () => {
   });
 });
 
-// H5: ariaValueNow + slider role doesn't double-trigger
 describe("H5: redundant drag signals", () => {
   it("slider + ariaValueNow = single pointer-drag pattern", () => {
     const desc = makeDescriptor({
@@ -70,7 +68,6 @@ describe("H5: redundant drag signals", () => {
   });
 });
 
-// H8: empty cursor string does not trigger
 describe("H8: empty cursor", () => {
   it("cursor='' does not trigger pointer-drag", () => {
     const desc = makeDescriptor({ cursor: "" });
@@ -79,7 +76,6 @@ describe("H8: empty cursor", () => {
   });
 });
 
-// H12: portal slider still gets pointer-drag
 describe("H12: portal slider", () => {
   it("slider with portal=true still gets pointer-drag", () => {
     const desc = makeDescriptor({ role: "slider", portal: true });
@@ -97,7 +93,6 @@ describe("H13: cursor auto", () => {
   });
 });
 
-// H14: cursor "default" does not trigger
 describe("H14: cursor default", () => {
   it("cursor=default does not trigger pointer-drag", () => {
     const desc = makeDescriptor({ cursor: "default" });
@@ -106,7 +101,6 @@ describe("H14: cursor default", () => {
   });
 });
 
-// H15: all three drag cursors work
 describe("H15: all drag cursor values", () => {
   it.each(["grab", "col-resize", "row-resize"])("cursor=%s triggers pointer-drag", (cursor) => {
     const desc = makeDescriptor({ cursor });
@@ -115,7 +109,6 @@ describe("H15: all drag cursor values", () => {
   });
 });
 
-// H16: ariaValueNow=false does not trigger
 describe("H16: ariaValueNow false", () => {
   it("ariaValueNow=false does not trigger pointer-drag", () => {
     const desc = makeDescriptor({ ariaValueNow: false });
@@ -124,7 +117,6 @@ describe("H16: ariaValueNow false", () => {
   });
 });
 
-// H20: triggeredBy does not prevent drag detection
 describe("H20: triggeredBy + slider", () => {
   it("slider with triggeredBy still gets pointer-drag (not open-close-10)", () => {
     const desc = makeDescriptor({ role: "slider", triggeredBy: "#trigger" });

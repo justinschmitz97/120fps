@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { buildAndServe, createServerPool } from "../../src/harness.js";
-import { createBrowserPool, measureMount } from "../../src/measure.js";
+import { buildAndServe, createServerPool } from "../../src/harness/index.js";
+import { createBrowserPool, measureMount } from "../../src/browser/index.js";
 
 describe("shared sweep server", () => {
   it("two components share one server; cleanup keeps it; both measure", async () => {

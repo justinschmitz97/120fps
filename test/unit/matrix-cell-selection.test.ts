@@ -7,17 +7,14 @@ import {
   matrixAxesFor,
   isMatrixEligible,
   pairwiseCover,
-} from "../../src/prop-gen-values.js";
-import type { PropSchema } from "../../src/prop-gen.js";
+} from "../../src/props/index.js";
+import type { PropSchema } from "../../src/props/index.js";
 
 function schema(partial: Partial<PropSchema> & { name: string }): PropSchema {
   return { kind: "boolean", required: false, values: [true, false], ...partial };
 }
 
-// twenty-F3: `Modal.tsx --matrix --max-combos 2` measured two cells that both
-// carried `isOpen: false`, the state the run itself reported as rendering
-// nothing. dub-F1: every Switch cell carried `disabledTooltip:
-// "120fps-placeholder"`, so every cell entered the Tooltip branch and crashed.
+// twenty-F3: capped cells both held isOpen false. dub-F1: disabledTooltip crashed every cell.
 
 const MODAL: PropSchema[] = [
   schema({ name: "size", kind: "union", values: ["small", "medium", "large"] }),
@@ -37,8 +34,7 @@ describe("the cell a matrix always measures", () => {
     const kept = selectMatrixCombos(combos, axesOf(MODAL), 1);
 
     expect(kept).toHaveLength(1);
-    // M114 B2: `overlay` is an optional boolean, so its anchor member is
-    // absence rather than `false`.
+    // M114 B2: overlay is an optional boolean, so its anchor member is absence, not `false`.
     expect(combos[kept[0]]).toMatchObject({
       size: "small",
       isOpen: false,
@@ -212,12 +208,7 @@ describe("the values an axis is crossed over", () => {
   });
 });
 
-// twenty-F3, second half: ten eligible axes push the cell count past
-// MAX_MATRIX_CELLS, so the set is built by `pairwiseCover`, whose greedy rows
-// differ from the anchor on two axes at once. With no distance-1 cell in the
-// set, the deviation rule had no candidate to promote and both kept cells
-// carried `isOpen: false` -- the state the run itself reports as rendering
-// nothing.
+// twenty-F3 (pairwise path): no distance-1 cell exists, so both kept cells held isOpen false.
 
 const WIDE_MODAL: PropSchema[] = [
   schema({ name: "size", kind: "union", values: ["small", "medium", "large"] }),
@@ -308,10 +299,7 @@ describe("a matrix too wide for a full cartesian set", () => {
   });
 });
 
-// Review B-1: "absent" was applied to every optional non-axis prop without a
-// literal default, which swept up the values a user wrote in `<stem>.props.tsx`
-// and the content slots a component renders. Combo mode still measures both, so
-// the two modes disagreed about what the component rendered.
+// Review B-1: "absent" swept up user-written prop values and content slots too, unlike combo mode.
 
 describe("a non-axis prop the user or the type actually named", () => {
   it("keeps a preset-supplied value in every cell", () => {
@@ -396,8 +384,7 @@ describe("a non-axis prop the user or the type actually named", () => {
   });
 });
 
-// Review B-12: an axis whose second value is literally `undefined` seeded a
-// "deviation" that is the prop's own absence.
+// Review B-12: an axis whose second value is `undefined` seeded a "deviation" that is just absence.
 
 describe("seeding the pairwise cover", () => {
   it("skips an axis whose deviation value is absent", () => {
@@ -408,9 +395,7 @@ describe("seeding the pairwise cover", () => {
     ];
     const rows = pairwiseCover(axes, 32);
 
-    // The seeds lead the cover: the anchor, then one deviation per axis that
-    // has a real second value. Pair filling afterwards may still visit
-    // `a: undefined`, which is a pair the cover has to cover.
+    // Seeds: anchor, then one deviation per axis with a defined 2nd value; fill may hit undefined.
     expect(rows[0]).toEqual({ a: "x", b: "p", c: "m" });
     const seeds = rows.slice(1, 3);
     expect(seeds).toEqual([
@@ -431,9 +416,7 @@ describe("seeding the pairwise cover", () => {
   });
 });
 
-// dub-F7: `variant` is Badge's only own prop and declares twelve values, so the
-// 1..8 eligibility window excluded it while thirteen inherited `<span>`
-// attributes were crossed. It is now an axis over a truncated value set.
+// dub-F7: variant declares 12 values but only 8 fit the eligibility window: a truncated axis.
 
 describe("a literal union with more values than one axis can cross", () => {
   const wide = (): PropSchema =>

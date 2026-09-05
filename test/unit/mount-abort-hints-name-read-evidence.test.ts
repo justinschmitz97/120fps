@@ -1,14 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { formatMountAbortHints, hintsForMountAbort } from "../../src/hints.js";
-import { SFC_INJECT_READ_FAILED_WARNING, viteConfigIgnoredKeys } from "../../src/analyze.js";
+import { formatMountAbortHints, hintsForMountAbort } from "../../src/report/index.js";
+import { SFC_INJECT_READ_FAILED_WARNING, viteConfigIgnoredKeys } from "../../src/pipeline/index.js";
 import {
   VITE_CONFIG_IGNORED_WARNING,
   VITE_CONFIG_PREPROCESSOR_OPTION_WARNING,
-} from "../../src/harness.js";
+} from "../../src/harness/index.js";
 
-// ark-F2: `at Proxy._sfc_render` matched the optional `$` in the proxy-frame
-// signature, so a plain provide/inject failure was reported as a missing Vue
-// plugin global — a cause the run never read.
+// ark-F2: `_sfc_render` matched the proxy-frame's optional `$`, misreporting a missing plugin.
 const PLUGIN_FRAME_ABORT =
   "mount phase failed on combo 0 of Select.vue: page.evaluate: TypeError: Cannot read properties " +
   "of undefined (reading 'config')\n    at Proxy.$variant (/e/repositories/primevue/packages/core/" +
@@ -19,8 +17,7 @@ const SFC_RENDER_ABORT =
   "properties of undefined (reading 'value')\n    at Proxy._sfc_render (/e/repositories-run5/ark/" +
   "packages/vue/src/components/dialog/dialog-trigger.vue:8:20)";
 
-// vitesse-F1: `defineModels is not defined` printed with no link to the
-// ignored-plugins warning the same run had already produced.
+// vitesse-F1: `defineModels is not defined` printed with no link to the ignored-plugins warning.
 const MACRO_ABORT =
   "mount phase failed on combo 0 of TheInput.vue: page.evaluate: ReferenceError: defineModels is " +
   "not defined\n    at /e/repositories-run5/vitesse/src/components/TheInput.vue:4:16";
@@ -94,9 +91,7 @@ describe("a mount abort naming an identifier nothing defined", () => {
   });
 });
 
-// M114 review: VITE_CONFIG_PREPROCESSOR_OPTION_WARNING opens with the same
-// prefix as VITE_CONFIG_IGNORED_WARNING, so a run that emits it first must
-// still hand C3 the ignored-plugins keys.
+// Shares a prefix with VITE_CONFIG_IGNORED_WARNING; C3 must still see the ignored-plugins keys.
 describe("the vite-config evidence read back out of a run's warnings", () => {
   it("skips the preprocessor warning that shares the ignored warning's prefix", () => {
     const evidence = viteConfigIgnoredKeys([
@@ -117,8 +112,7 @@ describe("the vite-config evidence read back out of a run's warnings", () => {
   });
 });
 
-// M114 review: an unreadable SFC used to be indistinguishable from one with no
-// inject( call, because the catch returned false with nothing said.
+// A read failure must be named, not silently conflated with "no inject( call" found.
 describe("an SFC the abort path could not re-read", () => {
   it("names the component and the read failure instead of implying no inject( call", () => {
     expect(SFC_INJECT_READ_FAILED_WARNING("src/Dialog.vue", "EACCES: permission denied")).toBe(

@@ -1,10 +1,10 @@
 import { describe, it, expect, afterAll } from "vitest";
 import path from "node:path";
 import { chromium, type Browser, type Page } from "playwright";
-import { buildAndServe, type HarnessResult } from "../../src/harness.js";
-import { attachPageErrorCapture } from "../../src/page-errors.js";
-import { applyWrapperViewport, measureMount, measureRerender } from "../../src/measure.js";
-import { explore } from "../../src/explorer.js";
+import { buildAndServe, type HarnessResult } from "../../src/harness/index.js";
+import { attachPageErrorCapture } from "../../src/browser/index.js";
+import { applyWrapperViewport, measureMount, measureRerender } from "../../src/browser/index.js";
+import { explore } from "../../src/analysis/index.js";
 import { sharedAnalyze as analyze } from "./shared-analyze.js";
 
 const VUE = path.resolve("fixtures/vue-project");
@@ -68,8 +68,7 @@ describe("mounting an SFC", () => {
   }, 90000);
 });
 
-// E2: the scheduling hazard. A wrong answer here does not fail: it reports
-// implausibly fast rerenders.
+// E2: the scheduling hazard; a wrong answer reports implausibly fast rerenders, not a failure.
 describe("rerender resolves after Vue patched the DOM", () => {
   it("shows the new content at the moment rerender() resolves", async () => {
     const harness = await buildAndServe(path.join(VUE, "Text.vue"));
@@ -154,8 +153,7 @@ describe("provider wrapper", () => {
     try {
       const { page } = await openHarness(harness);
       await page.evaluate(() => (window as any).__120fps.mountWrapperOnly());
-      // Attached, not visible: an empty wrapper has no box of its own, which is
-      // exactly what the overhead pass measures.
+      // Attached, not visible: an empty wrapper has no box, which the overhead pass measures.
       await page.waitForSelector('[data-wrap="vue-provider"]', { state: "attached" });
       expect(await page.evaluate(() => document.querySelectorAll(".widget").length)).toBe(0);
       await page.close();

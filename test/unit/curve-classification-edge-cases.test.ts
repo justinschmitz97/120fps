@@ -2,20 +2,20 @@ import { describe, it, expect } from "vitest";
 import {
   computeScalingCurve,
   growthExponent,
-  isSuperlinearGrowth,
   type ScalingCurve,
-} from "../../src/metrics.js";
+} from "../../src/report/index.js";
 import {
   evaluateCurve,
   formatCurveViolation,
   formatTable,
+  isSuperlinearGrowth,
   type CalibrationResult,
   type Report,
   type ScalingCurveReport,
   type ScalingPoint,
   type Thresholds,
-} from "../../src/report.js";
-import { hintsForReport } from "../../src/hints.js";
+} from "../../src/report/index.js";
+import { hintsForReport } from "../../src/report/index.js";
 
 const THRESHOLDS: Thresholds = {
   mountMs: 50,
@@ -110,7 +110,6 @@ describe("H6: near-tied candidates", () => {
   });
 });
 
-// H7: the case the milestone must not lose.
 describe("H7: genuine quadratic on the default sweep", () => {
   it("is caught for a range of coefficients", () => {
     for (const a of [0.05, 0.2, 1, 5]) {
@@ -217,7 +216,6 @@ describe("H13: violation ordering", () => {
   });
 });
 
-// H14: violation presence must track the verdict exactly.
 describe("H14: violation is present exactly on fail", () => {
   it("holds across a grid of curves and point sets", () => {
     const pointSets: ScalingPoint[][] = [
@@ -251,7 +249,6 @@ describe("H15: crossing-point wording", () => {
   });
 });
 
-// H16: the growth line and the hint read one classification.
 describe("H16: growth line and superlinear hint agree", () => {
   it("agrees across every mount/rerender class pair", () => {
     for (const mountClass of GROWTH_CLASSES) {
@@ -271,8 +268,7 @@ describe("H16: growth line and superlinear hint agree", () => {
   });
 });
 
-// H17: superlinear-by-noise was the reported defect; the gates must hold on
-// every near-linear shape a real component produces.
+// H17: superlinear-by-noise was the reported defect the gates must hold against.
 describe("H17: near-linear shapes never promote", () => {
   const SHAPES: [string, (n: number) => number][] = [
     ["constant + tiny slope", (n) => 4 + 0.001 * n],
@@ -300,7 +296,6 @@ describe("H18: degenerate sweeps", () => {
   });
 });
 
-// --- helpers ---
 
 function curveOf(growthClass: ScalingCurve["growthClass"]): ScalingCurve {
   return { slope: 0.1, intercept: 1, r2: 0.99, growthClass };

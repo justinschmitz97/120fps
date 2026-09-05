@@ -1,16 +1,12 @@
 import { describe, it, expect } from "vitest";
 import path from "node:path";
-import { extractProps, resetExtractionCache } from "../../src/prop-gen.js";
-import { fillArray } from "../../src/prop-gen-values.js";
+import { extractProps, resetExtractionCache } from "../../src/props/index.js";
+import { fillArray } from "../../src/props/index.js";
 
 const M84 = path.resolve("./fixtures/m84");
 const fixture = (name: string): string => path.join(M84, name);
 
-// M84 MUST: an identity-keyed collection (an array of objects consumed as
-// rows or items, whose element type could not be resolved) synthesizes
-// object elements, not primitives — a component keying a WeakMap on its own
-// rows throws `TypeError: Invalid value used as weak map key` on a
-// primitive key.
+// Identity-keyed arrays must synthesize object elements: a WeakMap key can't be a primitive.
 describe("M84: identity-keyed array prop synthesizes object elements", () => {
   it("data's fallback element is an object, not the bare string \"item\"", async () => {
     resetExtractionCache();

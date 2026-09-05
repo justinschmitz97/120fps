@@ -1,11 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { sharedAnalyze as analyze } from "./shared-analyze.js";
-import { COMPOSITION_EMPTY_WARNING } from "../../src/composition.js";
+import { COMPOSITION_EMPTY_WARNING } from "../../src/props/index.js";
 
-// F3: the fixture's parts throw outside their required parent, so whatever
-// tree the taxonomy infers mounts to an empty root. The run must fall back to
-// the bare export and say so, not report timings for a scene that rendered
-// nothing.
+// F3: parts throw outside their parent, so the inferred tree mounts empty; falls back and says so.
 describe("composition rollback", () => {
   it("measures the bare export and warns when the composed scene is empty", async () => {
     const report = await analyze("./fixtures/m30-strict-compound.tsx", {
