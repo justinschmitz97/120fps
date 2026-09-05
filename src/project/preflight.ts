@@ -10,8 +10,10 @@ import {
   declaredTransformOwner,
   detectMissingInstall,
   hardKindForTransformCode,
+  preprocessorSearchFor,
   recognizeTransform,
   type PreflightKind,
+  type PreprocessorSearch,
 } from "./preflight-gates.js";
 
 // Not "next/server-only": Next.js re-exports this package unchanged.
@@ -32,6 +34,8 @@ export interface PreflightHit {
   transformOwner?: string;
   // The refusal may only claim "this project compiles that with X" when this is true.
   transformOwnerDeclared?: boolean;
+  // Preprocessor refusals only: the search the walk performed, which the message reprints.
+  preprocessor?: PreprocessorSearch;
 }
 
 export interface PreflightResult {
@@ -523,7 +527,14 @@ export function runPreflight(options: PreflightOptions): PreflightResult {
   // Last, so an earlier refusal stays the one the message names; the hit stays in transforms.
   for (const hit of transforms) {
     const kind = hit.transformCode ? hardKindForTransformCode(hit.transformCode) : undefined;
-    if (kind) hard.push({ ...hit, kind });
+    if (kind) {
+      hard.push({ ...hit, kind });
+      continue;
+    }
+    if (hit.transformCode !== "css-preprocessor") continue;
+    // Vite's own two search bases decide this, so it is settled without starting the server.
+    const preprocessor = preprocessorSearchFor(hit, projectRoot, workspaceRoot);
+    if (preprocessor) hard.push({ ...hit, kind: "unavailable-preprocessor", preprocessor });
   }
 
   return { hard, soft, transforms, providers };

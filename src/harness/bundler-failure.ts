@@ -1,10 +1,14 @@
 import fs from "node:fs";
 import path from "node:path";
 import {
+  CSS_PREPROCESSOR_PACKAGES,
   declaredTransformOwner,
   findWorkspaceRoot,
   installedPackageDir,
   isPackageDeclared,
+  packageManagerAddCommand,
+  packageManagerInstallCommand,
+  packageManagerRunCommand,
   readProjectManifest,
   recognizeVirtualNamespace,
   SOURCE_EXTENSIONS,
@@ -97,8 +101,60 @@ export function presentBundlerFailure(
     diagnoseMissingShimExport(message) ??
     diagnoseGitignoredGeneratedFile(message, projectRoot) ??
     diagnoseNuxtBuildModule(message, buildWarnings, projectRoot) ??
+    diagnosePreprocessorMissing(message, projectRoot) ??
     diagnoseBundlerFailure(message, projectRoot) ??
     stripBundlerStackFrames(message)
+  );
+}
+
+const VITE_PREPROCESSOR_MISSING = /Preprocessor dependency "([^"]+)" not found/;
+// The dev server's own URL for the file it could not transform, the only importer in the message.
+const HARNESS_REQUEST_500 = /response 500: GET (\S+)/;
+
+// Vite reports only the first package it tried; sass has a second name it tries after it.
+function preprocessorFamily(lang: string): string[] {
+  const family = Object.values(CSS_PREPROCESSOR_PACKAGES).find((pkgs) => pkgs.includes(lang));
+  // sass-embedded is reported, sass is tried second: name them in the order Vite tries them.
+  return family && family.length > 1 ? [lang, ...family.filter((pkg) => pkg !== lang)] : [lang];
+}
+
+// `http://host/@fs/E:/a/b.vue?vue&type=style&lang.scss` is one file, named once.
+function requestedFile(url: string): string {
+  const withoutQuery = url.split("?")[0];
+  const withoutOrigin = withoutQuery.replace(/^https?:\/\/[^/]+\//, "");
+  return withoutOrigin.replace(/^@fs\//, "");
+}
+
+export function PREPROCESSOR_UNAVAILABLE_ERROR(
+  file: string,
+  packages: string[],
+  installCommand: string,
+): string {
+  const last = packages[packages.length - 1];
+  // Vite tries them in this order and reports only the first, so the message keeps the order.
+  const tried = packages.length > 1 ? `${packages.slice(0, -1).join(", ")} and then ${last}` : last;
+  return (
+    `${file} needs a CSS preprocessor the dev server could not load: Vite looked for ${tried}, ` +
+    "first up the node_modules chain of the measured package and then in its own installed copy, " +
+    `and found none of them. Install it where the measured package resolves it: ${installCommand}`
+  );
+}
+
+function diagnosePreprocessorMissing(message: string, projectRoot: string): string | undefined {
+  const match = VITE_PREPROCESSOR_MISSING.exec(message);
+  if (!match) return undefined;
+  const packages = preprocessorFamily(match[1]);
+  const url = HARNESS_REQUEST_500.exec(message)?.[1];
+  const workspaceRoot = findWorkspaceRoot(projectRoot);
+  // Declared but absent needs an install, not another dependency line.
+  const declared = packages.find((pkg) => isPackageDeclared(pkg, projectRoot, workspaceRoot));
+  const command = declared
+    ? packageManagerInstallCommand(projectRoot, process.cwd())
+    : packageManagerAddCommand(projectRoot, packages[packages.length - 1], process.cwd());
+  return PREPROCESSOR_UNAVAILABLE_ERROR(
+    url ? requestedFile(url) : "a stylesheet in this component's graph",
+    packages,
+    command,
   );
 }
 
@@ -262,60 +318,15 @@ const ESBUILD_COULD_NOT_RESOLVE = /([^\r\n]+?):(\d+):(\d+):\s*ERROR:\s*Could not
 
 const CODEGEN_SCRIPT_PRIORITY = ["codegen", "generate", "prepare", "postinstall", "build"];
 
-// The packageManager field wins over the lockfile, and the member's lockfile over the root's.
-type PackageManager = "npm" | "pnpm" | "yarn";
-
-const LOCKFILE_MANAGER: Array<[string, PackageManager]> = [
-  ["pnpm-lock.yaml", "pnpm"],
-  ["yarn.lock", "yarn"],
-  ["package-lock.json", "npm"],
-];
-
-export function detectPackageManager(root: string): PackageManager {
-  // A declaration beats an artifact: a stray package-lock.json in a pnpm member must not win.
-  const levels: string[] = [];
-  let cursor = path.resolve(root);
-  // findWorkspaceRoot stops at a member with a stray lockfile, so this walk goes up to .git.
-  while (true) {
-    levels.push(cursor);
-    if (fs.existsSync(path.join(cursor, ".git"))) break;
-    const parent = path.dirname(cursor);
-    if (parent === cursor) break;
-    cursor = parent;
-  }
-  const workspaceRoot = findWorkspaceRoot(root);
-  if (!levels.includes(workspaceRoot)) levels.push(workspaceRoot);
-  for (const level of levels) {
-    const declared = readProjectManifest(level)?.packageManager;
-    if (typeof declared !== "string") continue;
-    const name = declared.split("@")[0].trim();
-    if (name === "pnpm" || name === "yarn" || name === "npm") return name;
-  }
-  for (const level of [root, workspaceRoot]) {
-    for (const [file, manager] of LOCKFILE_MANAGER) {
-      if (fs.existsSync(path.join(level, file))) return manager;
-    }
-  }
-  return "npm";
-}
-
-// startDir is a parameter, not a read of `process.cwd()`, so the message is a function of it.
-export function runDirectoryPrefix(root: string, startDir: string): string {
-  const target = path.resolve(root);
-  const from = path.resolve(startDir);
-  if (target === from) return "";
-  const relative = path.relative(from, target);
-  const dir = relative === "" || path.isAbsolute(relative) ? target : toPosix(relative);
-  // A directory whose name contains a space is not pasteable unquoted.
-  return `cd ${/\s/.test(dir) ? `"${dir}"` : dir} && `;
-}
-
-// yarn runs a script by bare name; npm and pnpm need `run` outside their lifecycle names.
-export function packageManagerRunCommand(root: string, script: string, startDir?: string): string {
-  const manager = detectPackageManager(root);
-  const run = manager === "yarn" ? `yarn ${script}` : `${manager} run ${script}`;
-  return startDir === undefined ? run : runDirectoryPrefix(root, startDir) + run;
-}
+// Re-exported from their own module: which package manager a repository uses is a project fact.
+export {
+  detectPackageManager,
+  packageManagerAddCommand,
+  packageManagerInstallCommand,
+  packageManagerRunCommand,
+  runDirectoryPrefix,
+  type PackageManager,
+} from "../project/index.js";
 
 // A script body is never printed: it belongs to another package's build, not to the shell.
 export function packageScriptCommand(
