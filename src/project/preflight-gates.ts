@@ -25,7 +25,9 @@ export type PreflightKind =
   // Soft: the application's own cycle usually mounts; only a foreign entry point fails.
   | "import-cycle"
   // Hard: the dev server answers 500 and the run dies inside Vite's import analysis.
-  | "unloadable-file-type";
+  | "unloadable-file-type"
+  // Hard: no macro compiler is loadable here, so the macro reaches the browser unexpanded.
+  | "unloadable-macro";
 
 // The harness never loads the project's vite.config, so a missing transform is named here.
 export interface TransformRecognizer {
@@ -167,6 +169,12 @@ const DATA_LOADER_CANDIDATES: Record<string, string[]> = {
 // Codes Vite hands to its JavaScript parser, and that 120fps has no transform to load.
 export const UNLOADABLE_FILE_TYPE_CODES = new Set(Object.keys(DATA_LOADER_CANDIDATES));
 
+// A transform code no supported plugin can ever claim refuses the run; the rest only warn.
+export function hardKindForTransformCode(code: string): PreflightKind | undefined {
+  if (UNLOADABLE_FILE_TYPE_CODES.has(code)) return "unloadable-file-type";
+  return code === "babel-macro" ? "unloadable-macro" : undefined;
+}
+
 function macroCompilerCandidates(specifier: string): string[] {
   const candidates = ["vite-plugin-babel-macros", "babel-plugin-macros"];
   // A scoped macro package usually ships its compiler beside it (@lingui/vite-plugin).
@@ -222,6 +230,7 @@ const HARD_CAUSE: Record<HardKind, string> = {
     "is measured in a project with no installed dependencies (no node_modules under it or its " +
     "workspace root)",
   "unloadable-file-type": "imports a file type Vite parses as JavaScript unless a plugin claims it",
+  "unloadable-macro": "imports a Babel macro that no compiler here expands",
 };
 
 // Only the three server-boundary kinds; Solid and PnP need their own next step.
@@ -251,6 +260,11 @@ export const HARD_REMEDY: Record<HardKind, string> = {
     "Measure a component whose graph does not reach that import, or give this one a fixture " +
     "(120fps.fixture.tsx) or a wrapper (--wrap, 120fps.setup.tsx) that supplies the data instead " +
     "of importing the file. Pass --no-preflight to attempt the run anyway.",
+  // Expanding the macro by hand is the only edit that keeps the measured tree the same shape.
+  "unloadable-macro":
+    "In a copy of this component, write the macro call out by hand as the code the compiler " +
+    "would have generated, or measure a component below this one whose graph does not reach the " +
+    "macro. Pass --no-preflight to attempt the run anyway.",
 };
 
 // Process state like setCurrentRunProjectRoot: the remedy is built three layers below argv.
@@ -276,12 +290,33 @@ export class PreflightHardRejectionError extends Error {
   }
 }
 
+// Both transform refusals name an import edge; every other refusal fails before Vite gets there.
+const TRANSFORM_REFUSAL_KINDS = new Set<PreflightKind>(["unloadable-file-type", "unloadable-macro"]);
+
 // The first hit is the one to fix: everything below it is unreachable until that edge moves.
 export function preflightFailureMessage(hits: PreflightHit[]): string {
-  // Position does not encode precedence, and every other refusal fails before Vite gets there.
-  const hit = hits.find((candidate) => candidate.kind !== "unloadable-file-type") ?? hits[0];
+  // Position does not encode precedence, so the kind decides which hit the message reports.
+  const hit = hits.find((candidate) => !TRANSFORM_REFUSAL_KINDS.has(candidate.kind)) ?? hits[0];
   const where = hit.chain[hit.chain.length - 1];
   const kind = hit.kind as HardKind;
+  // Nothing on disk changes this: no macro compiler is among the transforms 120fps loads.
+  if (kind === "unloadable-macro") {
+    const supported = SUPPORTED_TRANSFORM_PLUGINS.map((plugin) => plugin.code).join(", ");
+    return [
+      `Cannot measure this component in a browser: ${where} imports ${hit.specifier}, a Babel ` +
+        "macro, which a compiler is meant to rewrite away while the project builds.",
+      "",
+      `  ${chainText(hit)}`,
+      "",
+      (hit.transformOwnerDeclared
+        ? `This project compiles that with ${hit.transformOwner}.`
+        : "Nothing in this project declares a macro compiler for it.") +
+        ` 120fps loads only its supported transforms (${supported}) and never reads your ` +
+        "vite.config, so nothing here expands it: the macro's own module would reach the browser " +
+        "instead of the code it would have generated.",
+      hardRemedyFor(kind),
+    ].join("\n");
+  }
   // Refused before Vite sees the file, so importer, import and declared plugin are in hand.
   if (kind === "unloadable-file-type") {
     const supported = SUPPORTED_TRANSFORM_PLUGINS.map((plugin) => plugin.code).join(", ");
@@ -419,6 +454,7 @@ const BYPASS_KIND_LABEL: Record<HardKind, string> = {
   "yarn-pnp": "yarn-pnp",
   "not-installed": "not-installed",
   "unloadable-file-type": "unloadable-file-type",
+  "unloadable-macro": "babel-macro",
 };
 
 export const PREFLIGHT_BYPASSED_WARNING = (hits: PreflightHit[]): string => {
