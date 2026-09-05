@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { escapeRegex } from "../shared/index.js";
+import { escapeRegex, toPosix } from "../shared/index.js";
 import {
   findWorkspaceRoot,
   installedPackageDir,
@@ -132,6 +132,51 @@ export function UNALIASED_WORKSPACE_SUBPATH_WARNING(specifier: string, pkg: stri
     "source; that subpath resolved to no source of its own and was left out of the pre-bundle, so " +
     "this import may still fail when the browser loads it, not only at pre-bundle time."
   );
+}
+
+// The substitution every React Native Web bundler makes, named so the report is not a surprise.
+export function REACT_NATIVE_WEB_ALIAS_WARNING(target: string): string {
+  return (
+    `react-native is aliased to ${target} for this run, the substitution a React Native app's own ` +
+    "web target makes; a component that reaches a module react-native-web does not implement still " +
+    "fails on that module."
+  );
+}
+
+// A module built for React Native needs the platform extension order this harness does not set,
+// so substituting react-native alone does not make it loadable.
+export function REACT_NATIVE_MODULES_ERROR(importer: string, modules: string[]): string {
+  const shown = modules.slice(0, 5).join(", ");
+  const rest = modules.length - 5;
+  const sample = rest > 0 ? `${shown} and ${rest} more` : shown;
+  return (
+    `${importer} reaches ${modules.length} React Native modules (${sample}). react-native itself ` +
+    "is substituted by react-native-web for this run, but each of these declares react-native as " +
+    "its own dependency and ships a native implementation this run cannot swap for a web one, so " +
+    "it cannot load in a browser. Measure a component whose imports reach none of them."
+  );
+}
+
+export function REACT_NATIVE_WITHOUT_WEB_ERROR(importer: string): string {
+  return (
+    `${importer} imports react-native, which renders through a native runtime this tool cannot ` +
+    "host: every measurement runs against a DOM in Chromium. Install react-native-web, the web " +
+    "target a React Native app builds with, or measure a component that reaches no react-native " +
+    "module."
+  );
+}
+
+// The manifest's own claim, not a guess from the name: a module built for React Native says so.
+function dependsOnReactNative(manifest: Record<string, unknown> | undefined): boolean {
+  if (!manifest) return false;
+  return ["dependencies", "peerDependencies"].some((field) => {
+    const declared = manifest[field];
+    return (
+      typeof declared === "object" &&
+      declared !== null &&
+      Object.prototype.hasOwnProperty.call(declared, "react-native")
+    );
+  });
 }
 
 type ExternalDepsAliases = Array<{
@@ -555,6 +600,36 @@ function walkExternalDeps(
     walk();
     dropIgnored();
     if (!resolvePackages()) break;
+  }
+
+  // react-native's own manifest answers a native runtime, so the browser never resolves it here.
+  const reactNativeEntries = [...externalPkgs].filter((entry) => pkgNameOf(entry) === "react-native");
+  if (reactNativeEntries.length > 0) {
+    const importerFile = firstImporterFile.get("react-native");
+    const importer =
+      importerFile === undefined
+        ? relativeToRoot(componentPath, projectRoot)
+        : relativeToRoot(importerFile, projectRoot);
+    const webDir =
+      installedPackageDir("react-native-web", projectRoot) ??
+      installedPackageDir("react-native-web", firstImporterDir.get("react-native") ?? projectRoot);
+    if (webDir === undefined) throw new Error(REACT_NATIVE_WITHOUT_WEB_ERROR(importer));
+    const nativeModules = [...externalPkgs]
+      .map(pkgNameOf)
+      .filter((pkg) => pkg !== "react-native" && pkg !== "react-native-web")
+      .filter((pkg) => {
+        const dir =
+          installedPackageDir(pkg, projectRoot) ??
+          installedPackageDir(pkg, firstImporterDir.get(pkg) ?? projectRoot);
+        return dir !== undefined && dependsOnReactNative(readProjectManifest(dir));
+      });
+    if (nativeModules.length > 0) {
+      throw new Error(REACT_NATIVE_MODULES_ERROR(importer, [...new Set(nativeModules)].sort()));
+    }
+    for (const entry of reactNativeEntries) externalPkgs.delete(entry);
+    externalPkgs.add("react-native-web");
+    extraAliasesOut?.push({ find: /^react-native$/, replacement: toPosix(fs.realpathSync(webDir)) });
+    warningsOut?.push(REACT_NATIVE_WEB_ALIAS_WARNING(relativeToRoot(webDir, projectRoot)));
   }
 
   // A bare package resolving nowhere survives the fixed point and kills dep-optimization.
