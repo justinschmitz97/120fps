@@ -134,6 +134,8 @@ C:/Projekte/120fps-fieldtest/scratch/lane-c/dist/cli/main.js -- src/components/u
   is entered again, never how long one attempt runs, so `src/pipeline/analyze.ts:483` keeps its 30 s
   first attempt until lane B adopts `harnessReadyTimeoutMs()`. Raising the bound, which is what the
   run-6 failures needed, works at every site that races through `waitForReadyOrFatal` today.
+  Adopted by lane B in `M125: pipeline wait adopts the readiness bound`: that call site now passes
+  `harnessReadyTimeoutMs()`, so its first attempt and the deadline are the same number.
 - Instrumenting time-to-ready as its own reported phase: the run-6 logs prove it is not measured, but
   the phase table is `src/report`/`src/pipeline` surface.
 - A bound that scales with machine load: no load signal exists on Windows
