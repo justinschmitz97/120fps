@@ -6,9 +6,14 @@ import {
   readProjectManifest,
 } from "../project/index.js";
 import { packageScriptCommand } from "./bundler-failure.js";
-import { detectRuntimeStyleEngines, unrecognisedRuntimeStyleEngine } from "./style-tooling.js";
+import {
+  detectRuntimeStyleEngines,
+  installedTailwindVersion,
+  unrecognisedRuntimeStyleEngine,
+} from "./style-tooling.js";
 import {
   CSS_FALLBACK_WARNING,
+  CSS_TAILWIND_SYNTAX_MISMATCH_WARNING,
   CSS_PLACEHOLDER_SKIPPED_WARNING,
   CSS_RESET_SKIPPED_WARNING,
   GLOBAL_CSS_CANDIDATES,
@@ -20,6 +25,7 @@ import {
   resolveStylesheetImportTarget,
   stylesheetImportSpecifiers,
   stylesheetRuleCount,
+  stylesheetTailwindSyntax,
   validateCssFiles,
 } from "./stylesheets.js";
 import { readViteConfigData } from "./vite-config.js";
@@ -292,6 +298,24 @@ export function discoverGlobalCss(
     return false;
   };
 
+  // A guessed candidate whose dialect the installed Tailwind cannot compile is not this app's sheet.
+  const tailwindVersion = installedTailwindVersion(projectRoot, workspaceRoot);
+  const tailwindInstalledMajor = Number(/(\d+)/.exec(tailwindVersion ?? "")?.[1]);
+  const contradictsInstalledTailwind = (file: string): boolean => {
+    if (tailwindVersion === undefined || Number.isNaN(tailwindInstalledMajor)) return false;
+    const syntax = stylesheetTailwindSyntax(file);
+    if (syntax === undefined || syntax === tailwindInstalledMajor) return false;
+    rejected.add(file);
+    warningsOut?.push(
+      CSS_TAILWIND_SYNTAX_MISMATCH_WARNING(
+        relativeToRoot(file, projectRoot),
+        syntax,
+        tailwindVersion,
+      ),
+    );
+    return true;
+  };
+
   // The config decides where index.html is: a declared `root`, or a foldable rollup input.
   const viteConfig = readViteConfigData(projectRoot, workspaceRoot);
   const entry = findProjectEntry(projectRoot, {
@@ -331,6 +355,8 @@ export function discoverGlobalCss(
   ];
   for (const { file: candidate, source } of declaredCandidates) {
     if (preprocessorFor(candidate, projectRoot, workspaceRoot)) continue;
+    // A filename convention is a guess; a manifest declaration is the package's own statement.
+    if (source === "candidate" && contradictsInstalledTailwind(candidate)) continue;
     if (!injectable(candidate)) continue;
     const files = expandPassthroughStylesheet(candidate, projectRoot, aliases, warningsOut).filter(
       injectable,
@@ -385,6 +411,7 @@ export function discoverGlobalCss(
       warningsOut?.push(CSS_RESET_SKIPPED_WARNING(relative));
       continue;
     }
+    if (contradictsInstalledTailwind(candidate.file)) continue;
     // Preprocessor-missing stops the walk rather than skipping to the next-ranked candidate.
     if (!preprocessorFor(candidate.file, projectRoot, workspaceRoot) && injectable(candidate.file)) {
       survivor = candidate;

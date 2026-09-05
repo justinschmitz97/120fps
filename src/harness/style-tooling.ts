@@ -148,7 +148,10 @@ function postcssTextDeclaresBareTailwind(text: string): boolean {
 }
 
 // Installed metadata first: a member measured before its install still states its major.
-function tailwindMajor(memberRoot: string, workspaceRoot: string): number | undefined {
+export function installedTailwindVersion(
+  memberRoot: string,
+  workspaceRoot: string = findWorkspaceRoot(memberRoot),
+): string | undefined {
   const versions: string[] = [];
   // An install above the workspace root belongs to the surrounding checkout, not this project.
   for (const level of workspaceLevels(memberRoot, workspaceRoot)) {
@@ -166,11 +169,16 @@ function tailwindMajor(memberRoot: string, workspaceRoot: string): number | unde
       if (typeof range === "string") versions.push(range);
     }
   }
-  for (const version of versions) {
-    const major = /(\d+)/.exec(version);
-    if (major) return Number(major[1]);
-  }
-  return undefined;
+  return versions[0];
+}
+
+export function installedTailwindMajor(
+  memberRoot: string,
+  workspaceRoot: string = findWorkspaceRoot(memberRoot),
+): number | undefined {
+  const version = installedTailwindVersion(memberRoot, workspaceRoot);
+  const major = version === undefined ? null : /(\d+)/.exec(version);
+  return major ? Number(major[1]) : undefined;
 }
 
 export interface Tailwind3Pipeline {
@@ -194,7 +202,7 @@ export function resolveTailwind3Config(
     return undefined;
   }
   if (!postcssTextDeclaresBareTailwind(text)) return undefined;
-  const major = tailwindMajor(memberRoot, workspaceRoot);
+  const major = installedTailwindMajor(memberRoot, workspaceRoot);
   if (major !== undefined && major !== 3) return undefined;
   const searched = workspaceLevels(memberRoot, workspaceRoot);
   for (const level of searched) {

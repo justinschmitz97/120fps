@@ -55,6 +55,37 @@ export function isStylesheet(file: string): boolean {
   return STYLESHEET_EXTENSIONS.includes(path.extname(file).toLowerCase());
 }
 
+// The at-rules that only exist in one Tailwind major, so a file states which one wrote it.
+const TAILWIND4_SYNTAX =
+  /@import\s+["']tailwindcss(?:\/[^"']*)?["']|@(?:theme|utility|custom-variant|plugin|source|reference)\b/;
+const TAILWIND3_SYNTAX = /@tailwind\s+(?:base|components|utilities|screens|variants)\b/;
+
+// Undefined when the file names neither dialect, and when it names both: neither is a contradiction.
+export function stylesheetTailwindSyntax(file: string): 3 | 4 | undefined {
+  let text: string;
+  try {
+    text = fs.readFileSync(file, "utf-8");
+  } catch {
+    return undefined;
+  }
+  const four = TAILWIND4_SYNTAX.test(text);
+  const three = TAILWIND3_SYNTAX.test(text);
+  if (four === three) return undefined;
+  return four ? 4 : 3;
+}
+
+export function CSS_TAILWIND_SYNTAX_MISMATCH_WARNING(
+  relative: string,
+  syntaxMajor: 3 | 4,
+  installedVersion: string,
+): string {
+  return (
+    `${relative} was written for Tailwind ${syntaxMajor}, but this project has tailwindcss ` +
+    `${installedVersion} installed, so it is not a stylesheet this project's own build compiles; ` +
+    "it was not used as the stylesheet fallback. Pass --css to name the right one"
+  );
+}
+
 // A CSS module exports class names; injecting it globally measures a sheet nothing loads.
 export function isCssModule(file: string): boolean {
   return /\.module\.[^.]+$/i.test(path.basename(file));

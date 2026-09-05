@@ -12,6 +12,7 @@ export * from "./prebuild.js";
 export * from "./renderer.js";
 export * from "./server.js";
 export * from "./shims.js";
+export * from "./stylesheet-probe.js";
 export * from "./stylesheets.js";
 export * from "./style-tooling.js";
 export * from "./vite-config.js";
