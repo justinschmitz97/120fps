@@ -374,7 +374,7 @@ export default function Wrapper({ children }: { children: React.ReactNode }) {
 - Node >= 22
 - React `>=18` in the profiled project (React mode); `vue` + `@vitejs/plugin-vue` (Vue mode); vanilla needs neither
 - `tsconfig.json` optional: nearest one wins, sane fallback otherwise. When the nearest config declares no `compilerOptions` and only `references`, the referenced config that covers the file supplies `paths`/`baseUrl`/`jsxImportSource`/`customConditions` instead, disclosed once naming both config paths. `.ts`/`.tsx`/`.js`/`.jsx` always compile with the automatic JSX runtime, whatever the config's own `jsx` setting is. A `paths` key with no non-wildcard prefix (`"/*"`, `"*"`) builds no alias and is reported once instead of applied.
-- Chromium via Playwright: auto-downloaded on install; otherwise `npx playwright install chromium` once
+- Chromium via Playwright: run `npx playwright install chromium` once after installing (the Playwright package downloads no browser on `npm install`); a run without the browser stops with that command as its hint
 
 ## License
 
