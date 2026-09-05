@@ -608,15 +608,18 @@ export async function runReactAnalysis(
 
     const errorCapture = attachPageErrorCapture(page, path.basename(harness.harnessDir));
 
+    // One read for both waits: navigation and readiness are one arrival, so one bound covers them.
+    const readyTimeoutMs = harnessReadyTimeoutMs();
+
     await gotoWithErrorContext(page, probeUrl, errorCapture, "react analysis harness", {
-      timeout: harnessReadyTimeoutMs(),
+      timeout: readyTimeoutMs,
       waitUntil: HARNESS_NAV_WAIT,
     });
     try {
       await page.waitForFunction(
         () => typeof (window as any).__120fps === "object",
         undefined,
-        { timeout: harnessReadyTimeoutMs() },
+        { timeout: readyTimeoutMs },
       );
     } catch (waitErr) {
       throw enrichTimeoutError(waitErr, errorCapture, "react analysis harness");
