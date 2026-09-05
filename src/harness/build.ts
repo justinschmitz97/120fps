@@ -17,6 +17,8 @@ import {
   type ReactCompilerState,
 } from "../project/index.js";
 import { presentBundlerFailure } from "./bundler-failure.js";
+import { cssImportHoistPlugin } from "./css-import-hoist.js";
+import { relativeToRoot } from "./css.js";
 import { createHarnessDir, forgetHarnessDirIfRemoved, sweepStaleHarnessDirs } from "./dirs.js";
 import { readEnvDefines } from "./env.js";
 import { generateComposedEntry, generateEntry } from "./entry.js";
@@ -44,6 +46,8 @@ import {
   unionCachedDeps,
   type ServerPool,
 } from "./server.js";
+import { loadPostcssConfigPipeline } from "./postcss-config.js";
+import { probeInjectedStylesheets } from "./stylesheet-probe.js";
 import {
   cssImportSpecifier,
   loadTailwind3PostcssPipeline,
@@ -178,17 +182,14 @@ export async function buildAndServe(
     ? toPosix(path.relative(projectRoot, path.resolve(options.presetPath)))
     : undefined;
 
-  let entryTsx: string;
+  // Re-rendered when the stylesheet probe drops a sheet, before the page is ever requested.
+  let renderEntry: (imports: string[]) => string;
   let component: ComponentIdentity;
 
   if (options?.composition) {
-    entryTsx = generateComposedEntry(
-      componentRelative,
-      options.composition,
-      options.exports,
-      wrapRelative,
-      cssImports,
-    );
+    const { composition, exports } = options;
+    renderEntry = (imports) =>
+      generateComposedEntry(componentRelative, composition, exports, wrapRelative, imports);
     const root = options.composition.root;
     component = {
       relative: componentRelative,
@@ -205,18 +206,21 @@ export async function buildAndServe(
       name: componentName,
       isDefaultExport: isDefaultOnly,
     };
-    entryTsx = generateEntry({
-      componentRelative,
-      componentName,
-      isDefaultExport: isDefaultOnly,
-      hasScale: detectScaleExport(absoluteComponentPath),
-      wrapRelative,
-      cssImports,
-      renderer,
-      ...(presetRelative ? { presetRelative } : {}),
-      ...(renderer === "vue" ? { vueUnconditionalRoot } : {}),
-    });
+    const hasScale = detectScaleExport(absoluteComponentPath);
+    renderEntry = (imports) =>
+      generateEntry({
+        componentRelative,
+        componentName,
+        isDefaultExport: isDefaultOnly,
+        hasScale,
+        wrapRelative,
+        cssImports: imports,
+        renderer,
+        ...(presetRelative ? { presetRelative } : {}),
+        ...(renderer === "vue" ? { vueUnconditionalRoot } : {}),
+      });
   }
+  const entryTsx = renderEntry(cssImports);
 
   // The Vue entry has no JSX, so it is a .ts file and index.html has to name the one written.
   const entryFile = renderer === "vue" ? "entry.ts" : "entry.tsx";
@@ -263,6 +267,8 @@ export async function buildAndServe(
   const plugins: unknown[] = styleTooling.tailwind
     ? await loadTailwindVitePlugin(projectRoot)
     : [];
+  // Ahead of Vite's own CSS plugin, so its import inliner sees the imports it accepts.
+  plugins.push(cssImportHoistPlugin());
   // Rebuilding the member's declared pipeline takes the config decision away from the shell.
   const tailwind3Postcss =
     styleTooling.tailwind3ConfigPath && styleTooling.tailwind3PostcssConfigFile
@@ -316,9 +322,22 @@ export async function buildAndServe(
   // Without these the page has no `process`, and a component reading process.env throws.
   const define = readEnvDefines(projectRoot, workspaceRoot);
 
+  // postcss-load-config accepts neither a string plugin name nor a [name, options] tuple, and it
+  // resolves from the member instead of the package that declares the plugin, so the harness loads
+  // the config itself and hands Vite the instances.
+  const declaredPostcss =
+    tailwind3Postcss === undefined && styleTooling.postcssConfigFile !== undefined
+      ? await loadPostcssConfigPipeline(
+          styleTooling.postcssConfigFile,
+          projectRoot,
+          workspaceRoot,
+          (warning) => configWarnings.push(warning),
+        )
+      : undefined;
+
   // The rebuilt pipeline wins over the inherited config directory: same config, member's path.
   const postcssOption: string | { plugins: unknown[] } | undefined =
-    tailwind3Postcss ?? styleTooling.postcssConfigDir;
+    tailwind3Postcss ?? declaredPostcss ?? styleTooling.postcssConfigDir;
 
   const bootServer = async (): Promise<ViteDevServer> => {
     const created = await createServer({
@@ -407,6 +426,24 @@ export async function buildAndServe(
     });
   }
 
+  // The entry imports the stylesheet first, so an uncompilable sheet stops the page before the
+  // component evaluates. Compiling it here costs the transform the page would ask for anyway.
+  let injectedCssFiles = cssFiles;
+  if (cssImports.length > 0) {
+    const probe = await probeInjectedStylesheets(
+      server,
+      cssImports.map((specifier, index) => ({
+        specifier,
+        label: relativeToRoot(cssFiles[index], projectRoot),
+      })),
+    );
+    if (probe.kept.length < cssImports.length) {
+      injectedCssFiles = cssFiles.filter((_, index) => probe.kept.includes(cssImports[index]));
+      fs.writeFileSync(path.join(harnessDir, entryFile), renderEntry(probe.kept));
+      buildWarnings.push(...probe.warnings);
+    }
+  }
+
   const address = server.httpServer?.address();
   let url: string;
   if (address && typeof address === "object") {
@@ -436,7 +473,7 @@ export async function buildAndServe(
     ...(wrapRelative !== undefined
       ? { wrapPath: path.resolve(options!.wrapPath!), wrapRelative }
       : {}),
-    ...(cssFiles.length > 0 ? { cssFiles } : {}),
+    ...(injectedCssFiles.length > 0 ? { cssFiles: injectedCssFiles } : {}),
     ...(viteConfig.aliases.length > 0 ? { viteAliases: viteConfig.aliases } : {}),
     ...(buildWarnings.length > 0 ? { warnings: buildWarnings } : {}),
   };
