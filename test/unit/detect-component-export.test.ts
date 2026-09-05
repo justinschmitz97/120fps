@@ -59,8 +59,7 @@ describe("detectComponentExport", () => {
       "toast.tsx",
       `function Toast() { return null; }\nexport { Toast as default };`,
     );
-    // Old regex path returned isDefaultOnly: false, which generated
-    // `import { Toast }` against a module with only a default export.
+    // The old regex returned isDefaultOnly: false, breaking the generated default-only import.
     expect(detectComponentExport(file)).toEqual({
       name: "Toast",
       isDefaultOnly: true,
@@ -86,8 +85,7 @@ export function Button() { return null; }`,
       `export const Alpha = () => null;
 export function Beta() { return null; }`,
     );
-    // New contract: source order wins; the old regex cascade preferred
-    // `export function` over `export const` regardless of order.
+    // Source order wins now; the old regex cascade preferred `export function` over `export const`.
     expect(detectComponentExport(file)).toEqual({
       name: "Alpha",
       isDefaultOnly: false,
@@ -163,10 +161,7 @@ export { Combo as default };`,
   });
 });
 
-// chakra-ui declares the controlled variant first in every compound file
-// (`tabs.ts:35` TabsRootProvider, `:52` TabsRoot), so source order alone
-// measured the variant that additionally requires an externally-managed
-// `value` object — for select/combobox, a class instance nothing synthesizes.
+// chakra-ui declares the controlled Provider first; naive order needs a value nothing synthesizes.
 describe("choosing between a controlled provider export and its sibling", () => {
   it("prefers the sibling declared after a *Provider export", () => {
     const file = writeFixture(

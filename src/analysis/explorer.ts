@@ -24,8 +24,6 @@ import {
   gotoWithErrorContext,
 } from "../browser/index.js";
 
-// --- Types ---
-
 export interface PathStep {
   interaction: InteractionDescriptor;
 }
@@ -47,12 +45,9 @@ export interface StateEdge {
   p95: number;
   traces: TraceEvent[][];
   stressPattern?: string;
-  // The steps that actually ran, not the pattern's planned count: a
-  // truncated `open-close-10` reporting 20 would understate its per-step
-  // cost by up to 6.7x.
+  // Steps that ran, not planned: a truncated open-close-10 reporting 20 understates cost 6.7x.
   stressSteps?: number;
-  // Set when the wall-clock budget cut the pattern short; carries the planned
-  // count so the row can say how much of the cycle ran.
+  // The planned count, set when the budget cut the pattern short; the row says how much ran.
   stressTruncatedFrom?: number;
 }
 
@@ -76,23 +71,18 @@ export interface ExploreOptions {
   combos?: PropCombination[];
   totalWallClockMs?: number;
   maxCombos?: number;
-  // Reuse the pooled vsync browser (fresh context per pass). Explore
-  // always paces at vsync: its metrics depend on real frame scheduling.
+  // Explore always paces at vsync: its metrics depend on real frame scheduling.
   pool?: import("../browser/index.js").BrowserPool;
   onWarning?: (warning: string) => void;
-  // Time interactions with in-page observers instead of a per-sample CDP
-  // trace, which is what dominates explore's wall clock. Opt-in until an A/B
-  // comparison against the trace path clears the accuracy bar.
+  // Opt-in until an A/B comparison against the trace path clears the accuracy bar.
   observerTiming?: boolean;
 }
 
-// `maxWallClockMs` is spent per combo. Without a run-level bound, a component
-// with the full 64-combo matrix can explore for over an hour.
+// maxWallClockMs is spent per combo; without a run-level bound a 64-combo matrix runs for an hour.
 export const DEFAULT_TOTAL_WALL_CLOCK_MS = 300000;
 export const DEFAULT_MAX_COMBOS = 8;
 
-// One selection algorithm serves exploration and measurement, so the two never
-// disagree about which combos represent the value space.
+// One selection algorithm for exploration and measurement, so the two never disagree.
 export function selectExploreCombos(count: number, maxCombos: number): number[] {
   return selectRepresentativeCombos(count, maxCombos);
 }
@@ -105,7 +95,6 @@ export interface ExploreResult {
   graph: StateGraph;
   comboIndex: number;
   props: PropCombination;
-  // How many DOM regions changed on their own between two idle probes.
   // Non-zero is a finding in itself: the component renders non-deterministically.
   volatileRegions?: number;
 }
@@ -115,11 +104,7 @@ export const VOLATILE_DOM_NOTICE = (comboIndex: number, regions: number): string
   "without input (timestamps, random ids, or animation). Their content is excluded from state " +
   "detection so exploration does not chase phantom states; structural change through them still counts.";
 
-// --- Pure utilities ---
-
-// `explore` numbers its results by position in the combos array it was handed.
-// A caller that explores a subset must translate those positions back into the
-// full combo space, or downstream joins attach interactions to the wrong props.
+// A caller that explores a subset must translate positions back, or joins attach the wrong props.
 export function restoreComboIndices<T extends { comboIndex: number }>(
   results: T[],
   sourceIndices: number[],
@@ -152,8 +137,6 @@ export function createRng(seed: number): () => number {
   };
 }
 
-// --- Browser helpers ---
-
 export async function mountComponent(
   page: Page,
   props: PropCombination,
@@ -179,18 +162,10 @@ async function waitForRender(page: Page): Promise<void> {
   );
 }
 
-// The gap has to outlast a frame and a short timer without costing more
-// than a combo can afford. A once-per-second clock beats it; that miss is
-// documented rather than paid for on every combo.
+// Outlasts a frame and a short timer; a once-per-second clock is missed, not paid for per combo.
 export const VOLATILITY_PROBE_GAP_MS = 250;
 
-// Structure is what the element tree is; content is what it says. A timestamp
-// re-rendering is content churn, and attributing state change to it inflates
-// the graph toward its node cap chasing phantoms.
-//
-// Outside a volatile region everything counts. Inside one, attribute values and
-// text drop out while tags and attribute names stay: an element appearing or
-// disappearing through a volatile region is still a state change.
+// Inside a volatile region values and text drop out; tags stay, so structural change still counts.
 function serializeTree(volatilePaths: string[]): string {
   const volatile = new Set(volatilePaths);
   const root = document.getElementById("root");
@@ -220,8 +195,7 @@ function serializeTree(volatilePaths: string[]): string {
   return out;
 }
 
-// Per-element content fingerprints, addressed structurally so a remount between
-// the two probes maps to the same regions.
+// Addressed structurally, so a remount between the two probes maps to the same regions.
 function contentMap(): Record<string, string> {
   const root = document.getElementById("root");
   const map: Record<string, string> = {};
@@ -247,8 +221,7 @@ function contentMap(): Record<string, string> {
   return map;
 }
 
-// Two idle samples with no input in between. Anything whose content moved on
-// its own is the DOM's noise floor, not a state.
+// Content that moved with no input in between is the DOM's noise floor, not a state.
 export async function probeVolatileRegions(
   page: Page,
   gapMs: number = VOLATILITY_PROBE_GAP_MS,
@@ -259,8 +232,7 @@ export async function probeVolatileRegions(
 
   const volatile: string[] = [];
   for (const [path, content] of Object.entries(first)) {
-    // A path present in only one sample is a structural change, which state
-    // detection is supposed to see.
+    // A path present in only one sample is a structural change, which state detection must see.
     if (path in second && second[path] !== content) volatile.push(path);
   }
   return volatile.sort();
@@ -300,8 +272,7 @@ export async function exerciseInteraction(
           await page.hover(desc.selector, { timeout: 3000 });
           break;
         case "scroll":
-          // Nothing to reach: scroll edges are state-invariant, so no state
-          // node is ever behind one and no replay path contains one.
+          // Scroll edges are state-invariant: no state node is behind one, no path contains one.
           break;
       }
     }
@@ -372,8 +343,6 @@ export async function navigateToState(
   }
 }
 
-// --- Main ---
-
 export async function explore(
   harness: HarnessResult,
   options: ExploreOptions = {},
@@ -411,9 +380,9 @@ export async function explore(
     const errorCapture = attachPageErrorCapture(page, path.basename(harness.harnessDir));
     const initialCdp = await page.context().newCDPSession(page);
 
-    // Renamed so a leftover reference to the pre-recovery session cannot
-    // compile; see measureMount for the same guard.
+    // A holder, so a stale reference to the pre-recovery session cannot compile; see measureMount.
     const session: CdpHolder = { cdp: initialCdp };
+    // One entry path for first entry and every recovery; a second copy would drift out of sync.
     const enter = async (): Promise<void> => {
       await refreshCdpSession(page, session);
       await gotoWithErrorContext(page, harness.url, errorCapture, "explorer harness", {
@@ -434,11 +403,7 @@ export async function explore(
       await session.cdp.send("Emulation.setCPUThrottlingRate", { rate: cpuThrottle });
     };
 
-    // One entry path, used for the first entry and for every recovery: the
-    // extra CDP session at startup is cheaper than a second copy of the
-    // preamble drifting out of sync with this one.
-    // A harness crash mid-exploration escapes here; the phase and the
-    // combo in flight are what make it diagnosable.
+    // A harness crash escapes here; the phase and the combo in flight make it diagnosable.
     const inFlight = createPhaseTracker("explore", harness);
     await inFlight.run(enter);
     const retryBudget = createRetryBudget();
@@ -448,8 +413,7 @@ export async function explore(
     const runStart = Date.now();
 
     for (const ci of selected) {
-      // The combo already running finishes; only new ones are refused, so a
-      // partial state graph is never returned.
+      // The combo already running finishes; only new ones are refused, so no partial graph.
       if (results.length > 0 && Date.now() - runStart >= totalWallClockMs) break;
       const props = combos[ci];
       inFlight.combo = ci;

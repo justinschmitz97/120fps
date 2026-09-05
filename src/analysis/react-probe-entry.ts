@@ -1,10 +1,6 @@
 import { renderTreeHelper, setupApiBlock, setupBlock, wrapImportLine } from "../harness/index.js";
 import { FUNCTION_MARKER } from "../props/index.js";
 
-// ====================================================================
-// Probe entry generation for context fan-out + callback identity
-// ====================================================================
-
 export interface ProbeEntryOptions {
   componentRelative: string;
   componentName: string;
@@ -12,10 +8,7 @@ export interface ProbeEntryOptions {
   wrapRelative?: string;
 }
 
-// Page-side props builder for the callback-identity arms, kept as source so one
-// definition serves the browser and the unit tests. Every function-valued prop
-// becomes a real function held stable across calls; only `measured` differs
-// between the arms, and it is present in the mount as well as both re-renders.
+// Kept as source so one definition serves the browser and the unit tests.
 export const CALLBACK_PROPS_SOURCE = `function __120fpsCallbackProps(props, cache, marker, measured, fresh) {
   var out = {};
   var keys = Object.keys(props || {});

@@ -71,7 +71,6 @@ describe("H5: n vs name: false positive", () => {
       { name: "name", kind: "number", required: true, values: [] },
     ];
     const matches = detectScalingProps(schemas);
-    // "name" doesn't match ^n$ or ^num, and doesn't match scaling pattern
     expect(matches).toHaveLength(0);
   });
 });
@@ -134,7 +133,6 @@ describe("H12: partial match on items-like name", () => {
       { name: "optionsProvider", kind: "array", required: true, values: [] },
     ];
     const matches = detectScalingProps(schemas);
-    // The regex tests /options/i which matches substring
     expect(matches).toHaveLength(1);
     expect(matches[0].reason).toBe("array prop with items-like name");
   });
@@ -176,7 +174,6 @@ describe("H15: formatTable with autoScalingProp but no scaling curve", () => {
       }],
     });
     const output = formatTable(report);
-    // No scaling curve → scaling column shows "-", no auto suffix
     expect(output).not.toContain("auto: items");
   });
 });

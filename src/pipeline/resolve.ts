@@ -7,16 +7,7 @@ import { type CssReport } from "../report/index.js";
 import { type AnalyzeOptions } from "./analyze.js";
 import { toPosix } from "../shared/index.js";
 
-// The generated harness entry exposes
-// `window.__120fps.stylesheetMatchStats()`: per injected global stylesheet,
-// how many of its rules match at least one element under `#root`. A
-// stylesheet entirely scoped under an ancestor class the harness never
-// renders would inject every rule and match none, so the run would measure
-// an unstyled tree while reporting the stylesheet as in use. Probed on a
-// deliberate mount of `{}` and gated on that mount actually rendering: a
-// component that renders nothing for empty props would match no rule for a
-// reason that has nothing to do with the stylesheet, and a warning there
-// would be false.
+// Gated on the mount of `{}` rendering: a component that renders nothing matches no rule anyway.
 export async function probeStylesheetMatchStats(
   page: import("playwright").Page,
 ): Promise<Array<{ file: string; rules: number; matched: number }> | undefined> {
@@ -35,20 +26,12 @@ export async function probeStylesheetMatchStats(
     await page.evaluate(() => (window as any).__120fps.unmount());
     return stats as Array<{ file: string; rules: number; matched: number }> | undefined;
   } catch {
-    // A probe is never a reason to fail a run: the measurement passes that
-    // follow do their own mounting and report their own failures.
+    // A probe never fails a run; the measurement passes mount again and report their own failures.
     return undefined;
   }
 }
 
-// Names the file and what the reader would otherwise have to infer from a
-// styled-looking report: that the render was measured as if the stylesheet
-// were not there at all. The probe asks
-// `#root.querySelector(selectorText)`, which searches descendants of the
-// component's container only. A rule selecting `:root`, `html` or `body`
-// can never match there even though its custom properties do cascade in, so
-// the message names both readings instead of asserting the sheet had no
-// effect.
+// The probe searches #root descendants only, so :root rules cannot match; name both readings.
 export const STYLESHEET_MATCHED_NOTHING_WARNING = (file: string, rules: number): string =>
   `${file} was injected and none of its ${rules} rules matched an element inside the component's ` +
   "own tree. Either the sheet is scoped under an ancestor the harness does not render (a theme " +
@@ -56,26 +39,12 @@ export const STYLESHEET_MATCHED_NOTHING_WARNING = (file: string, rules: number):
   "that renders that ancestor fixes it, or the sheet only declares custom properties on :root, " +
   "which do cascade in and are not counted here.";
 
-// --no-css wins over an explicit --css, matching --no-wrap/--wrap. Explicit
-// paths resolve against process.cwd() and suppress detection. Detection
-// follows the project's own entry imports first and can return several
-// files, in import order; whatever it had to guess at travels in
-// `warningsOut`. Layer travels with the resolution so analyzeComponent can
-// build a CssReport unconditionally: layer is what makes "found nothing"
-// and "found nothing because --no-css" distinguishable in the disclosed
-// report.
+// --no-css wins over an explicit --css, matching --no-wrap/--wrap.
 export function resolveCssFiles(
   options: Pick<AnalyzeOptions, "cssFiles" | "noCss">,
   projectRoot: string,
   warningsOut?: string[],
-  // `wrapPath` is a second entry into the project's own module graph: the
-  // stylesheets a wrapper's setup module imports are exactly the ones the
-  // measured render needs, so discovery must walk it alongside the project
-  // entry or it misses stylesheets a wrapper imports.
-  // `measuredFile` is the component file the run measures. It is the last
-  // read discovery has when no stylesheet and no declared engine exist, and
-  // it decides between "none found" and an engine the recogniser cannot
-  // name.
+  // wrapPath adds a second graph entry; measuredFile decides "none found" versus an unnamed engine.
   opts?: { wrapPath?: string; measuredFile?: string },
 ): {
   files: string[];
@@ -87,11 +56,13 @@ export function resolveCssFiles(
   runtimeEnginesRecognised?: boolean;
   declaredMissing?: Array<{ field: string; path: string; buildCommand?: string }>;
 } {
+  // layer is what makes "found nothing" and "found nothing because --no-css" distinguishable.
   if (options.noCss) return { files: [], autoDetected: false, layer: "disabled" };
 
   if (options.cssFiles && options.cssFiles.length > 0) {
     const files: string[] = [];
     for (const raw of options.cssFiles) {
+      // Explicit paths are CLI input: resolved against process.cwd(), not projectRoot.
       const resolved = path.resolve(raw);
       let stat: fs.Stats;
       try {
@@ -114,10 +85,7 @@ export function resolveCssFiles(
       ? "entry-chain"
       : discovered.source === "candidate"
         ? "known-name"
-        // A pick made from the measured package's own `style` /
-        // `exports["./styles"]` declaration is not a filename match; this
-        // arm keeps that layer name distinct from the ternary's `"none"`
-        // fallback.
+        // A package-declared pick is not a filename match; keep it distinct from the "none" arm.
         : (discovered.source as string) === "package-declared"
           ? "package-declared"
         : discovered.source === "fallback"
@@ -141,9 +109,7 @@ export function resolveCssFiles(
   };
 }
 
-// A wrapper placed at the workspace root produces total silence, identical
-// to no wrapper existing at all; a wrapper that loads from an unexpected
-// level must say so.
+// A wrapper loaded from the workspace root is otherwise indistinguishable from no wrapper at all.
 export function WRAPPER_FROM_WORKSPACE_ROOT_WARNING(wrapPath: string, projectRoot: string): string {
   return (
     `${wrapPath} was found at the workspace root, not in ${projectRoot}; the component's own package ` +
@@ -180,8 +146,7 @@ export function resolveWrapPath(
   return { wrapAutoDetected: false };
 }
 
-// Root for 120fps.config.json / 120fps-baseline.json: nearest ancestor of the
-// component containing package.json, falling back to the component's directory.
+// Root for 120fps.config.json and 120fps-baseline.json.
 export function resolveProjectPaths(resolvedPath: string): {
   projectRoot: string;
   relativeComponent: string;
@@ -193,16 +158,7 @@ export function resolveProjectPaths(resolvedPath: string): {
   return { projectRoot, relativeComponent };
 }
 
-// Explicit --framework react|vue|vanilla skips detection; auto detects from the
-// project's package.json. A `.vue` file overrides both: no flag can make React
-// render an SFC, so the file's own type is the stronger evidence.
-//
-// `rendererFor` (harness/renderer.ts) decides the mount template purely by
-// file extension and never reads --framework; the flag only ever gates
-// which *post-mount analysis* pass runs. An explicit, non-"auto" request
-// that disagrees with what will actually mount (by the same extension check
-// performed here) surfaces a warning instead of being silently discarded in
-// either direction.
+// A .vue file overrides the flag: rendererFor (harness/renderer.ts) mounts by extension alone.
 export function resolveFramework(
   mode: "react" | "vue" | "vanilla" | "auto",
   projectRoot: string,
@@ -210,6 +166,7 @@ export function resolveFramework(
   onWarning?: (warning: string) => void,
 ): "react" | "vue" | "vanilla" {
   const mounts = componentPath && isVueFile(componentPath) ? "vue" : "react";
+  // The flag only selects the post-mount analysis pass, so a disagreement warns instead of losing.
   if (mode !== "auto" && mode !== mounts) {
     onWarning?.(FRAMEWORK_FLAG_NO_MOUNT_EFFECT_WARNING(mode, mounts));
   }

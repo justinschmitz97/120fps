@@ -11,13 +11,7 @@ import {
 } from "../../src/project/index.js";
 import { findWorkspaceRoot } from "../../src/project/index.js";
 
-// M79 (3c, twenty-F3's false positive; excalidraw-F3). The css-preprocessor
-// recognizer (preflight.ts) performs no availability check by design and
-// fires unconditionally for every .scss/.sass/.less/.styl import — that part
-// is unchanged and test-locked (project-transforms.test.ts:98-99). The fix
-// is entirely downstream: a three-way classification (installed /
-// declared-but-not-installed / neither) that decides whether the warning
-// fires at all, and how it is worded.
+// M79 (twenty-F3, excalidraw-F3): fixed via a three-way installed/declared/neither split.
 
 let tmpDir: string;
 

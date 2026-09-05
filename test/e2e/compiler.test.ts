@@ -17,8 +17,7 @@ const TAILWIND_CSS = path.resolve("fixtures/compiler-tailwind/app/globals.css");
 // Lives under the repo root, which does not declare the compiler.
 const PLAIN_COMPONENT = "./fixtures/button.tsx";
 
-// The compiler emits a cache import from react/compiler-runtime; nothing else
-// in the pipeline produces it, so its presence is a direct transform signal.
+// Only the compiler emits a react/compiler-runtime import; presence is a direct transform signal.
 const COMPILED_MARKER = "compiler-runtime";
 
 function tmpJson(): string {
@@ -36,11 +35,7 @@ afterAll(async () => {
   if (brokenProject) fs.rmSync(brokenProject, { recursive: true, force: true });
 });
 
-// A project that declares the compiler and carries a half-installed copy of it.
-// Resolution then fails deterministically; a merely absent package would still
-// resolve here, because vitest exports NODE_PATH into pnpm's hoisted store.
-// The project lives inside the repo so react still resolves for the harness,
-// and it is built once so Vite's dep cache is warm for the measured run.
+// An absent package resolves via NODE_PATH; only a half-installed copy fails deterministically.
 function brokenCompilerProject(): string {
   if (brokenProject) return brokenProject;
   const dir = fs.mkdtempSync(path.resolve("fixtures", "compiler-broken-"));
@@ -107,9 +102,7 @@ async function openPage(harness: HarnessResult): Promise<Page> {
   return page;
 }
 
-// Vite's dep optimizer can force a full page reload right after the first load
-// when it discovers a module outside optimizeDeps.include; that destroys the
-// execution context mid-call. One retry after re-waiting for the harness.
+// Vite can reload on first-load optimizeDeps discovery, destroying the context mid-call.
 async function mountWithRetry(page: Page, props: Record<string, unknown>): Promise<void> {
   try {
     await page.evaluate((p) => (window as any).__120fps.mount(p), props);
@@ -136,9 +129,7 @@ function pluginNames(harness: HarnessResult): string[] {
   );
 }
 
-// agent:false keeps no socket alive, and the idle wait lets the dep-optimizer
-// work a request kicks off finish: closing the server before it settles never
-// resolves.
+// agent:false avoids a lingering socket; the wait lets any optimizer request finish before closing.
 async function readModule(harness: HarnessResult, specifier: string): Promise<string> {
   const url = new URL(specifier, harness.url).href;
   const response = await new Promise<{ status: number; text: string }>(
@@ -156,8 +147,6 @@ async function readModule(harness: HarnessResult, specifier: string): Promise<st
   expect(response.status).toBe(200);
   return response.text;
 }
-
-// --- K1/K2: detection and plugin assembly ---
 
 describe("compiler e2e: Vite config assembly", () => {
   it("adds the react plugin for a project that declares the compiler", async () => {
@@ -224,8 +213,7 @@ describe("compiler e2e: Vite config assembly", () => {
       expect(compilerWarnings.length).toBe(1);
       expect(compilerWarnings[0]).toContain(project);
 
-      // Loading the page once fills Vite's dep cache for this project, so the
-      // measured run below cannot hit the optimizer's first-load full reload.
+      // Loading the page once warms Vite's cache, so the run below skips the first-load reload.
       const page = await openPage(harness!);
       await mountWithRetry(page, {});
       await page.close();
@@ -234,8 +222,6 @@ describe("compiler e2e: Vite config assembly", () => {
     }
   }, 120000);
 });
-
-// --- K2: the transform actually runs ---
 
 describe("compiler e2e: served modules", () => {
   it("compiles the component module when active", async () => {
@@ -258,11 +244,7 @@ describe("compiler e2e: served modules", () => {
     }
   }, 120000);
 
-  // The probe's own synthetic provider assigns to window during render, which
-  // the compiler refuses to compile, so it carries no cache import. What the
-  // contract needs is that probe-entry.tsx goes through the same babel pipeline
-  // as every other module: the Fast Refresh markers only @vitejs/plugin-react
-  // emits are the evidence, and the component it imports is compiled above.
+  // Probe writes to window during render, so compiler skips it; Refresh markers prove pipeline ran.
   it("runs the React probe entry through the transform pipeline", async () => {
     const active = await buildAndServe(COMPILER_PROJECT);
     try {
@@ -282,12 +264,8 @@ describe("compiler e2e: served modules", () => {
   }, 180000);
 });
 
-// --- K4: the memoization the reinterpretation rests on ---
-
 describe("compiler e2e: automatic memoization", () => {
-  // Counts child renders caused by one same-props rerender. The mount is done
-  // first and the counter reset afterwards, so the dep-optimizer reload Vite can
-  // trigger on the first load cannot land inside the measured window.
+  // Mount first, reset the counter after: a first-load dep-optimizer reload then misses the window.
   async function countChildRenders(compilerActive: boolean): Promise<number> {
     const harness = await buildAndServe(RENDER_COUNT_COMPONENT, {
       ...(compilerActive ? {} : { reactCompiler: false }),
@@ -320,8 +298,6 @@ describe("compiler e2e: automatic memoization", () => {
     expect(await countChildRenders(true)).toBe(0);
   }, 180000);
 });
-
-// --- K2: coexistence with M25's Tailwind plugin ---
 
 describe("compiler e2e: coexistence with @tailwindcss/vite", () => {
   it("keeps both plugins when the project uses Tailwind and the compiler", async () => {
@@ -356,8 +332,6 @@ describe("compiler e2e: coexistence with @tailwindcss/vite", () => {
     }
   }, 180000);
 });
-
-// --- K4/K5/K6: full pipeline ---
 
 describe("compiler e2e: full pipeline", () => {
   const baselinePath = path.join(COMPILER_ROOT, "120fps-baseline.json");

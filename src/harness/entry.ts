@@ -36,13 +36,7 @@ export function compositionToJsx(tree: CompositionTree): string {
   return nodeToJsx(tree.structure[0]);
 }
 
-// The entry named its bindings in the import
-// statement, so one type re-exported as a value (`export { IconName, Icon }`)
-// made the whole module fail to link — "does not provide an export named
-// 'IconName'" — before a single line ran. A namespace import always links; the
-// export is selected afterwards, by name, and a name that is not a runtime
-// value is reported as exactly that instead of as a link error naming a file
-// the user never asked about.
+// A namespace import always links; a type re-exported as a value would fail the whole module.
 export function componentModuleImport(componentRelative: string): string {
   return `import * as __120fps_mod from "/${componentRelative}";`;
 }
@@ -51,8 +45,7 @@ export function EXPORT_NOT_RUNTIME_VALUE(name: string): string {
   return `export ${name} is not a runtime value (a type-only export?)`;
 }
 
-// Emitted once per entry; `selectExport` throws at module evaluation, so the
-// page error carries the name and the exports that do exist.
+// selectExport throws at module evaluation, so the page error names the missing export.
 export function componentExportSelector(): string {
   return `const __120fps_selectExport = (name: string): any => {
   const value = name === "default" ? (__120fps_mod as any).default : (__120fps_mod as any)[name];
@@ -66,24 +59,20 @@ export function componentExportSelector(): string {
 };`;
 }
 
-// `scale` is optional by contract (auto-scale probes for it), so it is read,
-// never selected: an absent one stays undefined and the existing
-// `typeof __120fps_scale === "function"` guards decide.
+// `scale` is optional by contract, so it is read, never selected: an absent one is undefined.
 export function scaleBinding(hasScale?: boolean): string {
   return hasScale ? `
 const __120fps_scale = (__120fps_mod as any).scale;` : "";
 }
 
-// A namespace import alongside the default binding: a missing `viewport`
-// export must not become a link-time SyntaxError in the browser.
+// Namespace alongside the default: a missing `viewport` export must not fail the link.
 export function wrapImportLine(wrapRelative?: string): string {
   return wrapRelative
     ? `import __120fpsWrap, * as __120fpsWrapModule from "/${wrapRelative}";\n`
     : "";
 }
 
-// `strict` is opt-in because only the measurement templates declare the strict
-// bindings; the React probe entry shares this helper without them.
+// Opt-in: only the measurement templates declare the strict bindings.
 export function renderTreeHelper(wrapRelative?: string, strict?: boolean): string {
   const el = strict ? "__120fpsInStrict(el)" : "el";
   return wrapRelative
@@ -91,19 +80,13 @@ export function renderTreeHelper(wrapRelative?: string, strict?: boolean): strin
     : `const renderTree = (el: any) => root.render(${el});`;
 }
 
-// StrictMode nests inside the provider wrapper, so the double-invoke cost
-// measured is the component's and not the providers'. Named __120fpsInStrict,
-// not __120fpsWrapStrict: an entry without a wrapper must not mention
-// __120fpsWrap at all.
+// StrictMode nests inside the wrapper, so the double-invoke cost measured is the component's.
 export function strictBlock(): string {
   return `const __120fpsStrict = new URLSearchParams(location.search).get("strict") === "1";
 const __120fpsInStrict = (el: any) => __120fpsStrict ? createElement(StrictMode, null, el) : el;`;
 }
 
-// Functions and JSX cannot cross the CDP boundary, so combo generation
-// carries their position instead and the entry substitutes the real value at
-// render time. Literal preset values never become refs: they travel as
-// themselves, so deltas and matrix cells compare real data.
+// Functions and JSX cannot cross the CDP boundary, so a preset value travels as its position.
 export function presetImportLine(presetRelative?: string): string {
   return presetRelative
     ? `import __120fpsPresets from "/${presetRelative}";\n`
@@ -127,19 +110,15 @@ const __120fpsResolveProps = (props: any) => {
 `;
 }
 
-// Substituted once at each entry point rather than at every render site, so
-// scale fan-outs and composed scenes get resolved props without extra cases.
+// Substituted once per entry point, so scale fan-outs and composed scenes need no extra case.
 export function presetResolveStatement(presetRelative?: string): string {
   return presetRelative ? "props = __120fpsResolveProps(props);" : "";
 }
 
-// Bounded because an unbounded setup would surface as a bare readiness
-// timeout 30s later, naming the harness instead of the wrapper.
+// Bounded: an unbounded setup would surface as a bare readiness timeout naming the harness.
 export const WRAPPER_SETUP_TIMEOUT_MS = 15000;
 
-// Top-level await ahead of the control API assignment: readiness implies setup
-// completed, so a fetch mock is installed before the first render. A rejection
-// fails module evaluation, which reaches the run as a captured page error.
+// Top-level await ahead of the control API: readiness implies setup finished.
 export function setupBlock(wrapRelative?: string): string {
   if (!wrapRelative) return "";
   return `
@@ -158,9 +137,7 @@ if (typeof __120fpsSetup === "function") {
 `;
 }
 
-// Session-scoped, not per-unmount: setup runs once and later samples depend on
-// what it installed, so tearing it down between samples would dismantle the
-// mocks the measurement needs. Measurement sessions call this before disposing.
+// Session-scoped: later samples depend on what setup installed, so teardown is not per-unmount.
 export function setupApiBlock(wrapRelative?: string): string {
   if (!wrapRelative) return "";
   return `
@@ -172,15 +149,7 @@ export function setupApiBlock(wrapRelative?: string): string {
 `;
 }
 
-// `Stylesheets: css/styles.scss` plus `Result: PASS` read as "a styled
-// button was measured" when every rule in that file is nested under an
-// ancestor selector the harness never renders, so not one of them could
-// match. Efficacy is a runtime question and CSSOM has already parsed the
-// answer: rules with a `selectorText`, tested against the rendered tree. No
-// CSS parser and no preprocessor, no network, and every sheet and selector
-// is guarded on its own — a cross-origin sheet throws on `cssRules`, an
-// exotic selector throws in `querySelector`, and neither may take the run
-// down.
+// Rules nested under an ancestor the harness never renders would read as a styled measurement.
 export const STYLESHEET_MATCH_STATS_SOURCE = `function __120fpsStylesheetMatchStats(specifiers, doc, root) {
   var countRules = function (list, stats) {
     for (var i = 0; i < list.length; i++) {
@@ -266,29 +235,18 @@ export interface EntryOptions {
   wrapRelative?: string;
   cssImports?: string[];
   presetRelative?: string;
-  // Defaults to React, so every existing caller produces the entry it did before.
+  // Absent means React.
   renderer?: Renderer;
-  // True when the SFC's template root carries none of v-if/v-show/v-for
-  // (templateHasUnconditionalRoot, src/project/vue-sfc.ts). Only that shape is safe to
-  // force into a stable wrapped render in the combo phase: a conditional root
-  // must keep the ability to legitimately report zero DOM.
+  // Only an unconditional root is safe to force into a stable wrapped render (vue-sfc.ts).
   vueUnconditionalRoot?: boolean;
 }
 
-// The renderer supplies four things: the import block, the mount body, the
-// unmount body, and `renderTree`. Everything around them: the stylesheet
-// block, the setup/teardown blocks, the preset resolver, the
-// single-render-site rule: is renderer-independent and shared.
+// The renderer supplies the import block, the mount and unmount bodies, and `renderTree`.
 export function generateEntry(opts: EntryOptions): string {
   return opts.renderer === "vue" ? generateVueEntry(opts) : generateReactEntry(opts);
 }
 
-// Vue batches updates into a microtask queue drained on nextTick(), so the
-// control API awaits it before resolving `rerender`. Resolving earlier would
-// time scheduling a rerender rather than performing one, and the caller's
-// double-rAF fence proves a frame was presented, not that the queue drained
-// into it: a wrong answer here reports implausibly fast rerenders instead of
-// failing.
+// Vue drains updates on nextTick(), so rerender awaits it; resolving earlier times scheduling.
 export function generateVueEntry(opts: EntryOptions): string {
   const {
     componentRelative,
@@ -300,9 +258,7 @@ export function generateVueEntry(opts: EntryOptions): string {
     vueUnconditionalRoot,
   } = opts;
 
-  // Namespace import, runtime selection — see componentModuleImport.
-  // An SFC always exports its component as the default (detectComponentExport
-  // returns isDefaultOnly for every .vue file), so the selected name is fixed.
+  // An SFC always exports its component as the default, so the selected name is fixed.
   const importLine =
     componentModuleImport(componentRelative) +
     `
@@ -321,20 +277,9 @@ const ${componentName} = __120fps_selectExport("default");` +
       h(${componentName}, { ...rest, key: i })));
   }`;
 
-  // A component reading `this.$slots.default()` or `slots.default?.()` as a
-  // callable (primevue's Accordion.vue, for instance) needs `$slots.default`
-  // to exist and be a function whether or not real children were composed in
-  // -- with no third h() argument at all, $slots.default is undefined, and
-  // calling it throws. An always-present, empty-returning default slot
-  // changes nothing for a component that never inspects $slots.
+  // $slots.default is undefined with no third h() argument, and a component may call it.
   const defaultSlotsArg = `, { default: () => [] }`;
-  // A template whose root has no v-if/v-show/v-for (element-plus's
-  // button.vue, for instance) always produces a real root element once
-  // mounted for real. Wrapping
-  // the bare render in the same stable container shape scale-probe already
-  // uses (its own scale branch above) is what makes the combo phase agree
-  // with scale-probe's already-correct nonzero count. A conditional root is
-  // left bare so a legitimately empty render can still report zero DOM.
+  // A conditional root is left bare so a legitimately empty render can still report zero DOM.
   const bareRender = `h(${componentName}, { ...props }${defaultSlotsArg})`;
   const rootRender = vueUnconditionalRoot ? `h("div", null, [${bareRender}])` : bareRender;
 
@@ -402,8 +347,7 @@ ${setupApiBlock(wrapRelative)}${viewportBlock(wrapRelative)}${stylesheetMatchSta
 `;
 }
 
-// The default slot keeps the wrapper outside the component exactly as
-// createElement(wrap, null, el) does on the React path.
+// The default slot keeps the wrapper outside the component, as on the React path.
 export function vueRenderTreeHelper(wrapRelative?: string): string {
   return wrapRelative
     ? `const renderTree = (node: any) => __120fpsWrap ? h(__120fpsWrap, null, { default: () => node }) : node;`
@@ -503,8 +447,7 @@ export function generateComposedEntry(
   const namedImports = [...components].filter((n) => !defaultExports.has(n)).sort();
   const defaultImport = [...components].find((n) => defaultExports.has(n));
 
-  // One namespace import for the whole composed scene; every composed
-  // name keeps its own binding, selected by name at runtime.
+  // One namespace import for the whole scene; every composed name is selected at runtime.
   const bindings = [
     ...(defaultImport ? [`const ${defaultImport} = __120fps_selectExport("default");`] : []),
     ...namedImports.map((name) => `const ${name} = __120fps_selectExport(${JSON.stringify(name)});`),

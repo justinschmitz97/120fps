@@ -3,10 +3,7 @@ import path from "node:path";
 import ts from "typescript";
 import { pathKey, readJsonFile, toPosix } from "../shared/index.js";
 
-// One directory answering every question about a project is only right
-// when the package and the install are the same directory. A
-// workspace member declares a fraction of what it is built with: the rest lives
-// at the root that owns the lockfile.
+// A workspace member declares a fraction of what it is built with; the lockfile root has the rest.
 export interface ProjectModel {
   // Nearest ancestor with a package.json: harness dir, Vite root, baseline key.
   memberRoot: string;
@@ -28,9 +25,7 @@ export function findProjectRoot(dir: string): string | undefined {
   }
 }
 
-// Undefined means "nothing usable here": missing, unparsable, or a JSON value
-// that is not an object. Callers that must fail closed need that distinction,
-// so it is not collapsed into an empty manifest.
+// Undefined, not an empty manifest: callers that fail closed need "nothing usable here".
 export function readProjectManifest(root: string): Record<string, unknown> | undefined {
   const parsed = readJsonFile(path.join(root, MANIFEST));
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return undefined;
@@ -43,9 +38,7 @@ function governsInstall(dir: string): boolean {
   return readProjectManifest(dir)?.workspaces !== undefined;
 }
 
-// Nearest wins, and the walk never leaves the repository the member is in: an
-// unbounded walk would let one stray lockfile in a home directory claim every
-// project underneath it.
+// Bounded by the repository: a stray lockfile in a home directory must not claim every project.
 export function findWorkspaceRoot(memberRoot: string): string {
   let current = memberRoot;
   while (true) {
@@ -62,10 +55,7 @@ export function resolveProjectModel(dir: string): ProjectModel {
   return { memberRoot, workspaceRoot: findWorkspaceRoot(memberRoot) };
 }
 
-// Both roots printed once per component, absolute, is the evidence a
-// diagnosis needs: identical here means two measurements resolved the same
-// project, and any remaining difference is not project resolution. One root
-// when the member is the workspace.
+// Absolute, so two measurements printing the same roots rule out project resolution.
 export function formatResolvedRoots(memberRoot: string, workspaceRoot: string): string {
   const member = path.resolve(memberRoot);
   const workspace = path.resolve(workspaceRoot);
@@ -74,22 +64,17 @@ export function formatResolvedRoots(memberRoot: string, workspaceRoot: string): 
     : `Roots: member ${member}, workspace ${workspace}`;
 }
 
+// jsconfig.json holds the same JSON shape and the TypeScript config APIs read it.
 const COMPILER_CONFIGS = ["tsconfig.json", "jsconfig.json"];
 
-// One answer to "which config governs this file", shared by alias
-// construction and prop extraction: two searches that disagreed gave a
-// workspace member working prop types and zero aliases. jsconfig.json holds the
-// same JSON shape and the TypeScript config APIs read it, so a JavaScript
-// project is not a separate path. The nearest level wins, and the walk stops
-// after stopDir; without a stopDir it reaches the filesystem root, which is the
-// reach ts.findConfigFile had. Forward slashes, because ts.readConfigFile
-// asserts on a backslash path once it has a diagnostic to report.
+// One answer for alias construction and prop extraction; two searches disagreeing cost aliases.
 export function findCompilerConfig(startDir: string, stopDir?: string): string | undefined {
   const stop = stopDir === undefined ? undefined : path.resolve(stopDir);
   let current = path.resolve(startDir);
   while (true) {
     for (const name of COMPILER_CONFIGS) {
       const candidate = path.join(current, name);
+      // toPosix: ts.readConfigFile asserts on a backslash path once it has a diagnostic.
       if (fs.existsSync(candidate)) return toPosix(candidate);
     }
     if (current === stop) return undefined;
@@ -113,8 +98,7 @@ export function declaredPackages(root: string): Set<string> {
   return names;
 }
 
-// memberRoot first, then each ancestor up to and including workspaceRoot. A
-// workspaceRoot that is not an ancestor leaves the member as the only level.
+// A workspaceRoot that is not an ancestor leaves the member as the only level.
 export function workspaceLevels(memberRoot: string, workspaceRoot: string): string[] {
   const target = path.resolve(workspaceRoot);
   const levels: string[] = [memberRoot];
@@ -128,18 +112,12 @@ export function workspaceLevels(memberRoot: string, workspaceRoot: string): stri
   return levels;
 }
 
-// A hoisting installer puts a package at a level no manifest mentions, which is
-// how a member with an empty manifest still builds. require.resolve is not the
-// probe: it honours NODE_PATH (a test runner points it at pnpm's store, where
-// everything resolves from everywhere) and it resolves symlinks, so a member's
-// link answers with a store path that does not name the level it came from.
+// Not require.resolve: it honours NODE_PATH and resolves symlinks, losing the level.
 function isInstalledAt(level: string, pkg: string): boolean {
   return fs.existsSync(path.join(level, "node_modules", ...pkg.split("/"), MANIFEST));
 }
 
-// Declaration at either level. Separate from availability because a transform
-// that rewrites the measured code (the React Compiler) must be something the
-// project says it ships: a hoisted transitive copy is not evidence of that.
+// Separate from availability: a transform that rewrites measured code must be declared.
 export function isPackageDeclared(
   pkg: string,
   memberRoot: string,
@@ -148,18 +126,7 @@ export function isPackageDeclared(
   return declaredPackages(memberRoot).has(pkg) || declaredPackages(workspaceRoot).has(pkg);
 }
 
-// Node's own CommonJS lookup chain: the directory, then every ancestor to
-// the filesystem root, skipping a `node_modules` directory as a base the way
-// Module._nodeModulePaths does. This is the reach every loader in this codebase
-// already has, all of them resolving through `createRequire(path.join(root, "/"))`,
-// so a package installed above the workspace root is importable and the
-// per-level walk (memberRoot up to workspaceRoot) reported it absent.
-//
-// Still a directory probe rather than require.resolve, for two measured reasons:
-// pnpm exports NODE_PATH into its hoisted store for every script it runs, so
-// under `pnpm test` every package resolves from every directory; and
-// `<pkg>/package.json` is answered through the package's `exports` map, which
-// @vitejs/plugin-vue does not open.
+// Node's CommonJS lookup chain, the reach every createRequire loader here already has.
 function isInstalledOnResolutionChain(fromDir: string, pkg: string): boolean {
   let current = path.resolve(fromDir);
   while (true) {
@@ -170,11 +137,6 @@ function isInstalledOnResolutionChain(fromDir: string, pkg: string): boolean {
   }
 }
 
-// The same upward walk as isInstalledOnResolutionChain, but returns
-// where a package lives instead of whether it does, so a caller can inspect
-// what is actually installed there (e.g. whether it has a runtime entry at
-// all, as distinct from a type-only import TypeScript resolves but a bundler
-// cannot load).
 export function installedPackageDir(pkg: string, fromDir: string): string | undefined {
   let current = path.resolve(fromDir);
   while (true) {
@@ -187,8 +149,7 @@ export function installedPackageDir(pkg: string, fromDir: string): string | unde
   }
 }
 
-// The chain walk is a strict superset of the workspace levels: every level is
-// memberRoot or one of its ancestors, so it needs no separate probe.
+// The chain walk is a strict superset of the workspace levels, so no separate probe is needed.
 export function isPackageAvailable(
   pkg: string,
   memberRoot: string,
@@ -200,34 +161,22 @@ export function isPackageAvailable(
 
 const PNP_MARKERS = [".pnp.cjs", ".pnp.loader.mjs"];
 
-// Yarn PnP replaces node_modules with a virtual filesystem resolved by
-// these two loader files at the workspace root; the harness's Vite server and
-// every createRequire-based lookup in this codebase assume real node_modules,
-// so a PnP install fails deep and confusingly instead of naming the actual
-// cause. process.versions.pnp is set by Yarn's own require hook when 120fps
-// itself runs under PnP, which the marker-file probe alone would miss.
+// Every createRequire lookup here assumes real node_modules, so PnP fails deep and unnamed.
 export function detectPnP(workspaceRoot: string): boolean {
+  // Set by Yarn's own require hook when 120fps itself runs under PnP; markers alone miss that.
   if ((process.versions as Record<string, string | undefined>).pnp !== undefined) return true;
   return PNP_MARKERS.some((name) => fs.existsSync(path.join(workspaceRoot, name)));
 }
 
-// "which config governs this file" has one more
-// answer than `findCompilerConfig` gives. `npm create vite@latest` writes a
-// root that declares no compilerOptions at all -- `{ "files": [],
-// "references": [...] }` -- and puts every option the project uses in
-// `tsconfig.app.json`. TypeScript reads the referenced project that covers the
-// file; reading the nearest config instead finds no `paths`, and the run
-// dies on the project's own `@/lib/utils` import.
+// npm create vite writes a references-only root; the nearest config there has no paths at all.
 export interface GoverningTsconfig {
-  // The config whose options apply. Undefined only when there is no config, or
-  // when the nearest one could not be read (the caller owns that message).
+  // Undefined when there is no config, or the nearest could not be read (caller owns the text).
   configPath: string | undefined;
   nearestConfigPath: string | undefined;
   // True only when configPath came from a `references` entry.
   viaReferences: boolean;
   options: ts.CompilerOptions;
-  // Where a relative `paths` target resolves from: baseUrl, else the directory
-  // of the config that declared `paths`, else the config's own directory.
+  // Where a relative paths target resolves from: baseUrl, else the declaring config's directory.
   base: string;
   warnings: string[];
 }
@@ -253,9 +202,7 @@ export function TSCONFIG_REFERENCES_NO_MATCH_WARNING(
   subject: string,
   tried: string[],
 ): string {
-  // Every config the walk touched, including one it could not read: a
-  // reference target that is missing is exactly the case this sentence has to
-  // explain, so naming nothing there would be the unhelpful answer.
+  // Every config the walk touched, unreadable ones included: a missing target is the case to name.
   const attempted = tried.length > 0 ? `(tried ${tried.join(", ")}) ` : "";
   return (
     `${nearestConfigPath} ${TSCONFIG_REFERENCES_MARKER}; no referenced config covers ${subject} ` +
@@ -263,9 +210,7 @@ export function TSCONFIG_REFERENCES_NO_MATCH_WARNING(
   );
 }
 
-// A broken extends chain, named and connected to the
-// downstream consequence (an empty prop schema) it silently causes, instead
-// of two unrelated-looking facts a user has to connect themselves.
+// Connects a broken extends chain to the empty prop schema it silently causes.
 export function TSCONFIG_EXTENDS_BROKEN_WARNING(tsconfigPath: string, detail: string): string {
   return (
     `${tsconfigPath}: ${detail} Path aliases and compiler options from the broken part of this ` +
@@ -274,11 +219,7 @@ export function TSCONFIG_EXTENDS_BROKEN_WARNING(tsconfigPath: string, detail: st
   );
 }
 
-// Scoped to the two diagnostic codes TypeScript actually uses for an
-// unresolvable extends target (5083 "Cannot find a base configuration file",
-// 6053 "File not found"). Every other parseJsonConfigFileContent diagnostic is
-// unrelated noise -- 18003 "No inputs were found" fires for a tmpdir tsconfig
-// with no matching source files, which is a completely normal config.
+// 5083 and 6053 only: 18003 "No inputs were found" is a normal config, not broken extends.
 const EXTENDS_BROKEN_CODES = new Set([5083, 6053]);
 
 // The four options a referenced config supplies that change what a run does.
@@ -291,8 +232,7 @@ interface ReadCompilerConfig {
   configErrors: string[];
 }
 
-// Returns undefined on a read or parse failure, with the detail pushed onto
-// `failures`: the caller owns the message, so no read reports itself twice.
+// The caller owns the message, so a failed read pushes detail onto failures and stays quiet.
 function readCompilerConfig(
   configPath: string,
   failures: string[],
@@ -306,8 +246,7 @@ function readCompilerConfig(
       );
       return undefined;
     }
-    // parseJsonConfigFileContent resolves extends (string and array), JSONC and
-    // trailing commas; baseUrl comes back absolute.
+    // parseJsonConfigFileContent resolves extends, JSONC and trailing commas; baseUrl is absolute.
     const parsed = ts.parseJsonConfigFileContent(
       configFile.config,
       ts.sys,
@@ -334,8 +273,7 @@ function readCompilerConfig(
   }
 }
 
-// A referenced `path` is a config file or the directory holding one, exactly as
-// `tsc --build` reads it.
+// A referenced path is a config file or the directory holding one, as tsc --build reads it.
 function resolveReferencePath(configDir: string, reference: string): string | undefined {
   const resolved = path.resolve(configDir, reference);
   try {
@@ -344,9 +282,7 @@ function resolveReferencePath(configDir: string, reference: string): string | un
     }
     return toPosix(resolved);
   } catch {
-    // A target that is not on disk is still named: a ".json" target reaches
-    // readCompilerConfig as itself, a directory target as the "tsconfig.json"
-    // `tsc --build` looks for inside it, so the tried list names both.
+    // A target that is not on disk is still named, so the tried list can report it.
     return resolved.endsWith(".json")
       ? toPosix(resolved)
       : toPosix(path.join(resolved, "tsconfig.json"));
@@ -363,8 +299,7 @@ function referencePaths(raw: Record<string, unknown>): string[] {
     .filter((value): value is string => typeof value === "string" && value.length > 0);
 }
 
-// `include`/`files` semantics, computed by TypeScript itself: fileNames is the
-// glob result. A directory is covered when any of its files is.
+// fileNames is TypeScript's own glob result; a directory is covered when any of its files is.
 function coversTarget(fileNames: readonly string[], target: string, targetIsFile: boolean): boolean {
   const wanted = pathKey(target);
   const prefix = wanted.endsWith("/") ? wanted : wanted + "/";
@@ -374,10 +309,7 @@ function coversTarget(fileNames: readonly string[], target: string, targetIsFile
   });
 }
 
-// A monorepo member's nearest config is one of several tsconfig.json files in
-// the tree, so the disclosure names it relative to the root that bounded the
-// search. A single-package project, whose search root holds that config, still
-// reads as a bare "tsconfig.json".
+// Relative to the search root: a monorepo has several tsconfig.json files to tell apart.
 function describeNearestConfig(nearestConfigPath: string, stopDir?: string): string {
   if (!stopDir) return path.basename(nearestConfigPath);
   const relative = toPosix(path.relative(stopDir, nearestConfigPath));
@@ -392,8 +324,7 @@ export function resolveGoverningTsconfig(fileOrDir: string, stopDir?: string): G
   try {
     targetIsFile = !fs.statSync(target).isDirectory();
   } catch {
-    // A path that is not on disk is a file when it looks like one; a caller
-    // naming a directory that does not exist gets the same answer either way.
+    // A path that is not on disk is a file when it looks like one.
     targetIsFile = path.extname(target) !== "";
   }
   const startDir = targetIsFile ? path.dirname(target) : target;
@@ -433,8 +364,7 @@ export function resolveGoverningTsconfig(fileOrDir: string, stopDir?: string): G
     warnings,
   };
 
-  // MUST NOT: a config declaring its own compilerOptions wins outright, so the
-  // README's "nearest one wins" stays true for every project that has one.
+  // A config with its own compilerOptions wins outright, keeping README's "nearest one wins".
   const ownOptions = nearest.raw.compilerOptions;
   const declaresOwnOptions =
     ownOptions !== null &&
@@ -449,17 +379,14 @@ export function resolveGoverningTsconfig(fileOrDir: string, stopDir?: string): G
   let queued = references.map((reference) =>
     resolveReferencePath(path.dirname(nearestConfigPath), reference),
   );
-  // Breadth-first over the reference graph, cycle-guarded: a solution-style
-  // root pointing at another solution-style root still reaches a real project,
-  // and a cycle or a missing target ends the walk with the nearest config.
+  // Breadth-first and cycle-guarded: a root pointing at another root still reaches a project.
   while (queued.length > 0) {
     const next: Array<string | undefined> = [];
     for (const candidate of queued) {
       if (!candidate || seen.has(pathKey(candidate))) continue;
       seen.add(pathKey(candidate));
       const relativeCandidate = toPosix(path.relative(path.dirname(nearestConfigPath), candidate));
-      // Named before it is read: a missing or malformed reference target is a
-      // config this walk tried, and the no-match sentence names every one.
+      // Named before it is read: an unreadable target is still a config this walk tried.
       const readFailures: string[] = [];
       const referenced = readCompilerConfig(candidate, readFailures);
       if (!referenced) {

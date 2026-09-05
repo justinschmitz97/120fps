@@ -19,8 +19,7 @@ import {
 import { formatTable, buildTimingWithCV, type EnvFingerprint, type Report, type Thresholds } from "../../src/report/index.js";
 import { parseArgs } from "../../src/cli/index.js";
 
-// M45: entries are keyed by component x environment slot; selectBaselineEntry
-// resolves the slot for us so these assertions stay about the entry, not the key.
+// M45: selectBaselineEntry resolves the component x env key so assertions stay on the entry.
 function entryOf(baseline: any, componentPath: string) {
   return selectBaselineEntry(baseline, componentPath, "unused")!.entry;
 }
@@ -60,7 +59,6 @@ function noArgs(v: unknown): EnvFingerprint {
   return v as EnvFingerprint;
 }
 
-// H1: baseline JSON with `env: null`
 describe("H1 null fingerprint", () => {
   it("classifies as unknown without throwing", () => {
     expect(classifyEnv(noArgs(null), env())).toBe("unknown");
@@ -75,7 +73,6 @@ describe("H1 null fingerprint", () => {
   });
 });
 
-// H2: a fingerprint written by a future shape
 describe("H2 unknown fingerprint shape", () => {
   it("compares on the shared fields instead of invalidating the entry", () => {
     expect(classifyEnv(env({ shape: 2 as 1 }), env())).toBe("identical");
@@ -83,7 +80,6 @@ describe("H2 unknown fingerprint shape", () => {
   });
 });
 
-// H3: hand-edited partial fingerprint
 describe("H3 partial fingerprint", () => {
   const partial = noArgs({ shape: 1, cpu: "TestCPU X1", mode: "combo" });
 
@@ -111,7 +107,6 @@ describe("H3 partial fingerprint", () => {
   });
 });
 
-// H4: zero calibration in the stored baseline
 describe("H4 zero calibration", () => {
   it("never divides by zero", () => {
     const result = compareBaseline(
@@ -131,7 +126,6 @@ describe("H4 zero calibration", () => {
   });
 });
 
-// H5: negative metrics
 describe("H5 negative metrics", () => {
   it("skips a non-positive baseline metric under normalization", () => {
     const result = compareBaseline(
@@ -146,7 +140,6 @@ describe("H5 negative metrics", () => {
   });
 });
 
-// H6: NaN metrics
 describe("H6 NaN metrics", () => {
   it("produces no regression or improvement and does not throw", () => {
     const result = compareBaseline(
@@ -161,7 +154,6 @@ describe("H6 NaN metrics", () => {
   });
 });
 
-// H7: non-finite calibration
 describe("H7 non-finite calibration", () => {
   it("rejects NaN and Infinity as normalization scales", () => {
     for (const bad of [NaN, Infinity, -Infinity]) {
@@ -178,7 +170,6 @@ describe("H7 non-finite calibration", () => {
   });
 });
 
-// H8: css presence asymmetry
 describe("H8 css presence", () => {
   it("is incompatible in both directions", () => {
     expect(classifyEnv(env({ css: ["a.css"] }), env())).toBe("incompatible");
@@ -196,7 +187,6 @@ describe("H8 css presence", () => {
   });
 });
 
-// H9: css ordering
 describe("H9 css ordering", () => {
   it("treats a reordered list as incompatible because order drives the cascade", () => {
     expect(classifyEnv(env({ css: ["reset.css", "tokens.css"] }), env({ css: ["tokens.css", "reset.css"] }))).toBe("incompatible");
@@ -207,7 +197,6 @@ describe("H9 css ordering", () => {
   });
 });
 
-// H10: mixed entries in one file
 describe("H10 mixed baseline file", () => {
   let tmpDir: string;
 
@@ -240,7 +229,6 @@ describe("H10 mixed baseline file", () => {
   });
 });
 
-// H11: flag edge cases
 describe("H11 --baseline-env parsing edges", () => {
   it("rejects an empty value", () => {
     expect(parseArgs(["./a.tsx", "--baseline-env", ""]).error).toContain("--baseline-env");
@@ -261,7 +249,6 @@ describe("H11 --baseline-env parsing edges", () => {
   });
 });
 
-// H12: strict against an unfingerprinted baseline
 describe("H12 strict with no baseline fingerprint", () => {
   it("fails and names the missing record", () => {
     const result = compareBaseline(makeEntry(), { mount: 1, rerender: 0.5, unmount: 0.1, interactions: {} }, TOL, undefined, env());
@@ -272,7 +259,6 @@ describe("H12 strict with no baseline fingerprint", () => {
   });
 });
 
-// H13: mode outside the declared union
 describe("H13 unrecognized mode", () => {
   it("is incompatible rather than a crash", () => {
     const result = compareBaseline(
@@ -288,7 +274,6 @@ describe("H13 unrecognized mode", () => {
   });
 });
 
-// H14: effective sample/throttle overrides
 describe("H14 effective run configuration", () => {
   it("records overridden samples and throttle, not defaults", () => {
     const fp = buildEnvFingerprint({
@@ -304,7 +289,6 @@ describe("H14 effective run configuration", () => {
   });
 });
 
-// H15: Infinity in the current run
 describe("H15 infinite current metric", () => {
   it("reports a regression without throwing", () => {
     const result = compareBaseline(
@@ -319,7 +303,6 @@ describe("H15 infinite current metric", () => {
   });
 });
 
-// H16: no cross-call state
 describe("H16 repeated comparisons", () => {
   it("does not accumulate mismatch notes across calls", () => {
     const entry = makeEntry({ mount: 1.0, env: env({ calibrationTotalDuration: 0, cpu: "Other" }) });
@@ -331,7 +314,6 @@ describe("H16 repeated comparisons", () => {
   });
 });
 
-// H17: interaction label collisions
 describe("H17 interaction label collisions", () => {
   it("keeps an interaction labelled mount separate from the core metric", () => {
     const result = compareBaseline(
@@ -345,7 +327,6 @@ describe("H17 interaction label collisions", () => {
   });
 });
 
-// H18: unstable metrics under normalization
 describe("H18 unstable metrics", () => {
   it("still skips unstable metrics when normalizing", () => {
     const result = compareBaseline(
@@ -359,7 +340,6 @@ describe("H18 unstable metrics", () => {
   });
 });
 
-// H19: report rendering with a contradictory comparison
 describe("H19 incompatible comparison carrying metrics", () => {
   it("suppresses the metric table entirely", () => {
     const out = formatTable(makeReport({
@@ -377,7 +357,6 @@ describe("H19 incompatible comparison carrying metrics", () => {
   });
 });
 
-// H20: feature mismatch beats hardware drift in reporting
 describe("H20 mismatch ordering", () => {
   it("lists feature differences before hardware differences", () => {
     const diffs = describeEnvDiff(

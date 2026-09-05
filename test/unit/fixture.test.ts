@@ -7,8 +7,6 @@ import type { MountResult } from "../../src/browser/index.js";
 import type { ExploreResult, StateGraph } from "../../src/analysis/index.js";
 import path from "node:path";
 
-// --- CLI tests ---
-
 describe("parseArgs --fixture", () => {
   it("parses --fixture flag with path", () => {
     const result = parseArgs(["./comp.tsx", "--fixture", "./comp.fixture.tsx"]);
@@ -38,8 +36,6 @@ describe("parseArgs --fixture", () => {
     expect(result.ci).toBe(true);
   });
 });
-
-// --- Fixture detection ---
 
 describe("isFixturePath", () => {
   it("returns true for .fixture.tsx", () => {
@@ -72,8 +68,6 @@ describe("detectFixture", () => {
     expect(result).toBeUndefined();
   });
 });
-
-// --- Report fields ---
 
 function makeEmptyGraph(): StateGraph {
   const nodes = new Map();

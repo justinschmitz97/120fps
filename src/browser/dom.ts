@@ -1,14 +1,6 @@
 import type { Page } from "playwright";
 
-// Animation is what the page is *doing*, never what its stylesheet
-// declares. A Tailwind `transition-all` on an idle button declares a transition
-// and animates nothing; reading it as animation would force static toolbars
-// into T3. Every real case: a CSS animation, a running transition, a WAAPI
-// animation: produces an `Animation` object here; a declared-but-untriggered
-// transition produces none.
-//
-// Exported as source rather than a closure so the rule is one definition and
-// can be exercised against stub objects without a browser.
+// A declared but untriggered transition produces no Animation; only running work does.
 export const OBSERVED_ANIMATION_EXPRESSION = `(function () {
   var root = document.getElementById("root");
   if (!root) return false;
@@ -32,18 +24,7 @@ export async function detectAnimations(page: Page): Promise<boolean> {
   return page.evaluate<boolean>(OBSERVED_ANIMATION_EXPRESSION);
 }
 
-// `document.querySelectorAll("*")` counts html/head/body/#root and Vite's
-// injected scripts, an ~8 element floor that is not the component's DOM and
-// that pushed small components a whole tier up. Count what the component
-// actually rendered: everything inside #root, plus portal content, which lives
-// on document.body but belongs to the component.
-//
-// The two halves are reported separately. The sum is what
-// every existing caller reads and is unchanged; the split is what lets a
-// report say "this component rendered only through a portal" instead of
-// leaving `domNodeCount` to carry both facts at once. Kept as a source string
-// so the same code a page runs is the code a unit test runs (the harness
-// entry's `stylesheetMatchStats` precedent).
+// Counting the whole document adds an ~8 element floor that is not the component's DOM.
 export const COMPONENT_NODE_COUNT_SOURCE = `
 function __120fpsCountComponentNodes(doc) {
   var INTERNAL = { SCRIPT: 1, STYLE: 1, LINK: 1, NOSCRIPT: 1, TEMPLATE: 1 };
@@ -68,10 +49,7 @@ export interface ComponentNodeCount {
   orphanNodes: number;
 }
 
-// `page.evaluate` parses a string as an EXPRESSION, so a bare function
-// declaration followed by a call is a syntax error at `eval`. Every source
-// string above is handed over wrapped in an IIFE, and the wrapped form is
-// exported so a unit test can assert it parses.
+// `page.evaluate` parses an EXPRESSION, so a bare function declaration is a syntax error.
 function asEvaluateExpression(source: string, call: string): string {
   return `(() => { ${source}
 return ${call}; })()`;
@@ -90,17 +68,7 @@ export function totalComponentNodes(count: ComponentNodeCount): number {
   return count.rootNodes + count.orphanNodes;
 }
 
-// `<use href="#calendar">` is a same-document fragment
-// reference. Nothing is requested, so the network capture is blind to it, and
-// the `<svg>` plus the `<use>` count as two real nodes -- a component that
-// renders visibly nothing measures as a component that rendered. calcom's
-// sprite is injected by `apps/web/app/layout.tsx`, which the harness never
-// mounts.
-//
-// Same-document fragments only. An external `<use href="/icons.svg#id">` is
-// fetched by the browser and its target never enters `document`, so
-// `getElementById` cannot decide it and checking it would report every valid
-// external sprite as unresolved.
+// Same-document fragments only: nothing is requested, so the network capture cannot see these.
 export const UNRESOLVED_SPRITE_REFS_SOURCE = `
 function __120fpsUnresolvedSpriteRefs(doc) {
   var INTERNAL = { SCRIPT: 1, STYLE: 1, LINK: 1, NOSCRIPT: 1, TEMPLATE: 1 };
@@ -133,8 +101,7 @@ function __120fpsUnresolvedSpriteRefs(doc) {
   return missing;
 }`;
 
-// Bounded like every other collected list in a report: a component with a
-// hundred broken icons says so with ten of them.
+// Bounded like every collected list in a report: a hundred broken icons say so with ten.
 export const MAX_UNRESOLVED_SPRITE_REFS = 10;
 
 export const UNRESOLVED_SPRITE_REFS_EXPRESSION = asEvaluateExpression(
@@ -147,20 +114,13 @@ export async function collectUnresolvedSpriteRefs(page: Page): Promise<string[]>
   return refs.slice(0, MAX_UNRESOLVED_SPRITE_REFS);
 }
 
-// What scene the numbers describe. A component that fetches, suspends, or
-// defers work renders a fallback first, and a mount measurement over that scene
-// is a real number about the wrong thing.
+// A component that suspends renders a fallback first; a mount over that scene measures wrong.
 export type MeasuredState = "settled" | "pending-network" | "late-mutation";
 
-// Grace window held after the mount fence, in real time: long enough for a
-// promise-resolution or short-timer re-render to land, short enough that every
-// combo can pay it once. Timers run on wall clock under the frame pump, and
-// the pump keeps driving frames throughout, so rAF-scheduled updates land too.
+// Long enough for a promise or short-timer re-render to land, short enough to pay per combo.
 export const MEASURED_STATE_HOLD_MS = 120;
 
-// Animation mutates the DOM by design, so an animated combo's mutation says
-// nothing about settledness. The network signal is unaffected by it, and it
-// names a cause the mutation signal only hints at, so it wins when both fire.
+// Animation mutates the DOM by design, so its mutation proves nothing; network wins.
 export function classifyMeasuredState(signals: {
   pendingNetwork: boolean;
   mutated: boolean;
@@ -171,15 +131,7 @@ export function classifyMeasuredState(signals: {
   return "settled";
 }
 
-// Counts in-flight fetch/XHR by wrapping the page's own APIs rather than
-// enabling CDP's Network domain: the domain's event traffic lands inside traced
-// windows, and enabling it for the probing sample only would make that sample's
-// conditions differ from the rest of the median. The wrapper is installed once
-// per page, before anything mounts, so every sample runs under identical
-// instrumentation and the counters are read outside traced windows.
-//
-// Each request carries a monotonic id, so "pending" can be narrowed to requests
-// that started during the mount rather than leftovers from an earlier combo.
+// Wraps the page APIs instead of CDP's Network domain, whose events land in traced windows.
 const MEASURED_STATE_PROBE = `(() => {
   const w = window;
   if (w.__120fpsNet) return;
@@ -236,10 +188,7 @@ export async function readNetworkProbe(
 
 const MUTATION_WATCH_KEY = "__120fpsMut";
 
-// Armed the moment the mount fence clears, before the DOM-count and animation
-// probes run. Those probes cost real time under a CPU throttle, and a component
-// whose content arrives while they are running would otherwise be classified
-// settled because our own instrumentation ate the window.
+// Armed before the DOM and animation probes: their own cost would swallow a late arrival.
 export async function beginMutationWatch(page: Page): Promise<void> {
   await page.evaluate((key: string) => {
     const w = window as any;
@@ -267,18 +216,16 @@ export async function beginMutationWatch(page: Page): Promise<void> {
       if (child.localName.startsWith("vite-")) continue;
       observer.observe(child, options);
     }
-    // A portal that appears late is a body-level childList change, which the
-    // per-child observers above cannot see.
+    // A late portal is a body-level childList change the per-child observers cannot see.
     observer.observe(document.body, { childList: true });
   }, MUTATION_WATCH_KEY);
 }
 
-// Holds the remainder of the grace window, then reports what moved. The hold
-// runs whether or not the mutation signal applies to this combo: the network
-// signal reads after the same window either way.
+// The hold runs even when mutation does not apply: the network signal reads after it anyway.
 export async function endMutationWatch(page: Page, holdMs: number): Promise<boolean> {
   return page.evaluate(
     async ([key, ms]: [string, number]) => {
+      // The pump keeps driving frames through this hold, so rAF-scheduled updates land too.
       await new Promise((r) => setTimeout(r, ms));
       const state = (window as any)[key];
       if (!state) return false;
@@ -290,8 +237,7 @@ export async function endMutationWatch(page: Page, holdMs: number): Promise<bool
   );
 }
 
-// Begin, hold, end: the composed form, for callers that have nothing to do in
-// between.
+// Begin, hold, end: the composed form, for callers with nothing to do in between.
 export async function probeLateMutation(
   page: Page,
   holdMs: number,

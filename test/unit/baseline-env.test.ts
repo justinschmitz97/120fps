@@ -26,8 +26,7 @@ import {
 } from "../../src/report/index.js";
 import { parseArgs, KNOWN_FLAGS } from "../../src/cli/index.js";
 
-// M45: entries are keyed by component x environment slot; selectBaselineEntry
-// resolves the slot for us so these assertions stay about the entry, not the key.
+// M45: selectBaselineEntry resolves the component x env key so assertions stay on the entry.
 function entryOf(baseline: any, componentPath: string) {
   return selectBaselineEntry(baseline, componentPath, "unused")!.entry;
 }
@@ -63,7 +62,6 @@ function makeEntry(overrides: Partial<BaselineEntry> = {}): BaselineEntry {
   };
 }
 
-// --- E1: fingerprint construction ---
 
 describe("E1 buildEnvFingerprint", () => {
   const machine = {
@@ -149,7 +147,6 @@ describe("E1 buildEnvFingerprint", () => {
   });
 });
 
-// --- E2: classification ---
 
 describe("E2 classifyEnv", () => {
   it("unknown when the baseline has no fingerprint", () => {
@@ -249,7 +246,6 @@ describe("E2 describeEnvDiff", () => {
   });
 });
 
-// --- E3: comparison strategy ---
 
 describe("E3 compareBaseline without a current fingerprint", () => {
   it("classifies unknown and compares raw", () => {
@@ -321,8 +317,7 @@ describe("E3 normalizable → calibration-normalized comparison", () => {
     expect(result.regressions).toHaveLength(0);
   });
 
-  // Equal calibration with a different CPU: still normalizable, but the
-  // normalization is 1:1, so the raw delta is the only thing being floored.
+  // Equal calibration despite a different CPU: normalization is 1:1, so only the raw delta floors.
   const flatBaseEnv = env({ calibrationTotalDuration: 10, cpu: "Slow CPU" });
   const flatCurEnv = env({ calibrationTotalDuration: 10 });
 
@@ -376,7 +371,6 @@ describe("E3 incompatible → no comparison", () => {
   });
 });
 
-// --- E4: policy ---
 
 describe("E4 envAdvisory", () => {
   it("never fails or warns for identical", () => {
@@ -453,7 +447,6 @@ describe("E4 --baseline-env flag", () => {
   });
 });
 
-// --- E5: reporting ---
 
 const THRESHOLDS: Thresholds = { mountMs: 50, interactionMs: 400, relativeMount: 2, rerenderMs: 16 };
 
@@ -561,7 +554,6 @@ describe("E5 formatBaselineSection environment line", () => {
   });
 });
 
-// --- E6: migration ---
 
 describe("E6 baseline file migration", () => {
   let tmpDir: string;

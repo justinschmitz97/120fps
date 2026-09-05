@@ -5,8 +5,7 @@ import { extractProps, resetExtractionCache } from "../../src/props/index.js";
 const M86 = path.resolve("./fixtures/m86");
 const fixture = (name: string): string => path.join(M86, name);
 
-// M86 harden: adversarial hypotheses against the required/source-reference/
-// preset-exemption mechanisms.
+// M86 harden: adversarial hypotheses against required/source-reference/preset-exemption mechanisms.
 describe("M86 harden", () => {
   it("1: a component with no parameters at all does not crash", async () => {
     resetExtractionCache();

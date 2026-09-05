@@ -128,40 +128,23 @@ export interface AnalyzeOptions {
   cssFiles?: string[];
   noCss?: boolean;
   reactCompiler?: boolean;
-  // Share pooled browsers across runs (the CLI passes one pool for a whole
-  // multi-component sweep). analyze() creates and closes its own pool when
-  // none is provided.
+  // Shared across a sweep; analyze() creates and closes its own pool when none is given.
   browserPool?: BrowserPool;
-  // Share one dev server per config tuple across a sweep. analyze() never
-  // creates or closes one: single-component runs gain nothing.
+  // Shared across a sweep; analyze() never creates or closes one, as one run gains nothing.
   serverPool?: import("../harness/index.js").ServerPool;
-  // Force measurement even when a fingerprinted baseline would allow
-  // reusing the stored verdict.
+  // Measure even when a fingerprinted baseline would allow reusing the stored verdict.
   noCache?: boolean;
   // Attempt the run even when the graph reaches a server boundary.
   noPreflight?: boolean;
   // Skip the project's own Vite transforms.
   noTransforms?: boolean;
-  // The export to import and bind props to (`<file>#Export`). Absent, the
-  // resolver's own selection order picks one.
+  // The export to import and bind props to (`<file>#Export`); absent, the resolver picks one.
   target?: string;
-  // One line per pipeline phase boundary. Defaulted by the CLI to stdout,
-  // silenced entirely in CI mode.
+  // One line per phase boundary, defaulted by the CLI to stdout and silenced in CI mode.
   onProgress?: (line: string) => void;
-  // The run watchdog reads the same phase boundaries as a signal, not as
-  // console output. `onProgress` is silenced by `--ci` because `--ci` owns
-  // stdout for JSON; a watchdog that re-arms per phase must not be silenced
-  // with it, or a CI run degrades to a single total-budget abort with no
-  // idea which phase hung. Invoked before the `ci` short-circuit and never
-  // written to any stream.
+  // A watchdog signal, never a stream: --ci silences onProgress, a per-phase re-arm must survive.
   onPhase?: (phase: string) => void;
-  // Mirrors every warning this run discovers (the `Stylesheets:` decision
-  // line, then each `runWarnings` entry as it is pushed) out to a
-  // caller-supplied sink in real time, not only at the end: a caller that
-  // also owns a *different* failure-arrival surface (cli/main.ts's
-  // process-level `unhandledRejection` handler, which runs on a separate
-  // call stack with no access to this function's own locals) can still
-  // disclose everything discovered before whatever crashed it.
+  // Mirrored in real time, so a caller owning a separate failure surface still sees them.
   onWarning?: (warning: string) => void;
 }
 
@@ -169,13 +152,10 @@ export interface AnalyzeOptions {
 export function resolveProgressReporter(
   options: Pick<AnalyzeOptions, "ci" | "onProgress" | "onPhase">,
   write: (chunk: string) => void = (chunk) => process.stdout.write(chunk),
-  // The run clock. Every boundary is charged here, on the one path every
-  // label already travels, so a phase is measured once and `onPhase` and
-  // `onProgress` see the identical stamped string.
+  // Charged on the one path every label travels, so a phase is measured once.
   clock?: PhaseClock,
 ): (line: string) => void {
-  // Every phase boundary reaches `onPhase` on every path, `--ci` included.
-  // Console reporting is decided after that, not instead of it.
+  // Every boundary reaches onPhase on every path, --ci included; console output is decided after.
   const heartbeat = options.onPhase;
   const stamp = (line: string): string =>
     clock ? `${line}  (${formatElapsedClock(clock.boundary(line))})` : line;
@@ -206,18 +186,9 @@ export function writeReportJson(report: Report, jsonPath: string | undefined): v
   fs.writeFileSync(target, JSON.stringify(report, mapReplacer, 2), "utf-8");
 }
 
-// Every warning already computed by the time of a throw is worth as much on
-// the way out as it would have been in a successful report — a
-// preprocessor-config-ignored or unsupported-style-engine warning explains a
-// crash the bare error message alone would not. Module-level (not a closure
-// inside analyze()) so pipeline/explain-props.ts's dry-run path can reuse
-// the identical format. Exported so cli/main.ts's surface-3 (async
-// unhandledRejection) handler can build the identical block from the
-// warnings it independently accumulated via AnalyzeOptions.onWarning,
-// instead of duplicating the wording. An empty list contributes nothing: a
-// header with nothing under it would tell the reader warnings had been
-// withheld.
+// One wording for every failure surface: the dry run and cli/main.ts's async handler reuse it.
 export function formatAccumulatedWarnings(warnings: string[]): string {
+  // A header with nothing under it would tell the reader warnings had been withheld.
   if (warnings.length === 0) return "";
   return ["", "", "Warnings recorded before this failure:", ...warnings.map((w) => `  ${w}`)].join("\n");
 }
@@ -236,8 +207,7 @@ export async function analyze(
     ...options.thresholds,
   };
 
-  // Under tiered budgets a threshold the user typed must override the tier's,
-  // so every mode that builds combos needs to know which ones were explicit.
+  // A threshold the user typed overrides the tier's, so every mode must know which were explicit.
   const explicitThresholds: Partial<Record<keyof TierBudget, boolean>> = {};
   if (options.thresholds?.mountMs !== undefined) explicitThresholds.mountMs = true;
   if (options.thresholds?.rerenderMs !== undefined) explicitThresholds.rerenderMs = true;
@@ -248,15 +218,11 @@ export async function analyze(
   const warmupRuns = options.warmupRuns ?? 2;
   const seed = options.seed ?? 42;
 
-  // Every browser-using pass draws from one pool (two processes for the
-  // whole run); a CLI-provided pool outlives this run and is not closed here.
+  // A CLI-provided pool outlives this run and is not closed here.
   const pool = options.browserPool ?? createBrowserPool();
   const ownsPool = options.browserPool === undefined;
 
-  // The run clock opens before anything is read from disk, so the interval
-  // that precedes the first `preflight:` boundary is charged rather than
-  // lost. Every stamp is taken at a phase boundary, never inside a traced
-  // window.
+  // Opened before the first disk read, so the interval preceding preflight is charged, not lost.
   const phaseClock = createPhaseClock();
   const progress = resolveProgressReporter(options, undefined, phaseClock);
 
@@ -264,9 +230,7 @@ export async function analyze(
   let fixtureAutoDetected = false;
   const inputIsFixture = isFixturePath(componentPath);
 
-  // `<file>#Export` names one export to render, so a fixture: which owns
-  // its whole scene: cannot also apply. Validated here, before any harness
-  // directory exists, so a typo costs a source read rather than a boot.
+  // Validated before any harness directory exists, so a typo costs a source read, not a boot.
   if (options.target) {
     if (options.fixturePath || inputIsFixture) throw new Error(TARGET_WITH_FIXTURE_ERROR);
     detectComponentExport(resolvedPath, options.target);
@@ -289,25 +253,17 @@ export async function analyze(
     }
   }
 
-  // One component per SFC, so there is nothing for the suffix taxonomy to
-  // infer: auto-composition is skipped for Vue, not adapted to it. Reached
-  // only when no fixture applies, so the measured file is componentPath.
+  // One component per SFC leaves the suffix taxonomy nothing to infer, so Vue skips composition.
   const rendererIsVue = isVueFile(componentPath);
 
   let compositionTree: CompositionTree | undefined;
   let componentExports: import("../props/index.js").ExportInfo[] | undefined;
-  // Set when a run's combos measured less than the whole component
-  // (radix's dual-family/bare-alias shape, base-ui's cross-file parts, or
-  // Vue's Options-API prop exclusion). Held locally until `runWarnings`
-  // exists (it is declared further down this function) because the check
-  // below can fire before that point.
+  // Held locally because the check below can fire before runWarnings is declared.
   let disclosureReason: "uncomposed" | "propsExcluded" | undefined;
   let uncomposedWarning: string | undefined;
-  // What `--init-fixture` did on the never-composed path, folded into the
-  // run's warnings below beside the disclosure that recommended it.
+  // What --init-fixture did, folded in below beside the disclosure that recommended it.
   let uncomposedFixtureLine: string | undefined;
-  // An explicit target names the one export to render, which is the
-  // opposite of inferring a scene from several.
+  // An explicit target names one export to render, the opposite of inferring a scene from several.
   if (!fixturePath && !inputIsFixture && !options.skipAutoCompose && !rendererIsVue && !options.target) {
     componentExports = await extractExports(resolvedPath);
     if (componentExports.length > 1) {
@@ -315,11 +271,7 @@ export async function analyze(
       const tree = inferComposition(componentExports, allSchemas);
       if (tree) compositionTree = tree;
     }
-    // Composition either never attempted (a single-export file, e.g.
-    // base-ui's TabsRoot.tsx) or attempted and failed to find a root (radix's
-    // dual prefixed/bare-alias shape defeats findRoot's prefix check). Either
-    // way the run is about to measure the bare export alone; check whether
-    // the file itself still declares recognized sibling parts.
+    // The run is about to measure the bare export alone; the file may still declare sibling parts.
     if (!compositionTree) {
       const boundName = detectComponentExport(resolvedPath, options.target).name;
       const typeImportNames = await extractRelativeTypeImports(resolvedPath);
@@ -328,10 +280,7 @@ export async function analyze(
       if (siblings.length > 0) {
         disclosureReason = "uncomposed";
         uncomposedWarning = UNCOMPOSED_SIBLINGS_WARNING(boundName, siblings.map((s) => s.name));
-        // The flag was accepted on the one path whose warning recommends it
-        // and would otherwise write nothing. There is no inferred tree
-        // here, so the scaffold is the bound root plus a placeholder per
-        // declared sibling; either way the run says what the flag did.
+        // No inferred tree here, so the scaffold is the bound root plus a placeholder per sibling.
         if (options.initFixture) {
           uncomposedFixtureLine = initFixtureOutcome(
             resolvedPath,
@@ -366,17 +315,12 @@ export async function analyze(
 
   // Provider-dependent imports found by the preflight walk.
   let providerCandidates: string[] = [];
-  // The subset of providerCandidates reached only transitively -- see
-  // isDirectProviderHit (project/preflight.ts) and report/hints.ts's own
-  // comment.
+  // The subset reached only transitively; see isDirectProviderHit (project/preflight.ts).
   let transitiveProviderCandidates: string[] = [];
-  // Declared before the try so attachHarnessContext can read them after the
-  // harness phase; a preflight hard rejection rethrows before any reader
-  // runs.
+  // Declared before the try so attachHarnessContext can read them after the harness phase.
   let transformHits: import("../project/index.js").PreflightHit[] = [];
   let activeTransforms: string[] | undefined;
-  // Applied to every harness build, so a rebuilt harness cannot bring back a
-  // note about a plugin this run applies itself.
+  // Applied to every build, so a rebuilt harness cannot revive a note about an applied plugin.
   const withoutHonoredPlugins = (list: string[]): string[] =>
     suppressHonoredPluginNote(list, projectRoot, options.noTransforms ? { noTransforms: true } : {});
   const runWarnings: string[] = [
@@ -385,8 +329,7 @@ export async function analyze(
     ...(uncomposedFixtureLine ? [uncomposedFixtureLine] : []),
     ...(presetShapeWarning ? [presetShapeWarning] : []),
   ];
-  // Counted before dedup: one surviving reload is a noise signal, and the
-  // warning list deliberately shows it once however often it happened.
+  // Counted before dedup: the reload count is a noise signal, though the warning prints once.
   let contextRetries = 0;
   let noiseProbe: number[] = [];
   const onWarning = (warning: string): void => {
@@ -394,20 +337,12 @@ export async function analyze(
     // Deduped: a reload during a 27-combo run would otherwise print 27 times.
     if (!runWarnings.includes(warning)) {
       runWarnings.push(warning);
-      // Mirrors the warning out to a caller-supplied sink as it is
-      // discovered, not only at the end -- a fire-and-forget async
-      // rejection (surface 3, cli/main.ts's unhandledRejection handler) can
-      // crash this run's promise chain from outside this closure entirely, after
-      // this point has already run but before this function ever returns
-      // (or throws) normally. That handler has no other way to see anything
-      // accumulated here: it runs on a separate call stack with no access to
-      // this closure's locals.
+      // Mirrored as discovered: a detached rejection can crash the run without reaching any catch.
       options.onWarning?.(warning);
     }
   };
 
-  // Preset values replace a prop's pool everywhere schemas are read, so combos,
-  // deltas, matrix cells and curve anchors all measure the same data.
+  // Preset values replace a prop's pool everywhere schemas are read, so every pass agrees.
   const presetApplied = new Set<string>();
   const extractSchemas = createSchemaExtractor({
     options,
@@ -473,9 +408,7 @@ export async function analyze(
     });
     if (reused) return reused;
 
-    // The project's own SFC parser, loaded once. A `.vue` target without it
-    // cannot be read at all, so the run fails here naming the missing
-    // dependency rather than deep inside Vite minutes later.
+    // Fail here naming the missing dependency, rather than deep inside Vite minutes later.
     const vueCompiler = framework === "vue" ? await loadVueCompiler(projectRoot) : undefined;
     if (framework === "vue" && !vueCompiler && isVueFile(harnessPath)) {
       throw new Error(VUE_COMPILER_MISSING(projectRoot));
@@ -514,8 +447,7 @@ export async function analyze(
     harness = await buildAndServe(harnessPath, composedHarnessOpts);
     if (harness.warnings) runWarnings.push(...withoutHonoredPlugins(harness.warnings));
 
-    // Calibration, trial mount, and wrapper overhead run under the same
-    // driven frame pacing as the measurement passes they normalize.
+    // Calibration, trial mount and wrapper overhead run under the pacing they normalize.
     msession = await openMeasurementSession({
       driven: true,
       onWarning,
@@ -529,8 +461,7 @@ export async function analyze(
     const chromiumVersion = msession.browser.version();
     const machine = await collectMachineInfo(chromiumVersion);
 
-    // One rebuild: the harness this run measures on is torn down, the new one
-    // takes its place, and its build warnings join the run's.
+    // The harness this run measures on is torn down, and the new one's warnings join the run's.
     const rebuildHarness = async (
       opts: import("../harness/index.js").BuildHarnessOptions,
     ): Promise<void> => {
@@ -543,9 +474,7 @@ export async function analyze(
       await gotoWithErrorContext(page, harness!.url, pageErrors, "component harness", {
         waitUntil: HARNESS_NAV_WAIT,
       });
-      // Races readiness against a fatal page error (a synchronous throw
-      // during module evaluation, e.g. a next.config.mjs env-validation
-      // failure) instead of always waiting out the full timeout.
+      // Races readiness against a fatal page error instead of waiting out the full timeout.
       await waitForReadyOrFatal(
         () =>
           page.waitForFunction(
@@ -562,9 +491,7 @@ export async function analyze(
       );
 
       await applyWrapperViewport(page);
-      // Threads both the settle-timeout warning and, when a @font-face
-      // 404'd or failed to decode, the failed-family warning through the
-      // same sink every other settleStyles call site uses.
+      // Settle-timeout and failed-font-family warnings reach the sink every settleStyles site uses.
       reportFontSettle(await settleStyles(page, harness!), onWarning);
     };
 
@@ -582,9 +509,7 @@ export async function analyze(
       });
     }
 
-    // A structurally inferred tree can violate a library's nesting rules and
-    // mount to an empty root. Measuring that produces confident numbers about
-    // a scene nobody wrote, so prove it renders before trusting it.
+    // An inferred tree can break a library's nesting rules, so prove it renders before measuring.
     if (useComposition) {
       await rollbackEmptyComposition({
         page,
@@ -609,8 +534,7 @@ export async function analyze(
 
     await recordStylesheetMatches({ page, cssReport, onWarning });
 
-    // Unthrottled and outside every traced window: the question is what
-    // the machine is doing, not what the component costs.
+    // Unthrottled and outside every traced window: the question is the machine, not the component.
     noiseProbe = await suspendThrottle(cdp, cpuThrottle, () => probeMachineNoise(page));
 
     await cdp.send("Emulation.setCPUThrottlingRate", { rate: cpuThrottle });
@@ -668,13 +592,7 @@ export async function analyze(
       fixtureAutoDetected,
       composed,
       ...(compositionTree !== undefined ? { compositionTree } : {}),
-      // A plain value-spread here would snapshot `disclosureReason` at ctx
-      // construction time, which is always before getSchemas() -- and thus
-      // extractSchemas's own, later "propsExcluded" assignment -- ever runs.
-      // A getter re-reads the outer binding live, so a Vue run's disclosure
-      // (computed lazily, on first getSchemas() call) still reaches
-      // BuildReportInput.disclosureReason below. The "uncomposed" producer is
-      // unaffected: it already assigns before this object is constructed.
+      // A getter, not a spread: extractSchemas assigns "propsExcluded" after ctx is constructed.
       get disclosureReason() {
         return disclosureReason;
       },
@@ -689,19 +607,14 @@ export async function analyze(
       attachHarnessContext,
     };
 
-    // --- Isolation mode ---
     if (options.isolation) {
       progress(`mode: isolation (${options.isolation.phases.join(",")})`);
       return await runIsolationMode(ctx, options.isolation);
     }
 
-    // --- Curve mode check ---
     const curveMatch = await resolveCurveMatch(ctx);
     if (curveMatch) {
-      // The CLI already rejects an explicit --curve combined with an
-      // explicit --matrix at parse time, so a truthy curveMatch here
-      // alongside an explicit --matrix can only be an auto-activation
-      // winning a mode conflict the user did not ask to lose silently.
+      // The CLI rejects explicit --curve with explicit --matrix, so this is an auto-activation.
       if (options.matrixMode === true) {
         runWarnings.push(MATRIX_SUPPRESSED_BY_CURVE_WARNING(curveMatch.schema.name));
       }
@@ -709,17 +622,12 @@ export async function analyze(
       return await runCurveMode(ctx, curveMatch);
     }
 
-    // --- Matrix mode check ---
     const matrixEligible = options.matrixMode !== false && !useFixture && !composed;
     const matrixRequested = options.matrixMode === true;
-    // Distinct from a forced --matrix: only auto-activation is a surprise
-    // worth an upfront notice, since --matrix was the user's own request.
+    // Only auto-activation is a surprise worth an upfront notice; --matrix was the user's request.
     const matrixAutoActivates =
       matrixEligible && !matrixRequested && shouldAutoActivateMatrix(await ctx.getSchemas());
-    // One predicate, shared with the dry run's own prediction, so the two
-    // cannot disagree about which mode a run takes. Curve has already
-    // returned above; passing `curve: false` here states that fact rather
-    // than leaving it implicit in the control flow.
+    // Shared with the dry run's prediction, so the two cannot disagree about the mode taken.
     const activateMatrix =
       predictMode({
         isolation: false,
@@ -729,10 +637,7 @@ export async function analyze(
         matrixAutoActivates,
       }) === "matrix";
     const matrixAutoActivated = activateMatrix && matrixAutoActivates;
-    // The curve branch above already names its winner; these two must not
-    // drop an explicit --matrix in silence. A composed scene and a fixture
-    // are mutually exclusive here (composition is skipped whenever a
-    // fixture applies), so at most one line is pushed.
+    // A composed scene and a fixture are mutually exclusive, so at most one line is pushed.
     if (matrixRequested && !activateMatrix) {
       if (composed) {
         runWarnings.push(MATRIX_SUPPRESSED_BY_COMPOSITION_WARNING(compositionTree!.root));
@@ -754,9 +659,7 @@ export async function analyze(
     progress("mode: prop combos");
     return await runComboMode(ctx, fixtureHasScale);
   } catch (err) {
-    // A preflight hard-rejection already names a complete, correct fix
-    // (nothing was built yet); stacking accumulated warnings on top of it
-    // would compound an unrelated note onto an already-complete rejection.
+    // A preflight hard-rejection already names a complete fix; accumulated notes would dilute it.
     if (err instanceof PreflightHardRejectionError) throw err;
     const { presented, combined, abortHints } = await classifyHarnessFault({
       err,

@@ -2,7 +2,6 @@ import { describe, it, expect } from "vitest";
 import { extractProps } from "../../src/props/index.js";
 import { generateCombinations } from "../../src/props/index.js";
 
-// H11: Class component
 describe("H11: class component", () => {
   it("extracts props from class extending React.Component<Props>", async () => {
     const schema = await extractProps("./fixtures/class-comp.tsx");
@@ -18,7 +17,6 @@ describe("H11: class component", () => {
   });
 });
 
-// H12: React.FC<Props> pattern
 describe("H12: React.FC pattern", () => {
   it("extracts props from FC-typed const", async () => {
     const schema = await extractProps("./fixtures/fc-pattern.tsx");
@@ -34,12 +32,10 @@ describe("H12: React.FC pattern", () => {
   });
 });
 
-// H13: Discriminated union props
 describe("H13: discriminated union", () => {
   it("extracts some props from discriminated union", async () => {
     const schema = await extractProps("./fixtures/discriminated.tsx");
-    // Discriminated unions: TS may report shared properties or union-level properties
-    // At minimum we should not crash
+    // TS may report shared or union-level properties; assert only that it doesn't crash.
     expect(schema).toBeInstanceOf(Array);
   });
 
@@ -54,7 +50,6 @@ describe("H13: discriminated union", () => {
   });
 });
 
-// H14: TypeScript enum
 describe("H14: TS enum prop", () => {
   it("extracts props from component with enum prop type", async () => {
     const schema = await extractProps("./fixtures/enum-prop.tsx");
@@ -70,11 +65,9 @@ describe("H14: TS enum prop", () => {
     if (size?.kind === "union") {
       expect(size.values).toEqual(["sm", "md", "lg", "xl"]);
     }
-    // Record what actually happens if it's not a union
   });
 });
 
-// H15: Nested object type
 describe("H15: nested object prop", () => {
   it("extracts props including nested object type", async () => {
     const schema = await extractProps("./fixtures/nested-object.tsx");
@@ -89,7 +82,6 @@ describe("H15: nested object prop", () => {
   });
 });
 
-// H16: string | null union
 describe("H16: null in union", () => {
   it("extracts props from component with nullable type", async () => {
     const schema = await extractProps("./fixtures/null-union.tsx");
@@ -101,26 +93,19 @@ describe("H16: null in union", () => {
     const schema = await extractProps("./fixtures/null-union.tsx");
     const src = schema.find((s) => s.name === "src");
     expect(src).toBeDefined();
-    // string | null should strip null and classify as string
-    // But our stripUndefined only strips undefined, not null
-    // Record actual behavior
+    // stripUndefined strips undefined, not null; classification here is left unchecked.
   });
 });
 
-// H17: Multiple components in one file
 describe("H17: multiple components", () => {
   it("extracts props from the first component", async () => {
     const schema = await extractProps("./fixtures/multi-component.tsx");
-    // Should pick the first exported function component
     const names = schema.map((s) => s.name).sort();
     expect(names).toEqual(["sticky", "title"].sort());
   });
 });
 
-// H18: Extends HTMLAttributes: massive DOM props. M81 section 2: the
-// inherited DOM surface is now ranked and capped at MAX_PROPS instead of
-// being silently erased before the count is even taken, so both the schema
-// size and the resulting combo count grow accordingly.
+// M81 section 2: inherited DOM surface is ranked and capped at MAX_PROPS, not erased pre-count.
 describe("H18: extends HTMLAttributes", () => {
   it("keeps user-defined props and ranks the inherited DOM surface up to the 32-prop cap", async () => {
     const schema = await extractProps("./fixtures/html-attrs.tsx");
@@ -138,7 +123,6 @@ describe("H18: extends HTMLAttributes", () => {
   });
 });
 
-// H19: Template literal type
 describe("H19: template literal type", () => {
   it("extracts props from component with template literal type", async () => {
     const schema = await extractProps("./fixtures/template-literal.tsx");
@@ -155,7 +139,6 @@ describe("H19: template literal type", () => {
   });
 });
 
-// H20: Readonly array
 describe("H20: readonly array", () => {
   it("extracts props from component with readonly array", async () => {
     const schema = await extractProps("./fixtures/readonly-array.tsx");
@@ -167,13 +150,11 @@ describe("H20: readonly array", () => {
     const schema = await extractProps("./fixtures/readonly-array.tsx");
     const tags = schema.find((s) => s.name === "tags");
     expect(tags).toBeDefined();
-    // checker.isArrayType may not recognize readonly arrays
-    // ReadonlyArray<string> is technically a different type
+    // checker.isArrayType may not recognize ReadonlyArray<string> as an array type.
     expect(["array", "object"]).toContain(tags?.kind);
   });
 });
 
-// H21: Tuple type
 describe("H21: tuple type", () => {
   it("extracts props from component with tuple", async () => {
     const schema = await extractProps("./fixtures/tuple-prop.tsx");
@@ -190,7 +171,6 @@ describe("H21: tuple type", () => {
   });
 });
 
-// H22: Very large union (22 values)
 describe("H22: large union", () => {
   it("extracts country as union with all 22 values", async () => {
     const schema = await extractProps("./fixtures/large-union.tsx");
@@ -202,8 +182,7 @@ describe("H22: large union", () => {
   it("combinations are capped when large union * other props > 64", async () => {
     const schema = await extractProps("./fixtures/large-union.tsx");
     const combos = generateCombinations(schema);
-    // country: 22 values (required), size: 3 + undefined = 4 (optional)
-    // 22 * 4 = 88 > 64 → should be capped
+    // country(22) * size(3+undefined=4) = 88 > 64, so combos are capped.
     expect(combos.length).toBeLessThanOrEqual(64);
   });
 
@@ -215,7 +194,6 @@ describe("H22: large union", () => {
   });
 });
 
-// H23: All-optional component
 describe("H23: all-optional props", () => {
   it("extracts all optional props", async () => {
     const schema = await extractProps("./fixtures/all-optional.tsx");
@@ -234,7 +212,7 @@ describe("H23: all-optional props", () => {
   });
 });
 
-// H25: third-party dep import (prop extraction only: TS doesn't need runtime deps)
+// TS type analysis doesn't need to resolve the runtime dependency import.
 describe("H25: third-party import", () => {
   it("extracts props from component that imports from node_modules", async () => {
     const schema = await extractProps("./fixtures/with-dep.tsx");
@@ -243,7 +221,6 @@ describe("H25: third-party import", () => {
   });
 });
 
-// H26: file with spaces in path
 describe("H26: spaces in path", () => {
   it("extracts props from file in directory with spaces", async () => {
     const schema = await extractProps("./fixtures/spaced dir/spaced-comp.tsx");
@@ -252,17 +229,15 @@ describe("H26: spaces in path", () => {
   });
 });
 
-// H27: two named exports: which one is picked
 describe("H27: two named exports", () => {
   it("extracts props from first component", async () => {
     const schema = await extractProps("./fixtures/two-exports.tsx");
-    // Should pick first function with props-like params
+    // Should pick first function with props-like params.
     const names = schema.map((s) => s.name).sort();
     expect(names).toEqual(["label", "size"].sort());
   });
 });
 
-// H28: double-wrapped: memo(forwardRef(...))
 describe("H28: memo(forwardRef(...))", () => {
   it("extracts props from double-wrapped component", async () => {
     const schema = await extractProps("./fixtures/double-wrap.tsx");
@@ -278,7 +253,6 @@ describe("H28: memo(forwardRef(...))", () => {
   });
 });
 
-// H29: props with default values in destructuring
 describe("H29: default values in destructuring", () => {
   it("extracts declared types not default value types", async () => {
     const schema = await extractProps("./fixtures/default-values.tsx");
@@ -299,7 +273,6 @@ describe("H29: default values in destructuring", () => {
   });
 });
 
-// H30: component with useEffect
 describe("H30: useEffect component", () => {
   it("extracts props from component with useEffect", async () => {
     const schema = await extractProps("./fixtures/use-effect.tsx");

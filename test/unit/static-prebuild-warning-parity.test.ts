@@ -5,11 +5,7 @@ import path from "node:path";
 import { explainProps, resolveWrapPath } from "../../src/pipeline/index.js";
 import { collectStaticPreBuildWarnings } from "../../src/harness/index.js";
 
-// V6's whole finding in one assertion: every warning the real run's pre-build
-// half produces is decidable from the filesystem, and the dry run used to
-// print none of them because they lived inside the function that starts a
-// server. dub's unbuilt-`dist/` substitution and nuxt-ui's stale `#build`
-// alias are the two the corpus reported.
+// V6: this file checks dry-run pre-build warnings match every filesystem fact the real run reports.
 
 const tmpDirs: string[] = [];
 afterEach(() => {
@@ -22,9 +18,6 @@ function write(root: string, rel: string, content: string): void {
   fs.writeFileSync(abs, content);
 }
 
-// A workspace member importing a sibling package whose package.json points at
-// a `dist/` that does not exist, plus a tsconfig whose `extends` target is
-// missing: two independent static facts the real run reports.
 function workspace(): { root: string; component: string } {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "120fps-prebuild-parity-"));
   tmpDirs.push(root);

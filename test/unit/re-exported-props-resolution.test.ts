@@ -4,10 +4,7 @@ import { extractPropsDetailed } from "../../src/props/index.js";
 
 const BARREL = path.resolve(__dirname, "../../fixtures/barrel-reexport");
 
-// gutenberg-F2: `src/confirm-dialog/index.tsx` re-exports the component its
-// sibling declares, and the entry-file-only candidate walk reported zero props
-// for a component whose declaring file prints 32.
-
+// gutenberg-F2: entry-file-only walk reported 0 props instead of the declaring file's 32.
 describe("a component reached through a re-export", () => {
   it("reads the props the declaring module declares", async () => {
     const detail = await extractPropsDetailed(path.join(BARREL, "index.tsx"));
@@ -35,10 +32,7 @@ describe("a component reached through a re-export", () => {
   });
 });
 
-// react-spectrum-F3: a shim whose specifier does not resolve printed
-// ZERO_PROPS_WARNING, whose "extraction may have failed" clause was false for a
-// cause the filesystem decides.
-
+// react-spectrum-F3: unresolved specifier must not claim extraction "may have failed".
 describe("a re-export whose specifier does not resolve", () => {
   it("names the barrel and the specifier instead of a props table", async () => {
     const broken = path.join(BARREL, "broken.tsx");
@@ -52,11 +46,7 @@ describe("a re-export whose specifier does not resolve", () => {
   });
 });
 
-// M114 (review B-major): `export { default } from "./x"` and `export * from
-// "./x"` name no PascalCase binding in the barrel's own text, so the export
-// scan yielded nothing and the follow gave up on a barrel the filesystem
-// resolves.
-
+// specs/milestones/m114-disclosures-are-true-for-runtime-styling-props-and-page-errors.md
 describe("a barrel that re-exports without naming the binding", () => {
   it("follows `export { default } from` to the declaring module", async () => {
     const detail = await extractPropsDetailed(path.join(BARREL, "default-barrel.tsx"));

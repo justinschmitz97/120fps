@@ -13,9 +13,7 @@ afterAll(async () => {
 });
 
 describe("injectProfilerHook", () => {
-  // Page.addScriptToEvaluateOnNewDocument silently no-ops unless the Page
-  // domain is enabled first, so the DevTools hook never reached the document
-  // and every React finding came back empty.
+  // addScriptToEvaluateOnNewDocument no-ops without the Page domain enabled first.
   it("installs the DevTools global hook into the page", async () => {
     browser = await chromium.launch({ headless: true });
     const page = await browser.newPage();
@@ -37,9 +35,7 @@ describe("injectProfilerHook", () => {
 });
 
 describe("React finding semantics", () => {
-  // Counting a fiber as re-rendered because it exists in the committed tree
-  // reported every component in every run; these two assertions are the ones
-  // that regression would break first.
+  // Guards a regression: counting a fiber as re-rendered by tree presence alone flagged everything.
   it("flags only the memo component whose memoization is defeated", async () => {
     const jsonPath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "120fps-memo-")), "r.json");
     const report = await analyze(
@@ -50,8 +46,7 @@ describe("React finding semantics", () => {
     const opts = report.combos[0].reactOptimizations!;
     const bailouts = opts.memoBailoutComponents ?? [];
 
-    // StableChild takes an equal string prop and bails; DefeatedChild takes a
-    // fresh object literal every render, so its shallow compare never matches.
+    // StableChild's prop is an equal string; DefeatedChild's is a fresh object each render.
     expect(bailouts.some((n) => n.startsWith("DefeatedChild"))).toBe(true);
     expect(bailouts.some((n) => n.startsWith("StableChild"))).toBe(false);
   }, 300000);

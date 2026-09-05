@@ -10,9 +10,7 @@ import type { Report } from "../../src/report/index.js";
 const execFileAsync = promisify(execFile);
 const CLI_PATH = path.resolve("dist/cli/main.js");
 
-// A package.json inside the repo makes this directory its own project root, so
-// the baseline lands here instead of at the repo root, while node resolution
-// still reaches the repo's node_modules.
+// A package.json here makes this its own project root; resolution still reaches repo node_modules.
 const PROJECT_DIR = path.resolve(`.m29-baseline-env-${process.pid}`);
 const COMPONENT = path.join(PROJECT_DIR, "static-panel.tsx");
 const BASELINE = path.join(PROJECT_DIR, "120fps-baseline.json");
@@ -42,8 +40,7 @@ function readBaseline(): Baseline {
   return JSON.parse(fs.readFileSync(BASELINE, "utf-8")) as Baseline;
 }
 
-// M45: entries live in per-environment slots, so the component's key carries an
-// environment digest.
+// M45: entries live in per-environment slots, so the key carries an environment digest.
 function slotKey(baseline: Baseline): string {
   const key = Object.keys(baseline.entries).find(
     (k) => parseBaselineKey(k).componentPath === ENTRY_KEY,
@@ -57,8 +54,7 @@ function storedEntry(): BaselineEntry {
   return baseline.entries[slotKey(baseline)];
 }
 
-// Editing the recorded environment moves the entry to the slot that environment
-// describes: which is what a baseline saved on another machine looks like.
+// Moves the entry to the slot its edited environment describes: a baseline saved elsewhere.
 function patchBaseline(mutate: (entry: BaselineEntry) => void): void {
   const baseline = readBaseline();
   const key = slotKey(baseline);
@@ -98,8 +94,7 @@ export function StaticPanel() {
     "utf-8",
   );
 
-  // Other e2e files build dist too; a concurrent tsc is fine as long as the
-  // binary exists afterwards.
+  // Other e2e files build dist too; a concurrent tsc is fine as long as the binary exists after.
   try {
     execFileSync("npx", ["tsc"], { cwd: path.resolve("."), shell: true, stdio: "ignore" });
   } catch (err) {
@@ -135,10 +130,7 @@ describe("baseline environment fingerprint e2e", () => {
     expect(stored.reactCompiler).toBeUndefined();
   });
 
-  // Calibration drifts with machine load, so an unchanged same-machine check is
-  // identical or normalizable: never incompatible, never unfingerprinted, and
-  // never a feature mismatch. Exact classification is unit-tested on the pure
-  // function; this asserts the round trip carries the fingerprint through.
+  // Calibration drift keeps a same-machine check identical or normalizable, not incompatible.
   it("compares an unchanged same-machine baseline without a feature mismatch or warning", async () => {
     const report = await run({ check: true });
     expect(report.baseline?.hasBaseline).toBe(true);
@@ -147,9 +139,7 @@ describe("baseline environment fingerprint e2e", () => {
     expect(envWarnings(report)).toEqual([]);
   }, 300000);
 
-  // M45: a different CPU is a different slot, so this is now the explicit
-  // cross-environment fallback rather than the accidental default. It still
-  // compares and still classifies, but it can no longer fail a run.
+  // M45: a different CPU is a different slot, making cross-environment fallback explicit here.
   it("falls back across environments for a different CPU, compares, and cannot fail", async () => {
     patchBaseline((e) => {
       e.env!.cpu = "Some Other CPU Model";
@@ -208,9 +198,7 @@ describe("baseline environment fingerprint e2e", () => {
     const report = await run({ check: true, baselineEnv: "ignore" });
     expect(report.baseline?.envMatch).toBe("unknown");
     expect(report.baseline?.envMismatches).toEqual([]);
-    // M46 blanks deltas when the machine was hostile, which a loaded CI box can
-    // be. That path has its own coverage; what this test is about is that
-    // `ignore` compares raw and stays silent about the environment.
+    // M46 blanks deltas on a hostile machine; this checks `ignore` compares raw and stays silent.
     if (report.noise?.level !== "hostile") {
       expect(report.baseline?.regressions.length).toBeGreaterThan(0);
     }

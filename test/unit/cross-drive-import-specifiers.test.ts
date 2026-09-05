@@ -9,8 +9,7 @@ import {
   resolveWrapper,
 } from "../../src/harness/index.js";
 
-// path.win32 and path.posix are driven directly so drive-letter behavior is
-// observable on any host.
+// path.win32 and path.posix are driven directly so drive-letter behavior is observable on any host.
 
 describe("out-of-root detection across Windows drives", () => {
   it("treats another drive as outside, even though the relative form has no ..", () => {

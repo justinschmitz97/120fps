@@ -10,8 +10,7 @@ afterAll(() => {
   for (const dir of cleanupDirs) fs.rmSync(dir, { recursive: true, force: true });
 });
 
-// Same temp-workspace shape unbuilt-workspace-source-alias.test.ts uses: only a
-// genuine link makes isWorkspaceSibling's realpath check pass.
+// Same as unbuilt-workspace-source-alias.test.ts: a genuine link satisfies the realpath check.
 function mkWorkspace(): {
   workspaceRoot: string;
   member: string;
@@ -120,8 +119,7 @@ describe("a workspace sibling reached only through another sibling is rescued in
     const ui = linkSibling(workspaceRoot, member, "@w/ui", UNBUILT, {
       "src/index.ts": 'import { addFilter } from "@w/hooks";\nexport const f = addFilter;\n',
     });
-    // The link lives under @w/ui, never under the entry project: a pnpm
-    // install links a package's own dependencies beside that package.
+    // Linked under @w/ui, not the entry project: pnpm installs a package's deps beside it.
     const hooks = linkSibling(workspaceRoot, ui, "@w/hooks", UNBUILT, {
       "src/index.ts": "export const addFilter = () => undefined;\n",
     });

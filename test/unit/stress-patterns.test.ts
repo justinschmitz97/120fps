@@ -14,8 +14,6 @@ function makeDescriptor(
   };
 }
 
-// --- Pattern dispatch ---
-
 describe("resolveStressPattern dispatch", () => {
   it.each([
     ["tab", "click", "[role=tab]"],
@@ -78,8 +76,6 @@ describe("resolveStressPattern dispatch", () => {
   });
 });
 
-// --- Dispatch priority ---
-
 describe("resolveStressPattern priority", () => {
   it("tab role without siblings falls through to rapid-toggle-11 (click type)", () => {
     const desc = makeDescriptor({ type: "click", role: "tab" });
@@ -105,8 +101,6 @@ describe("resolveStressPattern priority", () => {
     expect(pattern.name).toBe("open-close-10");
   });
 });
-
-// --- Step structure ---
 
 describe("keyboard-sweep steps", () => {
   it("includes focus, ArrowDown × siblingCount, Home, End", () => {
@@ -188,8 +182,6 @@ describe("single-shot steps", () => {
     expect(pattern.steps[0].selector).toBe("#el");
   });
 });
-
-// --- Purity ---
 
 describe("resolveStressPattern purity", () => {
   it("same input produces same output", () => {

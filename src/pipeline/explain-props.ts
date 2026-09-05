@@ -65,14 +65,9 @@ export interface ExplainedProp {
   required: boolean;
   values: unknown[];
   degenerate?: string;
-  // Every branch of a union the extractor collapsed to one measurable kind,
-  // exactly as the collapsed-union warning lists them (`number | "small" |
-  // "regular" | "wide"`). The value column renders from this so the table
-  // and the warning cannot disagree; `values` still holds only what the run
-  // would actually synthesize.
+  // Every branch of a collapsed union, so the value column and the warning cannot disagree.
   unionBranches?: string[];
-  // The value the component itself falls back to when the prop is omitted,
-  // and where that was read from.
+  // The value the component falls back to when the prop is omitted.
   defaultValue?: unknown;
   defaultSource?: "destructuring" | "withDefaults" | "defaultProps";
 }
@@ -81,44 +76,26 @@ export interface PropsExplanation {
   componentPath: string;
   componentName: string;
   target?: string;
-  // projectRoot-relative posix path, and the 1-based line of the declaration
-  // the schema bound to. Absent for a Vue SFC and for a file with no component.
+  // Posix, projectRoot-relative, 1-based; absent for a Vue SFC and a file with no component.
   bindingFile?: string;
   bindingLine?: number;
-  // The measured file re-exports the component another module declares,
-  // and the props below are that module's. Both paths, posix, relative to
-  // the project root.
+  // The props below belong to the declaring module, not the measured file. Posix paths.
   reExport?: { barrel: string; module: string };
   exports: string[];
   props: ExplainedProp[];
   curve?: { propName: string; reason: string };
   matrixWouldActivate: boolean;
-  // The "Curve mode: would (not) activate" line only predicts
-  // detectScalingProps's whole-run auto-activation. The sibling-copies
-  // scale probe is a separate, unconditional mechanism appended to every
-  // default combo-mode run for a non-fixture target with no curve match —
-  // this predicts *that*, so the dry run's stated mode matches what a real
-  // run on the same target would actually do.
+  // Decided apart from curve activation, so the curve line alone cannot predict this probe.
   scaleProbeWillRun: boolean;
-  // Which mode the real dispatcher would pick for this component, through
-  // the shared `predictMode`. `matrixWouldActivate` keeps its own narrower
-  // meaning (the matrix predicate is satisfied) and stops being what gets
-  // printed as a prediction.
+  // What the dispatcher would pick; matrixWouldActivate keeps the narrower predicate meaning.
   predictedMode: PredictedMode;
-  // Why the matrix branch was unreachable, when it was. "combo" alone
-  // cannot say, and the readings need different sentences: a flag the user
-  // typed, a fixture that owns the props, or a composed scene that does.
+  // Why the matrix branch was unreachable: "combo" alone cannot say, and each reading differs.
   matrixIneligibleReason?: "no-matrix-flag" | "fixture" | "composed";
-  // The dispatcher's own composition answer, decided from export names and
-  // schemas. Absent when the run would measure the bound export alone.
+  // Absent when the run would measure the bound export alone.
   composition?: { root: string; exportCount: number };
-  // The fixture that would supply the scene (projectRoot-relative posix
-  // path), so the composition line does not claim the component would be
-  // measured alone when a fixture owns the render.
+  // Posix, projectRoot-relative, so the composition line cannot claim a lone component.
   fixtureFile?: string;
-  // Set when a scaling prop was detected and `--no-curve` suppressed it, so
-  // "would not activate: no array or numeric scaling prop" is not printed over
-  // a component that has one.
+  // Set when --no-curve suppressed a detected scaling prop, so "none found" is not printed.
   curveSuppressedByFlag?: boolean;
   presetPath?: string;
   // What the real run this dry run predicts is about to cost.
@@ -126,44 +103,26 @@ export interface PropsExplanation {
   warnings: string[];
 }
 
-// The same resolution the pipeline performs, stopped before its first side
-// effect: no harness directory, no dev server, no browser, no report file.
+// The pipeline's own resolution, stopped before its first side effect: no dir, server or browser.
 export async function explainProps(
   componentPath: string,
-  // Forwarded to resolveFramework below so
-  // FRAMEWORK_FLAG_NO_MOUNT_EFFECT_WARNING can fire in a dry run exactly as
-  // it does in the real run.
+  // Forwarded to resolveFramework, so FRAMEWORK_FLAG_NO_MOUNT_EFFECT_WARNING fires here too.
   options: {
     target?: string;
     noPreflight?: boolean;
     framework?: "react" | "vue" | "vanilla" | "auto";
-    // The four flags that decide which mode a real run takes. Without
-    // them the dry run can only predict from its own detection, which
-    // would disagree with an explicit flag the user passed. Same names and
-    // types as `AnalyzeOptions`, so the CLI forwards one shape to both
-    // entry points.
+    // AnalyzeOptions names and types, so the CLI forwards one shape to both entry points.
     curveMode?: boolean | { propName: string; propKind: "array" | "number" };
     matrixMode?: boolean;
     isolation?: { phases: string[]; memoryCycles?: number };
     fixturePath?: string;
-    // The two remaining flags that change what the dispatcher decides from
-    // disk. Same names and types as `AnalyzeOptions`, so the CLI forwards
-    // one shape to both entry points.
     skipAutoCompose?: boolean;
     noTransforms?: boolean;
-    // The static pre-build both modes read resolves the external-dependency
-    // scan against the shim aliases, which `--no-shims` removes. Without
-    // this flag a `--no-shims` real run could report a different unresolved
-    // set than the dry run predicted from the same files.
+    // --no-shims removes the aliases the external-dependency scan resolves against.
     noShims?: boolean;
-    // The two flags that decide how many combos and samples the real run
-    // would measure. Same names and types as `AnalyzeOptions`, so the CLI
-    // forwards one shape to both entry points.
     samples?: number;
     maxCombos?: number;
-    // Curve mode measures one unit per scale point and the combo path
-    // appends these same points as anchors, so the estimate prices
-    // whichever list the real run would use.
+    // Curve points and combo-path anchors are the same list, so the estimate prices either.
     scalePoints?: number[];
   } = {},
 ): Promise<PropsExplanation> {
@@ -177,44 +136,22 @@ export async function explainProps(
 
   const warnings: string[] = [];
 
-  // Computed here, in the same order the full run computes them, so a dry
-  // run's warnings are the same set a real run would print for everything
-  // decidable without a browser. All four resolvers
-  // are read-only filesystem probes (existing detection functions the full
-  // run already calls) with no build/browser cost, so this function's own
-  // "no side effect" contract (no harness dir, no dev server, no browser) is
-  // unaffected.
+  // The full run's order, using the same read-only probes, so both modes warn identically.
   const framework = resolveFramework(
     options.framework ?? "auto",
     projectRoot,
     resolvedPath,
     (w) => warnings.push(w),
   );
-  // Resolved before the CSS probe, and in the same order the full run
-  // resolves them (resolveWrapPath then resolveCssFiles), so a wrapper's
-  // own stylesheet imports are discoverable in both modes.
+  // Before the CSS probe, as the full run resolves it, so a wrapper's imports are discoverable.
   const { wrapPath } = resolveWrapPath({}, projectRoot, framework, warnings);
   const resolvedCss = resolveCssFiles({}, projectRoot, warnings, {
     ...(wrapPath ? { wrapPath } : {}),
     measuredFile: resolvedPath,
   });
-  // The real run formats this line the moment the CSS decision is made
-  // (phases.ts's `cssDecisionWarning`) and carries it through every exit
-  // path including a crash, so the dry run must resolve the same files and
-  // say which ones it picked too.
+  // The real run carries this line through every exit path, so the dry run states its pick too.
   warnings.push(formatStylesheetsLine(buildCssReport(resolvedCss, projectRoot)));
-  // The full run's harness build always calls this (harness/prebuild.ts)
-  // and its TSCONFIG_EXTENDS_BROKEN_WARNING is what connects a broken
-  // `extends` chain to the empty prop schema it causes. extractPropsDetailed
-  // below uses a separate, checker-only tsconfig read
-  // (project/compiler-options.ts) that never sees this diagnostic either.
-  // loadTsconfigAliases is the first step of this one probe, which is the
-  // whole pre-build half of buildAndServe that needs nothing but the
-  // filesystem — the vite.config text parse, the external-dependency scan
-  // (broken aliases, unbuilt workspace `dist/` substitution, type-only
-  // packages), the Next shim inventory and the style tooling check.
-  // The same filter the real run applies to the same list, from the
-  // same two reads, so a note the dry run prints is a note the real run prints.
+  // buildAndServe's filesystem-only pre-build; only this read reports a broken extends chain.
   warnings.push(
     ...suppressHonoredPluginNote(
       collectStaticPreBuildWarnings(projectRoot, {
@@ -227,21 +164,9 @@ export async function explainProps(
     ),
   );
 
-  // This call is what keeps the promise the cli/main.ts call site makes:
-  // "before every check that exists to protect a measurement, because it
-  // never starts one." Same gate order buildAndServe uses: preflight's
-  // graph-walk hard-hits first (bypassable via --no-preflight), then the
-  // always-on react-dom gate, at zero build cost (no harness dir, no dev
-  // server), matching this function's own "measures nothing" contract.
-  // The real run walks a `.vue` graph with the project's own SFC parser
-  // (see the `vueCompiler` argument at the run path's own runPreflight
-  // call); this call needs the same compiler so a refusal several files
-  // deep is visible to the dry run too. Same compiler, same edges, same
-  // decision.
+  // The same compiler the run path's runPreflight gets, so both walks see the same edges.
   const vueCompiler = framework === "vue" ? await loadVueCompiler(projectRoot) : undefined;
-  // Same gate the run path applies: without the SFC parser the walk sees
-  // no edge out of a `.vue` target at all, so predicting a clean run here while
-  // the run refuses outright is the parity break this whole block closes.
+  // Without the SFC parser the walk sees no edge out of a .vue target, so a clean prediction lies.
   if (framework === "vue" && !vueCompiler && isVueFile(resolvedPath)) {
     throw new Error(VUE_COMPILER_MISSING(projectRoot));
   }
@@ -251,14 +176,10 @@ export async function explainProps(
     componentName,
     ...(vueCompiler ? { vueCompiler } : {}),
   });
-  // Folded in before the hard/soft handling below runs, so a
-  // one-hop-composed async server component gates identically here and
-  // in the full run.
+  // Folded in before the hard-hit check, so a composed child gates as it does in the full run.
   preflight.hard.push(...composedChildPreflightHits(resolvedPath, projectRoot));
   for (const hit of preflight.soft) warnings.push(NODE_BUILTIN_WARNING(hit));
-  // `runPreflight` returns `transforms` on this path too, read here with the
-  // same classifier, same order, same text the run path uses, so the dry
-  // run and the real run cannot disagree about these lines.
+  // The run path's classifier, order and text, so the two modes cannot disagree about these lines.
   for (const { hit, availability } of classifyProjectTransformHits(
     projectRoot,
     preflight.transforms,
@@ -275,18 +196,9 @@ export async function explainProps(
     if (bundlerAlias) {
       warnings.push(BUNDLER_PREACT_ALIAS_WARNING(bundlerAlias.configFile, bundlerAlias.target));
     }
-    // The alias warning above must be computed and pushed before this
-    // call, not after: assertReactDomClient throws before a dry run ever
-    // reaches a later check, so an alias note pushed afterward would never
-    // be seen whenever the version gate itself also failed. Wrapped so the
-    // throw still carries every warning collected so far, matching the
-    // full run's own accumulated-warnings behavior.
+    // Wrapped so a throw still carries the alias note above, which the gate would otherwise hide.
     try {
-      // The Vue-project question before the react-dom question, in the
-      // same order the real-run path calls them (harness/build.ts), so
-      // both modes fail a Vue render-function `.tsx` for the reason that
-      // applies to it instead of for a missing react-dom install it could
-      // never use.
+      // Vue before react-dom, as harness/build.ts asks, so a Vue .tsx fails for its own reason.
       assertRendererSupported(resolvedPath, projectRoot);
       assertReactDomClient(projectRoot);
     } catch (err) {
@@ -302,8 +214,7 @@ export async function explainProps(
     // A sink, not stderr: a dry run prints its diagnostics in its own output.
     onWarning: () => {},
   });
-  // The preset decides which extraction remedies still have a subject, so
-  // it is detected and applied before any of them is pushed.
+  // The preset decides which remedies still have a subject, so it applies before any is pushed.
   let schemas = detail.schemas;
   const presetPath = detectPropPresets(resolvedPath);
   const presets = presetPath ? loadPropPresets(presetPath, projectRoot) : undefined;
@@ -319,11 +230,7 @@ export async function explainProps(
   if (presets && unknownPresetProps.length > 0) {
     warnings.push(UNKNOWN_PRESET_PROPS_WARNING(presets.path, unknownPresetProps));
   }
-  // Same suppression as runComboMode -- a zero-prop count `detail.warnings`
-  // already attributes to a Vue scope exclusion does not also get the
-  // generic "extraction may have failed" text. A specifier that did not
-  // resolve is the whole explanation of the zero count, so it replaces the
-  // generic text rather than preceding it.
+  // An unresolved specifier explains the zero count whole, so it replaces the generic text.
   const projectRel = (file: string): string =>
     toPosix(path.relative(projectRoot, file));
   if (detail.unresolvedReExport) {
@@ -342,31 +249,21 @@ export async function explainProps(
     warnings.push(ZERO_PROPS_WARNING);
   }
 
-  // Kept as records, not names, because `inferComposition` reads the
-  // same shape the dispatcher hands it.
+  // Records, not names: inferComposition reads the shape the dispatcher hands it.
   const componentExports = isVueFile(resolvedPath) ? undefined : await extractExports(resolvedPath);
   const exports = componentExports ? componentExports.map((e) => e.name) : [componentName];
   const curveMatch = detectScalingProps(schemas)[0];
-  // The fixture inputs the real run has before it dispatches: an explicit
-  // --fixture, a target that is itself a fixture, or one sitting next to the
-  // component. Kept as the path, not a boolean, so a dropped --matrix can name
-  // the file that took precedence.
-  // The sibling probe mirrors the dispatcher's own gate (`!fixturePath &&
-  // !options.target`): with a --target the real run ignores a sibling
-  // fixture entirely.
+  // A path, not a boolean, so a dropped --matrix can name the file that took precedence.
   const dryRunFixturePath = options.fixturePath
     ? path.resolve(options.fixturePath)
     : isFixturePath(resolvedPath)
       ? resolvedPath
+      // The dispatcher gates its sibling probe on !options.target, so a --target ignores one.
       : options.target
         ? undefined
         : detectFixture(resolvedPath);
   const dryRunUsesFixture = dryRunFixturePath !== undefined;
-  // The sibling that carries the preset name without the preset shape,
-  // disclosed once by its path instead of dropped. Gated on the fixture
-  // decision the real run makes (pipeline/phases.ts's `presetShapeWarning`):
-  // a fixture owns its scene, so both modes stay silent about a
-  // preset-named sibling there.
+  // Gated on the fixture decision the real run makes, so both modes stay silent together.
   const shapeDisclosure = dryRunUsesFixture
     ? undefined
     : presetShapeDisclosure(resolvedPath, projectRoot);
@@ -380,9 +277,7 @@ export async function explainProps(
       ? "fixture-input"
       : "sibling";
 
-  // The dispatcher's own gate, evaluated here from the same filesystem
-  // inputs. `inferComposition` reads export names and schemas only, so
-  // this costs a source parse, not a browser.
+  // inferComposition reads export names and schemas, so this costs a source parse, not a browser.
   let composition: { root: string; exportCount: number } | undefined;
   if (
     componentExports &&
@@ -395,26 +290,14 @@ export async function explainProps(
     if (tree) composition = { root: tree.root, exportCount: componentExports.length };
   }
 
-  // detectComponentExport resolving to the file's own marked `export
-  // default` is correct by JS/TS export semantics, not a bug in the file's
-  // own authoring choice: this never changes *which* export is picked. It
-  // only surfaces the existing #ExportName escape hatch when the resolved
-  // export carries a degenerate-flagged required prop and an unpicked
-  // export in the same file has an all-non-degenerate schema.
+  // Surfaces the #ExportName escape hatch; it never changes which export is picked.
   const altNote = await alternativeExportNote(resolvedPath, componentName, schemas, options.target);
   if (altNote) warnings.push(altNote);
 
-  // The real dispatcher's own precedence, not two independent booleans. A
-  // fixture (given or auto-detected next to the component) makes the
-  // matrix branch unreachable exactly as it does in analyze(), and an
-  // auto-composed scene is read from the same source parse the dispatcher
-  // uses.
+  // The dispatcher's own precedence, not two independent booleans.
   const predictedMode = predictMode({
     isolation: options.isolation !== undefined,
-    // `resolveCurveMatch`'s own precedence: --no-curve suppresses it
-    // entirely, an explicit --curve names the prop itself, otherwise
-    // detection answers -- and a fixture or composed scene has no curve
-    // (resolveCurveMatch returns undefined for both).
+    // resolveCurveMatch's precedence: --no-curve, then an explicit prop, then detection.
     curve:
       options.curveMode === false || dryRunUsesFixture || composition !== undefined
         ? false
@@ -426,10 +309,7 @@ export async function explainProps(
     matrixAutoActivates: shouldAutoActivateMatrix(schemas),
   });
 
-  // The same two lines the dispatcher pushes, from the same two inputs.
-  // Restricted to a `combo` prediction because isolation and curve return
-  // before the dispatcher's matrix branch is reached, and curve carries
-  // its own suppressor.
+  // Only for a combo prediction: isolation and curve return earlier, and curve warns for itself.
   if (options.matrixMode === true && predictedMode === "combo") {
     if (composition) {
       warnings.push(MATRIX_SUPPRESSED_BY_COMPOSITION_WARNING(composition.root));
@@ -440,9 +320,7 @@ export async function explainProps(
     }
   }
 
-  // `resolveCurveMatch` warns whenever an explicit --curve meets a scene
-  // that has no curve; the dry run knows both of those scenes, so it says
-  // the same line from the same two inputs.
+  // resolveCurveMatch warns when an explicit --curve meets a scene that has none; so does this.
   if (options.curveMode === true || typeof options.curveMode === "object") {
     if (dryRunUsesFixture) {
       warnings.push(CURVE_NOT_ACTIVATED_WARNING("the run measures a fixture file"));
@@ -451,10 +329,7 @@ export async function explainProps(
     }
   }
 
-  // What the real run would cost. Filesystem reads only -- the units
-  // the mode this same dry run predicts would measure, the samples that mode
-  // allows, and this component's own recorded phases when a `--save-baseline`
-  // run on this machine left some.
+  // Filesystem reads only: the units the predicted mode would measure, priced from recorded phases.
   const costEstimate = estimateExplainedRunCost({
     schemas,
     projectRoot,
@@ -470,17 +345,14 @@ export async function explainProps(
     componentPath,
     componentName,
     ...(options.target ? { target: options.target } : {}),
-    // The line belongs to the file the declaration was read from. Pairing
-    // it with the barrel's path would print a file:line the barrel does
-    // not contain; the re-export line below still names the barrel.
+    // The line belongs to the declaring file; pairing it with the barrel would name no such line.
     ...(detail.targetLine !== undefined
       ? {
           bindingFile: projectRel(detail.targetFile ?? resolvedPath),
           bindingLine: detail.targetLine,
         }
       : {}),
-    // Only when the declaring module is a different file; a component
-    // declared where it was measured has no re-export to disclose.
+    // A component declared where it was measured has no re-export to disclose.
     ...(detail.targetFile !== undefined &&
     path.resolve(detail.targetFile) !== path.resolve(resolvedPath)
       ? {
@@ -499,8 +371,7 @@ export async function explainProps(
         required: s.required,
         values: s.values,
         ...(branches ? { unionBranches: branches } : {}),
-        // `defaultValue` is legitimately `false`/`0`/`""`, so presence is what
-        // decides, never truthiness.
+        // defaultValue is legitimately false/0/"", so presence decides, never truthiness.
         ...("defaultValue" in s ? { defaultValue: s.defaultValue } : {}),
         ...(s.defaultSource ? { defaultSource: s.defaultSource } : {}),
         ...(s.degenerate ? { degenerate: s.degenerate } : {}),
@@ -509,8 +380,7 @@ export async function explainProps(
     ...(curveMatch
       ? { curve: { propName: curveMatch.schema.name, reason: curveMatch.reason } }
       : {}),
-    // The same gating condition runComboMode's non-curve, non-fixture branch
-    // uses, including the `!composed` half.
+    // runComboMode's own gate for the non-curve, non-fixture branch, including the composed half.
     scaleProbeWillRun:
       !isFixturePath(resolvedPath) && !curveMatch && composition === undefined,
     matrixWouldActivate: shouldAutoActivateMatrix(schemas),
@@ -519,8 +389,7 @@ export async function explainProps(
       ? { matrixIneligibleReason: "no-matrix-flag" as const }
       : dryRunUsesFixture
         ? { matrixIneligibleReason: "fixture" as const }
-        // Reported only when the matrix would otherwise have run, so
-        // a component that never qualified is not told it lost a race.
+        // Reported only when the matrix would have run, so a component never in the race is silent.
         : composition && (options.matrixMode === true || shouldAutoActivateMatrix(schemas))
           ? { matrixIneligibleReason: "composed" as const }
           : {}),
@@ -531,8 +400,7 @@ export async function explainProps(
       : {}),
     ...(presets ? { presetPath: presets.path } : {}),
     costEstimate,
-    // The dry run deduplicates its own list by the same rule, so the
-    // parity the real run owes it is parity of what a reader sees.
+    // Deduplicated by the real run's own rule, so parity is parity of what a reader sees.
     warnings: dedupeWarnings(warnings),
   };
 }
@@ -544,13 +412,7 @@ const EXPLAIN_VALUE_WIDTH = 40;
 function explainValue(value: unknown): string {
   if (value === undefined) return "undefined";
   if (typeof value === "function") return "[Function]";
-  // A preset pool's non-literal entry (a function/JSX/
-  // variable reference, which cannot cross the CDP boundary) is stored as a
-  // PresetRef sentinel -- {__120fps_preset, index} -- resolved from the real
-  // preset module only at render time inside the browser. A dry run has no
-  // browser to resolve it against, so the real value genuinely is not known
-  // here; the internal marker itself must never be the displayed value in
-  // its place, matching the [Function] convention just above.
+  // A PresetRef resolves only in the browser, and the internal marker must never be displayed.
   if (isPresetRef(value)) return "[preset value]";
   let text: string;
   try {
@@ -563,11 +425,7 @@ function explainValue(value: unknown): string {
     : text;
 }
 
-// The value column would otherwise print only the one accepted value a
-// collapsed union happened to synthesize, while the warning two lines below
-// says the union has several shapes. The branch list lives in the warning
-// the same extraction produced, and is read back here rather than
-// re-derived, so the two cannot drift.
+// Read back from the warning the same extraction produced, never re-derived, so the two agree.
 const COLLAPSED_UNION_WARNING = /^Warning: prop "([^"]+)".* is a union of \d+ different shapes \(([^)]*)\)/;
 
 export function collapsedUnionBranchesFor(
@@ -583,9 +441,7 @@ export function collapsedUnionBranchesFor(
   return undefined;
 }
 
-// A quoted branch is a literal the run could synthesize; anything else is a
-// whole type the collapse dropped. Both are named, and they are named
-// differently, because they are different facts about the prop.
+// A quoted branch is a synthesizable literal; anything else is a whole type the collapse dropped.
 export function explainUnionBranches(branches: string[]): string {
   const literals = branches.filter((b) => /^["'`]/.test(b));
   const others = branches.filter((b) => !/^["'`]/.test(b));
@@ -615,8 +471,7 @@ export function formatExplainProps(explained: PropsExplanation): string {
       ? `  binding:  ${explained.bindingFile}:${explained.bindingLine}`
       : "  binding:  no component declaration (props read from the file itself)",
   );
-  // Beside the binding, because it is the reason the binding names a
-  // file the reader did not pass.
+  // Beside the binding, because it is why the binding names a file the reader did not pass.
   if (explained.reExport) {
     lines.push(
       `  ${RE_EXPORT_MEASURED_DISCLOSURE(explained.reExport.barrel, explained.reExport.module)}`,
@@ -634,9 +489,7 @@ export function formatExplainProps(explained: PropsExplanation): string {
   } else {
     const nameWidth = Math.max(...explained.props.map((p) => p.name.length));
     const kindWidth = Math.max(...explained.props.map((p) => p.kind.length));
-    // The column appears whenever any prop declares a default, and the
-    // header names it so a blank cell reads as "no default" rather than as
-    // a missing number.
+    // The header names the column, so a blank cell reads as "no default", not a missing number.
     const anyDefault = explained.props.some((p) => p.defaultValue !== undefined);
     const defaultWidth = anyDefault
       ? Math.max(
@@ -657,8 +510,7 @@ export function formatExplainProps(explained: PropsExplanation): string {
       const defaultColumn = anyDefault
         ? `${(prop.defaultValue === undefined ? "" : explainValue(prop.defaultValue)).padEnd(defaultWidth)}  `
         : "";
-      // A collapsed union renders its whole branch list, so the row and
-      // the warning below describe the same prop.
+      // A collapsed union renders its whole branch list, so the row and the warning agree.
       const valueColumn = prop.unionBranches
         ? explainUnionBranches(prop.unionBranches)
         : explainValues(prop.values);
@@ -669,8 +521,7 @@ export function formatExplainProps(explained: PropsExplanation): string {
   }
 
   lines.push("");
-  // Before the mode lines, because which scene the run builds is what
-  // makes the matrix branch reachable at all.
+  // Before the mode lines: which scene the run builds is what makes the matrix branch reachable.
   lines.push(
     explained.composition
       ? `Composition:  would auto-compose from ${explained.composition.root} ` +
@@ -682,34 +533,23 @@ export function formatExplainProps(explained: PropsExplanation): string {
   lines.push(
     explained.curveSuppressedByFlag
       ? "Curve mode:   would not activate: --no-curve, though this component has a scaling prop"
-      // `resolveCurveMatch` returns undefined for a composed
-      // scene, so a scaling prop on the root does not make curve mode run.
+      // resolveCurveMatch returns undefined for a composed scene, whatever the root declares.
       : explained.composition && explained.curve
         ? "Curve mode:   would not activate: an auto-composed scene supplies the props"
       : explained.curve
         ? `Curve mode:   would activate on ${explained.curve.propName} (${explained.curve.reason})`
         : "Curve mode:   would not activate: no array or numeric scaling prop",
   );
-  // A separate mechanism from curve mode above — the sibling-copies scale
-  // probe runs unconditionally on a non-fixture target whenever curve mode
-  // does not, regardless of whether the component has any array/numeric
-  // prop at all.
+  // A separate mechanism: the sibling-copies probe needs no array or numeric prop at all.
   if (explained.scaleProbeWillRun) {
     lines.push(
       "Scale probe:  would still run N=1/5/20/50 synthetic copies and report a growth class, " +
       "independent of curve mode",
     );
   }
-  // "would auto-activate" cannot be printed from the matrix predicate
-  // alone, because the real dispatcher returns at curve before the matrix
-  // branch is reached. The predicate's answer is still shown; what it
-  // loses to is shown alongside it.
+  // The predicate alone cannot say "would auto-activate": the dispatcher returns at curve first.
   lines.push(
-    // An explicit --matrix reaches this branch over a component whose own
-    // predicate never matched, so the composed answer is given before the
-    // predicate's, and "would auto-activate" can never print for a scene
-    // the dispatcher composes: saying "predicate matches" there would be
-    // false.
+    // The composed answer comes first, so "predicate matches" never prints for a composed scene.
     explained.matrixIneligibleReason === "composed" && explained.composition
       ? (explained.matrixWouldActivate
           ? "Matrix mode:  predicate matches, but an auto-composed scene supplies the props, so " +
@@ -720,10 +560,7 @@ export function formatExplainProps(explained: PropsExplanation): string {
     : explained.matrixWouldActivate
       ? explained.predictedMode === "matrix"
         ? "Matrix mode:  would auto-activate"
-        // Combo mode takes no precedence over matrix -- when the
-        // prediction is `combo` the matrix branch was *ineligible*, which on a
-        // dry run means a fixture (given or sitting next to the component)
-        // supplies the props. Naming precedence there would be false.
+        // A combo prediction means the matrix branch was ineligible, so naming precedence lies.
         : explained.matrixIneligibleReason === "no-matrix-flag"
           ? "Matrix mode:  predicate matches, but --no-matrix was passed, so this run would measure prop combos"
         : explained.matrixIneligibleReason === "fixture"
@@ -734,8 +571,7 @@ export function formatExplainProps(explained: PropsExplanation): string {
       : "Matrix mode:  would not auto-activate",
   );
 
-  // An estimate, said in that word, with the units it multiplied and
-  // where the per-phase numbers came from. Nothing was measured to produce it.
+  // Named an estimate, with its units and their source: nothing was measured to produce it.
   const estimate = explained.costEstimate;
   if (estimate) {
     lines.push(
@@ -755,9 +591,7 @@ export function formatExplainProps(explained: PropsExplanation): string {
 
   lines.push("");
   lines.push("Dry run: nothing was measured, no report was written.");
-  // Everything decidable from the filesystem prints in both modes; what is
-  // left needs the browser, and saying so in one line is what keeps a
-  // clean dry run from reading as a promise.
+  // What is left needs the browser, and saying so keeps a clean dry run from reading as a promise.
   lines.push(DRY_RUN_RUNTIME_ONLY_NOTE);
   return lines.join("\n");
 }

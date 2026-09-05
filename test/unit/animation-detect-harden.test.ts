@@ -5,7 +5,6 @@ import {
 } from "../../src/report/index.js";
 import { buildReport, type BuildReportInput } from "../../src/pipeline/index.js";
 
-// --- helpers ---
 
 const baseMachine = {
   cpu: "Test", cores: 4, ramMb: 16384,
@@ -32,7 +31,6 @@ function makeInput(overrides: Partial<BuildReportInput> = {}): BuildReportInput 
   };
 }
 
-// --- H13: hasAnimation + hasPortal on a large DOM ---
 describe("H13: animation + portal floor", () => {
   it("keeps the size tier when it is already above the T3 floor", () => {
     const graph = {
@@ -59,7 +57,6 @@ describe("H13: animation + portal floor", () => {
   });
 });
 
-// --- H14: hasAnimation + hasScaling interaction ---
 describe("H14: animation + scaling tier interaction", () => {
   it("animation=true + scaling=true, 30 DOM → T3 (floor lifts T2 to T3)", () => {
     expect(classifyTier({ domNodeCount: 30, hasPortal: false, hasScaling: true, hasAnimation: true })).toBe("T3");
@@ -74,7 +71,6 @@ describe("H14: animation + scaling tier interaction", () => {
   });
 });
 
-// --- H17: JSON roundtrip preserves hasAnimation ---
 describe("H17: JSON roundtrip", () => {
   it("hasAnimation survives JSON.stringify/parse", () => {
     const report = buildReport(makeInput({
@@ -91,7 +87,6 @@ describe("H17: JSON roundtrip", () => {
   });
 });
 
-// --- H20: hasAnimation on all combos when tieredBudgets active ---
 describe("H20: hasAnimation field present on all combos", () => {
   it("every combo has hasAnimation set when tiered budgets active", () => {
     const report = buildReport(makeInput({

@@ -25,9 +25,7 @@ function mkProject(files: Record<string, string>): string {
   return dir;
 }
 
-// A JavaScript project is a first-class target: without allowJs the program has
-// no source file for a .jsx component at all, so extraction could not even see
-// the component.
+// Without allowJs, TS has no source file for a .jsx component and extraction sees nothing.
 describe("prop extraction for a JavaScript component", () => {
   it("extracts props from a .jsx component in a project with no config", () => {
     const dir = mkProject({

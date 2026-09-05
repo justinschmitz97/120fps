@@ -43,10 +43,7 @@ function combo(interactions: InteractionReport[]): ComboReport {
 const T3 = TIER_BUDGETS.T3;
 
 describe("interaction budgets are per step", () => {
-  // The "interaction-step budgets: the budget is one frame" tests below
-  // replaced the divide-by-11 rule with a frame-derived per-event budget;
-  // REFERENCE_EVENTS survives only to translate an explicitly supplied
-  // aggregate --threshold-interaction.
+  // REFERENCE_EVENTS only translates an explicit --threshold-interaction; below is per-event.
   it("keeps the reference count for explicit aggregate thresholds", () => {
     expect(REFERENCE_EVENTS).toBe(11);
   });

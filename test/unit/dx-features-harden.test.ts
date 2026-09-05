@@ -50,7 +50,6 @@ describe("H2: two hashes", () => {
   });
 });
 
-// H3: a file with no component export.
 describe("H3: --explain-props on a file with no component", () => {
   it("falls back to the filename and reports an empty export list", async () => {
     const explained = await explainProps(fixture("m65/no-component.tsx"));
@@ -74,16 +73,11 @@ describe("H4: --explain-props with a <stem>.props.tsx preset", () => {
     const text = formatExplainProps(explained);
     expect(text).toContain("presets:");
     expect(text).toContain("Quarterly revenue");
-    // The preset names a key the component does not declare: same warning the
-    // measured run would push.
+    // notAProp isn't declared; a measured run would push the same warning.
     expect(explained.warnings.join("\n")).toContain("notAProp");
   });
 
-  // M92 (1.5d, heroui): onSelect's preset entry is a function literal, which
-  // cannot be read as a real value from the preset file's AST alone -- it
-  // becomes a PresetRef sentinel ({__120fps_preset, index}) resolved only
-  // once the real preset module loads in the browser. The displayed value
-  // must not leak that internal marker.
+  // M92: a function-literal preset resolves to a PresetRef sentinel; display must not leak it.
   it("does not leak the internal PresetRef marker for a non-literal preset entry", async () => {
     const explained = await explainProps(fixture("m44-preset-card.tsx"));
     const onSelect = explained.props.find((p) => p.name === "onSelect");
@@ -186,7 +180,6 @@ describe("H8: type-only provider import", () => {
   });
 });
 
-// H9: the same package imported by two files in the graph.
 describe("H9: duplicate provider imports", () => {
   it("are recorded and labelled once", () => {
     const result = runPreflight({
@@ -198,7 +191,6 @@ describe("H9: duplicate provider imports", () => {
   });
 });
 
-// H10: an alias is the name the module exports under.
 describe("H10: #Export naming an export alias", () => {
   it("resolves and binds to the aliased declaration's props", async () => {
     expect(detectComponentExport(fixture("m58/alias-widget.tsx"), "AliasWidget").name).toBe(
@@ -258,7 +250,6 @@ describe("H13: explain on a file with a hijacking helper", () => {
   });
 });
 
-// H14: wall-clock boundaries.
 describe("H14: wall-clock formatting boundaries", () => {
   it("switches unit exactly at one minute", () => {
     expect(formatWallClock(59_940)).toBe("Total: 59.9s");
@@ -267,8 +258,7 @@ describe("H14: wall-clock formatting boundaries", () => {
     expect(formatWallClock(89_000)).toBe("Total: 1m 29s");
   });
 
-  // commerce/material-ui printed `Total: 2m 60s`: the seconds were rounded
-  // after the minutes had already been split off, so a carry had nowhere to go.
+  // commerce/material-ui printed `Total: 2m 60s`: rounding after minute-split dropped the carry.
   it("carries a rounded-up second into the minutes", () => {
     expect(formatWallClock(119_600)).toBe("Total: 2m 0s");
     expect(formatWallClock(179_700)).toBe("Total: 3m 0s");
@@ -276,7 +266,6 @@ describe("H14: wall-clock formatting boundaries", () => {
   });
 });
 
-// H15: a wide value pool is a sample, not a dump.
 describe("H15: explain truncates long value pools", () => {
   it("shows the first values and counts the rest", async () => {
     const explained = await explainProps(fixture("large-union.tsx"));
@@ -284,19 +273,12 @@ describe("H15: explain truncates long value pools", () => {
     expect(country?.values.length).toBeGreaterThan(4);
     const text = formatExplainProps(explained);
     expect(text).toMatch(/\+\d+ more/);
-    // M91: explainProps now also surfaces pre-build warnings the full run
-    // already computes (framework/CSS/wrap resolution), matching parity —
-    // this fixture's shared `fixtures/` project root has an unrelated CSS
-    // fallback pick whose prose warning is legitimately long (matching what
-    // a full run against the same file already prints). The 200-char cap
-    // is this test's own concern (the truncated value-pool line specifically
-    // does not balloon), not a blanket limit on every line in the output.
+    // M91: 200-char cap applies only to this values line, not the rest of the output.
     const valuesLine = text.split("\n").find((l) => /\+\d+ more/.test(l));
     expect(valuesLine!.length).toBeLessThan(200);
   });
 });
 
-// H16: the untargeted resolution order is unchanged.
 describe("H16: no behavior change without a target", () => {
   it("keeps the exact-stem and default-export rules", () => {
     expect(detectComponentExport(fixture("button.tsx")).name).toBe("Button");
@@ -311,7 +293,6 @@ describe("H16: no behavior change without a target", () => {
   });
 });
 
-// H17: extraction warnings stay on stderr for a measured run.
 describe("H17: the warning sink does not leak into normal extraction", () => {
   it("collects into the result only when a sink was supplied", async () => {
     const withSink = await extractPropsDetailed(fixture("m60/unsynthesizable.tsx"), {
@@ -324,7 +305,6 @@ describe("H17: the warning sink does not leak into normal extraction", () => {
   });
 });
 
-// H18: explaining two components in one invocation.
 describe("H18: explaining several components", () => {
   it("produces an independent explanation per file", async () => {
     const a = await explainProps(fixture("two-exports.tsx"));
@@ -344,10 +324,7 @@ describe("H19: explain on a missing file", () => {
   });
 });
 
-// M83 #5 (base-ui-F6): --explain-props' "Curve mode: would (not) activate"
-// line only predicts detectScalingProps's whole-run auto-activation. The M61
-// sibling-copies scale probe is a separate, unconditional mechanism that
-// still runs on a non-fixture target whenever curve mode does not.
+// M83 #5: scaleProbeWillRun predicts the sibling-copies probe, separate from curve-mode activation.
 describe("M83 #5: scaleProbeWillRun predicts the sibling-copies scale probe", () => {
   it("is false when curve mode would activate (the scale probe never runs then)", async () => {
     const explained = await explainProps(fixture("m58/hotspot-image.tsx"));
@@ -374,11 +351,7 @@ describe("M83 #5: scaleProbeWillRun predicts the sibling-copies scale probe", ()
   });
 });
 
-// M83 #8 (chakra-ui-F7): detectComponentExport picking the file's own marked
-// `export default` is correct by JS/TS semantics — this does not change
-// which export is picked, only discloses the #ExportName escape hatch when
-// the resolved export has a degenerate required prop and a sibling export
-// does not.
+// M83 #8: default-export pick is correct; this covers disclosing the #ExportName escape hatch.
 describe("M83 #8: alternative-export disclosure for a degenerate required prop", () => {
   it("names the sibling export and its #ExportName override", async () => {
     const explained = await explainProps(fixture("m83/alt-export.tsx"));
@@ -401,8 +374,7 @@ describe("M83 #8: alternative-export disclosure for a degenerate required prop",
 // H20: the provider hint reads as one actionable line per candidate.
 describe("H20: provider hint text", () => {
   it("names every candidate exactly once", () => {
-    // M79 (4a): the provider hint is gated on a captured page-error message
-    // that actually looks provider/context-shaped.
+    // M79 (4a): provider hint fires only when a captured error looks provider/context-shaped.
     const report = {
       combos: [{ pageErrors: ["Cannot read properties of undefined (reading 'Context')"] }],
       providerCandidates: ["next-intl (useTranslations)", "src/store.tsx (useWorkbench)"],

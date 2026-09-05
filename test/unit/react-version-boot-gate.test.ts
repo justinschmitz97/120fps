@@ -65,12 +65,7 @@ describe("react-dom/client availability gate", () => {
     expect(message).not.toContain("esbuild");
   });
 
-  // M78: this used to assert /React 18\+ required/ against a tmpDir with
-  // zero node_modules — the excalidraw shape, and exactly the bug. The old
-  // catch treated every resolution failure as "version too old"; the real
-  // cause here is that nothing is installed at all. See the archived M76-M83 map's
-  // "LOCKED IN BY AN EXISTING TEST" note: an implementer who sees this test
-  // fail and "fixes" the code to satisfy the old assertion restores the bug.
+  // M78 regression: nothing installed must not be reported as an old react-dom version.
   it("still refuses when no react-dom is installed at all, naming the missing install (not a version claim)", () => {
     withProductionResolution(() => {
       const message = throwMessage(() => assertReactDomClient(tmpDir));
@@ -82,11 +77,7 @@ describe("react-dom/client availability gate", () => {
   });
 });
 
-// M78: assertReactDomClient's bare try/catch used to collapse four distinct
-// real causes into one wrong "version too old" message. Each cause below is
-// reached the same way runPreflight's own not-installed/PnP checks are, so
-// the gate names the truth even when reached directly (e.g. as the
-// --no-preflight backstop, which never skips this function).
+// M78: this taxonomy must hold even when reached directly, e.g. via the --no-preflight backstop.
 describe("react-dom/client resolution-failure taxonomy", () => {
   it("names Yarn PnP, not a react-dom version, when the workspace is PnP", () => {
     fs.writeFileSync(path.join(tmpDir, ".pnp.cjs"), "");
@@ -135,8 +126,7 @@ describe("react-dom/client resolution-failure taxonomy", () => {
     });
   });
 
-  // preact-app-F5: a real, too-old react-dom is still the one true "upgrade"
-  // case, now with an addendum naming preact/compat's own shim.
+  // preact-app-F5: preact alongside a genuinely outdated react-dom is still the "upgrade" case.
   it("appends the preact/compat shim note to the outdated message when preact is also declared", () => {
     installReactDom("17.0.2", false);
     writePackageJson({ "react-dom": "17.0.2", preact: "^10.19.0" });

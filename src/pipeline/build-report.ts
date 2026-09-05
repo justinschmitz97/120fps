@@ -57,8 +57,7 @@ import { type resolveCssFiles } from "./resolve.js";
 import { legacyBaselineWarning } from "./verdict-reuse.js";
 import { toPosix } from "../shared/index.js";
 
-// The numbers are real, but they describe a transient scene. Warn, never
-// fail: the defect would be presenting the skeleton's cost as the whole story.
+// Warn, never fail: the numbers are real, and the defect is presenting them as the whole story.
 const MEASURED_STATE_CAUSE: Record<Exclude<MeasuredState, "settled">, string> = {
   "pending-network": "fetch/XHR requests started during mount were still in flight when the sample window closed",
   "late-mutation": "the component DOM changed after the mount fence without any input",
@@ -88,39 +87,20 @@ export interface BuildReportInput {
   skipAttribution?: boolean;
   autoComposition?: boolean;
   compositionTree?: import("../props/index.js").CompositionTree;
-  // A combo rendered something, but not the whole component. Applied
-  // once, after the per-combo loop, to every combo without a renderHealth
-  // value already: renderHealth already fully discloses the combo's shape,
-  // so a combo that has it is left untouched by this field and its verdict.
+  // A combo rendered something, but not the whole component; a combo with renderHealth is exempt.
   disclosureReason?: "uncomposed" | "propsExcluded";
-  // Set when the combo list is the single `{}` a fixture or an
-  // auto-composed scene produces, so every combo built from it carries the
-  // fact on the row rather than leaving `props: {}` to be interpreted.
+  // Set when the combo list is the single {} a fixture or composed scene makes; every row says so.
   measuredWithoutProps?: boolean;
   nextJsShims?: string[];
   scalingCurveReport?: ScalingCurveReport;
   matrixReport?: import("../report/index.js").MatrixReport;
-  // Consumed to attribute a fatal render crash to a harness-synthesized
-  // value rather than the component (see detectHarnessFault). Optional and
-  // read defensively — `provenance` (props/schema.ts) may not exist on a
-  // given schema; when it is absent everywhere, no combo is ever exonerated
-  // (see detectHarnessFault).
+  // Attributes a fatal crash to a synthesized value; without provenance nothing is exonerated.
   schemas?: Array<PropSchema & { provenance?: PropProvenance }>;
-  // `attributeCost` runs per combo inside this function, between the mount
-  // phase and the report boundary, so its window is handed back to the
-  // clock here and carved out of whichever phase was open. No progress line
-  // names it; the report's `attribution` key is where it shows up.
+  // attributeCost runs per combo here, so its window is carved out of whichever phase was open.
   phaseClock?: Pick<PhaseClock, "addAttribution">;
 }
 
-// Mirrors isHarnessInternalNoise's (browser/page-errors.ts) principle for a
-// network request — a harness-caused failure is not the component's — but
-// generalized to a render crash. Requires positive evidence per provenance
-// class, never fires on presence alone: most placeholder/heuristic values
-// never cause a crash, so a schema's risky provenance is necessary but not
-// sufficient. Returns undefined whenever no schema explains the crash,
-// including when `schemas` is absent entirely (a caller that never had a
-// schema list to begin with, e.g. a fixture/matrix path).
+// A harness-caused crash is not the component's, but risky provenance alone is never evidence.
 function detectHarnessFault(
   combo: ComboReport,
   schemas: Array<PropSchema & { provenance?: PropProvenance }> | undefined,
@@ -128,15 +108,7 @@ function detectHarnessFault(
   if (!schemas || schemas.length === 0) return undefined;
   const errorText = (combo.pageErrors ?? []).join(" ");
 
-  // Contract props first: a prop whose truthiness imposes a requirement on
-  // sibling props (asChild, as, render...) is inherently a harness risk once
-  // truthy, by "contract" provenance's own definition — the synthesizer
-  // flagged this exact uncertainty when it chose the value. Truthiness is
-  // necessary and not sufficient: this branch requires positive evidence in
-  // `errorText`, the same bar the placeholder branch below applies, so a
-  // crash thrown unconditionally before any asChild branching cannot
-  // exonerate whichever combos happened to draw `asChild: true` while the
-  // identical crash keeps failing everywhere else.
+  // Truthiness is necessary, not sufficient: an unconditional crash must exonerate no combo.
   for (const schema of schemas) {
     if (schema.provenance !== "contract") continue;
     if (!(schema.name in combo.props)) continue;
@@ -146,10 +118,7 @@ function detectHarnessFault(
     return { propName: schema.name, value, provenance: "contract", evidence: errorText };
   }
 
-  // Placeholder/heuristic props: only when the synthesized value (or, for an
-  // object/array prop, one of its own scalar descendant values) shows up
-  // verbatim in the page's own captured error text — presence of a risky
-  // value in the combo is not by itself evidence it caused this crash.
+  // The synthesized value must appear verbatim in the error text; presence in the combo is not it.
   for (const schema of schemas) {
     if (schema.provenance !== "placeholder" && schema.provenance !== "heuristic") continue;
     if (!(schema.name in combo.props)) continue;
@@ -169,14 +138,7 @@ function stringifyLeaf(value: unknown): string | undefined {
   return undefined;
 }
 
-// The mechanisms a truthy `asChild` routes a render
-// through, matched case-insensitively because the libraries that raise them
-// spell them differently (`Slottable` in Radix's own text, "failed to slot
-// onto its children" in the sentence before it, React's own
-// `React.Children.only` and "not valid as a React child" when a Slot receives
-// something it cannot clone). These are evidence about `asChild` specifically:
-// `as` and `render` substitute an element without going through Slot, so a
-// slot/clone failure says nothing about them.
+// Evidence about asChild alone: `as` and `render` substitute an element without a Slot.
 const SLOT_MECHANISM_TERMS = [
   "aschild",
   "slot",
@@ -186,17 +148,7 @@ const SLOT_MECHANISM_TERMS = [
   "not valid as a react child",
 ];
 
-// `CONTRACT_PROP_NAME` (props/synthesize.ts) is /^(asChild|as|render)$/,
-// and two of its three members are ordinary English words that appear in
-// unrelated JS failure prose (e.g. `Cannot read properties of undefined
-// (reading 'render')`), so a bare name-quoted-or-behind-a-`.` match would
-// exonerate a component for its own crash. Two evidence forms survive, each
-// unambiguous on its own:
-//
-//   1. a slot/clone mechanism phrase, for `asChild` only;
-//   2. the prop's own name followed by the word "prop" (`The "as" prop must
-//      be a valid element type.`), which is about a prop by construction and
-//      cannot be produced by a property-read message.
+// "as" and "render" are ordinary words in failure prose, so a bare name match proves nothing.
 function contractEvidencedInText(propName: string, errorText: string): boolean {
   if (!errorText) return false;
   const lowered = errorText.toLowerCase();
@@ -211,17 +163,13 @@ function contractEvidencedInText(propName: string, errorText: string): boolean {
     .test(errorText);
 }
 
-// Word-boundary, not plain substring: a short/generic value ("0", "1", "id")
-// must not "match" merely because it happens to appear inside an unrelated
-// number or identifier in the error text (e.g. a placeholder `0` matching
-// "...at line 10"). Evidence has to be the value appearing as itself.
+// Word-boundary, not substring: a placeholder "0" must not match inside "...at line 10".
 function matchesAsWord(needle: string, haystack: string): boolean {
   const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return new RegExp(`(?<![A-Za-z0-9_])${escaped}(?![A-Za-z0-9_])`).test(haystack);
 }
 
-// Depth-bounded (object/array props are shallow prop-shaped data, not
-// arbitrary trees) so this cannot loop on a cyclic or pathological value.
+// Depth-bounded, so a cyclic or pathological value cannot loop this.
 function valueEvidencedInText(value: unknown, errorText: string, depth = 0): boolean {
   const leaf = stringifyLeaf(value);
   if (leaf && matchesAsWord(leaf, errorText)) return true;
@@ -235,10 +183,7 @@ function valueEvidencedInText(value: unknown, errorText: string, depth = 0): boo
 export function buildReport(input: BuildReportInput): Report {
   const combos: ComboReport[] = [];
 
-  // A pass that stopped early leaves holes in
-  // `mounts`/`rerenders`. `for...of` yields `undefined` for a hole and
-  // `Array.prototype.find` calls its predicate with it, so every consumer here
-  // asks for the measured entries.
+  // A pass that stopped early leaves holes, and find() would still call its predicate on them.
   for (const mount of measuredOnly(input.mounts)) {
     const exploreResult = input.explores.find(
       (e) => e.comboIndex === mount.comboIndex,
@@ -267,9 +212,7 @@ export function buildReport(input: BuildReportInput): Report {
       }
     }
 
-    // Interaction to Next Paint across every interaction explored for this
-    // combo. Edges retain their raw per-sample traces (M4), so this needs no
-    // extra measurement pass: only present when exploration produced traces.
+    // Edges retain their raw per-sample traces, so INP needs no extra measurement pass.
     let inp: number | undefined;
     if (exploreResult) {
       const interactionTraces = exploreResult.graph.edges.flatMap((edge) => edge.traces);
@@ -291,9 +234,7 @@ export function buildReport(input: BuildReportInput): Report {
       ? buildTimingWithCV(rerenderResult.stable.samples)
       : buildTimingWithCV([0]);
 
-    // `__120fps_scaleN` is the harness trigger key for the sibling-copies
-    // probe, not a real prop: it never belongs in the report's `props`.
-    // `scaleProbe` carries that identity instead.
+    // __120fps_scaleN is a harness trigger key, not a prop; scaleProbe carries that identity.
     const rawProps = mount.props as Record<string, unknown>;
     const scaleProbeValue = rawProps["__120fps_scaleN"];
     const isScaleProbe = typeof scaleProbeValue === "number";
@@ -337,14 +278,7 @@ export function buildReport(input: BuildReportInput): Report {
       input.phaseClock?.addAttribution(Date.now() - attributionStart);
     }
 
-    // Mount and rerender each watched the page over their own window; the
-    // combo is what the reader sees, so both windows land on it. "Both
-    // windows" means only this combo's own two windows: the rerender pass's
-    // third window — the prop-delta sub-probe driving this combo's tree
-    // into `combos[ci+1]`'s props — is kept separate below. Every
-    // downstream exclusion (renderHealth, harnessFault, verdict) follows
-    // from not merging it here, rather than from filters that could drift
-    // apart.
+    // This combo's own two windows only; the prop-delta sub-probe's window stays separate below.
     const pageErrors = mergeDrains(mount.pageErrors, rerenderResult?.pageErrors);
     if (hasPageErrors(pageErrors)) {
       combo.pageErrors = renderDrain(pageErrors!);
@@ -357,8 +291,7 @@ export function buildReport(input: BuildReportInput): Report {
       };
     }
     if (combo.domNodeCount === 0) {
-      // Fatal means an uncaught exception, never console.error output: React
-      // and Vue log dev warnings there, and a verdict must not turn on those.
+      // Fatal is an uncaught exception, never console.error: a verdict cannot turn on dev warnings.
       combo.renderHealth = pageErrors?.fatal ? "error" : "empty";
     }
 
@@ -366,16 +299,10 @@ export function buildReport(input: BuildReportInput): Report {
     combos.push(combo);
   }
 
-  // Computed here, before the scale-probe curve fit
-  // below can add more combos to reconcile against, and pushed onto
-  // report.warnings once the report exists — same array every other
-  // buildReport-time warning reaches, so the JSON report carries it too.
+  // Computed before the curve fit below adds more combos to reconcile against.
   const renderHealthInconsistencyWarning = detectRenderHealthInconsistency(combos);
 
-  // domNodeCount growth is fitted only across the sibling-copies probe
-  // combos, never mixed with incidental DOM differences unrelated real prop
-  // combos happen to have: the probe combos carry their own true
-  // independent variable (scaleProbe), and only they receive the fit.
+  // Only the probe combos carry a true independent variable, so only they receive the fit.
   const scaleProbeCombos = combos.filter((c) => c.scaleProbe !== undefined);
   if (scaleProbeCombos.length >= 2) {
     const points = scaleProbeCombos.map((c) => ({ n: c.scaleProbe!, metric: c.mount.median }));
@@ -389,18 +316,10 @@ export function buildReport(input: BuildReportInput): Report {
   }
 
   if (!input.flatThresholds) {
-    // The exemption below describes the augmentation probe -- N synthetic
-    // copies appended *beside* the real prop combos, whose cost is the copy
-    // count and not the component's. On a scale-export fixture
-    // (`runComboMode`'s `fixtureHasScale` branch) every combo is a probe,
-    // so exempting all of them would make the run unfailable on any budget.
-    // The exemption applies only where the contrast it rests on exists.
+    // On a scale-export fixture every combo is a probe, and exempting all would never fail.
     const probesAccompanyPropCombos = combos.some((c) => c.scaleProbe === undefined);
     for (const combo of combos) {
-      // `combo.props` has the `__120fps_scaleN` trigger key stripped (see
-      // above), so a probe must be identified through the `scaleProbe`
-      // field, not a `"__120fps_scaleN" in combo.props` test against the
-      // stripped props.
+      // combo.props has the trigger key stripped, so only scaleProbe identifies a probe here.
       const isScaleCombo = combo.scaleProbe !== undefined && probesAccompanyPropCombos;
       const hasPortal = combo.interactions.some((i) => i.portal === true);
       const hasScaling = combo.scalingCurve != null || combo.rerenderScalingCurve != null;
@@ -410,8 +329,7 @@ export function buildReport(input: BuildReportInput): Report {
       combo.tier = tier;
       combo.hasAnimation = hasAnimation;
       if (isScaleCombo) {
-        // The synthetic scale probe is exempt from budgets, never from
-        // rendering. A scale point that threw is still a broken render.
+        // A scale probe is exempt from budgets, never from rendering: a throw is still broken.
         combo.verdict = combo.renderHealth === "error" ? "fail" : "pass";
       } else {
         const tierBudget = TIER_BUDGETS[tier];
@@ -430,10 +348,7 @@ export function buildReport(input: BuildReportInput): Report {
     }
   }
 
-  // A fatal crash traceable to a harness-synthesized value is not charged
-  // to the component. Runs after the tier pass so it sees the same verdict
-  // a reader would; only ever narrows a "fail" it can positively explain,
-  // never a general crash-suppressor (see detectHarnessFault).
+  // After the tier pass, so it sees the verdict a reader would; it only narrows an explained fail.
   for (const combo of combos) {
     if (combo.verdict !== "fail" || combo.renderHealth !== "error") continue;
     const fault = detectHarnessFault(combo, input.schemas);
@@ -443,9 +358,7 @@ export function buildReport(input: BuildReportInput): Report {
     }
   }
 
-  // Stated directly, not just left to follow from the verdict demotion
-  // above — a future verdict mutation between here and this line must not
-  // silently start charging a harnessFault combo again.
+  // Stated directly: a verdict mutation added below must not start charging a harnessFault again.
   const pass = combos.every((c) => c.verdict !== "fail" || c.harnessFault !== undefined);
 
   const report: Report = {
@@ -470,9 +383,7 @@ export function buildReport(input: BuildReportInput): Report {
     ));
   }
 
-  // One entry naming every id the run saw, deduped across combos — the same
-  // `#calendar` missing from ten cells is one fact about the document, not
-  // ten about the component.
+  // The same missing id across ten cells is one fact about the document, not ten about the run.
   const spriteRefs = [...new Set(combos.flatMap((c) => c.unresolvedSpriteRefs ?? []))];
   if (spriteRefs.length > 0) {
     report.warnings = [...(report.warnings ?? []), UNRESOLVED_SPRITE_REFS_WARNING(spriteRefs)];
@@ -498,10 +409,7 @@ export function buildReport(input: BuildReportInput): Report {
     report.compositionTree = input.compositionTree;
   }
 
-  // Never overrides an honest renderHealth ("error"/"empty") combo — that
-  // already fully discloses what happened. Only a combo that rendered
-  // something (the dangerous case: a real-looking DOM count with none of the
-  // declared parts inside it) gets the new field and the pass->warn downgrade.
+  // A renderHealth combo already discloses what happened; a plausible-looking render does not.
   if (input.disclosureReason) {
     for (const combo of combos) {
       if (combo.renderHealth) continue;
@@ -534,15 +442,12 @@ export interface BaselineWorkflowContext {
   envPolicy: BaselineEnvPolicy;
   // Stored with the entry on save so unchanged components can reuse it.
   sourceFingerprint?: string;
-  // Where this run's minutes went, and the combo and sample counts it
-  // spent them on, so a later dry run can scale them. Read by the estimate
-  // only; it never enters the environment key or the reuse decision.
+  // Read by the estimate only: never part of the environment key or the reuse decision.
   phaseTimings?: PhaseTimings;
   phaseUnits?: { combos: number; samples: number };
 }
 
-// Shared by every output mode: the isolation branch returns before the combo
-// path would reach its own copy, and both compare the same three metrics.
+// Shared by every mode, so the isolation branch compares the same three metrics as the rest.
 export function applyBaselineWorkflow(
   report: Report,
   metrics: BaselineMetrics | undefined,
@@ -573,12 +478,7 @@ export function applyBaselineWorkflow(
         metrics?.unstable ?? new Set<string>(),
         ctx.envPolicy === "ignore" ? undefined : ctx.currentEnv,
       );
-      // A slot from another machine can inform, never fail. Without a slot
-      // for this environment there is no baseline for this environment, and a
-      // cross-machine delta is not evidence of a regression.
-      //
-      // `ignore` is the exception: it means the user asked for a raw comparison
-      // across environments and accepts what that implies, including failure.
+      // A cross-machine delta is not evidence of a regression, unless "ignore" asked for one.
       if (selection!.crossEnvironment && ctx.envPolicy !== "ignore") {
         comparison.crossEnvironment = true;
         report.warnings = [
@@ -586,11 +486,7 @@ export function applyBaselineWorkflow(
           NO_ENV_BASELINE_WARNING(ctx.relativeComponent),
         ];
       }
-      // On a hostile machine the run is not measuring the component, so
-      // its deltas would only manufacture false alarms. What noise invalidates
-      // is the *timing* comparison: which environment the baseline came from
-      // is a fact about the file, not about the machine's mood, so the
-      // classification and its mismatch detail survive.
+      // Noise invalidates the timing comparison; the environment classification is a file fact.
       if (report.noise?.level === "hostile") {
         comparison.regressions = [];
         comparison.improvements = [];
@@ -598,8 +494,7 @@ export function applyBaselineWorkflow(
       }
 
       report.baseline = comparison;
-      // Whether a comparison was applicable is only known here, and the
-      // noise text was recorded before this ran.
+      // Whether a comparison happened is known only here, and the noise text predates this.
       if (report.noise && report.warnings) {
         const uncompared = formatNoiseWarning(report.noise, false);
         const compared = formatNoiseWarning(report.noise, true);
@@ -607,9 +502,7 @@ export function applyBaselineWorkflow(
           report.warnings = report.warnings.map((w) => (w === uncompared ? compared : w));
         }
       }
-      // A noisy run's regressions are reported but do not fail: the same
-      // philosophy as the unstable-metric downgrade, run-scoped instead of
-      // metric-scoped. Budget breaches are unaffected; they are absolute.
+      // A noisy run reports regressions without failing; budget breaches are absolute regardless.
       const noiseDowngrade = report.noise?.level === "noisy";
       if (comparison.regressions.length > 0 && !comparison.crossEnvironment && !noiseDowngrade) {
         report.pass = false;
@@ -646,10 +539,7 @@ export function applyBaselineWorkflow(
   }
 }
 
-// The entry `--save-baseline` writes. A run that recorded both its phase
-// timings and the units it spent them on carries them on the entry, so a
-// later dry run can scale them; a run missing either (an isolation run has
-// no combos or samples) carries neither.
+// Timings ride along only with their units, so a later dry run can scale them or skip them.
 export function buildBaselineEntry(
   metrics: BaselineMetrics,
   pass: boolean,
@@ -672,11 +562,7 @@ export function buildBaselineEntry(
   };
 }
 
-// Always constructed, even for "none": the fingerprint call sites guard on
-// files.length so a no-CSS project's fingerprint bytes stay unchanged even
-// though cssReport itself is always defined. Extracted from analyze() so
-// the dry run formats its `Stylesheets:` line from the identical structure
-// rather than a second derivation that could describe a different pick.
+// One structure for both modes, so the dry run's Stylesheets: line cannot describe another pick.
 export function buildCssReport(
   resolvedCss: ReturnType<typeof resolveCssFiles>,
   projectRoot: string,
@@ -698,13 +584,10 @@ export function buildCssReport(
         rules: stylesheetRuleCount(f),
       };
     }),
-    // `discoverGlobalCss` (harness/css.ts) declares the shape,
-    // `resolveCssFiles` re-exports it, and it is read as typed here; a
-    // project-root-relative posix path regardless of where the producer put it.
+    // A project-root-relative posix path, wherever discoverGlobalCss (harness/css.ts) found it.
     ...(() => {
       const declared = resolvedCss.declaredMissing;
-      // An empty array is a producer that found nothing: no key at all, so a
-      // report of a project with no declaration is byte-identical.
+      // No key at all, so a project with no declaration reports byte-identically.
       if (declared === undefined || declared.length === 0) return {};
       const rel = (f: string): string =>
         toPosix(path.isAbsolute(f) ? path.relative(projectRoot, f) : f);
@@ -728,8 +611,7 @@ export function buildCssReport(
   };
 }
 
-// One place turns the harness's React Compiler state into the report's
-// disclosure, so the JSON field and the terminal line describe the same run.
+// One producer, so the JSON field and the terminal line describe the same run.
 export function buildReactCompilerReport(
   state: ReactCompilerState | undefined,
 ): ReactCompilerReport | undefined {
@@ -743,10 +625,7 @@ export function buildReactCompilerReport(
   };
 }
 
-// A same-document `<use href="#id">` issues no request, so the network
-// capture never sees it, and `<svg>` + `<use>` are two real nodes, so the
-// DOM count does not either. The run measured a graphic that drew nothing,
-// and only the document can say why.
+// A same-document <use href="#id"> issues no request and counts two nodes, so nothing else sees it.
 export const UNRESOLVED_SPRITE_REFS_WARNING = (ids: string[]): string =>
   `this component renders an empty <svg>: ${ids.join(", ")} ${ids.length === 1 ? "is" : "are"} ` +
   "referenced by a <use> element and defined nowhere in the document. A sprite sheet injected by " +

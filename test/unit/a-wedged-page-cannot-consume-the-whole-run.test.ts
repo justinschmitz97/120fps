@@ -11,17 +11,11 @@ import {
 import { buildReport, propDeltasFromMeasured, type BuildReportInput } from "../../src/pipeline/index.js";
 import type { DeltaPair } from "../../src/props/index.js";
 
-// midday-F1, end-game fix-up. `withFrameStarvationRetry` bounds one combo;
-// nothing bounded a pass. On midday's button the renderer wedged during the
-// delta pass, so all ~40 of its combos starved through three bounded retries
-// each: 20 minutes with no phase line, then the run watchdog killed the run
-// with no report at all. A pass whose combos stop measuring, combo after
-// combo, is measuring the page's failure, not the component.
+// midday-F1: a wedged page starved every remaining combo through full retries with no report.
 
 const measureSrc = fs.readFileSync(path.resolve("src", "browser/measure.ts"), "utf-8");
 const retrySrc = fs.readFileSync(path.resolve("src", "browser/retry.ts"), "utf-8");
-// The delta passes live in the pipeline stage's mode files; the guard below is
-// about every one of them, so the whole stage is read as one text.
+// Delta passes live across the pipeline stage's mode files; read the whole stage as one text.
 const pipelineSrc = (dir: string): string =>
   fs
     .readdirSync(dir, { withFileTypes: true })
@@ -98,11 +92,7 @@ describe("both measurement passes are bounded by it", () => {
   });
 });
 
-// The pass loops in measure.ts need a browser to run, so this stands in for
-// one: the same bound, the same `new Array(total)` results array written by
-// index, the same break. It is here to execute what the bound does to the run
-// downstream -- holes in the results array -- which the source greps above
-// cannot.
+// Stands in for measure.ts's pass loop (needs a browser) to exercise the bound's effect: holes.
 function runBoundedPass(
   phase: "mount" | "rerender",
   total: number,

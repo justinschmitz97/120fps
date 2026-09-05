@@ -3,13 +3,7 @@ import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { findWorkspaceRoot, isPackageAvailable, isPackageDeclared } from "./model.js";
 
-// A curated passthrough, not `vite.config` wholesale: each entry is an
-// explicit integration resolved from the *project's* node_modules, following
-// the same pattern as the React Compiler integration.
-//
-// The support list is evidence-driven. `probeCandidates` are the ones
-// verified end to end against a real project; anything else stays a
-// recognizer-only diagnosis until a spike proves it loads.
+// A curated passthrough, not vite.config wholesale: each entry resolves from the project.
 export interface TransformPlugin {
   // Matches a `TRANSFORM_RECOGNIZERS` code, so a diagnosis and a fix share a name.
   code: string;
@@ -27,15 +21,11 @@ export const SUPPORTED_TRANSFORM_PLUGINS: TransformPlugin[] = [
     packageName: "@vanilla-extract/vite-plugin",
     exportName: "vanillaExtractPlugin",
   },
-  // Without it nothing mounts a `.vue` file at all, so this is the one
-  // entry on the list a whole framework depends on. A project with `.vue` files
-  // and no plugin keeps the recognizer warning.
+  // Without this entry nothing mounts a .vue file at all.
   { code: "vue", packageName: "@vitejs/plugin-vue" },
 ];
 
-// Three shapes in the wild: a real default export, a
-// CJS package double-wrapped by interop (`mod.default.default`), and a package
-// whose factory is only a named export.
+// Three shapes in the wild: default export, interop double-wrap, named-export-only.
 export function resolvePluginFactory(
   mod: unknown,
   exportName?: string,
@@ -53,11 +43,7 @@ export function resolvePluginFactory(
     | undefined;
 }
 
-// Resolution via the hoisted-transitive-copy
-// fallback (isInstalledOnResolutionChain, inside isPackageAvailable) is
-// correct and by design — this only adds the disclosure. A plugin
-// found only that way, not declared in this project's own package.json, gets
-// named so a stricter installer (no hoisting) is not a surprise later.
+// A plugin resolved only through hoisting is named, so a stricter installer is no surprise.
 export function detectProjectTransforms(
   projectRoot: string,
   workspaceRoot: string = findWorkspaceRoot(projectRoot),
@@ -78,9 +64,7 @@ export const HOISTED_TRANSFORM_WARNING = (packageName: string): string =>
   `${packageName} was found via a hoisted transitive install, not declared in this project's own ` +
   "package.json; a stricter installer (no hoisting) would not resolve it.";
 
-// Server and HMR hooks are stripped: the harness owns the server's lifecycle,
-// and a project plugin reaching into it is a class of failure this design avoids.
-// Build-time hooks: resolve/load/transform: are the whole point.
+// The harness owns the server lifecycle; a project plugin reaching into it is a failure class.
 const STRIPPED_PLUGIN_HOOKS = [
   "configureServer",
   "configurePreviewServer",
@@ -118,8 +102,7 @@ export async function loadProjectTransformPlugins(
       const list = Array.isArray(produced) ? produced : [produced];
       loaded.push(...list.map(stripServerHooks));
     } catch (err) {
-      // Never fatal: a component that does not touch this transform still
-      // measures, and one that does gets the recognizer diagnosis anyway.
+      // Never fatal: an untouched transform still measures, a touched one gets the note.
       onWarning?.(TRANSFORM_LOAD_FAILED_WARNING(entry.code, err instanceof Error ? err.message : String(err)));
     }
   }

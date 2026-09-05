@@ -46,9 +46,7 @@ export interface CostBucket {
 export interface CostAttribution {
   buckets: CostBucket[];
   unattributed: number;
-  // How many mount windows the buckets were folded from, and what they
-  // summed to before the fold. Without them a reader cannot tell a per-mount
-  // breakdown from a total across every measured mount.
+  // Distinguishes a per-mount breakdown from a total across every measured mount.
   sampleCount: number;
   totalScriptingMs: number;
 }
@@ -103,9 +101,7 @@ function resolveSource(rawUrl: string): { source: string; category: CostBucket["
     cleaned = cleaned.slice(4);
   }
 
-  // Last, not first: pnpm nests the real package under its own node_modules/
-  // inside the store entry (node_modules/.pnpm/pkg@1.2.3/node_modules/pkg/…),
-  // so the first occurrence lands inside ".pnpm" instead of the package.
+  // Last occurrence: pnpm nests the real package under .pnpm/<pkg>/node_modules/<pkg>.
   const nmIndex = cleaned.lastIndexOf("node_modules/");
   if (nmIndex !== -1) {
     let pkgPath = cleaned.slice(nmIndex + "node_modules/".length);
@@ -146,8 +142,7 @@ function resolveSource(rawUrl: string): { source: string; category: CostBucket["
 
 type SourceDurations = Map<string, { durationMs: number; category: CostBucket["category"] }>;
 
-// One trace window's script events, net of nesting: a child span's time is
-// subtracted from its parent so React→Radix→motion never double-counts.
+// A child span's time is subtracted from its parent, so nesting never double-counts.
 function accumulateWindow(events: TraceEvent[], into: SourceDurations): void {
   const scriptEvents = events.filter(
     (e) => e.ph === "X" && typeof e.dur === "number" && e.ts !== undefined &&
@@ -198,10 +193,7 @@ function accumulateWindow(events: TraceEvent[], into: SourceDurations): void {
   }
 }
 
-// A combo's mount is measured N times, so N windows arrive. Summing them
-// would produce a breakdown N× the Mount column it sits next to. Buckets are
-// the mean scripting time inside one mount; `totalScriptingMs` and
-// `sampleCount` keep the raw sum and the window count recoverable.
+// Buckets are the mean inside one mount; summing N windows would be N× the Mount column.
 export function attributeCost(
   traces: TraceEvent[] | TraceEvent[][],
 ): CostAttribution {
@@ -323,7 +315,6 @@ export function parseMetrics(
     const eventStart = event.ts ?? 0;
     const eventEnd = eventStart + event.dur;
 
-    // Pop expired nesting parents
     while (
       nestingStack.length > 0 &&
       nestingStack[nestingStack.length - 1] <= eventStart
@@ -462,8 +453,7 @@ export function linearRegression(
   return { slope, intercept, r2 };
 }
 
-// Goodness of an arbitrary model on the raw metric. Non-finite (an overflowing
-// back-transform) means the model explains nothing, not that it wins.
+// A non-finite r² (an overflowing back-transform) means the model explains nothing.
 function rawR2(
   points: { n: number; metric: number }[],
   predict: (n: number) => number,
@@ -480,21 +470,13 @@ function rawR2(
   return Number.isFinite(r2) ? r2 : 0;
 }
 
-// The share of the linear fit's leftover variance a candidate must still
-// explain to be admitted. All three candidates are two-parameter fits, so an
-// information criterion reduces to ranking by residual sum of squares: the
-// rule that let noise flip an unchanged component between linear and
-// quadratic. The margin has to be relative: on the default sweep a perfect
-// quadratic only beats its own linear fit by 0.052 of R².
+// Relative margin: on the default sweep a perfect quadratic beats its linear fit by 0.052 R².
 export const SUPERLINEAR_RESIDUAL_SHARE = 0.5;
 
-// Cost that grew slower than its data over the measured sweep is not
-// super-linear in that data, whatever curve happens to fit it.
+// Cost growing slower than its data is not superlinear, whatever curve fits it.
 export const SUPERLINEAR_MIN_EXPONENT = 1;
 
-// The log-log slope between the sweep's endpoints: 1 means cost grew exactly as
-// fast as n, 2 means it grew as n². Points that cannot be logged (n ≤ 0,
-// metric ≤ 0, non-finite) carry no exponent and are dropped.
+// Log-log slope between the sweep's endpoints: 1 means cost grew as n, 2 as n².
 export function growthExponent(points: { n: number; metric: number }[]): number {
   const usable = points
     .filter((p) => p.n > 0 && p.metric > 0 && Number.isFinite(p.n) && Number.isFinite(p.metric))
@@ -517,8 +499,7 @@ export function computeScalingCurve(
   const linPoints = points.map((p) => ({ x: p.n, y: p.metric }));
   const linResult = linearRegression(linPoints);
 
-  // Fewer than 3 distinct x values can't discriminate between growth models:
-  // any candidate model fits an under-determined system with r2≈1.
+  // Under 3 distinct x values every candidate fits an under-determined system with r2≈1.
   const distinctN = new Set(points.map((p) => p.n)).size;
   if (distinctN < 3) {
     return {
@@ -529,8 +510,7 @@ export function computeScalingCurve(
     };
   }
 
-  // A non-positive slope means cost isn't growing with n: never classify as
-  // linear/quadratic/exponential growth, even if a curved model fits well.
+  // A non-positive slope is not growth, however well a curved model fits.
   if (linResult.slope <= 0) {
     return {
       slope: linResult.slope,
@@ -552,9 +532,7 @@ export function computeScalingCurve(
   const quadPoints = points.map((p) => ({ x: p.n ** 2, y: p.metric }));
   const quadResult = linearRegression(quadPoints);
 
-  // The exponential candidate is fitted on log y but ranked against fits on
-  // raw y, so its goodness is re-measured on raw y after back-transforming.
-  // An r² across two response variables compares nothing.
+  // Fitted on log y, so its r² is re-measured on raw y: two response variables compare nothing.
   const allPositive = points.every((p) => p.metric > 0);
   const expFit = allPositive
     ? linearRegression(points.map((p) => ({ x: p.n, y: Math.log(p.metric) })))
@@ -570,12 +548,10 @@ export function computeScalingCurve(
     growthClass: "linear",
   };
 
-  // Magnitude gate: a superlinear label claims cost outran the data. Data that
-  // grew 50x while cost grew 2.6x refutes the claim regardless of fit.
+  // Magnitude gate: data that grew 50x while cost grew 2.6x refutes a superlinear label.
   if (growthExponent(points) < SUPERLINEAR_MIN_EXPONENT) return linear;
 
-  // Fit gate: a nothing-left-to-explain linear fit admits no rival, and every
-  // rival must still explain half of what linear leaves.
+  // Fit gate: a rival must explain half of what the linear fit leaves unexplained.
   const leftover = 1 - linResult.r2;
   if (leftover <= 1e-9) return linear;
   const admitted = [
@@ -584,8 +560,7 @@ export function computeScalingCurve(
   ].filter((c) => 1 - c.r2 <= SUPERLINEAR_RESIDUAL_SHARE * leftover);
   if (admitted.length === 0) return linear;
 
-  // Ranking the survivors: raw-y R² decides, comparable now that
-  // exponential's fit was re-measured on raw y above.
+  // Raw-y R² decides, comparable because exponential's fit was re-measured on raw y.
   admitted.sort((a, b) => b.r2 - a.r2);
 
   return { ...linear, growthClass: admitted[0].growthClass };
@@ -634,9 +609,7 @@ export interface DomScalePoint {
   domNodeCount?: number;
 }
 
-// A sweep that never changes the DOM did not exercise growth: either the
-// component does not render its scaled prop, or the generated values do not
-// satisfy it. Either way the growth class describes nothing.
+// A sweep that never changes the DOM exercised no growth, so its class describes nothing.
 export function isDomFlat(points: DomScalePoint[]): boolean {
   const counts = points
     .map((p) => p.domNodeCount)

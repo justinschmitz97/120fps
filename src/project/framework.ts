@@ -10,39 +10,29 @@ export const FRAMEWORK_MANIFEST_UNREADABLE = (root: string): string =>
   `no readable package.json in ${root}, so the component is measured as vanilla; ` +
   `pass --framework react|vue to say what it is.`;
 
-// A project that also ships solid-js is not rejected — mixed repos
-// exist and the React tree is still measurable — but a Solid component
-// inside it will fail to mount, so the run says so up front.
+// Mixed repos are measurable, so a declared solid-js warns instead of rejecting.
 export const SOLID_AND_REACT_DECLARED = (root: string): string =>
   `${root} declares both react and solid-js; 120fps only measures the React tree, so a Solid ` +
   "component here will fail to mount.";
 
-// Without this, a project that declares preact but neither react nor vue
-// would resolve "vanilla" in total silence, skipping every React-family
-// analysis pass (memo bailout, context fan-out, callback identity, render
-// attribution) with no signal that anything was skipped.
+// A preact project resolves vanilla, which silently skips every React-family analysis pass.
 export const PREACT_UNSUPPORTED_WARNING = (root: string): string =>
   `${root} declares preact but no react or vue; Preact-specific analysis is not supported, so ` +
   "the run proceeds framework-agnostic (measured as vanilla).";
 
-// React wins a tie: a project with both installed is a React project that also
-// ships some Vue, and the React optimization pass is the one with findings.
+// React wins a tie: its optimization pass is the one with findings.
 function frameworkFrom(names: Set<string>): "react" | "vue" | undefined {
   if (names.has("react") || names.has("react-dom")) return "react";
   if (names.has("vue")) return "vue";
   return undefined;
 }
 
-// The member's own manifest decides whenever it names a framework: a Vue
-// package inside a React monorepo is a Vue package. Only a member that names
-// none falls back to the workspace root and then to what is installed.
-// An unreadable manifest is evidence of nothing, so it fails closed to vanilla:
-// defaulting to `react` would mount non-React code as React.
-// A `.vue` file overrides all of it: see pipeline/resolve.ts's resolveFramework.
+// The member's own manifest wins; pipeline/resolve.ts's resolveFramework overrides for .vue.
 export function detectFramework(
   memberRoot: string,
   onWarning?: (warning: string) => void,
 ): "react" | "vue" | "vanilla" {
+  // Fails closed: defaulting to react would mount non-React code as React.
   if (!readProjectManifest(memberRoot)) {
     onWarning?.(FRAMEWORK_MANIFEST_UNREADABLE(memberRoot));
     return "vanilla";
@@ -61,17 +51,10 @@ export function detectFramework(
       resolved = isPackageAvailable("vue", memberRoot, workspaceRoot) ? "vue" : "vanilla";
     }
   }
-  // Solid-js alongside react is not rejected here (see runPreflight for
-  // the solid-only rejection); it only warns. Declared, not merely available
-  // (isPackageAvailable walks ancestor node_modules): the message asserts
-  // the project "declares" solid-js, which must stay true, so a transitive,
-  // hoisted-but-undeclared solid-js must not trigger it.
+  // Declared, not available: the message asserts "declares", so a hoisted copy must not fire.
   if (resolved === "react" && isPackageDeclared("solid-js", memberRoot, workspaceRoot)) {
     onWarning?.(SOLID_AND_REACT_DECLARED(memberRoot));
   }
-  // Vanilla is a real resolution when nothing is declared or
-  // installed at all, but a project that declares preact and stops there
-  // deserves to know its React-family analysis is being skipped.
   if (resolved === "vanilla" && isPackageDeclared("preact", memberRoot, workspaceRoot)) {
     onWarning?.(PREACT_UNSUPPORTED_WARNING(memberRoot));
   }

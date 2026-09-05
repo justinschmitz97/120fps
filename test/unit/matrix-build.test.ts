@@ -108,9 +108,7 @@ describe("buildMatrixReport", () => {
     expect(result.cells[1].verdict).toBe("fail");
   });
 
-  // The run-level pass/fail is derived from the combos. Recomputing a verdict
-  // here from mount/rerender alone is what let an all-PASS table sit above a
-  // FAIL result when the real cost was in an interaction.
+  // Recomputing verdict from mount/rerender alone let an all-PASS table sit above a FAIL result.
   it("marks a cell failed when the combo failed on an interaction alone", () => {
     const combos = [
       makeCombo(0, 1.0, 8),

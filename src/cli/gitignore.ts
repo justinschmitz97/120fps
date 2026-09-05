@@ -1,18 +1,14 @@
 import fs from "node:fs";
 import path from "node:path";
 
-// The tool writes 120fps-report*.json and 120fps-baseline.json straight
-// into the user's repo with no gitignore awareness. This is a hint, never
-// a file edit: nothing below ever writes to .gitignore.
+// Advisory only: nothing in this file writes to .gitignore.
 export const GITIGNORE_SUGGESTED_PATTERNS = [
   "120fps-report*.json",
   "120fps-baseline.json",
   ".120fps-harness-*",
 ];
 
-// The tip names the patterns the paths that fired it need, so a run
-// that only wrote a report does not ask for the baseline and harness patterns
-// it never produced. No patterns, no tip.
+// Only the patterns this run's own writes need, so a report-only run never asks for more.
 export function formatGitignoreTip(patterns: string[]): string {
   if (patterns.length === 0) return "";
   return (
@@ -21,14 +17,7 @@ export function formatGitignoreTip(patterns: string[]): string {
   );
 }
 
-// Literal match or a single `*` wildcard (prefix/suffix around it) only: no
-// gitignore glob engine (no `**`, character classes, negation, or
-// directory-scoped rules). One wildcard is the level a user actually writes
-// by hand, and it is also the shape of every pattern this file itself
-// suggests (GITIGNORE_SUGGESTED_PATTERNS), so a user who already took the
-// hint stops seeing it. A pattern this fails to recognize (two or more
-// wildcards, a character class, a directory-scoped rule) produces an extra
-// hint, never a suppressed one.
+// Literal or one `*` only; an unrecognized pattern yields an extra hint, never a suppressed one.
 export function gitignoreCoversFile(gitignoreContent: string, filename: string): boolean {
   for (const rawLine of gitignoreContent.split("\n")) {
     const line = rawLine.trim();
@@ -50,16 +39,13 @@ export function gitignoreCoversFile(gitignoreContent: string, filename: string):
   return false;
 }
 
-// A missing .gitignore covers nothing, so every written filename is
-// uncovered; never a reason to skip the check.
+// A missing .gitignore covers nothing, so the check still runs against empty content.
 export function needsGitignoreAdvisory(gitRoot: string, writtenFilenames: string[]): boolean {
   const gitignorePath = path.join(gitRoot, ".gitignore");
   const content = fs.existsSync(gitignorePath) ? fs.readFileSync(gitignorePath, "utf-8") : "";
   return writtenFilenames.some((name) => !gitignoreCoversFile(content, name));
 }
 
-// The suggested pattern one written path asks for, or nothing for a path this
-// tool did not produce.
 function suggestedPatternFor(writtenPath: string): string | undefined {
   const name = path.basename(writtenPath);
   if (name.startsWith(".120fps-harness-")) return ".120fps-harness-*";
@@ -68,15 +54,12 @@ function suggestedPatternFor(writtenPath: string): string | undefined {
   return undefined;
 }
 
-// The resolved path decides whether a written file counts as inside the
-// repository, not just its basename: a file this run wrote outside the
-// repository is not that repository's hygiene problem, whatever it is
-// called.
 export function gitignoreTipPatterns(gitRoot: string, writtenPaths: string[]): string[] {
   const asked = new Set<string>();
   for (const written of writtenPaths) {
     const pattern = suggestedPatternFor(written);
     if (!pattern || asked.has(pattern)) continue;
+    // Resolved path, not basename: a file written outside the repo is not its hygiene problem.
     const relative = path.relative(gitRoot, path.resolve(written));
     if (relative === "" || relative.startsWith("..") || path.isAbsolute(relative)) continue;
     if (!needsGitignoreAdvisory(gitRoot, [path.basename(written)])) continue;

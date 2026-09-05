@@ -53,9 +53,7 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-// calcom-F3: the 60 s timer was armed before `Tracing.start`, so it covered the
-// traced action. An `open-close-10` pattern on a Radix portal spent 57 s in 19
-// timed-out clicks and reported itself as a tracing stall, exit 2, no report.
+// calcom-F3: a 60s timer armed before Tracing.start misreported a slow real action as a stall.
 
 describe("the window the tracing timeout bounds", () => {
   it("does not fire while the traced action is still running", async () => {

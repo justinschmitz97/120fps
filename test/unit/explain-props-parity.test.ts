@@ -4,13 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { explainProps } from "../../src/pipeline/index.js";
 
-// M91 (preact-app-F2): --explain-props is the tool's cheapest, most
-// recommended first probe, and it silently dropped the warning that matters
-// most because assertReactDomClient threw before the alias check ever ran.
-// This suite pins parity for the three pre-build warning classes the full
-// run computes and the dry run previously did not: the bundler react-dom
-// alias, a node-builtin soft preflight hit, and a wrapper resolved only from
-// the workspace root.
+// M91 (preact-app-F2): pins parity for three pre-build warnings: alias, node-builtin hit, wrapper.
 
 describe("M91: --explain-props warning parity", () => {
   const tmpDirs: string[] = [];
@@ -44,10 +38,7 @@ describe("M91: --explain-props warning parity", () => {
     }
   }
 
-  // The exact preact-app-F2 repro: react-dom below 18 (version-gate throw)
-  // AND a next.config.js aliasing react-dom to preact/compat. Before this
-  // milestone the throw happened first and the alias note was never
-  // computed at all.
+  // preact-app-F2 repro: react-dom below 18 throws before the alias note is computed; needs both.
   it("carries the preact/compat alias warning even though the version gate throws", async () => {
     const { root, entry } = isolatedProject("120fps-explain-parity-alias-", {
       "package.json": JSON.stringify({ dependencies: { react: "17.0.2", "react-dom": "17.0.2" } }),

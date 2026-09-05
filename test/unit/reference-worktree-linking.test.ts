@@ -110,13 +110,7 @@ describe("linking node_modules into a reference worktree", () => {
   });
 });
 
-// `git worktree remove --force` and a naive recursive delete both walk
-// through a Windows junction rather than unlinking it, so a worktree torn
-// down while linkNodeModules's links are still in place deletes files out of
-// repoRoot's real node_modules. unlinkNodeModules must run first. These use
-// the real link type linkNodeModules picks for this platform (junction on
-// win32, a plain dir symlink elsewhere), so the coverage is faithful to
-// whichever platform the suite runs on without a manual platform branch.
+// A naive recursive delete walks through the junction into real node_modules; unlink first.
 describe("detaching node_modules links from a worktree", () => {
   it("detaches the link at every level the working tree linked", () => {
     installTree(repoRoot, ".", "react");
@@ -130,12 +124,7 @@ describe("detaching node_modules links from a worktree", () => {
     expect(fs.existsSync(path.join(worktree, "packages", "ui", "node_modules"))).toBe(false);
   });
 
-  // The actual invariant, not just "the link is gone": `git worktree remove
-  // --force` -- one of compareAgainstRef's two cleanup paths, and the one
-  // that recurses through a Windows junction instead of unlinking it -- must
-  // never reach repoRoot's real install through a link left in place. A plain
-  // fs.rmSync does not reproduce this: Node's own recursive delete already
-  // treats a reparse point as a leaf, so only git's own removal exercises it.
+  // fs.rmSync treats a reparse point as a leaf; only `git worktree remove --force` exercises this.
   it("keeps the linked target's contents intact after `git worktree remove --force`", () => {
     git(["init", "-q"], repoRoot);
     git(["config", "user.email", "test@example.com"], repoRoot);
@@ -143,9 +132,7 @@ describe("detaching node_modules links from a worktree", () => {
     fs.writeFileSync(path.join(repoRoot, "a.txt"), "a");
     git(["add", "a.txt"], repoRoot);
     git(["commit", "-q", "-m", "init"], repoRoot);
-    // beforeEach already created `worktree` as an empty directory; `git
-    // worktree add` accepts an existing empty target the same way
-    // compare.ts's own mkdtempSync'd directory does.
+    // `worktree` already exists via beforeEach; git worktree add accepts an existing empty dir.
     git(["worktree", "add", "--detach", worktree, "HEAD"], repoRoot);
 
     installTree(repoRoot, ".", "react");

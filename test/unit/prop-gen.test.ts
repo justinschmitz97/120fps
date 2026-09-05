@@ -7,12 +7,7 @@ describe("generateCombinations", () => {
     const schema = await extractProps("./fixtures/button.tsx");
     const combos = generateCombinations(schema);
 
-    // variant: 3 values + undefined (optional) = 4
-    // disabled: 2 values + undefined (optional) = 3
-    // label: 1 value (required) = 1
-    // onClick: 1 value + undefined (optional) = 2
-    // children: 1 value + undefined (optional) = 2
-    // Total: 4 * 3 * 1 * 2 * 2 = 48 (under 64 cap)
+    // variant(4) * disabled(3) * label(1) * onClick(2) * children(2) = 48, under the 64 cap.
     expect(combos.length).toBe(48);
   });
 
@@ -36,7 +31,6 @@ describe("generateCombinations", () => {
   });
 
   it("respects MAX_COMBINATIONS cap", () => {
-    // Artificial schema that would produce > 64 combos
     const bigSchema = [
       { name: "a", kind: "union" as const, required: true, values: [1, 2, 3, 4, 5] },
       { name: "b", kind: "union" as const, required: true, values: [1, 2, 3, 4, 5] },

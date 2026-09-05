@@ -15,8 +15,7 @@ import { resolveWorkspaceSourceEntry } from "./workspace-entries.js";
 
 const RESOLVE_ENTRY_FAILURE = /Failed to resolve entry for package "([^"]+)"/;
 
-// Vite/esbuild's own manifest fields to probe, in the order Node's own
-// exports resolution would prefer them for a "." conditional export.
+// In the order Node's own exports resolution prefers them for a "." conditional export.
 export function resolveManifestEntry(manifest: Record<string, unknown>): string | undefined {
   const exportsField = manifest.exports;
   if (typeof exportsField === "string") return exportsField;
@@ -40,13 +39,7 @@ export const UNBUILT_WORKSPACE_PACKAGE_WARNING = (pkg: string, entryRelative: st
   "exist on disk: it needs a build step (that build output was never produced), not a " +
   "package.json fix. Run this workspace's build for that package, then measure again.";
 
-// Vite's own "Failed to resolve entry for package" message blames a
-// workspace-internal package's package.json fields when those fields are
-// correct and the real problem is that the package was never built (its
-// dist/ is gitignored and produced by a target this harness never runs).
-// Returns undefined — falling through to the unchanged VITE_START_FAILED
-// message — for anything that is not exactly this shape: a genuinely broken
-// external dependency, or a workspace package whose entry does resolve.
+// Vite blames the package.json fields when the real problem is that nothing built the dist/.
 export function diagnoseUnbuiltWorkspacePackage(
   viteMessage: string,
   projectRoot: string,
@@ -62,10 +55,7 @@ export function diagnoseUnbuiltWorkspacePackage(
   } catch {
     return undefined;
   }
-  // A workspace-linked package's real path sits outside every node_modules
-  // segment; an ordinary third-party dependency's real path always has one.
-  // This is the discriminator between "internal, possibly-unbuilt package"
-  // and "a genuinely broken external dependency".
+  // A workspace-linked package's real path has no node_modules segment; an external one does.
   if (/[\\/]node_modules[\\/]/.test(real)) return undefined;
   const manifest = readProjectManifest(real);
   if (!manifest) return undefined;
@@ -73,30 +63,16 @@ export function diagnoseUnbuiltWorkspacePackage(
   if (entry === undefined) return undefined;
   const entryPath = path.resolve(real, entry);
   if (fs.existsSync(entryPath)) return undefined;
-  // A build is not what this package needs when its own
-  // source is on disk — scanExternalDeps aliases it, and the run reaches a
-  // verdict instead of aborting.
+  // Source on disk means scanExternalDeps aliases it, and the run reaches a verdict.
   if (resolveWorkspaceSourceEntry(real, manifest) !== undefined) return undefined;
   return UNBUILT_WORKSPACE_PACKAGE_WARNING(pkg, toPosix(path.relative(real, entryPath)));
 }
 
-// A caught Vite/PostCSS/esbuild error's own .message frequently embeds
-// raw stack frames -- shadcn-ui's PostCSS ENOENT (10 frames) and Vite import
-// failure (8 frames) shapes both do -- referencing paths inside 120fps's own
-// node_modules install. This is the fallback that makes "no raw bundler stack
-// trace" hold even for a shape diagnoseBundlerFailure below does not
-// specifically recognize.
-// Conservative, not blanket -- only a frame whose own path sits inside
-// 120fps's OWN installation is ever useless to a user and must go. A frame
-// pointing into the target repository (its own node_modules, its own source)
-// can be exactly what a user debugging their own component needs, and this
-// function also runs on the page-error surface (a post-boot render crash's
-// stack is real application debugging information, not bundler noise), so
-// removing every "at" line unconditionally would strip real information.
 function installRoot(): string {
   return toPosix(path.resolve(import.meta.dirname ?? __dirname, "../.."));
 }
 
+// Only a frame inside 120fps's own installation is useless; a target-repo frame is evidence.
 function stripBundlerStackFrames(message: string): string {
   const root = installRoot();
   const lines = message.split("\n");
@@ -104,36 +80,16 @@ function stripBundlerStackFrames(message: string): string {
     if (!/^\s*at\s/.test(line)) return true;
     return !line.replace(/\\/g, "/").includes(root);
   });
-  // This is the universal fallback step of presentBundlerFailure,
-  // reached by every throw on the page-error surface (pipeline/analyze.ts's
-  // catch), not only a recognized bundler shape. An ordinary message with no
-  // 120fps-installation frame to strip must come back byte-identical --
-  // reformatting (trim, blank-line collapse) an unrelated error's message is
-  // its own kind of false statement about what the run printed.
+  // An unrelated message with no frame to strip must come back byte-identical.
   if (kept.length === lines.length) return message;
   return kept.join("\n").replace(/\n{2,}/g, "\n").trim();
 }
 
-// The one diagnosis-and-disclosure pipeline every failure-arrival
-// surface routes through, instead of each duplicating the chain:
-//   1. buildAndServe's own synchronous boot catch (below) -- the dev server
-//      itself never started.
-//   2. The page-error channel (pipeline/analyze.ts's harness-ready wait) --
-//      the dev server booted fine and a transform failed afterwards on a
-//      real request (twenty's sass "Undefined mixin", shadcn-ui's postcss
-//      ENOENT and Vite import-resolve, both arriving as page-error text with
-//      120fps's own node_modules frames inside it).
-//   3. The async unhandled-rejection surface (cli/main.ts) -- a fire-and-forget
-//      Vite dependency-optimizer scan can still reject after buildAndServe's
-//      own try/catch already exited successfully (ant-design's `./version`),
-//      reaching neither of the above.
-// A shape recognized on one surface is recognized on all three because they
-// all call this same function; `buildWarnings` is optional because surface 3
-// has no in-flight warnings array to offer diagnoseNuxtBuildModule's
-// cross-reference.
+// One diagnosis pipeline for every arrival surface, so a shape recognized on one is on all.
 export function presentBundlerFailure(
   message: string,
   projectRoot: string,
+  // Optional: the unhandled-rejection surface has no in-flight warnings array to offer.
   buildWarnings: readonly string[] = [],
 ): string {
   return (
@@ -157,9 +113,7 @@ export function BUNDLER_IMPORT_UNRESOLVED_ERROR(target: string, importer: string
   );
 }
 
-// Names the layer that produces the specifier (a Vite plugin this
-// harness never loads), and the package this repository declares for it. No
-// build command: nothing on disk is missing, so no build produces it.
+// No build command: nothing on disk is missing, so no build produces it.
 export function VIRTUAL_NAMESPACE_IMPORT_ERROR(
   target: string,
   importer: string,
@@ -184,25 +138,12 @@ export function BUNDLER_STYLESHEET_MISSING_ERROR(target: string): string {
   );
 }
 
-// Lets a caller detect this exact
-// shape *before* presentBundlerFailure ever converts it into a fatal error,
-// so a stylesheet that cannot be resolved/read can be dropped and the run
-// continued unstyled instead -- the governing policy: skip unresolvable
-// build artifacts and measure anyway wherever
-// possible. Deliberately scoped to ENOENT alone: a stylesheet that resolves
-// and then fails to *compile* (a real syntax/PostCSS/sass error in a file
-// that genuinely exists, e.g. twenty's sass "Undefined mixin") does not
-// match this pattern and must keep failing the run loudly -- this returns
-// `undefined` for that shape by construction, not by a second check.
+// ENOENT alone: a stylesheet that exists and fails to compile must keep failing the run.
 export function stylesheetReadFailureTarget(message: string): string | undefined {
   return POSTCSS_ENOENT_FAILURE.exec(message)?.[1];
 }
 
-// The disclosure a dropped stylesheet gets instead of a fatal error: names
-// what was dropped, reuses BUNDLER_STYLESHEET_MISSING_ERROR's own
-// well-written diagnosis of *why* (which stylesheet failed to read and its
-// two remedies) as the body, and states the concrete consequence -- an
-// unstyled measurement is a genuinely different one from a styled run.
+// An unstyled measurement is a genuinely different one, so the consequence is stated.
 export function CSS_UNREADABLE_DROPPED_WARNING(
   missingTarget: string,
   droppedFiles: string[],
@@ -219,16 +160,11 @@ export function CSS_UNREADABLE_DROPPED_WARNING(
   );
 }
 
-// Tried after diagnoseUnbuiltWorkspacePackage
-// so the more specific "unbuilt workspace package" diagnosis still wins when
-// both patterns could match the same message; returns undefined for any
-// shape neither recognizes, so the caller's own stripBundlerStackFrames still
-// runs as the universal fallback.
+// Tried after diagnoseUnbuiltWorkspacePackage, so the more specific diagnosis still wins.
 function diagnoseBundlerFailure(message: string, projectRoot: string): string | undefined {
   const importMatch = VITE_IMPORT_RESOLVE_FAILURE.exec(message);
   if (importMatch) {
-    // A virtual namespace has no file behind it and no
-    // build that produces one, so the unbuilt-workspace clause is false here.
+    // A virtual namespace has no file behind it, so the unbuilt-workspace clause is false.
     const virtual = recognizeVirtualNamespace(importMatch[1]);
     if (virtual) {
       return VIRTUAL_NAMESPACE_IMPORT_ERROR(
@@ -245,25 +181,10 @@ function diagnoseBundlerFailure(message: string, projectRoot: string): string | 
   return undefined;
 }
 
-// A Nuxt build-time virtual module ("#build/...")
-// cannot resolve before `nuxi prepare` generates .nuxt/. Node's own package-
-// imports resolver is what actually throws here (Vite delegates to it for a
-// "#"-prefixed specifier), producing this exact shape rather than either of
-// diagnoseBundlerFailure's two. Joined with a broken-tsconfig-extends-chain
-// warning already collected in buildWarnings when one names the same
-// generated directory ("nuxt-ui's tsconfig.json:2 extends ./.nuxt/tsconfig.json"
-// and its "#build" virtual module are both consequences of the same absent
-// .nuxt/ -- a user must not have to connect that themselves).
+// Node's own package-imports resolver throws this shape, not either of the two above.
 const NUXT_BUILD_MODULE_MISSING = /Missing "([^"]+)" specifier in "([^"]+)" package/;
 
-// `nuxi prepare` at the repo root can exit
-// 0 and create .nuxt/ without producing THIS module's own generated
-// templates -- nuxt-ui's root has no nuxt.config.ts of its own, so a
-// root-level prepare never runs @nuxt/ui's module hooks and .nuxt/ui/ stays
-// absent even though .nuxt/ itself now exists. Telling a user to run the
-// exact command they already ran, with a byte-identical message, is false of
-// the run that printed it a second time. `.nuxt/` existing on disk is what
-// distinguishes "not yet prepared" from "prepared, wrong app context".
+// `.nuxt/` on disk distinguishes "not yet prepared" from "prepared, wrong app context".
 export function NUXT_BUILD_MODULE_MISSING_ERROR(
   specifier: string,
   pkg: string,
@@ -294,10 +215,7 @@ export function NUXT_BUILD_MODULE_MISSING_ERROR(
     : base;
 }
 
-// The Nuxt mechanism is `#build`,
-// `#imports` and `#app`, and only in a repository that declares nuxt. Every
-// other package-imports/exports miss is Node's own resolver reporting a map
-// that lacks a subpath, and that is what the message says.
+// Only in a repository that declares nuxt; every other miss is an ordinary imports-map miss.
 const NUXT_VIRTUAL_PREFIXES = ["#build", "#imports", "#app"];
 
 export function MISSING_PACKAGE_SUBPATH_ERROR(
@@ -321,8 +239,7 @@ function diagnoseNuxtBuildModule(
 ): string | undefined {
   const match = NUXT_BUILD_MODULE_MISSING.exec(message);
   if (!match) return undefined;
-  // On a segment boundary. `#appsettings/x` is an ordinary
-  // imports-map miss, and `nuxi prepare` is no remedy for it.
+  // On a segment boundary: `#appsettings/x` is an ordinary imports-map miss.
   const isNuxtVirtual = NUXT_VIRTUAL_PREFIXES.some(
     (prefix) => match[1] === prefix || match[1].startsWith(prefix + "/"),
   );
@@ -340,22 +257,12 @@ function diagnoseNuxtBuildModule(
   );
 }
 
-// A relative import resolving to nothing, where
-// the resolved target is gitignored, is a generated-file-not-yet-produced
-// shape -- the repository's own build/codegen step produces it, a plain
-// install does not -- not a typo or a genuine broken import to surface as a
-// raw esbuild error. Path-aware (unlike cli/gitignore.ts's gitignoreCoversFile,
-// built for a single bare filename at the advisory-hint's own call site): reads
-// git-root-relative path patterns.
+// A relative import resolving to a gitignored target is a generated file, not a typo.
 const ESBUILD_COULD_NOT_RESOLVE = /([^\r\n]+?):(\d+):(\d+):\s*ERROR:\s*Could not resolve "([^"]+)"/;
 
 const CODEGEN_SCRIPT_PRIORITY = ["codegen", "generate", "prepare", "postinstall", "build"];
 
-// `npm run build` in a repository that declares
-// `packageManager: pnpm@11.22.0`, ships only a pnpm lockfile and calls
-// `pnpm build` from its own scripts is a command that repository does not
-// have. The field wins over the lockfile, and the member's own lockfile over
-// the workspace root's.
+// The packageManager field wins over the lockfile, and the member's lockfile over the root's.
 type PackageManager = "npm" | "pnpm" | "yarn";
 
 const LOCKFILE_MANAGER: Array<[string, PackageManager]> = [
@@ -365,14 +272,10 @@ const LOCKFILE_MANAGER: Array<[string, PackageManager]> = [
 ];
 
 export function detectPackageManager(root: string): PackageManager {
-  // A declaration beats an artifact, at every level. A stray
-  // package-lock.json inside a pnpm workspace member would otherwise win over
-  // the root's own `packageManager: pnpm@...` and print a command that
-  // repository does not have — and it also makes `findWorkspaceRoot` stop at
-  // the member,
-  // so the declaration walk goes up on its own, bounded by the repository.
+  // A declaration beats an artifact: a stray package-lock.json in a pnpm member must not win.
   const levels: string[] = [];
   let cursor = path.resolve(root);
+  // findWorkspaceRoot stops at a member with a stray lockfile, so this walk goes up to .git.
   while (true) {
     levels.push(cursor);
     if (fs.existsSync(path.join(cursor, ".git"))) break;
@@ -396,11 +299,7 @@ export function detectPackageManager(root: string): PackageManager {
   return "npm";
 }
 
-// A command the reader can paste. `<dir>` is the package's directory
-// relative to the directory the run started in, posix-separated; the absolute
-// path when no relative path exists (a different drive); nothing when the two
-// are the same directory. `startDir` is a parameter rather than a read of
-// `process.cwd()` so the message is a function of its inputs alone.
+// startDir is a parameter, not a read of `process.cwd()`, so the message is a function of it.
 export function runDirectoryPrefix(root: string, startDir: string): string {
   const target = path.resolve(root);
   const from = path.resolve(startDir);
@@ -411,18 +310,14 @@ export function runDirectoryPrefix(root: string, startDir: string): string {
   return `cd ${/\s/.test(dir) ? `"${dir}"` : dir} && `;
 }
 
-// yarn runs a script by bare name; npm and pnpm need `run` for anything
-// outside their own lifecycle names.
+// yarn runs a script by bare name; npm and pnpm need `run` outside their lifecycle names.
 export function packageManagerRunCommand(root: string, script: string, startDir?: string): string {
   const manager = detectPackageManager(root);
   const run = manager === "yarn" ? `yarn ${script}` : `${manager} run ${script}`;
   return startDir === undefined ? run : runDirectoryPrefix(root, startDir) + run;
 }
 
-// The one place a remedy turns a package's script into a command. A
-// script the manifest does not declare has no command, and a script *body* is
-// never printed: it belongs to another package's build, not to the reader's
-// shell.
+// A script body is never printed: it belongs to another package's build, not to the shell.
 export function packageScriptCommand(
   root: string,
   script: string,
@@ -433,11 +328,7 @@ export function packageScriptCommand(
   return packageManagerRunCommand(root, script, startDir);
 }
 
-// The script *name* list alone chose `prepare`
-// (`is-ci || husky && dumi setup`) for a missing `components/version/version.ts`
-// that `version` (`tsx scripts/generate-version.ts`) writes. A script's command
-// text is the evidence: it either names the missing path or names a generator
-// for it.
+// A script's command text is the evidence: the name list alone picked the wrong script.
 const GENERATOR_TOKEN = /(generate|codegen|gen)/i;
 
 export function findLikelyGenerateCommand(
@@ -473,10 +364,7 @@ export function findLikelyGenerateCommand(
   return undefined;
 }
 
-// Exact match, or a single "*" wildcard prefix/suffix -- the same rule
-// cli.ts's gitignoreCoversFile applies, extended to a full relative path
-// instead of a bare filename, and to a bare-filename pattern (no "/") also
-// matching at any depth, the way git itself treats one.
+// Exact match, or one "*" wildcard; a bare-filename pattern matches at any depth, as git does.
 function gitignoreCoversPath(gitignoreContent: string, relativePath: string): boolean {
   const posixPath = toPosix(relativePath);
   const base = posixPath.slice(posixPath.lastIndexOf("/") + 1);
@@ -524,8 +412,7 @@ function diagnoseGitignoredGeneratedFile(message: string, projectRoot: string): 
   const importerDir = path.dirname(importerAbs);
   const candidateBase = path.resolve(importerDir, specifier);
   const candidates = [candidateBase, ...SOURCE_EXTENSIONS.map((ext) => candidateBase + ext)];
-  // Every candidate already existing means this is not "resolves to nothing"
-  // at all; some other cause produced the esbuild error.
+  // Every candidate existing means this is not "resolves to nothing"; another cause produced it.
   if (candidates.every((c) => fs.existsSync(c))) return undefined;
   const gitRoot = findGitRoot(importerDir);
   if (!gitRoot) return undefined;
@@ -546,8 +433,7 @@ function diagnoseGitignoredGeneratedFile(message: string, projectRoot: string): 
   const relativeToProject = toPosix(path.relative(projectRoot, matchedAbsolute));
   return GITIGNORED_GENERATED_FILE_ERROR(
     relativeToProject,
-    // The missing file is the evidence for which script
-    // produces it, so it is passed rather than left to a name list.
+    // The missing file is the evidence for which script produces it, so it is passed.
     findLikelyGenerateCommand(projectRoot, relativeToProject, process.cwd()),
   );
 }

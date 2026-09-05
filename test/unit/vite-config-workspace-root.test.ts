@@ -31,9 +31,7 @@ function write(relative: string, content: string): string {
   return full;
 }
 
-// M76: readViteConfigData(projectRoot, workspaceRoot) additive second layer,
-// chakra-ui's exact shape (root vite.config.ts, no vite.config.ts at the
-// member at all).
+// M76: chakra-ui's shape: a root vite.config.ts, no vite.config.ts at the member at all.
 describe("readViteConfigData: workspace-root fallback (M76)", () => {
   it("merges a workspace-root resolve.alias key the member's own config does not declare", () => {
     mkdir("packages/react/src");
@@ -80,7 +78,7 @@ describe("readViteConfigData: workspace-root fallback (M76)", () => {
     write("vite.config.ts", "export default { root: '.' };");
     expect(readViteConfigData(tmpDir)).toEqual({
       configFile: path.join(tmpDir, "vite.config.ts"),
-      // M114 A3: a foldable `root` is read now, and stays member-only.
+      // A foldable `root` is still read here, and stays member-only.
       root: tmpDir,
       aliases: [],
       ignoredKeys: [],

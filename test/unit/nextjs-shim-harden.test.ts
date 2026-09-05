@@ -76,7 +76,6 @@ function makeReport(overrides: Partial<Report> = {}): Report {
   };
 }
 
-// H1: malformed package.json
 describe("H1: malformed package.json", () => {
   it("detectNextJs returns false for invalid JSON", () => {
     writePkg("{ not valid json }}}");
@@ -89,7 +88,6 @@ describe("H1: malformed package.json", () => {
   });
 });
 
-// H2: next in nested dependencies (not direct)
 describe("H2: next only in transitive deps", () => {
   it("returns false when next is not a direct dep", () => {
     writePkg(JSON.stringify({
@@ -99,7 +97,6 @@ describe("H2: next only in transitive deps", () => {
   });
 });
 
-// H3: alias regex doesn't match subpaths
 describe("H3: alias regex boundary matching", () => {
   it("next/image alias does not match next/image/loader", () => {
     const aliases = buildShimAliases(true);
@@ -120,7 +117,6 @@ describe("H3: alias regex boundary matching", () => {
   });
 });
 
-// H4: --no-shims with --ci
 describe("H4: --no-shims flag combinations", () => {
   it("--no-shims with --ci and --flat-thresholds", () => {
     const result = parseArgs(["./X.tsx", "--no-shims", "--ci", "--flat-thresholds"]);
@@ -136,7 +132,6 @@ describe("H4: --no-shims flag combinations", () => {
   });
 });
 
-// H5: buildReport with empty nextJsShims array
 describe("H5: edge cases for nextJsShims in report", () => {
   it("empty array is not propagated to report", () => {
     const report = buildReport(makeInput({ nextJsShims: [] }));
@@ -150,7 +145,6 @@ describe("H5: edge cases for nextJsShims in report", () => {
   });
 });
 
-// H6: formatTable with single shim
 describe("H6: formatTable with single shim", () => {
   it("single shim shows correctly", () => {
     const r = makeReport({ nextJsShims: ["next/image"] });
@@ -165,12 +159,11 @@ describe("H6: formatTable with single shim", () => {
     const lines = output.split("\n");
     const chromiumLine = lines.findIndex((l) => l.includes("Chromium"));
     const shimLine = lines.findIndex((l) => l.includes("Next.js shims"));
-    // Ordering, not adjacency: the header grows (M32 added the mode line).
+    // Ordering, not adjacency: other lines may sit between chromium and shims.
     expect(shimLine).toBeGreaterThan(chromiumLine);
   });
 });
 
-// H7: shim file contents are valid JS modules
 describe("H7: shim files are parseable", () => {
   it("all compiled shim files contain export", () => {
     const shimDir = path.resolve(__dirname, "../../dist/harness/shims");
@@ -195,7 +188,6 @@ describe("H7: shim files are parseable", () => {
   });
 });
 
-// H8: detectNextJs is idempotent
 describe("H8: detectNextJs idempotency", () => {
   it("same result on repeated calls", () => {
     writePkg(JSON.stringify({ dependencies: { next: "^16.0.0" } }));
@@ -206,7 +198,6 @@ describe("H8: detectNextJs idempotency", () => {
   });
 });
 
-// H9: package.json with no dependencies key at all
 describe("H9: minimal package.json", () => {
   it("returns false for package.json with only name", () => {
     writePkg(JSON.stringify({ name: "my-app" }));
@@ -219,7 +210,6 @@ describe("H9: minimal package.json", () => {
   });
 });
 
-// H11: nextJsShims survives JSON round-trip (report serialization)
 describe("H11: report JSON round-trip", () => {
   it("nextJsShims preserved through JSON.parse(JSON.stringify())", () => {
     const report = buildReport(makeInput({ nextJsShims: ["next/image", "next/dynamic"] }));

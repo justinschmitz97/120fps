@@ -110,11 +110,7 @@ export const KNOWN_FLAGS = new Set([
 
 const IDENTIFIER = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
 
-// `<file>#Export`. Decided from the text alone, so a path containing `#`
-// never depends on whether the file happens to exist yet. An export name is an
-// identifier: it can hold neither `.` nor a separator: and the left side must
-// already look like a component file, so `C:\p\c#1\B.tsx` and `C:\p\B#2.tsx`
-// stay whole paths.
+// Text alone, no filesystem: a path whose own name contains # stays a whole path.
 export function splitTargetSpec(arg: string): { path: string; target?: string } {
   const hash = arg.lastIndexOf("#");
   if (hash <= 0) return { path: arg };
@@ -574,9 +570,7 @@ export function parseArgs(argv: string[]): CliArgs {
   if (!result.error && result.isolate && result.matrix) {
     result.error = "--isolate cannot be combined with --matrix";
   }
-  // Checked against the paths as typed: directory and glob expansion happens
-  // later, and a phase that cannot mean anything for the target is a usage
-  // error, not a measurement that quietly reports nothing.
+  // Paths as typed: expansion happens later, and an impossible phase is a usage error.
   if (
     !result.error &&
     result.isolate &&
@@ -584,9 +578,7 @@ export function parseArgs(argv: string[]): CliArgs {
   ) {
     result.error = VUE_STRICTMODE_ERROR;
   }
-  // Two whole-run modes: one sweeps scale points, the other a prop matrix, and
-  // a run does one or the other. A disable wins over its own enable everywhere
-  // else, so it resolves this too instead of erroring on a mode that is off.
+  // A disable wins over its own enable, so a disabled mode never triggers this conflict.
   if (!result.error && result.curve && !result.noCurve && result.matrix && !result.noMatrix) {
     result.error = "--curve cannot be combined with --matrix";
   }
@@ -599,10 +591,7 @@ function parseCurveArg(arg: string): { propName: string; propKind: "array" | "nu
   return { propName, propKind: propKind as "array" | "number" };
 }
 
-// --no-curve / --no-matrix win over their enables, matching --no-isolate and
-// --no-react-compiler. `false` is not `undefined`: a disable is fingerprinted
-// as the combo mode it resolves to, so it stays eligible for verdict reuse,
-// while an absent flag leaves auto-activation free to run.
+// false is not undefined: a disable fingerprints as combo mode; absent leaves auto-activation.
 export function resolveCurveOption(
   args: Pick<CliArgs, "curve" | "noCurve">,
 ): boolean | { propName: string; propKind: "array" | "number" } | undefined {

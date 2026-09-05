@@ -7,6 +7,7 @@ export interface ShimEntry {
   shimFile: string;
 }
 
+// next/font/google is unshimmable: one named export per family, and the set is unbounded.
 export const SHIM_MODULES: ShimEntry[] = [
   { module: "next/image", shimFile: "next-image.js" },
   { module: "next/dynamic", shimFile: "next-dynamic.js" },
@@ -20,12 +21,7 @@ export const SHIM_MODULES: ShimEntry[] = [
   { module: "next-video/player", shimFile: "next-video-player.js" },
 ];
 
-// Everything else under `next/` resolves from the project's own Next
-// install, where a module written for the server or for the compiler plugin can
-// fail to load in a plain browser. Named rather than blocked: it may work.
-// `next/font/google` is here permanently, not by omission: each font family is
-// a separate named export, the set is unbounded, and a browser rejects a named
-// import its target module does not provide, so no static shim can answer it.
+// Warned about rather than blocked: an unshimmed next/ module may still load in a browser.
 export function unshimmedNextModules(specifiers: Iterable<string>): string[] {
   const shimmed = new Set(SHIM_MODULES.map((entry) => entry.module));
   const unshimmed = new Set<string>();
@@ -63,17 +59,10 @@ export function buildShimAliases(
   });
 }
 
-// The failure happens at esbuild's static ES-module resolution layer, before
-// any shim code runs, so only this bundler-error layer can catch and
-// re-present it. esbuild's own "No matching export" message names the shim's
-// absolute dist/shims path -- a path inside 120fps's own installation, which
-// must never reach the user verbatim. Recognized by exact match against the
-// shim file this same process would have aliased to (buildShimAliases' own
-// shimDir computation), not by a loose basename guess, so an unrelated file
-// in the target repo that happens to share a shim's filename is never
-// misattributed.
+// Resolution fails inside esbuild before any shim code runs, so only this layer can see it.
 const ESBUILD_NO_MATCHING_EXPORT = /No matching export in "([^"]+)" for import "([^"]+)"/;
 
+// esbuild's own message names 120fps's dist/shims path, which must never reach the user.
 export function SHIM_EXPORT_MISSING_ERROR(shimModule: string, missingExport: string): string {
   return (
     `"${missingExport}" is not available from 120fps's own "${shimModule}" shim. Pass --no-shims ` +
@@ -88,6 +77,7 @@ export function diagnoseMissingShimExport(message: string): string | undefined {
   const filePath = toPosix(match[1]);
   const missingExport = match[2];
   const shimDir = toPosix(path.resolve(import.meta.dirname ?? __dirname, "shims"));
+  // Exact shimDir match: a same-named file in the target repo must not be misattributed.
   const entry = SHIM_MODULES.find((s) => `${shimDir}/${s.shimFile}` === filePath);
   if (!entry) return undefined;
   return SHIM_EXPORT_MISSING_ERROR(entry.module, missingExport);

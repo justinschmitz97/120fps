@@ -154,10 +154,7 @@ describe("H9: scaling curve with negative slope", () => {
 
 describe("H10: mixed nested and sibling events in parseTraceDuration", () => {
   it("correctly handles interleaved nesting", () => {
-    // A: ts=0, dur=10000 (parent)
-    //   B: ts=1000, dur=3000 (nested in A)
-    // C: ts=15000, dur=5000 (sibling of A)
-    //   D: ts=16000, dur=2000 (nested in C)
+    // A/C are top-level siblings; B nests in A, D nests in C.
     const events: TraceEvent[] = [
       { name: "FunctionCall", dur: 10_000, ph: "X", ts: 0 },
       { name: "v8.compile", dur: 3_000, ph: "X", ts: 1_000 },
@@ -167,8 +164,7 @@ describe("H10: mixed nested and sibling events in parseTraceDuration", () => {
     const result = parseTraceDuration(events);
     // Only top-level: A (10ms) + C (5ms) = 15ms
     expect(result.totalDuration).toBeCloseTo(15, 0);
-    // Script duration must also dedup nesting: B is nested in A, D is nested
-    // in C, so only the outer events' durations count: A (10ms) + C (5ms) = 15ms
+    // scriptDuration also dedups nesting: only A (10ms) + C (5ms) = 15ms count.
     expect(result.scriptDuration).toBeCloseTo(15, 0);
   });
 
@@ -190,8 +186,7 @@ describe("H11: events with same start time", () => {
       { name: "v8.compile", dur: 3_000, ph: "X", ts: 100 },
     ];
     const result = parseTraceDuration(events);
-    // After sorting by ts, both have ts=100; first processed is top-level
-    // Second has ts=100 which is within first's [100, 10100] range → nested
+    // Both events share ts=100; the first processed is top-level, the second nests inside it.
     expect(result.totalDuration).toBeCloseTo(10, 0);
   });
 });

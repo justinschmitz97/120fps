@@ -1,18 +1,8 @@
 import type { Page } from "playwright";
 
-// Opt-in acquisition of what a browser can observe about an interaction
-// from inside the page: Event Timing, Long Animation Frames, layout
-// instability. It reports latency the trace path cannot see, and cannot report
-// the per-step work the trace path exists to measure: Event Timing's floor is
-// 16ms per event, an order of magnitude above the 0.5-1ms/step real components
-// measure, so explore keeps timing with traces (`ExploreOptions.observerTiming`
-// selects this path).
-
 export interface ObservedEvent {
   name: string;
-  // Chromium groups the entries of one user interaction (pointerdown,
-  // pointerup, click) under a shared id. 0 means the entry belongs to no
-  // interaction: a hover, say.
+  // Chromium shares one id across an interaction's entries; 0 means the entry belongs to none.
   interactionId: number;
   // Time from the input event to the first frame that showed its result.
   durationMs: number;
@@ -34,21 +24,16 @@ export interface ObservedWindow {
   layoutShiftScore: number;
   // Wall-clock span of the bracketed window, from the in-page clock.
   windowMs: number;
-  // Set when the browser reported no Event Timing entries at all, so a reader
-  // can tell "nothing was slow" from "nothing was observable".
+  // Distinguishes "nothing was slow" from "nothing was observable".
   eventTimingUnavailable: boolean;
 }
 
-// Chromium only emits Event Timing entries above a duration threshold. 16ms is
-// the documented minimum the API accepts; the harness asks for it explicitly
-// rather than relying on the 104ms default, and the observed floor is verified
-// by test rather than assumed.
+// The documented minimum Event Timing accepts; its 104ms default would hide most entries.
 export const EVENT_TIMING_THRESHOLD_MS = 16;
 
 export const OBSERVER_STATE_KEY = "__120fpsObs";
 
-// Installed once per page, before any interaction, so every window observes
-// under identical instrumentation.
+// Install before any interaction, so every window observes under identical instrumentation.
 export async function installObservers(
   page: Page,
   durationThreshold: number = EVENT_TIMING_THRESHOLD_MS,
@@ -103,8 +88,7 @@ export async function installObservers(
       });
 
       observe("layout-shift", {}, (entry) => {
-        // Shifts within 500ms of an input are the component's own reflow, which
-        // is exactly what an interaction measurement should count.
+        // Input-driven shifts are kept: the component's own reflow is what an interaction costs.
         state.shifts.push({ startTime: entry.startTime, value: entry.value } as any);
       });
     },
@@ -112,9 +96,7 @@ export async function installObservers(
   );
 }
 
-// Marks the start of a measured window. Entries are filtered by time rather
-// than cleared, so a late-arriving entry cannot be attributed to the next
-// window and nothing observed is thrown away.
+// Entries are filtered by time, never cleared, so a late entry cannot land in the next window.
 export async function beginObservedWindow(page: Page): Promise<void> {
   await page.evaluate((key: string) => {
     const state = (window as any)[key];
@@ -134,10 +116,7 @@ export async function readObservedWindow(page: Page): Promise<ObservedWindow> {
     };
     if (!state) return empty;
 
-    // An observer callback for the last interaction is queued as a task after
-    // its frame presented, so reading straight after the caller's fence drops
-    // it. Yield until a turn passes with nothing new, bounded so a page that
-    // keeps emitting cannot hold the read open.
+    // The last callback is queued after its frame, so a read right after the fence drops it.
     const settled = async () => {
       for (let turn = 0; turn < 3; turn++) {
         const before = state.events.length + state.longFrames.length;
@@ -173,17 +152,10 @@ export async function readObservedWindow(page: Page): Promise<ObservedWindow> {
   }, OBSERVER_STATE_KEY);
 }
 
-// The slowest interaction in a measured window, presentation-inclusive:
-// deliberately a maximum, not a total. Chromium emits one entry per dispatch
-// target, so a window of 11 clicks arrives as 62 entries: the
-// pointerdown/pointerup/click trio of each click plus one pointerenter per
-// ancestor, all ending at the same presentation. Summing them read 2720ms for
-// 1.8s of wall clock. A window's total interaction cost is therefore not
-// recoverable from Event Timing, which is why explore does not time with this.
+// A maximum, never a total: Chromium emits one entry per dispatch target of one presentation.
 export function observedInteractionMs(window: ObservedWindow): number {
   const worstEvent = window.events.reduce((max, e) => Math.max(max, e.durationMs), 0);
   if (worstEvent > 0) return worstEvent;
-  // Nothing cleared the Event Timing floor. Long frames are then the only
-  // observable cost.
+  // Nothing cleared the Event Timing floor; long frames are the only observable cost left.
   return window.longFrames.reduce((max, f) => Math.max(max, f.blockingMs), 0);
 }

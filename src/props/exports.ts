@@ -7,21 +7,14 @@ import { createCachedProgram } from "./program.js";
 import type { ExportInfo, PropSchema } from "./schema.js";
 import { createVueScripts, vueEntryScript, type VirtualScripts } from "./vue.js";
 
-// The module a barrel's exported
-// binding is declared in. `export { X } from "./component"` and
-// `import { X } from "./component"; export { X };` both reach it through the
-// checker's alias, so one lookup serves both spellings. An alias whose target
-// has no declaration is a specifier that did not resolve, which is a fact about
-// the filesystem, not a failed extraction.
+// An alias with no declaration is an unresolved specifier: a filesystem fact, not a failed read.
 type ReExportTarget =
   | { file: ts.SourceFile; name: string | undefined }
   | { unresolved: { barrel: string; specifier: string } };
 
 
 function moduleSpecifierFor(sourceFile: ts.SourceFile, name: string): string | undefined {
-  // A bare `export * from` specifier stands in for a
-  // name it never matched. It is the only candidate when the file has exactly
-  // one star; with two, naming either as the cause would be a guess.
+  // One `export *` can be named as the cause; with two, naming either would be a guess.
   let starSpecifier: string | undefined;
   let starCount = 0;
   for (const statement of sourceFile.statements) {
@@ -69,8 +62,7 @@ function aliasTargetOf(
   try {
     return checker.getAliasedSymbol(symbol);
   } catch (error) {
-    // The checker throwing is a different cause from a
-    // specifier the filesystem never resolved, so the run says which one it hit.
+    // A throwing checker is a different cause from an unresolved specifier; the run says which.
     const reason = error instanceof Error ? error.message : String(error);
     sink?.(`re-export of ${symbol.getName()}: the type checker could not follow the alias (${reason})`);
     return undefined;
@@ -91,10 +83,7 @@ function isValueDeclaration(declaration: ts.Declaration): boolean {
 }
 
 
-// `export { default } from "./component"` and `export * from
-// "./component"` name no PascalCase binding in the barrel's own text, so
-// `scanExports` yields nothing and the walk stopped at a barrel the filesystem
-// resolves fine. The module's export symbols carry both spellings.
+// scanExports sees no name in `export { default } from` or `export *`; export symbols carry both.
 function fallbackExportSymbol(
   moduleExports: ts.Symbol[],
   checker: ts.TypeChecker,
@@ -112,8 +101,7 @@ function fallbackExportSymbol(
 }
 
 
-// The name the declaring module knows the component by. `default` is a slot,
-// not an identifier, so the declaring file selects its own export instead.
+// `default` is a slot rather than an identifier, so the declaring file selects its own export.
 function declaredNameOf(aliased: ts.Symbol, declaration: ts.Declaration): string | undefined {
   const declared = (declaration as ts.Declaration & { name?: ts.Node }).name;
   if (declared && ts.isIdentifier(declared)) return declared.text;
@@ -168,18 +156,11 @@ export function followReExportedComponent(
 }
 
 
-// A barrel of barrels still resolves in a bounded number of hops; the bound
-// stops a cycle of two files re-exporting each other.
+// The bound stops a cycle of two files re-exporting each other.
 export const RE_EXPORT_HOPS = 4;
 
 
-// A same-file, top-level `const NAME = <expr>` initializer for the given
-// identifier (ant-design's Button.tsx:294 is the motivating case) --
-// shallow and parse-only, matching this codebase's existing precedent for a
-// same-file, top-level alias lookup (no cross-file/scope resolution, no
-// checker). `identifier` names could theoretically collide across nested
-// scopes; only a top-level match is trusted, the same tradeoff
-// `detectOptionsApiProps`/`scanRelativeTypeImports` already accept elsewhere.
+// Only a top-level match is trusted: a nested scope could bind the same name.
 function findTopLevelVariableInitializer(identifier: ts.Identifier): ts.Expression | undefined {
   for (const statement of identifier.getSourceFile().statements) {
     if (!ts.isVariableStatement(statement)) continue;
@@ -197,12 +178,7 @@ export function extractFunctionFromInitializer(
   node: ts.Expression,
   depth = 0,
 ): ts.ArrowFunction | ts.FunctionExpression | undefined {
-  // An `as`/`satisfies` assertion is erased at runtime and asserts
-  // nothing about the VALUE, only a claim about its type -- ant-design's
-  // `const Button = InternalCompoundedButton as CompoundedComponent` is
-  // exactly InternalCompoundedButton at runtime. Unwrapped before every other
-  // check, so it composes with the HOC-chain and identifier-alias cases below
-  // regardless of where the assertion sits.
+  // An assertion is erased at runtime; unwrapped first so it composes with the cases below.
   if (ts.isAsExpression(node) || ts.isSatisfiesExpression(node) || ts.isParenthesizedExpression(node)) {
     return extractFunctionFromInitializer(node.expression, depth);
   }
@@ -219,12 +195,7 @@ export function extractFunctionFromInitializer(
     }
   }
 
-  // A bare identifier alias points at a different declaration, often in
-  // the same file (ant-design's Button.tsx:294 own motivating shape) --
-  // follow it once so Tier-0's source-reference scan (sourceReferencedPropNames)
-  // sees the real implementation's body instead of an empty alias with none
-  // of its own. Depth-bounded against a pathological `const A = B; const B
-  // = A;` cycle; five hops is far more than any real alias chain needs.
+  // Followed so sourceReferencedPropNames sees the implementation body; bounded against a cycle.
   if (ts.isIdentifier(node) && depth < 5) {
     const target = findTopLevelVariableInitializer(node);
     if (target) return extractFunctionFromInitializer(target, depth + 1);
@@ -234,11 +205,7 @@ export function extractFunctionFromInitializer(
 }
 
 
-// Shared sync AST walker for export detection (parse-only, no type checker).
-// Recognizes: export function/class/const declarations, export default
-// declarations, `export default <Identifier>;` assignments, and
-// `export { A, B as default }` clauses (type specifiers skipped).
-// PascalCase-filtered; entries deduped by name with isDefault OR-merged.
+// Parse-only: no type checker, so a barrel's exports read without binding the program.
 export function scanExports(sourceText: string, fileName: string): ExportInfo[] {
   const sourceFile = ts.createSourceFile(
     fileName,
@@ -259,13 +226,8 @@ export function scanExports(sourceText: string, fileName: string): ExportInfo[] 
   };
 
   ts.forEachChild(sourceFile, (node) => {
-    // export default <Identifier>;
     if (ts.isExportAssignment(node)) {
-      // `export default forwardRef(Button)` and
-      // `memo(forwardRef(Button))` name `Button` as the default. Recording only
-      // a bare identifier would drop the default entirely: `selectMeasuredExport`
-      // would fall through to the first non-Provider export, so the header would
-      // name a sibling while the props table described the wrapped component.
+      // `memo(forwardRef(Button))` names Button; recording only a bare identifier would lose it.
       const identifier = !node.isExportEquals ? identifierBehind(node.expression) : undefined;
       if (identifier) add(identifier.text, true);
       return;
@@ -306,16 +268,12 @@ export function scanExports(sourceText: string, fileName: string): ExportInfo[] 
 }
 
 
-// Every source file a component's type-check touches, minus default
-// libs and external libraries: the file set whose contents identify the
-// component for fingerprinting. Rides the program cache.
+// The file set whose contents identify the component for fingerprinting.
 export async function projectSourceFiles(filePath: string): Promise<string[]> {
   const absolutePath = path.resolve(filePath);
   const files: string[] = [];
 
-  // The program roots at a virtual script, which is not a file anyone can
-  // hash. Each `<x>.vue.ts` collapses back to `<x>.vue`: without that an
-  // edited component would keep reusing a stored verdict about different source.
+  // A virtual `<x>.vue.ts` collapses back to `<x>.vue`; nothing can hash a file with no bytes.
   let root = absolutePath;
   let virtual: VirtualScripts | undefined;
   if (isVueFile(absolutePath)) {

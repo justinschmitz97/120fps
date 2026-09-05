@@ -16,8 +16,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-// M86 MUST: a <stem>.props.tsx preset can name a prop the cap dropped and
-// have it restored to the measured schema.
+// M86: a props.tsx preset can name a cap-dropped prop and have it restored to the schema.
 describe("M86: a preset-named prop is exempt from the cap", () => {
   it("onKeyDown (purely inherited, unreferenced, unrequired) is present in the schema", async () => {
     resetExtractionCache();
@@ -40,8 +39,6 @@ describe("M86: a preset-named prop is exempt from the cap", () => {
   });
 });
 
-// M86 MUST NOT: report "not a prop of the measured component" for a prop
-// that IS a prop and was merely truncated.
 describe("M86 MUST NOT: no false 'not a prop' warning for a cap-truncated-but-restored prop", () => {
   it("no UNKNOWN_PRESET_PROPS_WARNING fires for onKeyDown", async () => {
     resetExtractionCache();

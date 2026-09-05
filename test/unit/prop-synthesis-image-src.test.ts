@@ -5,9 +5,7 @@ import { extractProps, resetExtractionCache } from "../../src/props/index.js";
 const M84 = path.resolve("./fixtures/m84");
 const fixture = (name: string): string => path.join(M84, name);
 
-// M84 MUST: a prop whose name identifies it as an image source synthesizes a
-// value that resolves without a network request, not "test" (which
-// relative-resolves against the harness origin and 404s).
+// "test" relative-resolves against the harness origin and 404s; image sources need a real URI.
 describe("M84: image-source-named props synthesize a data: URI", () => {
   it("src, srcSet, and poster all synthesize an inline data: URI", async () => {
     resetExtractionCache();

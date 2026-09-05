@@ -12,15 +12,9 @@ import { formatTable, type CalibrationResult, type Report, type Thresholds } fro
 import type { MountResult } from "../../src/browser/index.js";
 import type { ExploreResult, StateGraph } from "../../src/analysis/index.js";
 
-// chakra-ui-F4: --explain-props printed the one actionable sentence for a
-// Select whose resolved export takes a class instance ("Target it with
-// #SelectTrigger"), and the real run — the one a user pays wall-clock time for
-// — dropped it. calcom-F4: a composed run measured `props: {}` and printed
-// none of the 73-prop extraction diagnostics the dry run had printed, with no
-// caveat that no props were applied at all.
-
 const FIXTURE = path.resolve("fixtures/alt-export-degenerate/select.tsx");
 
+// chakra-ui-F4: --explain-props named the actionable target; the real run silently dropped it.
 describe("the retarget remedy is computed once and printed by both modes", () => {
   it("names the alternative export for a degenerate required prop", async () => {
     const schemas = await extractProps(FIXTURE, { onWarning: () => {} });
@@ -82,6 +76,7 @@ function build(overrides: Partial<BuildReportInput> = {}): Report {
   });
 }
 
+// calcom-F4: a composed run measuring props: {} printed no diagnostics and no caveat.
 describe("a run that applied no props at all says so on the row it measured", () => {
   it("marks the combo when the scene owned the props", () => {
     const report = build({ measuredWithoutProps: true });

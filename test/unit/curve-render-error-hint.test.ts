@@ -6,13 +6,7 @@ import type { Report } from "../../src/report/index.js";
 
 const src = (name: string): string => fs.readFileSync(path.resolve("src", name), "utf-8");
 
-// M79 (4b, chakra-ui-F1). hintsForReport used to only inspect report.combos
-// to detect a render error (combo.renderHealth === "error"); curve mode
-// always sets combos: [], so a render error could never reach hint
-// selection there. runCurveMode already detects a broken scale point
-// correctly and pushes CURVE_RENDER_ERROR_WARNING (a "scale point N=..."
-// line) into report.warnings — the same signal renderFailed() (analyze.ts)
-// already keys on. hintsForReport now reads that same signal.
+// M79 (4b, chakra-ui-F1): curve mode's combos: [] hid render errors from the hint.
 
 function curveReport(opts: {
   warnings?: string[];
@@ -73,12 +67,7 @@ describe("M79 4b: curve-mode render error reaches hintsForReport", () => {
   });
 });
 
-// M79 gap (structural field). Migrated from the string-signature convention
-// per M83's own instruction: hintsForReport now reads
-// scalingCurveReport.renderErrorPoints directly. No "scale point N=" string
-// appears in report.warnings in any of these — the field alone must drive
-// the hint, proving the switch actually happened rather than merely adding
-// a redundant check.
+// M79/M83: no "scale point N=" string appears here; the structural field alone must drive the hint.
 describe("M79 gap: hintsForReport reads renderErrorPoints structurally (no warnings string)", () => {
   it("adds renderError from the structural field alone", () => {
     const report = curveReport({
@@ -104,10 +93,7 @@ describe("M79 gap: hintsForReport reads renderErrorPoints structurally (no warni
   });
 });
 
-// Wiring: runCurveMode (analyze.ts) is an integration entry point that
-// cannot be reached without a real browser/harness (matches the established
-// convention for matrix-transparency.test.ts's "matrix branch wiring"
-// section), so the population site is pinned by source content instead.
+// runCurveMode needs a real browser; pinned by source content (see matrix-transparency.test.ts).
 describe("M79 gap: runCurveMode populates renderErrorPoints", () => {
   it("sets curveReport.renderErrorPoints at the same point CURVE_RENDER_ERROR_WARNING is pushed", () => {
     const analyzeSrc = src("pipeline/modes/curve.ts");

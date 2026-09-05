@@ -79,8 +79,7 @@ describe("transform recognition", () => {
     expect(recognizeTransform("./styles.css.ts")?.code).toBe("vanilla-extract");
   });
 
-  // The specifier alone cannot say: vanilla-extract is imported as
-  // "./styles.css" while the file on disk is "styles.css.ts".
+  // Specifier alone can't say it: "./styles.css" imports "styles.css.ts" on disk.
   it("recognizes one imported the way vanilla-extract is actually written", () => {
     expect(recognizeTransform("./styles.css", path.join(ROOT, "uses-vanilla-extract.tsx"))?.code)
       .toBe("vanilla-extract");

@@ -33,9 +33,7 @@ async function run(component: string, extra: AnalyzeOptions = {}) {
 const allErrors = (report: { combos: { pageErrors?: string[] }[] }) =>
   report.combos.flatMap((c) => c.pageErrors ?? []).join("\n");
 
-// H1: a throw after paint. React unwinds the whole root when an effect throws
-// with no boundary above it, so the measured scene really is empty and the gate
-// is the right answer.
+// H1: an effect throw unwinds the root with no boundary; the empty scene is correctly gated.
 describe("H1: throws from an effect after paint", () => {
   it("gates the combo, because React tore the tree down", async () => {
     const report = await run("./fixtures/m59-throws-in-effect.tsx");
@@ -103,9 +101,7 @@ describe("H6: a portal child throws", () => {
   }, 180_000);
 });
 
-// H7: Vue mounts synchronously, so a setup throw propagates out of the mount
-// call instead of only reaching the page. The run aborts rather than reporting,
-// which is not a silent pass; the phase context is what makes it diagnosable.
+// H7: Vue mounts synchronously, so a setup throw aborts the run instead of only reaching the page.
 describe("H7: a Vue SFC that throws during setup", () => {
   it("aborts the run naming the phase, the combo and the component", async () => {
     await expect(

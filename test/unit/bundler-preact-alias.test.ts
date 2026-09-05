@@ -10,13 +10,7 @@ import {
 } from "../../src/harness/index.js";
 import { resolveReactDomIdentity, REACT_DOM_NOT_REACT_WARNING, runReactAnalysis } from "../../src/analysis/index.js";
 
-// M78 (preact-app-F3): two bundler shapes, two mechanisms.
-//   (a) Vite's resolve.alias is a filesystem-literal-path alias that
-//       readViteConfigData already merges into the harness's own alias
-//       list, so it genuinely changes what 120fps mounts.
-//   (b) Next.js/webpack aliases are bare-specifier and never applied to
-//       120fps's own mount; this is a disclosure gap, not a silent
-//       mismeasurement.
+// M78 (preact-app-F3): Vite's alias changes the mount; Next/webpack aliases never apply.
 const tmpDirs: string[] = [];
 
 afterEach(() => {

@@ -4,12 +4,7 @@ import { formatTable, describeMode, type CalibrationResult, type Report, type Th
 import type { MountResult } from "../../src/browser/index.js";
 import type { ExploreResult, StateGraph } from "../../src/analysis/index.js";
 
-// dub-F5: a Badge run's footer said "2 of 12 combos warned" two lines above
-// its own "measured 8 of 64 prop combos". Twelve is eight prop combos plus
-// four sibling-copies scale probes, which the mode line already excludes.
-// M59 also exempts a scale probe from tier budgets ("exempt from budgets,
-// never from rendering"); the test that found them read a props key M61 had
-// already stripped, so the exemption had stopped applying.
+// dub-F5: M61's __120fps_scaleN stripping broke M59's budget exemption for scale probes.
 
 const baseMachine = {
   cpu: "Test", cores: 4, ramMb: 16384,
@@ -51,8 +46,7 @@ function build(mounts: MountResult[], overrides: Partial<BuildReportInput> = {})
   });
 }
 
-// One warning-worthy prop combo (unstable mount), one healthy one, and four
-// scale probes: dub's exact shape at a smaller size.
+// dub's exact shape at smaller size: one warning-worthy combo, one healthy, four scale probes.
 function dubShapedMounts(): MountResult[] {
   const unstable = mountResult(0, { variant: "default" }, 4);
   unstable.mount.samples = [1, 9, 1];
@@ -92,9 +86,7 @@ describe("a run's combo counts all describe the same set", () => {
 
 describe("a scale probe is exempt from budgets and never from rendering", () => {
   it("does not fail a scale probe for exceeding a prop-combo tier budget", () => {
-    // 200 DOM nodes is still T1 by node count, and 40ms would fail T1's
-    // mount budget — the probe mounts N whole extra trees, so that budget
-    // never described it.
+    // 200 nodes/40ms would fail T1's per-combo budget, but a probe mounting N trees is exempt.
     const mounts = [
       mountResult(0, { variant: "default" }, 4),
       mountResult(1, { __120fps_scaleN: 50 }, 40, 30),
@@ -114,11 +106,7 @@ describe("a scale probe is exempt from budgets and never from rendering", () => 
   });
 });
 
-// C-1: `fixtures/scale-accordion.fixture.tsx` and `fixtures/scale-throws.fixture.tsx`
-// both export `scale`, so `runComboMode`'s `fixtureHasScale` branch builds a
-// combo list where *every* entry is a probe. The M59 exemption describes the
-// M61 augmentation probe appended beside real prop combos; applied to a whole
-// run it made a scale fixture unfailable on any budget.
+// C-1: applied to an all-probe run, M59's exemption made a scale fixture unfailable on any budget.
 describe("a run made only of scale probes is still judged", () => {
   function scaleOnlyRun(mountMs: number): Report {
     return build([

@@ -155,7 +155,6 @@ function runAnimationRule(animations: unknown[]): boolean {
 
 const inRoot = { nodeType: 1, inRoot: true };
 
-// H1: three-deep wrapper nesting still finds the innermost name.
 describe("H1: memo(forwardRef(memo(fn)))", () => {
   it("resolves through every layer", () => {
     const Inner = (): null => null;
@@ -179,8 +178,7 @@ describe("H2: cyclic forwardRef chain", () => {
   });
 });
 
-// H3: React.lazy and context objects carry neither a name nor an unwrappable
-// inner type; the resolver must fall through rather than throw.
+// H3: exotic types with no name resolve to null, they never throw.
 describe("H3: exotic types without a name", () => {
   it("returns null for a context object", () => {
     expect(resolveTypeName({ $$typeof: Symbol.for("react.context"), _currentValue: 1 }, 0)).toBe(null);
@@ -192,8 +190,6 @@ describe("H3: exotic types without a name", () => {
   });
 });
 
-// H4: detection is a single read. An animation that starts after it is not
-// retroactively seen: the rule must be a pure function of what is live now.
 describe("H4: animation starting after detection", () => {
   it("is false before it starts and true after", () => {
     const animations: unknown[] = [];
@@ -203,8 +199,7 @@ describe("H4: animation starting after detection", () => {
   });
 });
 
-// H5: the rule must not walk the DOM: that was the source of both the false
-// positive and the per-element computed-style cost.
+// H5: DOM-walking caused both the false positive and the per-element computed-style cost.
 describe("H5: the animation rule reads no DOM", () => {
   it("never queries elements", () => {
     expect(OBSERVED_ANIMATION_EXPRESSION).not.toContain("querySelectorAll");
@@ -220,8 +215,7 @@ describe("H5: the animation rule reads no DOM", () => {
 describe("H6: a large animated component gets T4's budget", () => {
   it("passes at 70ms mount where the T3 override would have failed it", () => {
     const report = buildReport(makeInput({
-      // A calibration slow enough that the relative-mount warn does not mask
-      // the budget check this hypothesis is about.
+      // A calibration slow enough that the relative-mount warn does not mask this budget check.
       calibration: { totalDuration: 100, scriptDuration: 50 },
       mounts: [{
         comboIndex: 0, props: {},
@@ -253,8 +247,6 @@ describe("H6: a large animated component gets T4's budget", () => {
   });
 });
 
-// H7: report.mode uses the fingerprint's vocabulary, so a mode value can never
-// mean one thing on the report and another in the baseline slot it compares to.
 describe("H7: report.mode and baseline fingerprint compatibility", () => {
   it("does not change what a report without the field derives to", () => {
     const curve = makeReport({ combos: [], scalingCurveReport: makeCurve() });
@@ -272,8 +264,7 @@ describe("H7: report.mode and baseline fingerprint compatibility", () => {
   });
 });
 
-// H8: --ci suppresses the terminal table, so the WARN rollup must not be the
-// only place a CI reader learns a run warned.
+// H8: the WARN rollup is terminal-only, so JSON/markdown must carry the signal too under --ci.
 describe("H8: the WARN signal survives JSON-only mode", () => {
   it("markdown reports the warn verdict for a passing run with a warned combo", () => {
     const report = makeReport({
@@ -289,7 +280,6 @@ describe("H8: the WARN signal survives JSON-only mode", () => {
   });
 });
 
-// H9: modes with no per-row verdicts must not print a rollup at all.
 describe("H9: rollup only where rows carry verdicts", () => {
   it("says nothing in curve mode", () => {
     const report = makeReport({ combos: [], scalingCurveReport: makeCurve() });
@@ -322,7 +312,6 @@ describe("H9: rollup only where rows carry verdicts", () => {
   });
 });
 
-// H10: the noise warning must reach every output mode, not just the combo table.
 describe("H10: enriched noise warning in every mode", () => {
   it("appears in curve output", () => {
     const report = makeReport({
@@ -350,7 +339,6 @@ describe("H10: enriched noise warning in every mode", () => {
   });
 });
 
-// H11: a warning with no `noise` object behind it must degrade, not crash.
 describe("H11: noise warning without signals", () => {
   it("falls back to the fixed sentence", () => {
     const report = makeReport({ warnings: [HOSTILE_RUN_WARNING] });
@@ -365,11 +353,9 @@ describe("H11: noise warning without signals", () => {
   });
 });
 
-// H12: the baseline clause tracks whether a comparison happened, not whether
-// one was asked for and found nothing.
+// H12: the baseline clause tracks that a comparison happened, not that one was requested and empty.
 describe("H12: baseline clause conditions", () => {
-  // M117 C6: the clause is part of the full text `report.warnings` carries for
-  // the JSON; the terminal's one line never repeats it.
+  // specs/milestones/m117-output-that-respects-the-reader.md C6: JSON has it, terminal doesn't.
   it("turns on for a baseline field that reports no entry", () => {
     const report = makeReport({
       warnings: [formatNoiseWarning(noise("hostile"), true)], noise: noise("hostile"),
@@ -472,7 +458,6 @@ describe("H16: --json split notice bounds", () => {
   });
 });
 
-// H17: the new help sections must not break the flag-parity guard.
 describe("H17: help parity after the new sections", () => {
   it("every two-space-indented flag in the help text is a known flag", () => {
     const documented = new Set(
@@ -499,9 +484,7 @@ describe("H18: size boundaries unchanged", () => {
   });
 });
 
-// M83 #1 (element-plus-F2): a same-run disagreement between an empty combo
-// and a nonzero sibling (including a scale-probe row) must be reported, not
-// asserted away as "the component renders nothing for these props".
+// M83 #1: an empty combo vs a nonzero sibling disagreement must be reported, not waved off.
 describe("M83 #1: detectRenderHealthInconsistency", () => {
   it("returns undefined when nothing is empty", () => {
     const combos = [makeCombo({ comboIndex: 0, domNodeCount: 5 })];
@@ -556,9 +539,7 @@ describe("M83 #1: appendEmptyRenderNote states the disagreement instead of asser
   });
 });
 
-// M83 #8 (primevue-Minor1): detectFixture never accepts `.fixture.tsx` for a
-// Vue target — it looks only for `${stem}.fixture.vue`. The fixture-creation
-// hint must name a file the loader will actually find.
+// M83 #8: detectFixture accepts only .fixture.vue for Vue; the hint must name a findable file.
 describe("M83 #8: fixture suggestion matches the loader's own extension", () => {
   it("suggests .fixture.vue for a Vue component", () => {
     const report = makeReport({ componentPath: "./Button.vue", combos: [makeCombo({ interactions: [] })] });
@@ -572,8 +553,7 @@ describe("M83 #8: fixture suggestion matches the loader's own extension", () => 
   });
 });
 
-// Integration: buildReport itself must push the warning onto report.warnings,
-// not only formatTable's terminal phrasing — so the JSON report carries it too.
+// Integration: buildReport must push the warning onto warnings, not just formatTable's phrasing.
 describe("M83 #1: buildReport pushes RENDER_HEALTH_INCONSISTENT_WARNING", () => {
   it("warns when a discrete combo is empty and a scale-probe sibling is nonzero", () => {
     const mounts = [

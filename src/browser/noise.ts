@@ -18,9 +18,7 @@ export interface NoiseReport {
   signals: NoiseSignals;
 }
 
-// The same bar `buildTimingWithCV` uses to distrust a metric. A machine that
-// cannot run a fixed busy loop more repeatably than the threshold at which we
-// stop trusting a measurement is, by that same standard, not quiet.
+// The same bar buildTimingWithCV uses to distrust a metric, applied to the machine itself.
 export const NOISE_CV_PERCENT = 15;
 
 // Twice the bar. At this dispersion the run is not measuring the component.
@@ -48,11 +46,7 @@ export function classifyNoise(signals: NoiseSignals): NoiseLevel {
   return "quiet";
 }
 
-// A fixed arithmetic loop, timed K times. Deliberately not calibration: that
-// measures a DOM insert plus forced layout and feeds normalization, and one
-// sample of it swings 20–40%. This asks a narrower question: can this
-// machine repeat identical work identically right now: and answers it with
-// enough samples to mean something.
+// Deliberately not calibration: that measures a DOM insert plus forced layout and swings 20-40%.
 export async function probeMachineNoise(
   page: Page,
   samples: number = NOISE_PROBE_SAMPLES,
@@ -86,8 +80,7 @@ export function buildNoiseReport(input: {
   return { level: classifyNoise(signals), signals };
 }
 
-// The fixed sentences claim nothing about a baseline. A run that never
-// asked for one would still be told its baseline comparison had been skipped.
+// Says nothing about a baseline: a run that asked for none must not be told one was skipped.
 export const NOISY_RUN_WARNING =
   "The machine was noisy while this ran; treat these numbers as suspect and rerun to confirm.";
 
@@ -101,9 +94,7 @@ export const NOISY_BASELINE_NOTE =
 
 export const HOSTILE_BASELINE_NOTE = "Baseline comparison was skipped.";
 
-// One vocabulary for the terminal and the JSON: the classification and the
-// signals behind it are what `report.noise` carries, so the sentence names them
-// instead of paraphrasing ("too busy").
+// Names the signals report.noise carries, so terminal and JSON share one vocabulary.
 export function formatNoiseWarning(noise: NoiseReport, baselineCompared: boolean): string {
   if (noise.level === "quiet") return "";
   const { probeCv, unstableFraction, contextRetries } = noise.signals;

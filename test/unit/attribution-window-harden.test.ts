@@ -21,7 +21,6 @@ function total(a: { buckets: { durationMs: number }[] }): number {
 }
 
 describe("attribution window edge cases", () => {
-  // H1: one sample behaves exactly like the single-window call it replaces.
   it("a one-window array equals the flat call", () => {
     const events = [ev("FunctionCall", 3000, 1000, PKG), ev("FunctionCall", 2000, 5000, USER)];
     const nested = attributeCost([events]);
@@ -31,11 +30,9 @@ describe("attribution window edge cases", () => {
     expect(nested.buckets.map((b) => b.source)).toEqual(flat.buckets.map((b) => b.source));
   });
 
-  // H5: a later window's events must not be treated as nested inside an
-  // earlier window's span, which would delete them from the breakdown.
+  // H5: cross-window events must not read as nested, which would delete them from the breakdown.
   it("does not deduct across window boundaries", () => {
-    // Window A holds one long span; window B's timestamps sit inside A's range,
-    // as they would if the trace clock restarted or windows were reordered.
+    // Window B's timestamps sit inside A's range, as if the trace clock restarted or reordered.
     const a = [ev("FunctionCall", 10_000, 1000, PKG)];
     const b = [ev("FunctionCall", 4000, 2000, USER)];
     const perWindow = attributeCost([a, b]);

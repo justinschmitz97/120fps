@@ -14,7 +14,6 @@ async function gotoAndMount(page: Page, url: string, props: any = {}) {
   await page.evaluate((p: any) => (window as any).__120fps.mount(p), props);
 }
 
-// H1: forwardRef component renders in harness
 describe("H1: forwardRef harness", () => {
   it("renders forwardRef component", async () => {
     browser = await chromium.launch({ headless: true });
@@ -33,7 +32,6 @@ describe("H1: forwardRef harness", () => {
   });
 });
 
-// H2: memo-wrapped component renders in harness
 describe("H2: React.memo harness", () => {
   it("renders memo-wrapped component", async () => {
     if (!browser) browser = await chromium.launch({ headless: true });
@@ -52,7 +50,6 @@ describe("H2: React.memo harness", () => {
   });
 });
 
-// H3: default-export-only: harness imports default
 describe("H3: default-export-only harness", () => {
   it("renders default-exported component", async () => {
     browser = await chromium.launch({ headless: true });
@@ -71,7 +68,6 @@ describe("H3: default-export-only harness", () => {
   });
 });
 
-// H7: CSS import: Vite should handle CSS in the component
 describe("H7: CSS import harness", () => {
   it("renders component that imports CSS without error", async () => {
     if (!browser) browser = await chromium.launch({ headless: true });
@@ -90,7 +86,7 @@ describe("H7: CSS import harness", () => {
   });
 });
 
-// H8: relative sibling import: component imports ./helpers
+// Fixture imports ./helpers as a sibling module.
 describe("H8: sibling import harness", () => {
   it("renders component with sibling imports", async () => {
     if (!browser) browser = await chromium.launch({ headless: true });
@@ -107,7 +103,6 @@ describe("H8: sibling import harness", () => {
   });
 });
 
-// H5: zero-props component renders in harness
 describe("H5: zero-props harness", () => {
   it("renders component with no props", async () => {
     if (!browser) browser = await chromium.launch({ headless: true });
@@ -126,7 +121,6 @@ describe("H5: zero-props harness", () => {
   });
 });
 
-// H6: generic component: mount with valid props via Control API
 describe("H6: generic component harness", () => {
   it("renders generic DataTable when mounted with valid props", async () => {
     if (!browser) browser = await chromium.launch({ headless: true });
@@ -149,7 +143,7 @@ describe("H6: generic component harness", () => {
   });
 });
 
-// H9: concurrent buildAndServe: port collision or symlink race
+// Guards against port collision and symlink races between concurrent buildAndServe calls.
 describe("H9: concurrent harness instances", () => {
   it("runs two harnesses simultaneously without conflict", async () => {
     if (!browser) browser = await chromium.launch({ headless: true });
@@ -192,7 +186,6 @@ describe("H9: concurrent harness instances", () => {
   });
 });
 
-// Error handling: nonexistent file
 describe("error handling", () => {
   it("throws on nonexistent component file", async () => {
     await expect(

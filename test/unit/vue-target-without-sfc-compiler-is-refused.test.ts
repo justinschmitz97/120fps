@@ -3,12 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-// M110: the run path refuses a `.vue` target whose project resolves no SFC
-// compiler (src/analyze.ts, M57). Without the same gate the dry run walked past
-// every SFC edge blind and predicted a clean run for a component the run would
-// refuse outright. The compiler resolves from any directory under the test
-// runner, so the missing one is supplied by a module mock rather than a
-// fixture.
+// The SFC compiler resolves from any dir under the test runner; mocked here, not fixtured.
 vi.mock("../../src/project/vue-sfc.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../src/project/vue-sfc.js")>();
   return { ...actual, loadVueCompiler: async () => undefined };

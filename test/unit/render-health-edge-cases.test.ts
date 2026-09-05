@@ -98,10 +98,6 @@ function build(overrides: Partial<BuildReportInput>): Report {
   });
 }
 
-// ====================================================================
-// H2: an error only the rerender pass saw
-// ====================================================================
-
 describe("H2: rerender-only error", () => {
   it("reaches the combo even though the mount pass stayed quiet", () => {
     const report = build({
@@ -126,10 +122,6 @@ describe("H2: rerender-only error", () => {
   });
 });
 
-// ====================================================================
-// H3: StrictMode / repeated-sample duplicates
-// ====================================================================
-
 describe("H3: repeated identical errors", () => {
   it("keeps the row marker at one error, not one per sample", () => {
     const report = build({
@@ -144,10 +136,6 @@ describe("H3: repeated identical errors", () => {
   });
 });
 
-// ====================================================================
-// H4: cap overflow
-// ====================================================================
-
 describe("H4: more distinct errors than the cap", () => {
   it("attaches a drain that dropped everything, so an all-overflow window is not silent", () => {
     const report = build({
@@ -158,10 +146,6 @@ describe("H4: more distinct errors than the cap", () => {
     expect(report.combos[0].pageErrors).toEqual(["(+3 more dropped)"]);
   });
 });
-
-// ====================================================================
-// H5: non-Error throws and hostile message content
-// ====================================================================
 
 describe("H5: hostile error payloads", () => {
   it("escapes XML metacharacters in the JUnit failure body", () => {
@@ -182,10 +166,6 @@ describe("H5: hostile error payloads", () => {
     expect(xml).not.toContain('<Foo & "Bar">');
   });
 });
-
-// ====================================================================
-// H6: the gate survives every verdict path
-// ====================================================================
 
 describe("H6: gate precedence", () => {
   it("overrides a would-be warn from unstable timings", () => {
@@ -225,10 +205,6 @@ describe("H6: gate precedence", () => {
   });
 });
 
-// ====================================================================
-// H7: matrix mode
-// ====================================================================
-
 describe("H7: matrix mode", () => {
   it("fails the run and prints the errors on the matrix screen", () => {
     const report = build({
@@ -266,10 +242,7 @@ describe("H7: matrix mode", () => {
   });
 });
 
-// ====================================================================
-// H8: phase enrichment must not break retry detection
-// ====================================================================
-
+// H8: enriched errors must stay matchable so retry detection is not broken.
 describe("H8: enriched errors stay matchable", () => {
   it("keeps isContextLostError true for a wrapped tracing timeout", () => {
     const err = enrichPhaseError(new Error("Tracing.tracingComplete timed out"), {
@@ -296,10 +269,7 @@ describe("H8: enriched errors stay matchable", () => {
   });
 });
 
-// ====================================================================
-// H9: merge and render helpers
-// ====================================================================
-
+// H9: also covers renderDrain, not just mergeDrains.
 describe("H9: drain merging", () => {
   it("returns the other side when one is missing", () => {
     const drain = { messages: ["a"], fatal: true, dropped: 0 };
@@ -321,10 +291,6 @@ describe("H9: drain merging", () => {
   });
 });
 
-// ====================================================================
-// H10: quiet runs are untouched
-// ====================================================================
-
 describe("H10: no page errors anywhere", () => {
   it("serializes a healthy report without either new field", () => {
     const report = build({ mounts: [makeMountResult()] });
@@ -342,10 +308,6 @@ describe("H10: no page errors anywhere", () => {
     expect(report.combos[0].pageErrors).toBeUndefined();
   });
 });
-
-// ====================================================================
-// H11: console-only noise on a rendering component
-// ====================================================================
 
 describe("H11: dev warnings on a healthy component", () => {
   it("clears fatality on the next window once the throw stops repeating", () => {

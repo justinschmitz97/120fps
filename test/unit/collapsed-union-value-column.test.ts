@@ -7,10 +7,7 @@ import {
   explainUnionBranches,
 } from "../../src/pipeline/index.js";
 
-// excalidraw-F4: `--explain-props` on ConfirmDialog printed
-// `size  union  optional  "small"` and, two lines below,
-// `union of 4 different shapes (number | "small" | "regular" | "wide")`.
-// A reader of the table alone believed "small" was the only accepted value.
+// excalidraw-F4: the value column showed only "small", letting a reader miss the other 3 shapes.
 
 const FIXTURE = path.resolve("fixtures/collapsed-union-size/ConfirmDialog.tsx");
 

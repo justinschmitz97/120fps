@@ -7,8 +7,6 @@ import {
 } from "../../src/report/index.js";
 import type { ReactOptimizations } from "../../src/analysis/index.js";
 
-// --- helpers ---
-
 function makeCombo(overrides: Partial<ComboReport> = {}): ComboReport {
   return {
     comboIndex: 0,
@@ -53,10 +51,6 @@ function makeReactOptimizations(overrides: Partial<ReactOptimizations> = {}): Re
     ...overrides,
   };
 }
-
-// ====================================================================
-// formatTable: React Optimizations section
-// ====================================================================
 
 describe("formatTable React Optimizations section", () => {
   it("shows 'React Optimizations' header when reactOptimizations present", () => {

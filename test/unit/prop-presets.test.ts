@@ -131,7 +131,6 @@ describe("preset entry wiring", () => {
   });
 });
 
-// H1..H4: hardening.
 describe("preset loading edge cases", () => {
   it("H1: a preset module with no default export yields nothing", () => {
     expect(loadPropPresets(path.join(ROOT, "m44-preset-card.tsx"), ROOT)).toBeUndefined();

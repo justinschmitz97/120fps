@@ -8,9 +8,7 @@ function makeFakePage(): { page: Page; emitter: EventEmitter } {
   return { page: emitter as unknown as Page, emitter };
 }
 
-// Playwright renders a console message as the format string followed by every
-// argument's preview, joined by a space, and exposes the same previews through
-// `args()`.
+// Playwright renders a console message as the format string plus each arg's preview, space-joined.
 function makeConsoleMessage(type: string, args: string[]) {
   return {
     type: () => type,

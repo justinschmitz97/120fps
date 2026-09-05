@@ -1,9 +1,7 @@
 import type { Report } from "./types.js";
 import { isSuperlinearGrowth } from "./stats.js";
 
-// A hint is documentation attached to a diagnosis, not advice generated from
-// inspecting the user's code. Each is derived from the finding class alone, and
-// each names an *action* rather than restating the finding.
+// A hint is documentation attached to a finding class, never advice inferred from code.
 export type HintId =
   | "memoBailout"
   | "contextFanOut"
@@ -17,28 +15,18 @@ export type HintId =
   | "measuredState"
   | "renderError"
   | "harnessFault"
-  // Two mount-phase aborts whose remedy is neither a
-  // React provider nor a props preset, so `renderError`'s text fits neither.
+  // Mount aborts whose remedy is neither a React provider nor a props preset.
   | "vuePluginGlobals"
   | "vueSlotContent"
-  // A mount abort has no timings and prints no
-  // `Page errors` block, so `renderError`'s copy ("the timings describe a
-  // broken tree", "Read the page errors above") points at output that does not
-  // exist in that window.
+  // A mount abort has no timings and no `Page errors` block for `renderError` to cite.
   | "mountAbortProvider"
-  // Every scale point rendered nothing and the page
-  // stayed quiet. `renderError`'s copy asserts an uncaught error, which is
-  // false here, so this case gets its own.
+  // Every scale point rendered nothing and nothing threw, so `renderError` would lie.
   | "curveRenderedNothing"
   // The numbers are real and the graphic is not.
   | "unresolvedSprite"
-  // A read of undefined in an ordinary SFC render frame,
-  // where the run read an `inject(` call in the measured component. The
-  // plugin hint would otherwise assert a plugin nobody installed for exactly
-  // this case.
+  // A read of undefined in an SFC render frame, where the component itself calls `inject(`.
   | "vueProvideInject"
-  // An identifier nothing defined, in a run whose vite
-  // config declared plugins the harness read and never executed.
+  // An identifier nothing defined, in a run whose vite config declared plugins.
   | "vitePluginsNotExecuted";
 
 export interface Hint {
@@ -249,48 +237,29 @@ export const HINTS: Record<HintId, Hint> = {
   },
 };
 
-// A mount-phase abort throws before any report exists, so `hintsForReport`
-// — which consumes a built report — never runs for it, and the catalog
-// entry for exactly this failure would otherwise be unreachable. This reads
-// the one thing such a failure does have: the abort's own message text.
-//
-// The Select repro's text never contains "$primevue"; its stack frame reads
-// `at Proxy.$variant`. A `Proxy.` frame comes from Vue's own component proxy,
-// so that frame together with a read of `undefined` identifies a missing
-// injected global without needing the plugin's name to appear.
 const VUE_PLUGIN_GLOBAL_SIGNATURE = /\$primevue|app\.use\(|\binject\(\)/i;
-// The `$` is what makes the frame evidence of a plugin global. Without it,
-// `at Proxy._sfc_render` — an ordinary SFC render — would assert a plugin
-// the run had never read.
+// The `$` is what makes the frame evidence of a plugin global.
 const VUE_PROXY_FRAME_SIGNATURE = /\bat Proxy\.\$\w/;
-// An ordinary component render frame: Vue's compiled render function, or a
-// component-proxy frame whose member is not a `$`-prefixed global.
+// An ordinary render frame: a compiled render function, or a proxy member without `$`.
 const VUE_RENDER_FRAME_SIGNATURE = /\b_sfc_render\b|\bat Proxy\.(?!\$)\w/;
-// `defineModels is not defined`. The identifier is the
-// one fact the abort carries about the global the transform never installed.
+// The identifier is the one fact the abort carries about the missing global.
 const UNDEFINED_IDENTIFIER_SIGNATURE = /\b([A-Za-z_$][\w$]*) is not defined\b/;
 const UNDEFINED_READ_SIGNATURE = /Cannot read propert(?:y|ies) of undefined/i;
 const VUE_SLOT_SIGNATURE = /\$slots\b/;
 
-// `PROVIDER_ERROR_SIGNATURE` is /provider|context/i, which a mount abort
-// matches on ordinary browser-lifecycle text ("Execution context was
-// destroyed", "browser context was closed") -- a guess this hint never
-// makes. These four name a provider or an injection specifically, and none
-// of them appears in a lifecycle message.
+// Narrower than PROVIDER_ERROR_SIGNATURE, which matches "Execution context was destroyed".
 const MOUNT_ABORT_PROVIDER_SIGNATURE =
   /useContext|must be used within|<[A-Z]\w*Provider\b|\binject\(/;
 
-// What the run read from the repository
-// while it was measuring, beside the abort's own text. A hint names a cause
-// only from evidence one of these two carries; neither is inferred here.
+// A hint names a cause only from evidence carried here; nothing is inferred.
 export interface MountAbortEvidence {
   // The measured SFC's setup block calls `inject(` (`project/vue-sfc.ts`).
   usesInject?: boolean;
-  // The project's vite config and the keys the harness read and could not
-  // honor (`ViteConfigData.ignoredKeys`, `harness/vite-config.ts`).
+  // Keys the harness read and could not honor (`ViteConfigData`, `harness/vite-config.ts`).
   viteConfig?: { file: string; ignoredKeys: string[] };
 }
 
+// A mount abort throws before a report exists, so hintsForReport never runs for it.
 export function hintsForMountAbort(
   errorText: string,
   evidence?: MountAbortEvidence,
@@ -303,9 +272,7 @@ export function hintsForMountAbort(
   ) {
     found.add("vuePluginGlobals");
   }
-  // The same read of undefined, one frame class down. Provide/inject
-  // is named only because this run read an `inject(` call in the measured
-  // component; without that read the abort gets no Vue hint at all.
+  // Named only because the run read an `inject(` call in the measured component.
   if (
     evidence?.usesInject === true &&
     !found.has("vuePluginGlobals") &&
@@ -314,25 +281,20 @@ export function hintsForMountAbort(
   ) {
     found.add("vueProvideInject");
   }
-  // The identifier and the ignored `plugins` key are both records the
-  // run made. An empty ignored list means the config declared nothing the
-  // harness dropped, so the abort has no explanation to offer.
+  // An empty ignored list means the config declared nothing the harness dropped.
   if (
     UNDEFINED_IDENTIFIER_SIGNATURE.test(errorText) &&
     (evidence?.viteConfig?.ignoredKeys ?? []).includes("plugins")
   ) {
     found.add("vitePluginsNotExecuted");
   }
-  // Narrow, and with its own copy. A stack naming none of these gets no
-  // guess at all, which is the never-guess rule stated as code.
+  // A stack naming none of these gets no guess at all.
   if (MOUNT_ABORT_PROVIDER_SIGNATURE.test(errorText)) found.add("mountAbortProvider");
   const order = Object.keys(HINTS) as HintId[];
   return order.filter((id) => found.has(id));
 }
 
-// The hint catalog is static copy; the config file name and the
-// identifier are this run's facts, so they arrive as extra lines rather than
-// as a second catalog entry per project.
+// The catalog is static copy, so this run's own facts arrive as extra lines.
 export function formatMountAbortHints(
   errorText: string,
   evidence?: MountAbortEvidence,
@@ -352,8 +314,7 @@ export function formatMountAbortHints(
   return formatHints(ids, undefined, extra);
 }
 
-// Derived from the report alone, so a hint can never depend on a heuristic
-// about code the tool did not measure.
+// Derived from the report alone, never from code the tool did not measure.
 export function hintsForReport(report: Report): HintId[] {
   const found = new Set<HintId>();
 
@@ -363,16 +324,10 @@ export function hintsForReport(report: Report): HintId[] {
     if (optimizations?.contextFanOut) found.add("contextFanOut");
     if ((optimizations?.callbackIdentityDeltas?.length ?? 0) > 0) found.add("callbackIdentity");
     if ((optimizations?.portalOrphans ?? 0) > 0) found.add("portalOrphans");
-    // A finding about the document the component was measured in,
-    // carried on whichever combos observed it.
+    // A finding about the document, carried on whichever combos observed it.
     if ((combo.unresolvedSpriteRefs?.length ?? 0) > 0) found.add("unresolvedSprite");
 
-    // A render error fails the combo without any budget being exceeded, so the
-    // budget hint would send the reader to the cost attribution of a tree that
-    // never existed. A combo whose crash is already attributed to a
-    // harness-synthesized value gets its own, more specific hint instead —
-    // "an undefined prop needs a preset" is wrong for a value that is
-    // defined, just not the component's fault.
+    // A render error exceeds no budget, so the budget hint would cite a tree that never was.
     if (combo.renderHealth === "error") {
       found.add(combo.harnessFault ? "harnessFault" : "renderError");
     } else if (combo.verdict === "fail") found.add("budgetBreach");
@@ -388,41 +343,20 @@ export function hintsForReport(report: Report): HintId[] {
   if ((isolation?.rerender?.churnDegradation ?? 0) > 0) found.add("churnDegradation");
 
   const curveReport = report.scalingCurveReport;
-  // Curve mode has no combos, so the per-combo
-  // renderHealth gate above can never fire for it. `renderErrorPoints`
-  // is the structural signal a broken scale point leaves behind,
-  // populated by runCurveMode at the same point CURVE_RENDER_ERROR_WARNING is
-  // pushed, so the two never drift by construction. The "scale point N="
-  // string match is kept as a fallback for a report built without the field
-  // (e.g. hand-constructed in a test, or from an older JSON report) — the
-  // structural field is what production code actually populates.
+  // Curve mode has no combos, so the per-combo renderHealth gate above never fires here.
   const curveRenderError =
     (curveReport?.renderErrorPoints?.length ?? 0) > 0 ||
-    // The all-empty marker below shares this prefix so `renderFailed`
-    // publishes provider candidates for it, but nothing threw, so it must not
-    // reach a hint that says something did.
+    // The all-empty marker shares this prefix but nothing threw, so `\d` excludes it.
     (report.warnings ?? []).some((w) => /^scale point N=\d/.test(w));
   if (curveRenderError) found.add("renderError");
-  // A page that threw on every scale point is not evidence the scaling prop
-  // fails to drive rendering: domFlat's hint text is actively wrong for that
-  // case, so it is suppressed whenever this same report already has a render
-  // error to explain the flat curve.
-  // Same reasoning one step further: a curve every one of
-  // whose points rendered zero nodes did not measure a prop that fails to
-  // drive the DOM — it measured a component that never rendered. domFlat's
-  // remedy ("point --curve at the prop that does") would send the reader after
-  // the wrong thing, and the run's own all-points-empty warning already states
-  // what happened.
-  // `points` is optional in practice: a hand-built or older report can carry a
-  // curve without it, and reading `.length` off it unguarded is what this
-  // predicate must never do.
+  // `points` is optional on a hand-built report, so `.length` is never read unguarded.
   const curvePoints = curveReport?.points ?? [];
   const curveRenderedNothing =
     curvePoints.length > 0 && curvePoints.every((p) => p.domNodeCount === 0);
+  // domFlat's remedy is wrong when a render error or an all-empty curve explains the flatness.
   if (curveReport?.domFlat && !curveRenderError && !curveRenderedNothing) found.add("domFlat");
   if (curveRenderedNothing && !curveRenderError) found.add("curveRenderedNothing");
-  // Both classes are printed on the curve screen's `Growth:` line, so the hint
-  // never cites a classification the reader cannot see.
+  // Both classes print on the curve screen's `Growth:` line, so no hint cites an unseen one.
   for (const curve of [curveReport?.mountCurve, curveReport?.rerenderCurve]) {
     if (isSuperlinearGrowth(curve)) found.add("superlinearGrowth");
   }
@@ -432,38 +366,23 @@ export function hintsForReport(report: Report): HintId[] {
   return order.filter((id) => found.has(id));
 }
 
-// One line, every mode: first-run users read 14ms and think their button takes
-// 14ms in production.
+// First-run users read 14ms and think their button takes 14ms in production.
 export const MEASUREMENT_BASIS_LINE =
   "Measured under 4x CPU throttle; budgets are calibrated for these conditions. " +
   "Numbers are comparative, not production wall-clock.";
 
-// The preflight import graph already knows which provider-dependent
-// libraries the component pulls in. Named only once a render actually failed:
-// a healthy run is never told about an import that behaved.
+// Named only once a render failed; a healthy run is never told about an import that behaved.
 export const PROVIDER_HINT_LINE = (candidate: string): string =>
   `component imports ${candidate}: likely needs a provider wrapper; see --wrap / 120fps.setup.tsx`;
 
-// "component imports X" is false for a candidate reached only
-// transitively (an intermediate file the component imports is what imports
-// X, not the component itself). A printed message must be true of the run,
-// so this uses the same remedy with an honest verb.
+// "component imports X" is false for a candidate reached through an intermediate file.
 export const PROVIDER_HINT_LINE_TRANSITIVE = (candidate: string): string =>
   `component's import graph reaches ${candidate}: likely needs a provider wrapper; see --wrap / 120fps.setup.tsx`;
 
-// Loose, deliberately — the goal is withholding a wrong
-// guess, not proving a right one. A captured error naming the real cause
-// (e.g. Base UI's own "The render prop was provided an invalid React
-// element...") must not also print a provider guess that has nothing to do
-// with it.
+// Deliberately loose: the goal is withholding a wrong guess, never proving a right one.
 const PROVIDER_ERROR_SIGNATURE = /provider|context/i;
 
-// Combo mode's captured text lives on each combo; curve mode has none of its
-// own combos, but its equivalent capture lives structurally in
-// scalingCurveReport.renderErrorPoints (report.ts), populated by runCurveMode
-// at the same point CURVE_RENDER_ERROR_WARNING (analyze.ts) is pushed into
-// report.warnings — both are read here so a report built either way (the
-// structural field, or only the formatted warning string) is covered.
+// Curve mode has no combos; its capture is renderErrorPoints (pipeline/modes/curve.ts).
 function capturedErrorTexts(report: Report): string[] {
   const texts: string[] = [];
   for (const combo of report.combos) {
@@ -478,10 +397,7 @@ function capturedErrorTexts(report: Report): string[] {
   return texts;
 }
 
-// A thrown error frequently names the exact symbol it
-// needed ("`Tooltip` must be used within `TooltipProvider`"). Extracted so a
-// candidate whose own label plausibly matches it can lead the guess instead
-// of an unrelated candidate winning purely by discovery order.
+// A thrown error often names the symbol it needed, which then leads the candidate order.
 const NAMED_PROVIDER_SYMBOL = /\b([A-Z]\w*(?:Provider|Context))\b/;
 
 function namedProviderSymbol(texts: string[]): string | undefined {
@@ -492,16 +408,12 @@ function namedProviderSymbol(texts: string[]): string | undefined {
   return undefined;
 }
 
-// Alphanumeric-only, lowercased comparison: a candidate label is a file path
-// or package name ("rich-text-provider.tsx", "next-intl"), never the exact
-// PascalCase export the error names, so punctuation/case must not defeat an
-// otherwise-real match.
+// A candidate label is a path or package name, so punctuation and case must not defeat it.
 function normalizeForMatch(text: string): string {
   return text.toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
-// Only reorders; never adds or removes a candidate, so this can only improve
-// which genuine candidate leads, never manufacture a false one.
+// Only reorders, so this can never manufacture a candidate that was not found.
 function rankProviderCandidates(candidates: string[], texts: string[]): string[] {
   const symbol = namedProviderSymbol(texts);
   if (!symbol) return candidates;
@@ -515,8 +427,7 @@ function rankProviderCandidates(candidates: string[], texts: string[]): string[]
 }
 
 function extraHintLines(id: HintId, report: Report | undefined): string[] {
-  // The all-empty curve reaches the same provider-candidate list a
-  // render error does; only the surrounding copy differs.
+  // The all-empty curve reaches the same candidate list a render error does.
   if (id === "curveRenderedNothing" && report) {
     return (report.providerCandidates ?? []).map((candidate) =>
       (report.transitiveProviderCandidates ?? []).includes(candidate)
@@ -526,16 +437,10 @@ function extraHintLines(id: HintId, report: Report | undefined): string[] {
   }
   if (id !== "renderError" || !report) return [];
   const texts = capturedErrorTexts(report);
-  // Only emit the provider guess when at least one captured
-  // page-error message actually looks provider/context-shaped. When nothing
-  // captured mentions either, the reader already has the real captured text
-  // from appendPageErrors, and a wrong guess on top of a correct disclosure
-  // is worse than no guess.
+  // A wrong guess on top of appendPageErrors's correct disclosure is worse than none.
   if (!texts.some((text) => PROVIDER_ERROR_SIGNATURE.test(text))) return [];
   const ranked = rankProviderCandidates(report.providerCandidates ?? [], texts);
-  // A candidate the component reaches only transitively gets the
-  // honest "import graph reaches" wording instead of "component imports" --
-  // ranking (which candidate leads) is unaffected either way.
+  // Wording only; which candidate leads is unaffected.
   const transitive = new Set(report.transitiveProviderCandidates ?? []);
   return ranked.map((candidate) =>
     transitive.has(candidate) ? PROVIDER_HINT_LINE_TRANSITIVE(candidate) : PROVIDER_HINT_LINE(candidate),
@@ -545,8 +450,7 @@ function extraHintLines(id: HintId, report: Report | undefined): string[] {
 export function formatHints(
   ids: HintId[],
   report?: Report,
-  // Run-specific lines the catalog cannot carry, keyed by the hint
-  // they belong under.
+  // Run-specific lines the catalog cannot carry, keyed by the hint they belong under.
   extra?: Partial<Record<HintId, string[]>>,
 ): string {
   if (ids.length === 0) return "";

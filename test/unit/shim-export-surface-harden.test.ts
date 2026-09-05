@@ -3,8 +3,6 @@ import * as nextNavigation from "../../src/harness/shims/next-navigation.js";
 import * as nextImage from "../../src/harness/shims/next-image.js";
 import * as nextHeaders from "../../src/harness/shims/next-headers.js";
 
-// M96 harden: adversarial hypotheses against the new shim exports.
-
 describe("M96 harden", () => {
   it("#1 ReadonlyURLSearchParams accepts a URLSearchParams instance as input", () => {
     const seed = new URLSearchParams("x=9");

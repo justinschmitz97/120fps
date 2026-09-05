@@ -10,8 +10,6 @@ import {
 import { isFile } from "../shared/index.js";
 
 // Probe order is significant: first hit wins, and detection returns at most one.
-// The create-vite name and the Sass spellings are appended, so every path
-// that already won still wins.
 export const GLOBAL_CSS_CANDIDATES = [
   "app/globals.css",
   "app/global.css",
@@ -22,8 +20,7 @@ export const GLOBAL_CSS_CANDIDATES = [
   "src/index.css",
   "src/global.css",
   "src/style.css",
-  // The plural spelling, one character away from the line
-  // above and the name heroui's own `exports["./styles"]` points at.
+  // The plural spelling heroui's own `exports["./styles"]` points at.
   "src/styles.css",
   "app/globals.scss",
   "app/global.scss",
@@ -46,8 +43,7 @@ export function detectGlobalCss(projectRoot: string): string | undefined {
 
 export const STYLESHEET_EXTENSIONS = [".css", ".scss", ".sass", ".less", ".styl"];
 
-// Vite fails the whole entry module with "Preprocessor dependency … not found"
-// when the compiler is absent, which costs the run rather than the stylesheet.
+// Without the compiler, Vite fails the whole entry module: the run, not just the stylesheet.
 const PREPROCESSOR_PACKAGES: Record<string, string[]> = {
   ".scss": ["sass", "sass-embedded"],
   ".sass": ["sass", "sass-embedded"],
@@ -59,15 +55,12 @@ export function isStylesheet(file: string): boolean {
   return STYLESHEET_EXTENSIONS.includes(path.extname(file).toLowerCase());
 }
 
-// A CSS module exports class names; injecting one globally measures a stylesheet
-// the application never loads globally.
+// A CSS module exports class names; injecting it globally measures a sheet nothing loads.
 export function isCssModule(file: string): boolean {
   return /\.module\.[^.]+$/i.test(path.basename(file));
 }
 
-// A reset/normalize library's own convention. Opt-in everywhere it
-// appears, so the name alone disqualifies it from the largest-stylesheet
-// fallback regardless of rule count.
+// Opt-in by convention, so the name alone disqualifies it from the largest-sheet fallback.
 export const RESET_STYLESHEET_STEMS = ["reset", "normalize", "preflight", "sanitize"];
 
 export function isOptInResetName(file: string): boolean {
@@ -75,12 +68,9 @@ export function isOptInResetName(file: string): boolean {
   return RESET_STYLESHEET_STEMS.includes(stem);
 }
 
-// Text-only heuristic, matching the "text only, nothing executed" invariant
-// readViteConfigData follows. Strips comments and
-// @import/@charset/@use statements, then counts remaining `{` occurrences.
-// Zero means the file is a pure passthrough: nothing was ever built into it.
 const STYLESHEET_RULE_COUNT_MAX_BYTES = 2 * 1024 * 1024;
 
+// Zero braces means a pure passthrough: nothing was ever built into the file.
 export function stylesheetRuleCount(file: string): number {
   let size: number;
   try {
@@ -88,8 +78,7 @@ export function stylesheetRuleCount(file: string): number {
   } catch {
     return 0;
   }
-  // Too large to be worth reading this early in the pipeline; a file this big
-  // is not an unbuilt placeholder, so it is treated as plausible.
+  // A file this big is not an unbuilt placeholder, so it is treated as plausible.
   if (size > STYLESHEET_RULE_COUNT_MAX_BYTES) return 1;
   let text: string;
   try {
@@ -103,12 +92,7 @@ export function stylesheetRuleCount(file: string): number {
   return (stripped.match(/\{/g) ?? []).length;
 }
 
-// A stylesheet's own `@import` statements, one hop, at the same text
-// level `stylesheetRuleCount` works at — comments stripped, `url()` and quotes
-// normalized, a media query or `layer()` suffix and a `?query` dropped. No CSS
-// parser, and no recursion: one hop answers every shape the
-// corpus produced (a passthrough that re-exports a package's real stylesheet,
-// and an entry stylesheet importing an unbuilt package subpath).
+// One hop and no CSS parser: no shape the corpus produced needs recursion.
 const STYLESHEET_IMPORT_STATEMENT = /@import\s+(url\(\s*)?("([^"]*)"|'([^']*)')/gi;
 
 export function stylesheetImportSpecifiers(file: string): string[] {
@@ -128,16 +112,10 @@ export function stylesheetImportSpecifiers(file: string): string[] {
   return specifiers;
 }
 
-// The three answers a bundler's own resolution can give, kept apart because
-// they mean different things to a user: a file to inject, a path the package
-// declares and has not produced (shadcn's `dist/tailwind.css`: the run must say
-// which build to run), and nothing at all.
+// The declared case is kept apart: a user must be told which build produces that path.
 export type StylesheetImportTarget = { file: string } | { declared: string } | undefined;
 
-// A bare package root ("@heroui/styles") is not a subpath, so
-// resolveBareStylesheetSpecifier declines it by construction. The package's own
-// manifest still names its stylesheet, in the same two fields a bundler's
-// "style" condition reads.
+// A bare package root is not a subpath, so resolveBareStylesheetSpecifier declines it.
 function packageRootStylesheet(pkg: string, fromDir: string): StylesheetImportTarget {
   const pkgDir = installedPackageDir(pkg, fromDir);
   if (!pkgDir) return undefined;
@@ -156,12 +134,9 @@ function packageRootStylesheet(pkg: string, fromDir: string): StylesheetImportTa
   return isFile(resolved) ? { file: resolved } : { declared: resolved };
 }
 
-// The lookup order a preprocessor applies to an extension-less import: the
-// file itself, its underscore-prefixed partial, and the directory's own index
-// partial, per language. Returns undefined when none of them exists — unknown,
-// never "missing".
 const PREPROCESSOR_PARTIAL_EXTENSIONS = [".scss", ".sass", ".less", ".styl", ".css"];
 
+// A preprocessor also accepts the underscore partial and the directory's own index partial.
 export function resolvePreprocessorPartial(base: string): string | undefined {
   const dir = path.dirname(base);
   const name = path.basename(base);
@@ -191,13 +166,9 @@ export function resolveStylesheetImportTarget(
       ? path.join(projectRoot, specifier)
       : path.resolve(path.dirname(fromFile), specifier);
     if (isFile(resolved)) return { file: resolved };
-    // A specifier that names its own extension and is not there really is
-    // missing, and the caller may say so (shadcn's `dist/tailwind.css`). An
-    // extension-less one is the canonical Sass/Less partial form — ant-design's
-    // `@import "../variables"`, primevue's `@import './_mixins'` — where the
-    // file on disk is spelled differently by design. Claiming it missing would
-    // name a path that exists nowhere.
+    // A specifier that names its own extension and is not there really is missing.
     if (isStylesheet(resolved)) return { declared: resolved };
+    // Extension-less is the canonical Sass/Less partial form, spelled differently on disk.
     const partial = resolvePreprocessorPartial(resolved);
     return partial ? { file: partial } : undefined;
   }
@@ -237,13 +208,7 @@ export function CSS_PREPROCESSOR_MISSING_WARNING(file: string, pkg: string): str
   );
 }
 
-// The pick IS ranked (by size, stated in `scope` below), so "no evidence
-// behind it at all" would overclaim when this package has no entry of its
-// own: a fallback pick can land on the file a profile calls the correct
-// design-token root, ranked there by size alone, not
-// arbitrarily. What is actually missing is import-chain corroboration, not
-// evidence outright; the low-confidence framing lives in the `Stylesheets:`
-// summary line (formatStylesheetsLine, src/report/terminal.ts) this warning precedes.
+// The pick is ranked by size, so what is missing is import-chain corroboration, not evidence.
 export function CSS_FALLBACK_WARNING(
   relative: string,
   opts: { onlyCandidate: boolean; noEntryInPackage: boolean },
@@ -261,14 +226,7 @@ export function CSS_FALLBACK_WARNING(
   );
 }
 
-// A fallback candidate with rule count 0 was never built into anything
-// the project would load as-is.
-// Rule count 0 means no brace-delimited rule survives stripping
-// comments and @import/@charset/@use -- it does not mean the file's only
-// content IS comments and imports. A pure `@tailwind base;`/`@tailwind
-// components;`/`@tailwind utilities;` passthrough (three at-rules, zero
-// comments, zero imports) also counts 0, so the message names what the
-// count actually proves instead of claiming the file is comments-only.
+// Rule count 0 does not mean comments-only: a pure @tailwind passthrough also counts 0.
 export function CSS_PLACEHOLDER_SKIPPED_WARNING(relative: string): string {
   return (
     `${relative} contains no CSS rule with a body of its own (comments, imports, and bare at-rules ` +
@@ -277,9 +235,7 @@ export function CSS_PLACEHOLDER_SKIPPED_WARNING(relative: string): string {
   );
 }
 
-// A reset/normalize stylesheet is conventionally opt-in; a project that
-// imports it deliberately reaches it through the entry layer and never falls
-// this far.
+// A project that imports a reset deliberately reaches it through the entry layer.
 export function CSS_RESET_SKIPPED_WARNING(relative: string): string {
   return (
     `${relative} looks like an opt-in reset/normalize stylesheet (by filename), so it was not used as ` +
@@ -294,8 +250,7 @@ export function CSS_DROPPED_WARNING(file: string): string {
   );
 }
 
-// Only --css validated its input, and a specifier that resolves to nothing
-// takes the entry module down with it. Every auto-detected path passes here.
+// Auto-detected paths are unvalidated, and one that resolves to nothing kills the entry.
 export function validateCssFiles(files: string[], warningsOut?: string[]): string[] {
   const kept: string[] = [];
   for (const file of files) {
@@ -305,23 +260,13 @@ export function validateCssFiles(files: string[], warningsOut?: string[]): strin
   return kept;
 }
 
-// A bare package specifier ("twenty-ui/theme-light.css") is a
-// real, resolvable stylesheet whenever the package's own exports map (or, in
-// its absence, a plain directory join) names that subpath -- exactly the
-// resolution a real bundler performs. A package can export some subpaths and
-// not others, so this always resolves one full specifier's real status, never
-// a whole batch's: the caller can tell a genuinely-missing file from one that
-// resolves fine.
+// One full specifier at a time: a package can export some subpaths and not others.
 function resolveBareStylesheetSpecifier(specifier: string, fromDir: string): string | undefined {
   const target = bareStylesheetTarget(specifier, fromDir);
   return target && "file" in target ? target.file : undefined;
 }
 
-// The same resolution, reporting a declared-but-absent target instead of
-// discarding it. shadcn's `shadcn/tailwind.css` resolves through the package's
-// own exports map to `dist/tailwind.css`, a directory that exists only after
-// that package is built: a user needs that path named, not the specifier
-// pasted onto a repository root.
+// A declared target inside an unbuilt dist/ must be named, not pasted onto a repository root.
 function declaredBareStylesheetTarget(specifier: string, fromDir: string): StylesheetImportTarget {
   const target = bareStylesheetTarget(specifier, fromDir);
   return target && "declared" in target ? target : undefined;
@@ -376,10 +321,7 @@ function resolveStylesheetSpecifier(
   return resolveBareStylesheetSpecifier(specifier, path.dirname(entryFile));
 }
 
-// The entry's own side-effect stylesheet imports, in import order. A bound
-// import (`import styles from "./x.module.css"`) is a CSS module read, not a
-// global stylesheet, and a deeper walk is out of scope: the file the project
-// starts from is where a global stylesheet is loaded.
+// A bound import is a CSS module read; only a side-effect import is a global stylesheet.
 export function entryStylesheetImports(
   entryFile: string,
   projectRoot: string,

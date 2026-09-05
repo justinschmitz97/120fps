@@ -152,8 +152,7 @@ describe("naming the config data the harness cannot honor", () => {
         "});",
       ].join("\n"),
     );
-    // M106 A3: a literal additionalData is folded and replayed now, so it is
-    // no longer an ignored key; plugins still are.
+    // M106 A3: a literal additionalData folds and replays; plugins remain the ignored key.
     const data = readViteConfigData(tmpDir);
     expect(data.ignoredKeys).toEqual(["plugins"]);
     expect(data.preprocessorOptions?.scss?.additionalData).toBe('@use "vars";');

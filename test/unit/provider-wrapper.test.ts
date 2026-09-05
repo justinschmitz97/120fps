@@ -22,19 +22,13 @@ import {
 } from "../../src/report/index.js";
 import type { CompositionTree } from "../../src/props/index.js";
 
-// --- helpers ---
-
 let tmpDir: string;
 
 beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "120fps-wrap-test-"));
 });
 
-// Deletion is deferred to the end of the file, not done per test: Vite's
-// dependency optimizer keeps reading this project's node_modules after
-// cleanup() returns, and removing it underneath that read is what produced the
-// leaked esbuild rejection this file now guards against. Each test still gets
-// its own fresh directory from beforeEach.
+// Deletion is deferred to file end: Vite's optimizer keeps reading node_modules after cleanup().
 const finishedDirs: string[] = [];
 
 afterEach(() => {
@@ -94,16 +88,7 @@ function countOccurrences(haystack: string, needle: string): number {
   return count;
 }
 
-// ====================================================================
-// W1: resolution: CLI flags
-// ====================================================================
-
-// Every test in this file that boots a real dev server owns a temp
-// node_modules that afterEach deletes. Vite's dependency optimizer runs
-// detached from listen(), so a test that cleans up before the optimizer
-// settles makes esbuild read a deleted file and rejects into the run — a
-// rejection that leaks past the suite instead of failing a test. This guard
-// turns any such leak from this file into a failure.
+// Vite's optimizer reads deleted node_modules after cleanup; this catches the leaked rejection.
 const leakedRejections: unknown[] = [];
 const recordRejection = (reason: unknown): void => {
   leakedRejections.push(reason);
@@ -152,17 +137,12 @@ describe("W1: --wrap / --no-wrap parsing", () => {
   });
 });
 
-// ====================================================================
-// W1: auto-detection
-// ====================================================================
-
 describe("W1: wrapper auto-detection", () => {
   it("returns undefined when no candidate exists", () => {
     expect(detectWrapper(tmpDir)).toBeUndefined();
   });
 
-  // M57 appends the SFC candidate; a Vue run reorders it to the front rather
-  // than changing this list, so React probing order is untouched.
+  // M57 appends the SFC candidate; a Vue run reorders it to the front, not this list.
   it("probes candidates in tsx > jsx > ts > js > vue order", () => {
     expect(WRAPPER_CANDIDATES).toEqual([
       "120fps.setup.tsx",
@@ -202,10 +182,6 @@ describe("W1: wrapper auto-detection", () => {
     expect(detectWrapper(tmpDir)).toBeUndefined();
   });
 });
-
-// ====================================================================
-// W3: entry generation
-// ====================================================================
 
 describe("W3: entry generation without a wrapper", () => {
   const entry = generateEntry(ENTRY_BASE);
@@ -319,10 +295,6 @@ describe("W3: composed entry generation", () => {
   });
 });
 
-// ====================================================================
-// W2 / W3: buildAndServe integration
-// ====================================================================
-
 describe("W2/W3: buildAndServe wrapper handling", () => {
   it("rejects a wrapper module without a default export", async () => {
     await expect(
@@ -365,13 +337,8 @@ describe("W2/W3: buildAndServe wrapper handling", () => {
   });
 });
 
-// ====================================================================
-// W5: dependency scanning
-// ====================================================================
-
 describe("W5: wrapper deps join optimizeDeps.include", () => {
-  // M73: buildAndServe refuses a React project whose react-dom has no client
-  // entry, so a project booting a real server owns a resolvable one.
+  // M73: buildAndServe refuses a react-dom with no client entry, so tests provide a resolvable one.
   function installReactDom(): void {
     const pkgDir = path.join(tmpDir, "node_modules", "react-dom");
     fs.mkdirSync(pkgDir, { recursive: true });
@@ -413,12 +380,7 @@ describe("W5: wrapper deps join optimizeDeps.include", () => {
       expect(include).toContain("component-only-pkg");
       expect(include).toContain("wrapper-only-pkg");
     } finally {
-      // Vite's dependency optimizer is fire-and-forget by design (it must not
-      // block listen()), and this project's node_modules is a temp directory
-      // afterEach deletes. Letting the optimizer settle first is what keeps its
-      // esbuild pass from reading a file that has just been removed and
-      // rejecting into the run — the same detached surface M94's
-      // resolveFatalProcessError exists for in production.
+      // Settling the optimizer before cleanup avoids esbuild reading an already-removed file (M94).
       await harness.server.waitForRequestsIdle();
       await harness.cleanup();
     }
@@ -447,8 +409,7 @@ describe("W5: wrapper deps join optimizeDeps.include", () => {
     const harness = await buildAndServe(component, { wrapPath: wrapper });
     try {
       const include = harness.server.config.optimizeDeps.include ?? [];
-      // Without aliases in the wrapper scan, "@ui/theme" would be treated as an
-      // external package and "theme-pkg" would never be discovered.
+      // Without alias resolution, "@ui/theme" reads as external and "theme-pkg" stays undiscovered.
       expect(include).not.toContain("@ui/theme");
       expect(include).toContain("theme-pkg");
     } finally {
@@ -458,10 +419,6 @@ describe("W5: wrapper deps join optimizeDeps.include", () => {
   });
 });
 
-// ====================================================================
-// W6: React analysis compatibility
-// ====================================================================
-
 describe("W6: component identity on HarnessResult", () => {
   it("records the component, not the wrapper, when a wrapper import comes first", async () => {
     const harness = await buildAndServe("./fixtures/button.tsx", {
@@ -469,8 +426,7 @@ describe("W6: component identity on HarnessResult", () => {
     });
     try {
       const entry = fs.readFileSync(path.join(harness.harnessDir, "entry.tsx"), "utf-8");
-      // The wrapper is the first `from "/…"` import: the deleted regex would
-      // have picked it up as the component.
+      // The wrapper import comes first; a naive first-import regex would misidentify it.
       expect(entry.match(/from\s+"\/([^"]+)"/)?.[1]).toBe("fixtures/wrap-basic.tsx");
       expect(harness.component.relative).toBe("fixtures/button.tsx");
       expect(harness.component.name).toBe("Button");
@@ -551,10 +507,6 @@ describe("W6: probe entry wrapping", () => {
     expect(componentIdx).toBeGreaterThan(wrapIdx);
   });
 });
-
-// ====================================================================
-// W7: reporting
-// ====================================================================
 
 describe("W7: wrapper report shape and warnings", () => {
   it("attaches the wrapper block to the report", () => {

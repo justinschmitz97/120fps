@@ -13,9 +13,7 @@ export function defaultJsonPathFor(componentPath: string): string {
   return `120fps-report.${stem}.json`;
 }
 
-// A single directory argument expands to many components, so --json can no
-// longer be rejected as ambiguous: it names where the reports go, and the
-// component stem is appended to it.
+// With many components --json names a prefix; each report gets its component stem appended.
 export function resolveReportPaths(
   componentPaths: string[],
   explicitJsonPath?: string,
@@ -26,9 +24,7 @@ export function resolveReportPaths(
   const seen = new Map<string, number>();
   return componentPaths.map((p) => {
     const base = prefix ? `${prefix}.${reportStem(p)}.json` : defaultJsonPathFor(p);
-    // Case-folded key: NTFS/APFS cannot tell 120fps-report.Card.json apart
-    // from 120fps-report.card.json, so a same-case-insensitive collision must
-    // take the suffix branch too, even though `base` itself differs by case.
+    // Case-folded: NTFS/APFS collide Card.json with card.json, so both need the suffix branch.
     const key = base.toLowerCase();
     const count = seen.get(key) ?? 0;
     seen.set(key, count + 1);
@@ -38,8 +34,7 @@ export function resolveReportPaths(
 
 const JSON_NOTICE_LIST_CAP = 8;
 
-// A CI step that passes `--json out.json` and gets `out.badge.json` needs a
-// way to learn that from the run. One line naming what was actually written.
+// A CI step passing --json out.json needs to learn it got out.<stem>.json instead.
 export function formatJsonSplitNotice(reportPaths: string[]): string {
   if (reportPaths.length < 2) return "";
   const shown = reportPaths.slice(0, JSON_NOTICE_LIST_CAP);
@@ -62,20 +57,14 @@ export interface PathReader {
 
 const ACCEPTED_COMPONENT_EXTENSIONS = [".tsx", ".jsx", ".vue", ".ts", ".js"];
 
-// Extension only: directory/glob expansion additionally filters build dirs
-// and test/story/fixture suffixes via isComponentFile below; a plain path
-// the user named explicitly should only be rejected for its extension.
+// Extension only: an explicitly named path is rejected for its extension, nothing else.
 export function hasAcceptedComponentExtension(filePath: string): boolean {
   const posix = toPosix(filePath);
   if (posix.endsWith(".d.ts")) return false;
   return /\.(tsx|jsx|vue|ts|js)$/.test(posix);
 }
 
-// Extension alone is not enough for `.ts`/`.js` — a library's own
-// .js-with-JSX convention and a wrapper's .ts-with-no-JSX shapes are both
-// legitimate components, but a `.js`/`.ts` utility file with only
-// camelCase exports is not. `.tsx`/`.jsx`/`.vue` short-circuit true with no
-// content read.
+// A .ts/.js utility with only camelCase exports is not a component; .tsx/.jsx/.vue always are.
 export function hasComponentShape(filePath: string): boolean {
   const posix = toPosix(filePath);
   if (/\.(tsx|jsx|vue)$/.test(posix)) return true;
@@ -104,8 +93,7 @@ export function isComponentFile(filePath: string): boolean {
   return hasComponentShape(filePath);
 }
 
-// `*` stops at a separator, `**` does not. Nothing else is special, so a path
-// with regex characters cannot change the meaning of a pattern.
+// `*` stops at a separator, `**` does not; every other regex character is escaped.
 function globToRegExp(pattern: string): RegExp {
   const posix = toPosix(pattern);
   let out = "";
@@ -140,19 +128,12 @@ export function expandComponentPaths(
   const found = new Set<string>();
 
   for (const arg of args) {
-    // Counted per argument, not against the running set: overlapping arguments
-    // are a convenience, not a mistake to report.
+    // Per argument, not the running set: overlapping arguments are a convenience, not an error.
     const matches: string[] = [];
 
     if (arg.includes("*")) {
       const re = globToRegExp(arg);
-      // An absolute pattern (`C:/repo/src/**/*.tsx`, `/repo/src/**/*.tsx`) is
-      // already anchored to the same frame nodePathReader().walk returns
-      // (its own `path.resolve(root)` call below), so it must be tested
-      // against the walked file's absolute form. A relative pattern (`src/**/*.tsx`) is
-      // written against cwd, so the walked file is relativized to cwd first —
-      // a no-op for the relative-path test double, since path.relative
-      // resolves a relative `to` against cwd too.
+      // Absolute pattern: test the walked path as-is; relative: relativize to cwd first.
       const patternIsAbsolute = path.isAbsolute(toPosix(arg));
       for (const file of reader.walk(globRoot(arg))) {
         const target = patternIsAbsolute
@@ -178,8 +159,7 @@ export function expandComponentPaths(
     }
 
     if (matches.length === 0) {
-      // A plain path that is simply absent deserves the specific message; the
-      // generic one is for directories and globs that yielded nothing.
+      // An absent plain path deserves the specific message; globs and dirs get the generic one.
       const missingFile = !arg.includes("*") && !reader.exists(arg);
       return {
         paths: [],
@@ -194,7 +174,6 @@ export function expandComponentPaths(
   return { paths: [...found].sort() };
 }
 
-// Real filesystem behind the injected reader `expandComponentPaths` takes.
 export function nodePathReader(): PathReader {
   const walk = (root: string): string[] => {
     const out: string[] = [];

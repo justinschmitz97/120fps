@@ -6,9 +6,7 @@ import { sweepStaleTmpDirs } from "./dirs.js";
 import { resolveJsxImportSource } from "./renderer.js";
 import { resolvePosix } from "../shared/index.js";
 
-// The dev server's root is projectRoot and every harness dir lives under
-// it, so one server per config tuple serves a whole sweep. Vite serves files
-// created after boot on demand: later components need no restart.
+// One server per config tuple serves a whole sweep: Vite serves files created after boot.
 export interface ServerPool {
   acquire(
     key: string,
@@ -19,14 +17,7 @@ export interface ServerPool {
   closeAll(): Promise<void>;
 }
 
-// Vite's own dev-server teardown has a known shape where server.close()
-// never settles. Both callers that await a server's own close() --
-// buildAndServe's cleanup() and the pool's
-// closeAll() below -- race it against an unref'd timer instead of awaiting it
-// unconditionally, so a single hung server can never block the caller (and,
-// transitively, the process from exiting) forever. Unref'd: this timer alone
-// never keeps an otherwise-idle process alive, but a hung close() leaves
-// other handles open regardless, so it still fires on schedule.
+// Vite's server.close() has a shape where it never settles, so callers race it instead.
 export const SERVER_CLOSE_TIMEOUT_MS = 5000;
 
 export async function closeServerBounded(
@@ -37,14 +28,14 @@ export async function closeServerBounded(
     server.close().catch(() => {}),
     new Promise<void>((resolve) => {
       const timer = setTimeout(resolve, timeoutMs);
+      // Unref'd: a hung close() holds other handles open, so this still fires on schedule.
       timer.unref();
     }),
   ]);
 }
 
 export function createServerPool(): ServerPool {
-  // Once per session, best-effort: errors are swallowed inside the
-  // sweep itself, so this can never fail or block pool creation.
+  // Best-effort: the sweep swallows its own errors, so it cannot block pool creation.
   sweepStaleTmpDirs();
   const servers = new Map<string, Promise<{ server: ViteDevServer; include: Set<string> }>>();
   let closed = false;
@@ -57,9 +48,7 @@ export function createServerPool(): ServerPool {
       if (!entry) {
         reused = false;
         booted++;
-        // The include list is frozen at first boot: it is part of the Vite
-        // config hash, and changing it per component would force a dep
-        // re-bundle for every component of the sweep.
+        // Frozen at first boot: the list is part of the config hash, and a change re-bundles.
         entry = boot().then((server) => ({ server, include: new Set(include) }));
         servers.set(key, entry);
       }
@@ -81,14 +70,7 @@ export function createServerPool(): ServerPool {
   };
 }
 
-// With no esbuild option of its own, vite:esbuild reads the project tsconfig
-// for the ts/tsx loaders, so a library shipping `"jsx": "preserve"` (the
-// standard Vite library setup, where the project's own plugin-react supplies
-// the runtime the harness does not run) falls through to esbuild's classic
-// React.createElement transform. A library that imports only named React
-// exports then throws `React is not defined` on the first JSX evaluation,
-// mis-transforming every .tsx in the repository. These are the two settings
-// jsxInJsPlugin applies to project .js files.
+// Forced automatic: a project's "jsx": "preserve" would break JSX with React is not defined.
 export function harnessEsbuildOptions(
   projectRoot: string,
   workspaceRoot?: string,
@@ -104,9 +86,7 @@ export function harnessEsbuildOptions(
   };
 }
 
-// The two compile-shaping keys createServer receives, in one place a test can
-// hold: a Vue project keeps the vue plugin's own compilation of its SFC blocks
-// and receives no esbuild key at all.
+// A Vue project keeps the vue plugin's own SFC compilation and receives no esbuild key.
 export function harnessServerCompileOptions(
   renderer: string,
   projectRoot: string,
@@ -125,12 +105,7 @@ export function harnessServerCompileOptions(
   };
 }
 
-// Any change to optimizeDeps.include changes Vite's config hash, and a
-// changed hash forces a full dependency re-bundle (~10s) on the next run. The
-// scanned list varies per component, so every component of a sweep paid it.
-// Union the list with whatever the project's dep cache already optimized: the
-// list converges to a stable superset and repeat runs hit the cache. A missing
-// or corrupt cache costs one re-bundle, nothing else.
+// A changed optimizeDeps.include changes Vite's config hash and forces a ~10s re-bundle.
 export function unionCachedDeps(
   include: string[],
   metadataJson: string | undefined,
@@ -158,17 +133,12 @@ export function readDepCacheMetadata(projectRoot: string): string | undefined {
   }
 }
 
-// Vite serves nothing outside its allow list, and the harness root is the
-// member package. An alias into a sibling package or into a linked install of
-// this tool is outside it. Undefined keeps Vite's own defaults, which is every
-// project whose targets are all inside the member root.
-// extraDirs carries directories no alias names — the component's own
-// directory when its import routes through /@fs/. An empty list reproduces the
-// alias-only answer exactly, undefined included.
+// An alias into a sibling package or into a linked install of this tool is outside the root.
 export function fsAllowDirs(
   memberRoot: string,
   workspaceRoot: string,
   aliases: Array<{ replacement: string }>,
+  // Directories no alias names: the component's own when its import routes through /@fs/.
   extraDirs: string[] = [],
 ): string[] | undefined {
   const forward = (p: string) => resolvePosix(p);
@@ -188,6 +158,7 @@ export function fsAllowDirs(
     return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
   };
   const outside = [...targets, ...extraDirs.map(forward)].filter((dir) => !inside(dir));
+  // Undefined keeps Vite's own defaults, right whenever every target is inside memberRoot.
   if (outside.length === 0) return undefined;
   return [...new Set([forward(memberRoot), forward(workspaceRoot), ...outside])];
 }

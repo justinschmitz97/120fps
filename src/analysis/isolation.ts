@@ -28,16 +28,12 @@ export type IsolationPhase = "mount" | "rerender" | "unmount" | "memory" | "stri
 
 const ALL_PHASES: IsolationPhase[] = ["mount", "rerender", "unmount", "memory", "strictmode"];
 
-// One more warmup cycle than the standard pass: an isolated phase has nothing
-// else warming the same code path.
+// One more warmup than the standard pass: an isolated phase has nothing else warming the path.
 export const ISOLATION_WARMUP_RUNS = 3;
 export const CHURN_CYCLES = 10;
 export const DEFAULT_MEMORY_CYCLES = 20;
 
-// The memory phase warms up longer than the timing phases: its noise floor is
-// one-time allocation, not JIT. Measured over 20 cycles at 4x throttle, growth
-// for non-leaking components falls from ~14 KB/cycle at 3 warmup cycles to
-// ~2.4 KB/cycle at 10, while a real leak stays at ~200 KB/cycle.
+// Growth for non-leaking components falls from ~14 KB/cycle at 3 warmup cycles to ~2.4 KB at 10.
 export const MEMORY_WARMUP_CYCLES = 10;
 
 export const DEGENERATE_COMBO_WARNING =
@@ -92,15 +88,11 @@ export function parseIsolationPhases(raw: string): IsolationPhase[] {
     seen.add(p as IsolationPhase);
   }
 
-  // Canonical order, so the same set of phases parses to the same list however
-  // the user spelled it: `all,mount` and `memory,all` included.
+  // Canonical order, so the same set of phases parses to the same list however it was spelled.
   return ALL_PHASES.filter((p) => seen.has(p));
 }
 
-// StrictMode is a React development-mode double-invoke; Vue has no
-// equivalent, so a Vue "strict" pass would re-measure the identical page and
-// report 0% overhead and a clean double-invoke: a false clean bill of health,
-// which is worse than refusing the phase.
+// A Vue strict pass would re-measure the identical page and report a false clean bill of health.
 export const VUE_STRICTMODE_ERROR =
   "--isolate strictmode is React-only: StrictMode is a React development-mode double-invoke " +
   "with no Vue equivalent. Drop strictmode from --isolate (the other phases measure .vue " +
@@ -113,9 +105,7 @@ export function strictModeUnsupported(
   return phases.includes("strictmode") && componentPaths.some((p) => isVueFile(p));
 }
 
-// measureChurn records one B rerender and one A rerender per cycle, so even
-// and odd samples have different prop composition. Comparing across the mix
-// measures the A/B gap; each parity is only ever compared against itself.
+// measureChurn alternates B and A rerenders, so even and odd samples have different props.
 export function churnParitySeries(samples: number[]): number[][] {
   const even: number[] = [];
   const odd: number[] = [];
@@ -132,8 +122,7 @@ function seriesDegradation(series: number[]): number | undefined {
   return mean(series.slice(-edge)) / first;
 }
 
-// The worse parity: churn that degrades on one prop target is degradation,
-// however steady the other one stays.
+// The worse parity: degradation on one prop target is degradation, however steady the other is.
 export function computeChurnDegradation(samples: number[]): number {
   const ratios = churnParitySeries(samples)
     .map(seriesDegradation)
@@ -141,9 +130,7 @@ export function computeChurnDegradation(samples: number[]): number {
   return ratios.length === 0 ? 1.0 : Math.max(...ratios);
 }
 
-// Median and P95 describe the whole alternation (that is what a churn cycle
-// costs), but dispersion is read inside a parity: across the mix it would
-// report the A/B gap as instability.
+// Dispersion is read inside a parity: across the mix it would report the A/B gap as instability.
 export function buildChurnTiming(samples: number[]): TimingWithCV {
   const overall = buildTimingWithCV(samples);
   const parities = churnParitySeries(samples)
@@ -209,8 +196,7 @@ export interface IsolationComboSelection {
   degenerate: boolean;
 }
 
-// Scale combos render N instances and are not a prop variation, so they are
-// never the subject of an isolated phase.
+// Scale combos render N instances and are not a prop variation, so no isolated phase uses them.
 export function selectIsolationCombos(combos: PropCombination[]): IsolationComboSelection {
   const usable = combos.filter((c) => !("__120fps_scaleN" in c));
   const comboA = usable[0] ?? {};
@@ -238,18 +224,15 @@ export interface PhaseOptions {
   samples?: number;
   cpuThrottle?: number;
   warmupRuns?: number;
-  // "vsync" when the measured combo animates: driven frames would
-  // change how much animation work lands in the traced windows.
+  // "vsync" when the combo animates: driven frames change how much animation work is traced.
   pacing?: MeasurementPacing;
   // Reuse pooled browsers (fresh context per phase session).
   pool?: BrowserPool;
-  // The run's warning sink; every warning a phase session raises (font-settle
-  // retries, the context retry, the frame pump) flows through here.
+  // The run's warning sink: font-settle retries, context retries and the frame pump flow here.
   onWarning?: (warning: string) => void;
 }
 
-// One place builds the session options for all three phases: what a phase did
-// not set stays absent, so a session keeps the defaults it has today.
+// What a phase did not set stays absent, so a session keeps the defaults it has today.
 export function phaseSessionOptions(
   label: string,
   options: PhaseOptions,
@@ -263,8 +246,7 @@ export function phaseSessionOptions(
   };
 }
 
-// Untimed mount with propsA, then `cycles` traced A→B→A alternations. No GC
-// between iterations: accumulated pressure is what churn measures.
+// No GC between iterations: accumulated pressure is what churn measures.
 export async function measureChurn(
   harness: HarnessResult,
   propsA: PropCombination,
@@ -304,8 +286,7 @@ export interface MemoryMeasurement {
   gcPressure: number;
 }
 
-// Undefined when the browser exposes no forced GC: heap deltas without it are
-// dominated by uncollected garbage and would fabricate leaks.
+// Undefined when the browser exposes no forced GC: heap deltas alone would fabricate leaks.
 export async function measureMemory(
   harness: HarnessResult,
   cycles: number,
@@ -342,6 +323,7 @@ export async function measureMemory(
   );
 }
 
+// Navigation and warmup sit outside the traced window.
 async function sampleStrictPair(
   page: Page,
   cdp: CDPSession,
@@ -359,8 +341,7 @@ async function sampleStrictPair(
   return mountAndTrace(page, cdp, props);
 }
 
-// Interleaved normal/strict pairs so both series see the same machine
-// conditions. Navigation and warmup sit outside the traced window.
+// Interleaved normal/strict pairs, so both series see the same machine conditions.
 export async function measureStrictMode(
   harness: HarnessResult,
   props: PropCombination,
@@ -432,8 +413,7 @@ export async function runIsolationPhases(
     }
   }
 
-  // Animation status comes from the mount pass; when it did not run, the
-  // status is unknown and phases default to driven pacing.
+  // Animation status comes from the mount pass; unknown when it did not run, so pacing is driven.
   const rerenderCombos = options.degenerate ? [comboA] : [comboA, comboB];
   const animatedPhase: Pick<PhaseOptions, "pacing" | "pool" | "onWarning"> = {
     ...(hasAnimation ? { pacing: "vsync" as const } : {}),
@@ -477,14 +457,7 @@ export async function runIsolationPhases(
   return { isolation, domNodeCount, hasAnimation, warnings };
 }
 
-// StrictMode double-invoke overhead is a development-mode property, so it warns
-// through `doubleInvokeClean` and never fails the run.
-//
-// `noiseLevel` lets a caller withhold the memory branch's FAIL when the run's
-// own noise sentinel already called the machine hostile. Only "hostile"
-// suppresses the flip: "noisy" still fails and still compares against
-// baseline. The mount-budget and churn-degradation checks are unaffected by
-// noise: they are unconditional.
+// StrictMode overhead is development-mode only: it warns through doubleInvokeClean, never fails.
 export function computeIsolationVerdict(
   isolation: IsolationReport,
   mountBudgetMs: number | undefined,
@@ -493,6 +466,7 @@ export function computeIsolationVerdict(
   if (isolation.mount && mountBudgetMs !== undefined && isolation.mount.median > mountBudgetMs) {
     return false;
   }
+  // Only "hostile" suppresses this FAIL; "noisy" still fails and still compares against baseline.
   if (isolation.memory?.leakSuspected && noiseLevel !== "hostile") return false;
   if (isolation.rerender && isolation.rerender.churnDegradation > CHURN_DEGRADATION_LIMIT) {
     return false;

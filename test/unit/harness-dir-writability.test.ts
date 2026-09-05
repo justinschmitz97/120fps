@@ -60,8 +60,7 @@ describe("harness directory creation when the project root cannot be written", (
     expect((thrown as Error).cause).toBeInstanceOf(Error);
   });
 
-  // POSIX permission bits only: Windows ignores chmod on directories, and the
-  // ACL equivalent is not something a test may set up.
+  // POSIX permission bits only: Windows ignores chmod on dirs; no test-settable ACL equivalent.
   it.skipIf(process.platform === "win32")("rejects a read-only directory", () => {
     fs.chmodSync(tmpDir, 0o555);
     expect(() => createHarnessDir(tmpDir)).toThrow(/project root/);
@@ -78,12 +77,7 @@ describe("HARNESS_DIR_UNWRITABLE message", () => {
   });
 });
 
-// M83 #7: why harness directories survive a crash. `sweepStaleHarnessDirs`
-// is age-gated at one hour, so it can never cover a directory the *current*
-// run just abandoned; `cleanup()` is only reachable on the success path.
-// `sweepActiveHarnessDirs` is the body the `process.on("exit")` handler
-// runs — exercised directly here rather than by triggering a real process
-// exit.
+// M83 #7: exercises process-exit cleanup directly; the age-gated sweep can't reach it here.
 describe("M83 #7: sweepActiveHarnessDirs cleans up a directory nothing else removed", () => {
   it("removes a directory created but never cleaned up", () => {
     const created = createHarnessDir(tmpDir);

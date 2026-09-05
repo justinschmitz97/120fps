@@ -6,9 +6,7 @@ export function cookies() {
 
 export function headers() { return new Headers(); }
 
-// Matches the sync convention this file's own
-// cookies()/headers() already use — draft mode is never active in a
-// measurement.
+// Sync like cookies()/headers() above; draft mode is never active in a measurement.
 export function draftMode() {
   return { isEnabled: false, enable: noop, disable: noop };
 }

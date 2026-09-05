@@ -24,22 +24,9 @@ import {
   workspaceSubpathSourceEntries,
 } from "./workspace-entries.js";
 
-// Static imports and re-exports, dynamic import(), and require(). String
-// literals only: a template literal or a computed specifier is unknowable
-// without running the code.
-// The negative lookahead excludes a whole-clause `import type`/`export
-// type` from-specifier: type-space, never loaded at runtime. A mixed clause
-// (`import { type A, b } from "x"`) still matches, because `b` is a real
-// value import and "x" genuinely needs runtime resolution.
-// A clause written over several lines
-// (`import {`, `  escapeHTML,`, `} from "@wordpress/escape-html"`) is the same
-// import. `[\w$*,{}\s]*?` spans newlines where `.` did not, and stops at the
-// first character an import clause cannot contain — a `;`, a quote, a `(`, a
-// comment slash — so a side-effect import standing above the clause
-// (`import "./a.css"`, with or without its semicolon) stays its own match, and
-// prose or JSX below an `export` keyword ends the scan instead of reaching a
-// later `from "…"` and reporting its string as a specifier.
+// String literals only, whole-clause `import type` excluded; the clause may span newlines.
 const STATIC_IMPORT_PATTERN =
+  // The clause class excludes ; " ( and /, so a side-effect import above stays its own match.
   /(?:^|\s)(?:import|export)\s+(?!type\s)[\w$*,{}\s]*?from\s+["']([^"']+)["']|(?:^|\s)import\s+["']([^"']+)["']/gm;
 const DYNAMIC_IMPORT_PATTERN = /\bimport\s*\(\s*["']([^"']+)["']/g;
 const REQUIRE_PATTERN = /\brequire\s*\(\s*["']([^"']+)["']/g;
@@ -57,9 +44,7 @@ function readSpecifiers(content: string): string[] {
   return specifiers;
 }
 
-// A specifier that resolves to nothing is disclosed here rather than passed
-// over silently, so `--explain-props` and the real run agree instead of
-// staying silent until the dev server dies on it at dep-optimization.
+// Disclosed here so --explain-props and the real run agree instead of dying at optimization.
 export function UNRESOLVED_PREBUNDLE_ENTRY_WARNING(specifier: string, importer: string): string {
   return (
     `"${specifier}" (imported by ${importer}) resolves to no installed package, no alias and no ` +
@@ -75,10 +60,7 @@ export function BROKEN_ALIAS_WARNING(specifier: string, target: string): string 
   );
 }
 
-// Proven, not guessed — the package resolves to an installed directory
-// whose own package.json has no main/module/exports and no index file, the
-// same "no loadable entry" primitive the types-only paths-alias check (1)
-// uses.
+// Proven, not guessed: the installed package has no main/module/exports and no index file.
 export function TYPE_ONLY_PACKAGE_WARNING(pkg: string): string {
   return (
     `import "${pkg}" resolved to an installed package with no runtime entry ` +
@@ -87,13 +69,7 @@ export function TYPE_ONLY_PACKAGE_WARNING(pkg: string): string {
   );
 }
 
-// A workspace sibling's own source, not its declared (unbuilt)
-// dist/, answers for the bare specifier — the alias applies to Vite's
-// real per-request resolution, not only optimizeDeps, so this import
-// resolves rather than merely avoiding one particular crash site.
-// The message names the manifest field the derivation followed, the
-// path that field declared and whether that path is on disk, so no message
-// claims a `dist/` the package never named.
+// The message names the field, its declared path and whether that path is on disk.
 export function UNBUILT_WORKSPACE_SOURCE_ALIAS_WARNING(
   pkg: string,
   sourceEntry: string,
@@ -113,9 +89,7 @@ export function UNBUILT_WORKSPACE_SOURCE_ALIAS_WARNING(
   );
 }
 
-// A workspace sibling that declares no runtime entry
-// at all ships declarations only. It is not an unbuilt package, nothing about
-// it can fail when the browser loads it, and no build command helps.
+// Declarations only: nothing can fail when the browser loads it, and no build command helps.
 export function TYPES_ONLY_WORKSPACE_PACKAGE_WARNING(
   pkg: string,
   typesPath: string | undefined,
@@ -127,13 +101,7 @@ export function TYPES_ONLY_WORKSPACE_PACKAGE_WARNING(
   );
 }
 
-// The honest replacement for TYPE_ONLY_PACKAGE_WARNING when the
-// package is a workspace sibling, not a genuinely external dependency: this
-// import is not proven type-only, and excluding it from the pre-bundle does
-// not stop Vite's own per-request resolution from hitting the identical
-// unresolvable specifier the moment the browser loads the importing file —
-// the "excluded... instead of aborting the harness" promise TYPE_ONLY_PACKAGE_WARNING
-// makes is not true here.
+// TYPE_ONLY_PACKAGE_WARNING's "excluded instead of aborting" promise is not true here.
 export function UNBUILT_WORKSPACE_PACKAGE_NO_SOURCE_WARNING(
   pkg: string,
   buildCommand: string | undefined,
@@ -157,9 +125,7 @@ export function UNBUILT_WORKSPACE_PACKAGE_NO_SOURCE_WARNING(
   );
 }
 
-// A subpath specifier of a sibling whose root was aliased is
-// removed from the pre-bundle by that root decision alone. Nothing aliased the
-// subpath itself, so the removal is disclosed instead of silent.
+// Nothing aliased the subpath itself, so its removal is disclosed instead of silent.
 export function UNALIASED_WORKSPACE_SUBPATH_WARNING(specifier: string, pkg: string): string {
   return (
     `${specifier} is a subpath of the workspace package ${pkg}, whose root was aliased to its own ` +
@@ -181,17 +147,12 @@ interface ExternalDepsWalkRecord {
   warnings: string[];
   extraAliases: Array<{ find: RegExp; replacement: string }>;
   unresolved: Array<{ specifier: string; importer: string }>;
-  // Specifiers the walk added to the caller's dedupe set, replayed so a second
-  // walk sharing that set reports what the first one left it reporting.
+  // Replayed so a second walk sharing the dedupe set reports what the first left it reporting.
   reported: string[];
   files: Array<[string, string | undefined]>;
 }
 
-// The component walk and the wrapper walk run per build, and a sweep
-// builds per component; the same entry over the same files, alias set and roots
-// cannot produce a different list. The key carries every input the walk reads,
-// including the dedupe set it was handed, and the entry is served again only
-// while every file it read has the mtime and size it read.
+// The key carries every input the walk reads; an entry is served only while mtimes match.
 const externalDepsWalks = new Map<string, ExternalDepsWalkRecord>();
 
 function sourceSignature(file: string): string | undefined {
@@ -253,15 +214,9 @@ export function scanExternalDeps(
     return [...cached.packages];
   }
 
-  // The walk writes into the caller's own channels, unchanged: buildAndServe
-  // passes one array as both `aliases` and `extraAliasesOut`, so a rescue alias
-  // pushed mid-walk resolves the imports below it. What each channel gained is
-  // read off afterwards as the delta, never by substituting a collector.
-  // `specifiersOut` is the one channel the walk only writes to, so it collects
-  // separately: a delta against the caller's prior contents would depend on a
-  // set the key does not carry, and a later walk handed an empty set would be
-  // served the short list.
+  // Collected separately: a delta against the caller's set would depend on what the key omits.
   const collected = new Set<string>();
+  // The caller's own channels: a rescue alias pushed mid-walk resolves the imports below it.
   const warnings = warningsOut ?? [];
   const extraAliases = extraAliasesOut ?? [];
   const unresolved = unresolvedOut ?? [];
@@ -311,21 +266,13 @@ function walkExternalDeps(
   specifiersOut?: Set<string>,
   warningsOut?: string[],
   workspaceRoot: string = findWorkspaceRoot(projectRoot),
-  // A workspace-sibling package rescued by aliasing to its own source
-  // (see the exclusion loop below) pushes its alias here; the one caller
-  // (buildAndServe) passes the same array it is already assembling `alias`
-  // from, so the rescue applies to Vite's real per-request resolution too,
-  // not only to optimizeDeps.
+  // buildAndServe passes the array it assembles `alias` from, so a rescue applies per request.
   extraAliasesOut?: Array<{ find: RegExp; replacement: string }>,
-  // The specifiers this walk could not resolve, in the order it
-  // read them, for the caller that publishes them on `StaticPreBuild`.
+  // In the order the walk read them, for the caller that publishes them on StaticPreBuild.
   unresolvedOut?: Array<{ specifier: string; importer: string }>,
-  // A caller that walks twice into one `unresolvedOut`
-  // (component and wrapper) shares the dedupe set, so a specifier unresolved in
-  // both walks is still reported once.
+  // Shared by the component and wrapper walks, so a specifier unresolved in both reports once.
   reportedUnresolvedOut?: Set<string>,
-  // Every file this walk read, with the mtime and size it had, for
-  // the memo that decides whether the result still stands.
+  // With the mtime and size it had, for the memo that decides whether the result still stands.
   filesReadOut?: Map<string, string | undefined>,
 ): string[] {
   const externalPkgs = new Set<string>();
@@ -337,21 +284,14 @@ function walkExternalDeps(
   const queue = [componentPath];
   const pkgNameOf = (spec: string) =>
     spec.startsWith("@") ? spec.split("/").slice(0, 2).join("/") : spec.split("/")[0];
-  // A sibling rescued in a later round is imported from inside another
-  // package, where a pnpm install links dependencies the entry project's own
-  // node_modules chain never carries. The directory the specifier was first
-  // read from answers for it; projectRoot stays the first probe.
+  // A pnpm install links dependencies the entry project's own node_modules chain lacks.
   const firstImporterDir = new Map<string, string>();
-  // The same bookkeeping at file granularity, so a specifier
-  // that resolves nowhere can name the file that imported it.
+  // The same at file granularity, so a specifier that resolves nowhere can name its importer.
   const firstImporterFile = new Map<string, string>();
-  // A specifier whose package directory no importer has yet
-  // produced re-reads its importer from the newest file that imported it.
+  // Re-reads its importer from the newest file that imported it.
   const unresolvedImporters = new Set<string>();
 
-  // The walk runs again from every source an unbuilt
-  // sibling was aliased to, so a sibling first reached through an import the
-  // scanner could not resolve is rescued in the same pass.
+  // Runs again from every aliased sibling source, so a rescue happens in the same pass.
   const walk = () => {
   while (queue.length > 0) {
     const file = queue.shift()!;
@@ -359,9 +299,7 @@ function walkExternalDeps(
     if (visited.has(normalizedFile)) continue;
     visited.add(normalizedFile);
 
-    // What the memo above this function has to re-check before it
-    // serves this walk again. A file the walk could not read is recorded too,
-    // so one that appears later invalidates the entry.
+    // A file the walk could not read is recorded too, so one that appears later invalidates.
     filesReadOut?.set(normalizedFile, sourceSignature(normalizedFile));
 
     let content: string;
@@ -372,9 +310,7 @@ function walkExternalDeps(
     }
 
     for (const raw of readSpecifiers(content)) {
-      // `./icon.svg?url` and `pkg/style.css?inline` never resolved with
-      // the query attached. A "#" survives: it opens a Node subpath import and
-      // a legitimate alias pattern.
+      // `./icon.svg?url` never resolved with the query; a "#" survives, it opens a subpath import.
       const spec = raw.split("?")[0];
       if (!spec) continue;
 
@@ -384,14 +320,9 @@ function walkExternalDeps(
         if (SOURCE_EXTENSIONS.includes(path.extname(localResolved.path))) {
           queue.push(localResolved.path);
         }
-        // A shim alias redirects the specifier to a local file, but the
-        // specifier itself was still imported and must be reported: the
-        // resolution stays local (queued above), only the bookkeeping changes.
+        // The specifier was still imported and must be reported; only the bookkeeping changes.
         if (isBareSpecifier && localResolved.viaShimAlias) specifiersOut?.add(spec);
-        // Same idea for a workspace-root-sourced alias — usage-triggered
-        // and deduped per specifier, so a root config with many patterns for
-        // packages this component never touches does not bury the one that
-        // actually mattered.
+        // Usage-triggered and deduped per specifier, so an unused root pattern buries nothing.
         if (
           isBareSpecifier &&
           localResolved.viaWorkspaceRootAlias &&
@@ -402,10 +333,7 @@ function walkExternalDeps(
           warningsOut?.push(WORKSPACE_ROOT_ALIAS_WARNING(spec, tag.pattern, tag.target, tag.configFile));
         }
       } else if (localResolved.kind === "alias-miss") {
-        // A shim alias whose file is not built yet is this tool's own state,
-        // and the specifier was still imported: this warning's report needs it either
-        // way. A project alias pointing nowhere is the project's to fix, and
-        // it is never a package.
+        // A shim alias whose file is not built is this tool's own state; a project alias is theirs.
         if (localResolved.viaShimAlias) {
           specifiersOut?.add(spec);
         } else if (!reportedBrokenAliases.has(spec)) {
@@ -413,25 +341,18 @@ function walkExternalDeps(
           warningsOut?.push(BROKEN_ALIAS_WARNING(spec, localResolved.target));
         }
       } else if (spec.startsWith("#")) {
-        // A subpath import is the importer's own package talking to
-        // itself. Resolved, it is an ordinary graph edge; unresolved, it is a
-        // map that lacks the key — never a package to pre-bundle, and never a
-        // truncation of one (collapsing "#app/utils/misc" to "#app" would be
-        // wrong).
+        // Never a package to pre-bundle, and never a truncation of one ("#app/x" is not "#app").
         const viaImports = resolveSubpathImport(normalizedFile, spec);
         if (viaImports && SOURCE_EXTENSIONS.includes(path.extname(viaImports))) {
           queue.push(viaImports);
         } else if (!viaImports) {
-          // The map may name a dependency rather than a local file; that target,
-          // never the "#" specifier, is what a bundler pre-bundles.
+          // The map may name a dependency; that target, never the "#" specifier, is pre-bundled.
           const viaPackage = subpathImportPackage(normalizedFile, spec);
           if (viaPackage) {
             specifiersOut?.add(viaPackage);
             externalPkgs.add(pkgNameOf(viaPackage));
           } else if (!reportedUnresolved.has(spec)) {
-            // No file, no package, no alias. Nothing can pre-bundle
-            // it, and the specifier stays out of the include list — the
-            // report is the only thing that was missing.
+            // Nothing can pre-bundle it, so the specifier stays out of the include list.
             reportedUnresolved.add(spec);
             const importer = relativeToRoot(normalizedFile, projectRoot);
             unresolvedOut?.push({ specifier: spec, importer });
@@ -455,16 +376,10 @@ function walkExternalDeps(
           unresolvedImporters.delete(pkg);
         }
         if (spec === pkg) {
-          // The specifier was already the bare root: unchanged, covers every
-          // ordinary dependency including subpath-only ones like swiper.
+          // Already the bare root: covers every ordinary dependency, subpath-only ones included.
           externalPkgs.add(pkg);
         } else {
-          // A subpath specifier. Collapsing it to `pkg` unconditionally
-          // manufactures an optimizeDeps entry nothing in the source wrote
-          // when `pkg` is a workspace sibling whose own root has no
-          // resolvable entry (an `exports` map with only subpath keys, no
-          // `main`). Substitute the literal subpath instead, once
-          // per distinct subpath; every other package keeps collapsing.
+          // Collapsing to `pkg` manufactures an entry nothing wrote when the root has none.
           const pkgDir = installedPackageDir(pkg, path.dirname(normalizedFile));
           if (
             pkgDir &&
@@ -491,9 +406,7 @@ function walkExternalDeps(
     "sass", "less", "stylus", "lightningcss", "sugarss",
   ]);
 
-  // An entry may be a subpath string rather than a bare name, so the
-  // blocklist's membership and prefix checks apply to the package-name
-  // portion re-derived from each entry, not to the raw entry text.
+  // An entry may be a subpath string, so the checks apply to the re-derived package name.
   const dropIgnored = () => {
     externalPkgs.delete("react");
     externalPkgs.delete("react-dom");
@@ -505,29 +418,9 @@ function walkExternalDeps(
     }
   };
 
-  // A bare specifier that resolves to an installed package with no
-  // runtime entry (no package.json main/module/exports, no index file) is
-  // almost certainly type-only — the regex scanner cannot see that an import
-  // is structurally type-only (`import * as CSS from 'csstype'`), so
-  // correctness depends on this proof, not on syntax. A package this walk
-  // cannot find at all is left alone: this only skips packages it has
-  // proven lack a runtime entry, never ones it merely failed to locate.
-  //
-  // That inference is wrong for a workspace sibling — its
-  // "no runtime entry" only proves its *declared* dist/ is unbuilt, not that
-  // the import is type-only, and excluding a genuinely value-imported bare
-  // specifier from optimizeDeps does not stop Vite's own per-request
-  // resolution from failing on the identical specifier the moment the
-  // browser loads the file that imports it. A workspace sibling
-  // with a resolvable src/ entry is aliased to it instead of excluded, so
-  // both the optimizer and Vite's real resolver succeed; one with no
-  // resolvable source anywhere is still excluded (nothing else is safe), but
-  // the warning stops promising a crash it cannot actually prevent.
-  //
-  // Each sibling is decided once per pass; a sibling aliased to its own
-  // source hands that source back to the walk, so the pass reaches a fixed
-  // point instead of stopping at the first ring of imports.
+  // A sibling's missing entry proves its dist/ is unbuilt, not that the import is type-only.
   type SiblingDecision = { aliasedRoot: boolean; aliasedSpecifiers: Set<string> };
+  // One decision per sibling per pass; an aliased source re-enters the walk to a fixed point.
   const siblingDecisions = new Map<string, SiblingDecision>();
   const decidedEntries = new Set<string>();
   const keptEntries = new Set<string>();
@@ -564,30 +457,24 @@ function walkExternalDeps(
         installedPackageDir(pkg, projectRoot) ??
         (importerDir === undefined ? undefined : installedPackageDir(pkg, importerDir));
       if (dir === undefined) {
-        // The importer this specifier was first read from may be
-        // a file where the package is not installed; a later round can reach the
-        // same specifier from a directory where it is, so the entry is left
-        // undecided rather than kept for good.
+        // A later round can reach the same specifier from a directory where it is installed.
         unresolvedImporters.add(entry);
         unresolvedImporters.add(pkg);
         continue;
       }
       if (!isWorkspaceSibling(dir, workspaceRoot)) {
-        // A subpath of a package that is not a workspace sibling keeps the
-        // resolution it has today.
+        // A subpath of a package that is not a workspace sibling keeps the resolution it has.
         if (entry !== pkg || resolveTarget(dir) !== undefined) {
           keptEntries.add(entry);
           continue;
         }
+        // Proven lack of a runtime entry, never a package this walk merely failed to locate.
         decidedEntries.add(entry);
         externalPkgs.delete(entry);
         warningsOut?.push(TYPE_ONLY_PACKAGE_WARNING(entry));
         continue;
       }
-      // Realpath, not the node_modules symlink/junction location: the
-      // physical source directory, matching isWorkspaceSibling's own check
-      // and avoiding routing Vite's resolution and fs watching through the
-      // link layer for no reason.
+      // Realpath, not the node_modules link: routing through the link layer buys nothing.
       let real: string;
       try {
         real = fs.realpathSync(dir);
@@ -595,9 +482,7 @@ function walkExternalDeps(
         real = dir;
       }
       const manifest = readProjectManifest(real);
-      // A sibling that declares a runtime entry is unbuilt when that
-      // entry does not resolve, whatever else happens to sit in its root; one
-      // that declares none keeps the type-only probe above.
+      // A sibling that declares a runtime entry is unbuilt when that entry does not resolve.
       const declaresEntry = declaresRuntimeEntry(manifest);
       if (
         resolveDirectoryEntry(dir) !== undefined ||
@@ -643,8 +528,7 @@ function walkExternalDeps(
           const types = typeof manifest?.types === "string" ? manifest.types : undefined;
           warningsOut?.push(TYPES_ONLY_WORKSPACE_PACKAGE_WARNING(pkg, types));
         } else {
-          // The package manager invocation of the script name, with the
-          // directory to run it in, never the script body.
+          // The package manager invocation with the directory to run it in, not the body.
           const buildCommand = packageScriptCommand(real, "build", process.cwd());
           const declaredEntry = manifest ? declaredRuntimeEntries(manifest)[0] : undefined;
           warningsOut?.push(
@@ -673,13 +557,7 @@ function walkExternalDeps(
     if (!resolvePackages()) break;
   }
 
-  // The `#`-specifier branch above covers only what is
-  // already kept out of the include list. The root cause is here: a bare
-  // package that resolves to no installed directory in any round survives the
-  // fixed point, reaches optimizeDeps.include and kills the run at
-  // dep-optimization. The entry itself stays (an entry excluded on a
-  // resolution this scanner cannot see is worse than one Vite resolves per
-  // request); the report is what was missing.
+  // A bare package resolving nowhere survives the fixed point and kills dep-optimization.
   for (const entry of externalPkgs) {
     if (reportedUnresolved.has(entry)) continue;
     const pkg = pkgNameOf(entry);
@@ -688,6 +566,7 @@ function walkExternalDeps(
       installedPackageDir(pkg, projectRoot) ??
       (importerDir === undefined ? undefined : installedPackageDir(pkg, importerDir));
     if (dir !== undefined) continue;
+    // The entry stays: excluding one on a resolution this scanner cannot see is worse.
     reportedUnresolved.add(entry);
     const importerFile = firstImporterFile.get(entry) ?? firstImporterFile.get(pkg);
     const importer = importerFile === undefined ? "" : relativeToRoot(importerFile, projectRoot);

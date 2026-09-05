@@ -2,8 +2,7 @@ import { describe, it, expect } from "vitest";
 import { formatTotalLine } from "../../src/cli/index.js";
 import type { PhaseTimings } from "../../src/report/index.js";
 
-// M115 A1: a user who waited three minutes learned only that they waited three
-// minutes. The breakdown rides on the line that already prints the wait.
+// specs/milestones/m115-every-run-prints-where-its-minutes-went.md: the breakdown rides that line.
 const timings = (over: Partial<PhaseTimings>): PhaseTimings => ({
   preflight: 0,
   build: 0,

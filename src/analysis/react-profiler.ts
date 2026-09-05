@@ -35,18 +35,12 @@ export interface ProfilerDiff {
 export interface CallbackIdentityDelta {
   propName: string;
   deltaMs: number;
-  // The two medians the delta came from. A difference alone hides whether
-  // it is 6ms of 8ms or 6ms of 300ms.
+  // A difference alone hides whether it is 6ms of 8ms or 6ms of 300ms.
   stableMs?: number;
   freshMs?: number;
 }
 
-// A callback-identity effect is the gap between two arms measured minutes apart
-// on a machine whose baseline drifts. Each arm's own spread is that drift, so an
-// effect smaller than the two spreads together is the drift and nothing else.
-// Fewer than two samples in an arm measures no spread at all and reports
-// nothing. Threshold evidence: an A/A control (both arms stable) on a 900-node
-// memoized fixture produced +18.1ms and +30.9ms apparent effects.
+// An A/A control on a 900-node memoized fixture showed +18.1ms and +30.9ms apparent effects.
 const CALLBACK_IDENTITY_MIN_DELTA_MS = 0.5;
 
 export function computeCallbackIdentityDelta(
@@ -61,6 +55,7 @@ export function computeCallbackIdentityDelta(
   if (deltaMs <= CALLBACK_IDENTITY_MIN_DELTA_MS) return null;
 
   const spread = (xs: number[]) => Math.max(...xs) - Math.min(...xs);
+  // An effect smaller than the two arms' spreads together is baseline drift and nothing else.
   if (deltaMs <= spread(stableSamples) + spread(freshSamples)) return null;
 
   return { deltaMs, stableMs, freshMs };
@@ -113,15 +108,12 @@ export function diffSnapshots(
   return { rerenderFibers };
 }
 
-// Bundlers suffix duplicate function names (__120fpsStable → __120fpsStable2),
-// so probe internals are matched by prefix rather than exact name.
+// Bundlers suffix duplicate function names, so probe internals are matched by prefix.
 function isProbeInternal(name: string): boolean {
   return name === "Root" || name === "AppRoot" || name.startsWith("__120fps");
 }
 
-// React Compiler emits memo-cache slot bindings (_c1, _c2, ...) that reach the
-// fiber tree as names. They identify a cache index, not a component the user
-// wrote, so acting on them is impossible.
+// React Compiler memo-cache slots (_c1, _c2) reach the fiber tree as names; nothing to act on.
 function isCompilerCacheSlot(name: string): boolean {
   return /^_c\d+$/.test(name);
 }
@@ -131,17 +123,14 @@ function isReportableComponent(name: string): boolean {
   return !isProbeInternal(name) && !isCompilerCacheSlot(name);
 }
 
-// A component without React.memo re-renders whenever its parent does: that is
-// React working as designed, not a defect. Only a memoized component that
-// re-rendered on identical props has had its memoization defeated.
+// A component without memo re-renders with its parent by design; only a memoized one qualifies.
 export function detectMemoBailouts(diff: ProfilerDiff): string[] {
   return diff.rerenderFibers
     .filter((f) => f.isMemo && isReportableComponent(f.name))
     .map((f) => f.name);
 }
 
-// The probe renders the component behind a memo boundary, so a value change on
-// the synthetic provider reaches only fibers that actually read the context.
+// The probe's memo boundary means only fibers that actually read the context re-render.
 export function detectContextFanOut(diff: ProfilerDiff): string[] {
   return diff.rerenderFibers
     .filter((f) => isReportableComponent(f.name))
@@ -152,8 +141,7 @@ export function computeRenderAttribution(
   snapshot: ProfilerSnapshot,
   top = 5,
 ): RenderAttribution[] {
-  // The probe's own provider and memo boundary are harness scaffolding, not the
-  // user's components; reporting them as hot spots is noise.
+  // The probe's provider and memo boundary are harness scaffolding; reporting them is noise.
   const fibers = [...snapshot.fibers.values()].filter((f) => isReportableComponent(f.name));
   fibers.sort((a, b) => b.selfDurationMs - a.selfDurationMs);
   return fibers.slice(0, top).map((f) => ({
@@ -168,8 +156,7 @@ export function computePortalOrphans(preCount: number, postCount: number): numbe
   return Math.max(0, postCount - preCount);
 }
 
-// Under the compiler, automatic memoization is the compiler's job: a bailout
-// finding is not actionable user code, so it stays informational.
+// Under the compiler, memoization is the compiler's job, so a bailout stays informational.
 export function hasReactWarning(opts: ReactOptimizations): boolean {
   if (opts.memoBailout && !opts.compilerActive) return true;
   if (opts.contextFanOut) return true;
@@ -182,17 +169,7 @@ export function hasReactWarning(opts: ReactOptimizations): boolean {
   return false;
 }
 
-// ====================================================================
-// Profiler hook injection script
-// ====================================================================
-
-// `React.memo(X)` reaches the fiber as `{$$typeof, type: X}` and
-// `forwardRef(X)` as `{$$typeof, render: X}`: neither wrapper carries a name,
-// so reading displayName/name off the fiber type would attribute every
-// memoized export to "Anonymous". Unwrap first, in either nesting order.
-//
-// Source rather than a closure: the profiler hook is injected as text, and this
-// keeps one definition that unit tests can evaluate directly.
+// Source rather than a closure: the hook is injected as text and unit tests evaluate it directly.
 export const FIBER_TYPE_NAME_SOURCE = `function resolveTypeName(type, depth) {
   if (!type || depth > 4) return null;
   if (typeof type === "string") return type;
@@ -297,8 +274,7 @@ export const PROFILER_HOOK_SCRIPT = `
 `;
 
 export async function injectProfilerHook(cdp: CDPSession): Promise<void> {
-  // Page.addScriptToEvaluateOnNewDocument silently no-ops while the Page domain
-  // is disabled, leaving every fiber snapshot empty.
+  // addScriptToEvaluateOnNewDocument silently no-ops while the Page domain is disabled.
   await cdp.send("Page.enable" as any);
   await cdp.send("Page.addScriptToEvaluateOnNewDocument" as any, {
     source: PROFILER_HOOK_SCRIPT,
@@ -355,10 +331,6 @@ export async function countBodyOrphans(page: Page): Promise<number> {
   });
 }
 
-// ====================================================================
-// React analysis orchestrator
-// ====================================================================
-
 export interface ReactAnalysisOptions {
   combos: PropCombination[];
   samples?: number;
@@ -367,26 +339,18 @@ export interface ReactAnalysisOptions {
   fnPropNames?: string[];
   // Reuse the pooled vsync browser (fresh context per pass).
   pool?: import("../browser/index.js").BrowserPool;
-  // This pass settles fonts on its own probe page, independently of the
-  // mount/rerender passes; a timeout here needs its own way out.
+  // This pass settles fonts on its own probe page, so a timeout here needs its own way out.
   onWarning?: (warning: string) => void;
 }
 
 export interface ReactDomIdentity {
   name: string;
   version: string;
-  // Set when the identity came from a Vite resolve.alias match rather
-  // than react-dom's own installed package.json, so REACT_DOM_NOT_REACT_WARNING
-  // can name the right mechanism (and the right, different remedy).
+  // "vite-alias" when a resolve.alias match supplied the identity, which has a different remedy.
   source?: "vite-alias";
 }
 
-// readViteConfigData's resolve.alias output is already merged into the
-// harness's own Vite alias list, so a literal-path alias targeting react-dom
-// is genuinely what this server mounts — the real react-dom package on disk
-// is never touched and stays irrelevant. Resolves the aliased file's nearest
-// ancestor package.json, the same identity signal already trusted for the
-// npm-alias case below, fed through a second path.
+// The aliased file's own package.json: a resolve.alias match is what this server actually mounts.
 function nearestPackageJson(fromPath: string): { name?: unknown; version?: unknown } | undefined {
   let dir: string;
   try {
@@ -418,23 +382,16 @@ function resolveViaBundlerAlias(
   return undefined;
 }
 
-// An npm/pnpm alias (`"react-dom": "npm:preact/compat"`) keeps the
-// `react-dom` folder name on disk, but the package.json inside it belongs to
-// the aliased package. Reading that package.json's own `name` is the only
-// reliable way to tell React and an aliased Preact apart; the specifier
-// alone cannot. `fromDir` is normally `harness.harnessDir`, which
-// `mkdtempSync` creates directly under the project root (`harness/dirs.ts`),
-// so Node's own upward resolution walk reaches the project's real install.
-// `bundlerAliases` (normally `harness.viteAliases`) is checked first — when
-// one matches, it is what this server actually mounts, overriding whatever
-// the real react-dom's own manifest says.
+// An npm alias keeps the react-dom folder name; only its package.json's name tells them apart.
 export function resolveReactDomIdentity(
   fromDir: string,
   bundlerAliases: Array<{ find: RegExp; replacement: string }> = [],
 ): ReactDomIdentity | undefined {
+  // A bundler alias wins: when one matches, it is what this server actually mounts.
   const viaAlias = resolveViaBundlerAlias(bundlerAliases);
   if (viaAlias) return viaAlias;
   try {
+    // fromDir sits under the project root (harness/dirs.ts), so Node's walk finds the install.
     const projectRequire = createRequire(path.join(fromDir, "/"));
     const pkgPath = projectRequire.resolve("react-dom/package.json");
     const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8")) as { name?: unknown; version?: unknown };
@@ -449,11 +406,10 @@ const REACT_DOM_MIN_MAJOR = 16;
 const REACT_DOM_MIN_MINOR = 5;
 const REACT_DOM_MAX_MAJOR = 19;
 
-// Coarse on purpose: PROFILER_HOOK_SCRIPT hardcodes React's internal WorkTag
-// numbers (memo=14, forwardRef=15) for the range 120fps has been tested
-// against. An unparseable version is evidence of nothing, so it passes.
+// PROFILER_HOOK_SCRIPT hardcodes React's WorkTag numbers (memo=14, forwardRef=15) for this range.
 export function isSupportedReactDomVersion(version: string): boolean {
   const match = /^(\d+)\.(\d+)/.exec(version);
+  // An unparseable version is evidence of nothing, so it passes.
   if (!match) return true;
   const major = Number(match[1]);
   const minor = Number(match[2]);
@@ -502,9 +458,7 @@ async function mountAndWaitProbe(page: Page, props: PropCombination): Promise<vo
   );
 }
 
-// Mount for a callback-identity arm: the measured prop and every other function
-// prop are the page's cached callbacks, so the stable arm's re-render changes
-// nothing and the fresh arm's changes exactly one identity.
+// The stable arm's re-render changes nothing; the fresh arm's changes exactly one identity.
 async function mountWithStableCallbacksProbe(
   page: Page,
   props: PropCombination,
@@ -543,16 +497,11 @@ export async function runReactAnalysis(
 ): Promise<Map<number, ReactOptimizations>> {
   const { combos, samples = 3, cpuThrottle = 4, warmupRuns = 1, fnPropNames = [] } = options;
 
-  // The framework was detected as "react" from declared/available
-  // packages (project/framework.ts detectFramework), which an npm alias
-  // (`"react-dom": "npm:preact/compat"`) satisfies without being React. This
-  // pass's every measurement reads React DevTools fiber internals, so a
-  // wrong or unconfirmed identity is skipped entirely rather than reporting
-  // fiction. Mounting itself is unaffected: it happens in harness/renderer.ts
-  // via createRoot, which preact/compat implements too.
+  // detectFramework accepts an npm alias that is not React; fiber reads need a confirmed identity.
   const reactDomIdentity = resolveReactDomIdentity(harness.harnessDir, harness.viteAliases ?? []);
   if (!reactDomIdentity || reactDomIdentity.name !== "react-dom") {
     options.onWarning?.(REACT_DOM_NOT_REACT_WARNING(reactDomIdentity));
+    // Mounting is unaffected: harness/entry.ts uses createRoot, which preact/compat implements.
     return new Map();
   }
   if (!isSupportedReactDomVersion(reactDomIdentity.version)) {
@@ -577,8 +526,7 @@ export async function runReactAnalysis(
   const results = new Map<number, ReactOptimizations>();
   let browser: Browser | undefined;
   let context: import("playwright").BrowserContext | undefined;
-  // This pass owns the probe page and its own tracing windows, so a
-  // harness crash here escapes with no phase of its own otherwise.
+  // This pass owns the probe page and its own tracing windows; a crash here has no other phase.
   const inFlight = createPhaseTracker("attribution", harness);
 
   try {
@@ -613,7 +561,6 @@ export async function runReactAnalysis(
     reportFontSettle(await settleStyles(page, harness), options.onWarning);
     await cdp.send("Emulation.setCPUThrottlingRate", { rate: cpuThrottle });
 
-    // Warmup
     if (warmupRuns > 0 && combos.length > 0) {
       await mountAndWaitProbe(page, combos[0]);
       for (let w = 0; w < warmupRuns; w++) {
@@ -621,14 +568,13 @@ export async function runReactAnalysis(
       }
     }
 
-    // Portal orphan baseline (before any measurements)
+    // Read before any measurement: a later baseline would hide the orphans this pass creates.
     const portalBaseline = await countBodyOrphans(page);
 
     for (let ci = 0; ci < combos.length; ci++) {
       inFlight.combo = ci;
       const props = combos[ci];
 
-      // --- Memo bailout detection ---
       await resetProfilerData(page);
       await mountAndWaitProbe(page, props);
       await rerenderProbe(page, props);
@@ -638,7 +584,6 @@ export async function runReactAnalysis(
       const memoDiff = diffSnapshots(snapA, snapB);
       const memoBailoutComponents = detectMemoBailouts(memoDiff);
 
-      // --- Context fan-out detection ---
       await resetProfilerData(page);
       await mountAndWaitProbe(page, props);
       await page.evaluate(
@@ -653,7 +598,6 @@ export async function runReactAnalysis(
       const ctxDiff = diffSnapshots(ctxSnapA, ctxSnapB);
       const contextFanOutComponents = detectContextFanOut(ctxDiff);
 
-      // --- Callback identity detection ---
       const callbackIdentityDeltas: CallbackIdentityDelta[] = [];
       if (fnPropNames.length > 0) {
         for (const fnProp of fnPropNames) {
@@ -678,8 +622,7 @@ export async function runReactAnalysis(
             sink.push(parseTraceDuration(events).totalDuration);
           };
 
-          // Arms alternate: measured all-stable-then-all-fresh, a baseline that
-          // drifts over the pass lands entirely on the fresh arm.
+          // Arms alternate, so a baseline drifting over the pass does not land on one arm.
           for (let s = 0; s < samples; s++) {
             if (s % 2 === 0) {
               await measureArm(false, stableSamples);
@@ -697,11 +640,9 @@ export async function runReactAnalysis(
         }
       }
 
-      // --- Render attribution ---
       const fullSnap = await collectProfilerData(page);
       const renderAttribution = computeRenderAttribution(fullSnap);
 
-      // --- Portal orphan check ---
       const portalPost = await countBodyOrphans(page);
       const portalOrphans = computePortalOrphans(portalBaseline, portalPost);
 

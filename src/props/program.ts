@@ -3,11 +3,7 @@ import ts from "typescript";
 import { resetWarnOnceCache } from "./extract.js";
 import type { VirtualScripts } from "./vue.js";
 
-// A fresh ts.Program per extraction re-parses lib.d.ts and the project's
-// node_modules type graph every time. Between calls only the component file
-// differs, so parsed source files are cached for the process lifetime (keyed
-// by options bucket + file stamp, mirroring the LanguageService document
-// registry) and programs chain through `oldProgram` within an options bucket.
+// A fresh ts.Program re-parses lib.d.ts and node_modules; between calls only one file differs.
 interface ExtractionCache {
   sourceFiles: Map<string, { sf: ts.SourceFile; mtimeMs: number; size: number }>;
   lastProgram?: ts.Program;
@@ -67,8 +63,7 @@ export function createCachedProgram(
   rootFile: string,
   options: ts.CompilerOptions,
   virtual?: VirtualScripts,
-  // A JS entry's sibling declaration, so the declaration's own symbols
-  // bind in the same program the entry is checked in.
+  // A JS entry's sibling declaration, bound in the same program the entry is checked in.
   extraRoots?: string[],
 ): ts.Program {
   const optionsKey = stableStringify(options);
@@ -84,6 +79,7 @@ export function createCachedProgram(
 
   const baseGetSourceFile = host.getSourceFile.bind(host);
   host.getSourceFile = (fileName, languageVersionOrOptions, onError, shouldCreateNewSourceFile) => {
+    // A virtual file has no stamp to validate a cache entry against, which keeps it fresh.
     if (virtual?.has(fileName)) {
       return ts.createSourceFile(
         fileName,
@@ -94,8 +90,7 @@ export function createCachedProgram(
       );
     }
     const caseKey = ts.sys.useCaseSensitiveFileNames ? fileName : fileName.toLowerCase();
-    // Bucketed by options like the document registry: a source file bound
-    // under one options set is never reused under another.
+    // A source file bound under one options set is never reused under another.
     const key = optionsKey + "|" + caseKey;
     const stamp = fileStamp(fileName);
     const cached = extractionCache.sourceFiles.get(key);

@@ -1,6 +1,4 @@
-// Wall clock around phases, never inside a traced window. The ten
-// phase keys are disjoint intervals over one run and sum to `total` exactly,
-// so a printed breakdown is checkable against the number beside it.
+// Disjoint intervals summing to `total` exactly, measured outside every traced window.
 export interface PhaseTimings {
   preflight: number;
   build: number;
@@ -17,9 +15,7 @@ export interface PhaseTimings {
 
 export type PhaseName = Exclude<keyof PhaseTimings, "total">;
 
-// The phase a progress label can open. `attribution` is not one of them: no
-// progress line names it, and its window is handed to the clock by
-// the pass that runs it.
+// `attribution` is excluded: no progress line names it; addAttribution supplies its window.
 type BoundaryPhase = Exclude<PhaseName, "attribution">;
 
 // Declaration order is print order.
@@ -36,9 +32,7 @@ export const PHASE_NAMES: readonly PhaseName[] = [
   "analysis",
 ];
 
-// A boundary line is classified by its label alone, so combo, matrix,
-// curve and isolation runs are all charged by the same rule. A label matching
-// none of them keeps the phase that is already open.
+// A label matching none of these keeps the phase that is already open.
 export function classifyPhaseLabel(line: string): BoundaryPhase | "report" | undefined {
   if (line.startsWith("preflight:")) return "preflight";
   if (line.startsWith("harness:")) return "build";
@@ -54,16 +48,12 @@ export function classifyPhaseLabel(line: string): BoundaryPhase | "report" | und
 }
 
 export interface PhaseClock {
-  // Charges the interval since the previous boundary and opens the phase this
-  // label names. Returns the elapsed run clock at that boundary, which is what
-  // the progress line prints.
+  // Returns the elapsed run clock at the boundary, which is what the progress line prints.
   boundary(line: string): number;
-  // The window a cost-attribution pass ran in, carved out of whichever phase
-  // was open so no millisecond is counted twice.
+  // Carved out of whichever phase is open, so no millisecond is counted twice.
   addAttribution(ms: number): void;
   elapsedMs(): number;
-  // Reads the timings without closing the clock: for a caller that runs before
-  // the `report` boundary and must not decide where the total ends.
+  // Does not close the clock: for a caller that must not decide where the total ends.
   snapshot(): PhaseTimings;
   // Closes the total at the `report` boundary if one arrived, otherwise now.
   timings(): PhaseTimings;
@@ -83,8 +73,7 @@ export function createPhaseClock(now: () => number = Date.now): PhaseClock {
     attribution: 0,
     analysis: 0,
   };
-  // The interval before the first `preflight:` boundary is charged to
-  // preflight: it is the run's own start-up, and preflight is what follows it.
+  // Start-up before the first `preflight:` boundary is charged to preflight.
   let open: BoundaryPhase = "preflight";
   let mark = start;
   let pendingAttribution = 0;
@@ -136,8 +125,7 @@ export function createPhaseClock(now: () => number = Date.now): PhaseClock {
   };
 }
 
-// Whole seconds up to a minute, then minutes and seconds: the units the
-// terminal's own `Total:` line prints.
+// The units the terminal's own `Total:` line prints.
 export function formatPhaseDuration(ms: number): string {
   const wholeSeconds = Math.round(ms / 1000);
   if (wholeSeconds < 60) return `${wholeSeconds}s`;
@@ -152,8 +140,7 @@ export function formatElapsedClock(ms: number): string {
   return `${minutes}:${String(wholeSeconds - minutes * 60).padStart(2, "0")}`;
 }
 
-// A phase at zero is omitted: a run that never explored says nothing about
-// exploring rather than claiming it took no time.
+// A phase at zero is omitted; printing it would claim the phase took no time.
 export function describePhaseBreakdown(timings: PhaseTimings | undefined): string {
   if (!timings) return "";
   return PHASE_NAMES

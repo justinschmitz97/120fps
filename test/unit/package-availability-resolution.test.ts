@@ -23,8 +23,7 @@ function makeTree(files: Record<string, string>): void {
   }
 }
 
-// A real, resolvable package: package.json plus the entry point node looks for
-// when no "main" is declared.
+// index.js is node's default entry when package.json declares no "main".
 function installInto(dir: string, name: string): void {
   const target = path.join(dir, ...name.split("/"));
   fs.mkdirSync(target, { recursive: true });
@@ -32,9 +31,7 @@ function installInto(dir: string, name: string): void {
   fs.writeFileSync(path.join(target, "index.js"), "module.exports = {};\n");
 }
 
-// The inverse of test/node-resolution.ts's withProductionResolution: it makes
-// the runner's own resolution hazard explicit instead of hiding it, so a probe
-// that reads NODE_PATH is caught here rather than in CI.
+// Inverse of test/node-resolution.ts's withProductionResolution: exposes the NODE_PATH hazard.
 function withNodePath<T>(dir: string, fn: () => T): T {
   const initPaths = (Module as unknown as { _initPaths(): void })._initPaths;
   const saved = process.env.NODE_PATH;
@@ -81,8 +78,7 @@ describe("availability along the node resolution chain", () => {
     const store = path.join(tmpDir, "store");
     installInto(store, "ghost-tool");
     withNodePath(store, () => {
-      // The hazard is real in this process: node resolves the package from a
-      // directory that has no node_modules anywhere on its chain.
+      // The hazard is real here: node resolves ghost-tool despite no node_modules on its chain.
       expect(createRequire(path.join(member(), "/")).resolve("ghost-tool")).toContain("ghost-tool");
       expect(isPackageAvailable("ghost-tool", member(), repo())).toBe(false);
     });

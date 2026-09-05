@@ -23,8 +23,7 @@ function modeDisabledOrAbsent(mode: AnalyzeOptions["curveMode"]): boolean {
   return mode === undefined || mode === false;
 }
 
-// The option-only half of the verdict-reuse gate. The rest of it needs the
-// baseline file, the source fingerprint, and a machine probe.
+// The option-only half of the gate; the rest needs the baseline, fingerprint and machine probe.
 export function optionsAllowVerdictReuse(
   options: Pick<
     AnalyzeOptions,
@@ -44,14 +43,10 @@ export function optionsAllowVerdictReuse(
     !options.noBaseline &&
     !options.saveBaseline &&
     !options.isolation &&
-    // An explicit *enable* changes what gets measured beyond anything the
-    // fingerprint records, so it always measures. An explicit *disable* does
-    // not: the mode it resolves to is `combo`, which the stored env already
-    // carries, so the run reproduces exactly the distribution the slot holds.
+    // An explicit enable measures beyond what the fingerprint records; a disable resolves to combo.
     modeDisabledOrAbsent(options.curveMode) &&
     modeDisabledOrAbsent(options.matrixMode) &&
-    // "ignore" explicitly requests a raw comparison and "strict" a hard
-    // verification of a real run: both must measure.
+    // "ignore" requests a raw comparison and "strict" a hard verification: both must measure.
     (options.baselineEnv ?? "normalize") === "normalize"
   );
 }
@@ -70,11 +65,7 @@ export async function collectMachineInfo(
   };
 }
 
-// Identical source in an identical environment redraws the same
-// distribution, so a check-mode run may reuse the stored verdict instead of
-// measuring. Explicit mode enables always measure: auto-activation is a
-// function of the fingerprinted source, flags are not. Returns the reused
-// report, or undefined when the run must measure.
+// Safe because identical source in an identical environment redraws the same distribution.
 export async function tryReuseStoredVerdict(args: {
   options: AnalyzeOptions;
   pool: BrowserPool;
@@ -93,8 +84,7 @@ export async function tryReuseStoredVerdict(args: {
   const { options, projectRoot } = args;
   if (!optionsAllowVerdictReuse(options)) return undefined;
 
-  // Only this environment's own slot can carry a reusable verdict. A
-  // cross-machine slot is informational and must never short-circuit a run.
+  // Only this environment's own slot may short-circuit; a cross-machine slot is informational.
   const baselineFile = loadBaseline(path.join(projectRoot, "120fps-baseline.json"));
   const slots = Object.entries(baselineFile?.entries ?? {}).filter(
     ([key]) => parseBaselineKey(key).componentPath === args.relativeComponent,
@@ -105,26 +95,18 @@ export async function tryReuseStoredVerdict(args: {
   const fingerprint = await args.getSourceFingerprint();
   if (fingerprint !== entry.sourceFingerprint) return undefined;
 
-  // Machine identity only: no page, no calibration. A single calibration
-  // sample swings 20–40% on a real machine, and thermal drift changes
-  // measured values, never the verdict of unchanged code
-  // (sameMachineIdentity). Features are the current run's real ones, so a
-  // hand-edited or drifted env record breaks reuse.
+  // Identity only: one calibration sample swings 20-40%, and drift changes values, not verdicts.
   const browser = await args.pool.acquire(true);
   const machine = await collectMachineInfo(browser.version());
   const probeEnv = buildEnvFingerprint({
     machine,
     calibration: { totalDuration: 0, scriptDuration: 0 },
     cpuThrottle: args.cpuThrottle,
-    // The requested count: combos are not extracted yet, so the effective one
-    // is unknown here. A stored entry that was throttled therefore fails the
-    // gate and the run measures: reuse errs towards measuring, never towards
-    // a mismatched verdict.
+    // Requested, not effective: combos are unextracted, so a throttled entry fails the gate.
     samples: args.samples,
     mode: "combo",
     framework: args.framework,
-    // cssReport is always constructed, even for "none"; gate on files.length
-    // so a no-CSS project's fingerprint bytes stay unchanged.
+    // cssReport exists even for "none"; gate on files.length to keep a no-CSS fingerprint stable.
     ...(args.cssReport && args.cssReport.files.length > 0 ? { css: args.cssReport.files } : {}),
     ...(args.wrapPath
       ? { wrapper: toPosix(path.relative(projectRoot, args.wrapPath)) }
@@ -168,9 +150,6 @@ export async function tryReuseStoredVerdict(args: {
 }
 
 // Tooling configs and lockfiles belong to the identity of a cached verdict.
-// In a workspace they sit at the root the member never mentions, so a root
-// lockfile bump could otherwise invalidate every member's baseline at once.
-// Member level first: a name found there is the one that applies.
 const PROJECT_CONFIG_FINGERPRINT_FILES = [
   "tailwind.config.js",
   "tailwind.config.ts",
@@ -187,6 +166,7 @@ export function projectConfigFingerprintFiles(
   memberRoot: string,
   workspaceRoot: string = findWorkspaceRoot(memberRoot),
 ): string[] {
+  // Member root first: a root lockfile bump must not invalidate every member's baseline at once.
   const roots = [...new Set([memberRoot, workspaceRoot])];
   const found: string[] = [];
   for (const name of PROJECT_CONFIG_FINGERPRINT_FILES) {

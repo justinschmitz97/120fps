@@ -16,18 +16,14 @@ import {
 import { literalPropertyName, stringLiteralValue } from "./vite-config.js";
 import { isFile, toPosix } from "../shared/index.js";
 
-// The measured file's own extension decides how it is mounted: a `.vue`
-// SFC cannot be rendered by React and a `.tsx` cannot be rendered by Vue, so
-// this is stronger evidence than anything in package.json.
+// The measured file's extension is stronger evidence than anything in package.json.
 export type Renderer = "react" | "vue";
 
 export function rendererFor(filePath: string): Renderer {
   return isVueFile(filePath) ? "vue" : "react";
 }
 
-// The version is read from the project's own react-dom rather than
-// resolveReactDomIdentity in src/analysis/react-profiler.ts, which imports
-// values from this module: the reverse import would close a cycle.
+// Not resolveReactDomIdentity (src/analysis/react-profiler.ts): the reverse import is a cycle.
 function readReactDomVersion(projectRoot: string): string | undefined {
   try {
     const pkgPath = createRequire(path.join(projectRoot, "/")).resolve("react-dom/package.json");
@@ -47,11 +43,6 @@ export function REACT_DOM_CLIENT_MISSING(projectRoot: string, version: string | 
   );
 }
 
-// readReactDomVersion fails the same way regardless of the underlying cause,
-// so the order matters: a package that genuinely resolves on disk with a
-// real (too old) version is a version problem regardless of whether the
-// project's own package.json happens to list it, so readReactDomVersion is
-// checked before isPackageDeclared, not after.
 type ReactDomResolutionCause =
   | "pnp"
   | "not-installed"
@@ -66,6 +57,7 @@ function diagnoseReactDomResolutionFailure(
   const workspaceRoot = findWorkspaceRoot(projectRoot);
   if (detectPnP(workspaceRoot)) return { cause: "pnp" };
   if (detectMissingInstall(projectRoot, workspaceRoot)) return { cause: "not-installed" };
+  // Before isPackageDeclared: a resolvable too-old version is a version problem either way.
   const version = readReactDomVersion(projectRoot);
   if (version !== undefined) return { cause: "outdated", version };
   if (isPackageDeclared("react-dom", projectRoot, workspaceRoot)) return { cause: "not-linked" };
@@ -137,9 +129,7 @@ function reactDomResolutionMessage(
   }
 }
 
-// Checked before the server boots: react-dom/client is forced into
-// optimizeDeps.include for every React run, and an unresolvable include aborts
-// Vite's optimizer with an esbuild path dump instead of a version diagnosis.
+// Checked before boot: an unresolvable optimizeDeps include aborts Vite with a path dump.
 export function assertReactDomClient(projectRoot: string): void {
   try {
     createRequire(path.join(projectRoot, "/")).resolve("react-dom/client");
@@ -148,11 +138,7 @@ export function assertReactDomClient(projectRoot: string): void {
   }
 }
 
-// `npm i react-dom` cannot fix a Vue project's render-function `.tsx`:
-// `rendererFor` keys the mount on the file extension alone, and no Vue-JSX
-// transform is loaded (`SUPPORTED_TRANSFORM_PLUGINS` in
-// src/project/transforms.ts carries `@vitejs/plugin-vue`, never
-// `@vitejs/plugin-vue-jsx`).
+// No Vue-JSX transform is loaded, so `npm i react-dom` cannot fix a Vue project's `.tsx`.
 export function VUE_PROJECT_REACT_FILE_ERROR(relativePath: string): string {
   return (
     `${relativePath} is a ${path.extname(relativePath)} file in a Vue project (this project ` +
@@ -164,10 +150,7 @@ export function VUE_PROJECT_REACT_FILE_ERROR(relativePath: string): string {
   );
 }
 
-// Asked before the react-dom question, on both the dry-run and the real-run
-// path, so the two agree on which question the file actually fails. A project
-// that declares react-dom is left to `assertReactDomClient` exactly as before:
-// this gate only claims the case where no React mount could exist at all.
+// Asked before the react-dom question on both paths, so the two agree on the failing question.
 export function assertRendererSupported(componentPath: string, projectRoot: string): void {
   if (rendererFor(componentPath) !== "react") return;
   const workspaceRoot = findWorkspaceRoot(projectRoot);
@@ -177,14 +160,11 @@ export function assertRendererSupported(componentPath: string, projectRoot: stri
   throw new Error(VUE_PROJECT_REACT_FILE_ERROR(relative === "" ? componentPath : relative));
 }
 
-// path.win32.relative("C:\\proj", "D:\\x") returns "D:\\x" — two drives
-// have no common ancestor to walk up to, so the result is absolute and carries
-// no "..". A caller reading only the "../" prefix takes another drive for an
-// in-root path. The platform parameter makes the drive-letter behavior
-// observable from a test on any host.
+// Two drives have no common ancestor, so the relative result is absolute and carries no "..".
 export function isOutsideRoot(
   target: string,
   root: string,
+  // An explicit platform makes the drive-letter behavior observable from a test on any host.
   platform: path.PlatformPath = path,
 ): boolean {
   const relative = platform.relative(root, target);
@@ -193,10 +173,7 @@ export function isOutsideRoot(
   );
 }
 
-// The body of the entry's import specifier: the generators embed it as
-// `from "/${componentRelative}"`, so an out-of-root component becomes
-// "/@fs/<posix-absolute>", the same escape hatch cssImportSpecifier already
-// uses for an out-of-root stylesheet.
+// Embedded by the generators after a slash, so an out-of-root component needs /@fs/.
 export function componentImportPath(
   componentPath: string,
   projectRoot: string,
@@ -208,13 +185,7 @@ export function componentImportPath(
   return toPosix(platform.relative(projectRoot, componentPath));
 }
 
-// A bare-specifier bundler alias ("react-dom": "preact/compat", the
-// webpack/Next.js shape) is dropped by readViteConfigData's own
-// fs.existsSync requirement above, and no reader exists at all for
-// next.config/webpack.config: 120fps applies neither shape to its own mount,
-// so this is a disclosure gap, not a silent-wrong-analysis risk the way the
-// Vite literal-alias shape is. Same invariant as readViteConfigData:
-// text-parsed, never imported, never run.
+// A disclosure gap only: 120fps applies no next.config/webpack.config alias to its own mount.
 const BUNDLER_CONFIG_FILES = [
   "next.config.js",
   "next.config.mjs",
@@ -226,10 +197,7 @@ const BUNDLER_CONFIG_FILES = [
   "webpack.config.ts",
 ];
 
-// Walks every node in the file, not just a recognized resolve.alias shape:
-// the field-tested pattern is `Object.assign(config.resolve.alias, {...})`
-// inside a `webpack:` customizer, so the react-dom key can appear inside a
-// plain object literal, a call argument, or an assignment target alike.
+// Every node is visited: the key appears inside `Object.assign(config.resolve.alias, {...})`.
 function findReactDomPreactAlias(source: ts.SourceFile): string | undefined {
   let found: string | undefined;
   const visit = (node: ts.Node): void => {
@@ -277,34 +245,9 @@ export function BUNDLER_PREACT_ALIAS_WARNING(configFile: string, target: string)
   );
 }
 
-// Vite's own esbuild transform plugin (`vite:esbuild`) applies ONE
-// loader to every file its filter matches; its default filter excludes plain
-// `.js`, so a `.js` file with literal JSX (MUI's own authoring convention)
-// fails Vite's transform even once the CLI gate accepts it. Widening that
-// filter and forcing `loader: "jsx"` was considered and rejected: the loader
-// is shared by every matched file, so a widened filter also routes typed
-// `.ts`/`.tsx` files through the "jsx" loader, and esbuild's "jsx" loader
-// rejects TypeScript-only syntax outright (verified against the installed
-// esbuild: `transformSync("interface X{}", { loader: "jsx" })` throws). This
-// standalone plugin, run ahead of Vite's own (`enforce: "pre"`), instead
-// transforms only `.js` outside `node_modules` with esbuild's "jsx" loader
-// directly; by the time Vite's own `vite:esbuild` plugin looks at the file,
-// its default filter already excludes `.js`, so nothing there re-transforms
-// it. Vendored `.js` under node_modules, and every `.ts`/`.tsx` file, never
-// reach this plugin at all.
 export const DEFAULT_JSX_IMPORT_SOURCE = "react";
 
-//
-// The loader alone is not the whole transform.
-// Vite's `transformWithEsbuild` reads the project tsconfig's JSX settings only
-// for the "ts"/"tsx" loaders (vite 6.4.2, dep chunk :9086), so `loader: "jsx"`
-// left `compilerOptions.jsx` undefined and esbuild fell back to its classic
-// `React.createElement` transform. A `.js` authored for the automatic runtime
-// (`"jsx": "react-jsx"`, no `React` binding of its own — MUI's
-// `internal/svg-icons/*.js`) then threw `React is not defined` the instant the
-// module evaluated. The runtime is passed explicitly: automatic, with the
-// project's own `jsxImportSource` when its tsconfig sets one. Automatic also
-// compiles a file that does import React, so one setting covers both forms.
+// vite:esbuild's default filter excludes plain .js, so a .js with literal JSX never transforms.
 export function jsxInJsPlugin(jsxImportSource: string = DEFAULT_JSX_IMPORT_SOURCE): {
   name: string;
   enforce: "pre";
@@ -319,6 +262,7 @@ export function jsxInJsPlugin(jsxImportSource: string = DEFAULT_JSX_IMPORT_SOURC
       if (/[\\/]node_modules[\\/]/.test(file)) return null;
       const result = await transformWithEsbuild(code, id, {
         loader: "jsx",
+        // Explicit: the "jsx" loader alone leaves esbuild on its classic React.createElement path.
         jsx: "automatic",
         jsxImportSource,
       });
@@ -327,29 +271,21 @@ export function jsxInJsPlugin(jsxImportSource: string = DEFAULT_JSX_IMPORT_SOURC
   };
 }
 
-// The runtime package whose `/jsx-runtime` the automatic transform imports.
-// Read from the config that governs the project (the same
-// `findCompilerConfig` walk alias construction and prop extraction use), so a
-// preact project's `"jsxImportSource": "preact"` is honoured instead of
-// hard-coding React. Any read/parse failure falls back to React rather than
-// failing the run: the previous behaviour compiled these files at all.
+// A preact project's `"jsxImportSource": "preact"` is honoured instead of hard-coding React.
 export function resolveJsxImportSource(
   projectRoot: string,
   workspaceRoot: string = findWorkspaceRoot(projectRoot),
   forFile?: string,
 ): string {
   try {
-    // The governing config, so a references-only root reaches the
-    // referenced config that declares jsxImportSource. The file decides which
-    // referenced config that is: a directory query matches whichever config
-    // covers any file under the root, which is the first `references` entry,
-    // not the one covering the component being measured.
+    // The file, not the root: a directory query matches the first `references` entry instead.
     const declared = resolveGoverningTsconfig(
       forFile ?? projectRoot,
       workspaceRoot,
     ).options.jsxImportSource;
     return declared && declared.length > 0 ? declared : DEFAULT_JSX_IMPORT_SOURCE;
   } catch {
+    // A read or parse failure falls back to React rather than failing the run.
     return DEFAULT_JSX_IMPORT_SOURCE;
   }
 }

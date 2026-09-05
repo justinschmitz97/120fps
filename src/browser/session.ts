@@ -20,8 +20,7 @@ import {
   type MeasurementPacing,
 } from "./pacing.js";
 
-// Returns whether the CDP call succeeded; callers that only want best-effort
-// cleanup ignore it.
+// Returns whether the CDP call succeeded; best-effort cleanup callers ignore it.
 export async function tryCollectGarbage(cdp: CDPSession): Promise<boolean> {
   try {
     await cdp.send("HeapProfiler.collectGarbage" as any);
@@ -31,10 +30,7 @@ export async function tryCollectGarbage(cdp: CDPSession): Promise<boolean> {
   }
 }
 
-// Inter-sample bookkeeping (GC) produces no measured value, so it runs
-// unthrottled; the throttle is restored before the next traced window. Errors
-// propagate: call sites sit inside withContextRetry, whose re-entry re-engages
-// the throttle. Nothing may run at an unknown throttle state.
+// Errors propagate: `withContextRetry` re-entry re-engages the throttle, so no unknown state.
 export async function suspendThrottle<T>(
   cdp: CDPSession,
   rate: number,
@@ -48,9 +44,7 @@ export async function suspendThrottle<T>(
   }
 }
 
-// The readiness gate is window.__120fps, not the load event. A stylesheet whose
-// webfont never answers keeps `load` pending forever, which would fail the
-// navigation before the settle gate gets a chance to bound it.
+// A stylesheet whose webfont never answers keeps `load` pending past the settle gate's bound.
 export const HARNESS_NAV_WAIT = "domcontentloaded" as const;
 
 const HARNESS_READY_TIMEOUT_MS = 30000;
@@ -68,9 +62,7 @@ export interface HarnessSessionOptions {
   onWarning?: (warning: string) => void;
 }
 
-// Navigate and bring the page to a measurable state: readiness gate, wrapper
-// viewport, style/font settle, CPU throttle. Re-runnable, so a pass that
-// navigates mid-session repeats the whole preamble.
+// Re-runnable, so a pass that navigates mid-session repeats the whole preamble.
 export async function enterHarness(
   page: Page,
   cdp: CDPSession,
@@ -82,11 +74,7 @@ export async function enterHarness(
   await gotoWithErrorContext(page, url, errorCapture, options.label, {
     waitUntil: HARNESS_NAV_WAIT,
   });
-  // Races readiness against a fatal page error (a synchronous
-  // throw during module evaluation, e.g. a next.config.mjs env-validation
-  // failure). When the fatal signal wins, this throws immediately instead of
-  // waiting out the remaining timeout, and leads with the page error instead
-  // of "did not become ready within timeout".
+  // A fatal module-evaluation throw wins the race, so the page error leads over the timeout.
   await waitForReadyOrFatal(
     () =>
       page.waitForFunction(
@@ -109,8 +97,7 @@ export async function enterHarness(
   await cdp.send("Emulation.setCPUThrottlingRate", { rate: options.cpuThrottle ?? 4 });
 }
 
-// The session is held in a box so `enter` can swap it and every body sees the
-// replacement; a captured const would keep using the wedged one.
+// Boxed so `enter` can swap the session; a captured const would keep using the wedged one.
 export interface CdpHolder {
   cdp: CDPSession;
 }
@@ -124,9 +111,7 @@ export async function refreshCdpSession(page: Page, holder: CdpHolder): Promise<
   holder.cdp = await page.context().newCDPSession(page);
 }
 
-// The wrapper's session-scoped counterpart to setup, run once before the
-// session's page goes away. Best-effort: a completed measurement must not fail
-// because a teardown threw or the page was already gone.
+// Best-effort: a completed measurement must not fail because teardown threw.
 export async function runWrapperTeardown(page: Page): Promise<void> {
   try {
     await page.evaluate(() => (window as any).__120fps?.teardown?.());
@@ -144,18 +129,12 @@ export interface MeasurementSession {
   close(): Promise<void>;
 }
 
-// Begin-frame control is probed with one frame before anything else runs: a
-// browser whose compositor cannot be driven never produces a frame at all, so
-// probe failure falls the whole pass back to a plain vsync launch instead of
-// hanging on the first fence.
+// One probe frame first: an undrivable compositor would otherwise hang on the first fence.
 export async function openMeasurementSession(options: {
   driven: boolean;
   onWarning?: (warning: string) => void;
   pool?: BrowserPool;
-  // Threaded into attachPageErrorCapture so a bare, extension-less
-  // 404 landing directly under the harness's own serving root (a
-  // synthesized-placeholder collision, not a component defect) is excluded
-  // from attribution.
+  // Lets attachPageErrorCapture drop 404s under the harness root: placeholder collisions.
   harnessDirName?: string;
 }): Promise<MeasurementSession> {
   // With a pool the session owns a context; without one it owns the browser.
@@ -218,8 +197,7 @@ export async function openMeasurementSession(options: {
   };
 }
 
-// One browser per pass, matching every other measurement entry point. `enter`
-// re-navigates within the same page and re-runs the preamble.
+// `enter` re-navigates within the same page and re-runs the preamble.
 export async function runHarnessSession<T>(
   harness: HarnessResult,
   options: HarnessSessionOptions,
@@ -247,9 +225,7 @@ export async function runHarnessSession<T>(
     await ms.close();
   }
 }
-// One phase's failure context, mutated as the pass advances. `run` is the
-// only way a phase body reaches the caller, so no escape route is left
-// unenriched.
+// `run` is the only way a phase body reaches the caller, so no escape route stays unenriched.
 export interface PhaseTracker {
   combo: number | undefined;
   run<T>(body: () => Promise<T>): Promise<T>;

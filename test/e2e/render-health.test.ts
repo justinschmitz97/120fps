@@ -55,8 +55,7 @@ describe("a component that renders null legitimately", () => {
   it("annotates the empty render and still passes", async () => {
     const report = await run("./fixtures/m59-renders-nothing.tsx");
 
-    // The synthetic scale probe wraps its copies, so it contributes a node even
-    // when the component itself renders nothing; the real combos render zero.
+    // The scale probe wraps its copies, contributing a node even when the component is empty.
     const empty = report.combos.filter((c) => c.domNodeCount === 0);
     expect(empty.length).toBeGreaterThan(0);
     for (const combo of report.combos) {

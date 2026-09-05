@@ -67,9 +67,7 @@ import { composedChildPreflightHits, trialMountComposition, writeFixtureScaffold
 import { projectConfigFingerprintFiles } from "./verdict-reuse.js";
 import { toPosix } from "../shared/index.js";
 
-// Everything the run resolves from the filesystem before it builds anything:
-// where the project is, which framework renders it, which wrapper and
-// stylesheets apply, and which prop preset supplies values.
+// Everything resolved from the filesystem before anything is built.
 export function prepareRunInputs(input: {
   options: AnalyzeOptions;
   resolvedPath: string;
@@ -91,15 +89,13 @@ export function prepareRunInputs(input: {
 } {
   const { options, resolvedPath, harnessPath, useFixture } = input;
   const { projectRoot, relativeComponent } = resolveProjectPaths(resolvedPath);
-  // Resolved before the wrapper, because a Vue project's wrapper is an SFC
-  // and a `.tsx` one left lying around could not render the component at all.
   // Collected before the run's warning list exists; folded into it below.
   const frameworkWarnings: string[] = [];
+  // Before the wrapper: a Vue project's wrapper is an SFC, and a stray .tsx renders nothing.
   const framework = resolveFramework(options.framework ?? "auto", projectRoot, harnessPath, (w) =>
     frameworkWarnings.push(w),
   );
-  // What the wrapper probe had to fall back to, folded into the run's
-  // warnings below alongside frameworkWarnings and cssWarnings.
+  // What the wrapper probe had to fall back to, folded into the run's warnings below.
   const wrapWarnings: string[] = [];
   const { wrapPath, wrapAutoDetected } = resolveWrapPath(options, projectRoot, framework, wrapWarnings);
   // What discovery had to guess at, folded into the run's warnings below.
@@ -109,30 +105,18 @@ export function prepareRunInputs(input: {
     measuredFile: resolvedPath,
   });
   const cssReport = buildCssReport(resolvedCss, projectRoot);
-  // Computed once, right where the decision is made, so it survives any
-  // later throw regardless of where in the pipeline it lands. Deliberately
-  // kept out of `runWarnings`/`cssWarnings` (which become `report.warnings`
-  // on a successful run): the decision already has its own dedicated
-  // `Stylesheets:` line there, and folding this in too would print it
-  // twice. It is threaded only into the crash-path catch below.
+  // Kept out of runWarnings, which already carry a Stylesheets: line; only the crash path reads it.
   const cssDecisionWarning = formatStylesheetsLine(cssReport);
-  // Mirrored out immediately, same reasoning as the internal `onWarning`
-  // closure below -- a surface-3 async rejection needs this available
-  // before this function's own local catch ever gets a chance to build
-  // `combined`, since that catch's stack frame is exactly what a detached
-  // rejection never reaches.
+  // Mirrored out at once: a detached async rejection never reaches this function's own catch.
   options.onWarning?.(cssDecisionWarning);
   // A fixture already owns its scene, so presets never apply there.
   const presetPath = useFixture ? undefined : detectPropPresets(resolvedPath);
   const presets = presetPath ? loadPropPresets(presetPath, projectRoot) : undefined;
-  // The same disclosure the dry run prints, from the same producer, so
-  // both modes name the rejected sibling in the same words. A fixture owns
-  // its scene, so a preset-named sibling is irrelevant there.
+  // The dry run's producer, so both modes name the rejected sibling in the same words.
   const presetShapeWarning = useFixture
     ? undefined
     : presetShapeDisclosure(resolvedPath, projectRoot);
-  // The props the preset supplies values for, known before extraction
-  // runs, so the remedies it answers never reach the terminal.
+  // Known before extraction runs, so the remedies a preset answers never reach the terminal.
   const presetSuppliedProps = presets
     ? [...presets.entries].filter(([, values]) => values.length > 0).map(([name]) => name)
     : [];
@@ -152,8 +136,7 @@ export function prepareRunInputs(input: {
   };
 }
 
-// The one schema read the measurement path uses: extraction, preset
-// application, and every disclosure those two produce.
+// The one schema read the measurement path uses: extraction, presets, their disclosures.
 export function createSchemaExtractor(deps: {
   options: AnalyzeOptions;
   projectRoot: string;
@@ -168,35 +151,24 @@ export function createSchemaExtractor(deps: {
 }): (file: string) => Promise<PropSchema[]> {
   const { options, projectRoot, presets, presetSuppliedProps, presetApplied, onWarning, useFixture } = deps;
   return async (file: string): Promise<PropSchema[]> => {
-    // extractPropsDetailed's warnings (not just the Vue one) reach the real
-    // measurement path's onWarning, matching --explain-props's own
-    // extractPropsDetailed call. Covers both Vue scope exclusions ADR 0002
-    // defines -- Options-API props and a <script setup> runtime-object
-    // defineProps({...}) call -- so either one downgrades to the same
-    // disclosure instead of the generic "extraction may have failed" text.
+    // Covers both Vue scope exclusions ADR 0002 defines, so either downgrades to one disclosure.
     let sawPropsScopeExclusion = false;
     const extracted = await extractPropsDetailed(file, {
       ...(options.target ? { target: options.target } : {}),
       onWarning: (warning) => {
         if (isVuePropsScopeExclusionWarning(warning)) sawPropsScopeExclusion = true;
-        // The preset is loaded before extraction runs here, so a
-        // collapsed-union remedy for a prop it supplies values for is dropped
-        // as it is produced rather than printed and then contradicted. The
-        // same rule the dry run applies, on the same warning texts.
+        // The preset loads before extraction, so an answered remedy is dropped as it is produced.
         if (presetSuppliedProps.length > 0 && presetAnswersRemedy(warning, presetSuppliedProps)) {
           return;
         }
-        // A remedy the preset did not answer survives, and names the
-        // preset the run already loaded instead of asking for a file.
+        // A surviving remedy names the loaded preset instead of asking for a file.
         onWarning(presets ? remedyNamesLoadedPreset(warning, presets.path) : warning);
       },
     });
     const raw = extracted.schemas;
-    // The same two disclosures the dry run prints, in the same words, from
-    // the same extraction record. Both are decided by the filesystem, so
-    // the dry run and the real run cannot describe them differently.
     const asProjectPath = (target: string): string =>
       toPosix(path.relative(projectRoot, target));
+    // Decided by the filesystem, so the dry run and the real run cannot word these differently.
     if (
       extracted.targetFile !== undefined &&
       path.resolve(extracted.targetFile) !== path.resolve(file)
@@ -213,10 +185,7 @@ export function createSchemaExtractor(deps: {
         ),
       );
     }
-    // The producer for BuildReportInput.disclosureReason's "propsExcluded"
-    // value. `disclosureReason` is untouched by the auto-composition guard
-    // above for a Vue run (rendererIsVue skips it entirely), so this is the
-    // only place a Vue run can set it.
+    // The only place a Vue run sets it: analyze.ts's auto-composition guard skips rendererIsVue.
     if (raw.length === 0 && sawPropsScopeExclusion && deps.getDisclosureReason() === undefined) {
       deps.setDisclosureReason("propsExcluded");
     }
@@ -228,16 +197,7 @@ export function createSchemaExtractor(deps: {
       }
     }
     const finalSchemas = applied ? applied.schemas : raw;
-    // The same note --explain-props prints, from the same function, on the
-    // same schemas the run will measure. A fixture owns its scene, so
-    // retargeting an export inside it is not the remedy there. A composed
-    // scene owns the render exactly as a fixture does and also reaches
-    // getSchemas(), so the retarget note would print beside
-    // NO_PROPS_MEASURED_WARNING and contradict it -- advising a retarget
-    // because of a required degenerate prop the run never applied.
-    // Read live, not captured: this closure runs lazily (getSchemas), long
-    // after `compositionTree` is decided, and a rolled-back composition clears
-    // it again.
+    // A composed scene owns the render, so a retarget note would contradict what it measured.
     if (!useFixture && deps.getCompositionTree() === undefined) {
       const note = await alternativeExportNote(
         file,
@@ -251,8 +211,7 @@ export function createSchemaExtractor(deps: {
   };
 }
 
-// The identity of what this run measures: the component's source graph plus
-// every file and option that changes the numbers.
+// The identity of a run: the source graph plus every file and option that changes the numbers.
 export function createSourceFingerprint(deps: {
   options: AnalyzeOptions;
   projectRoot: string;
@@ -266,25 +225,15 @@ export function createSourceFingerprint(deps: {
   cpuThrottle: number;
 }): { getSourceFingerprint: () => Promise<string>; resetSourceFingerprint: () => void } {
   const { options, projectRoot, harnessPath, metadataPath, cssReport, resolvedCss, presets, wrapPath, samples, cpuThrottle } = deps;
-  // Everything that shapes what gets measured, hashed together with the
-  // measured sources. Feature drift lives here, so the environment probe only
-  // has to guard the machine.
-  // A thunk, not a frozen value -- `resolvedCss.files`/
-  // `cssReport.files` can still change after this point (a stylesheet
-  // dropped mid-run because it could not be read), and a verdict cached or
-  // saved under a fingerprint that still names the dropped file would be
-  // indistinguishable from one measured with it. Read fresh on every actual
-  // (non-memoized) call instead of captured once here.
+  // A thunk: cssReport.files can still lose a stylesheet mid-run, and the hash must follow.
   const buildFingerprintConfig = (): string =>
     JSON.stringify({
-      // A transform changes the code that gets measured, exactly like the
-      // React Compiler does, so it belongs in the identity of a cached verdict.
+      // A transform changes the code that gets measured, so it belongs in the cached identity.
       transforms: options.noTransforms ? [] : detectProjectTransforms(projectRoot).map((t) => t.code),
       css: cssReport?.files ?? [],
       wrap: wrapPath ? toPosix(path.relative(projectRoot, wrapPath)) : null,
       reactCompiler: options.reactCompiler ?? "auto",
-      // Only present when targeted, so an untargeted run's fingerprint: and
-      // every baseline already stored against it: is byte-identical.
+      // Present only when targeted, so an untargeted run's stored baselines stay byte-identical.
       ...(options.target ? { target: options.target } : {}),
       samples,
       cpuThrottle,
@@ -295,8 +244,7 @@ export function createSourceFingerprint(deps: {
     const graph = await projectSourceFiles(path.resolve(harnessPath));
     const extras: string[] = [];
     if (wrapPath) extras.push(wrapPath);
-    // Nothing imports the preset module from the component graph, so an
-    // edited preset would otherwise reuse a verdict about different values.
+    // Nothing imports the preset from the component graph, so an edit would reuse a stale verdict.
     if (presets) extras.push(presets.absolutePath);
     extras.push(...resolvedCss.files);
     if (path.resolve(metadataPath) !== path.resolve(harnessPath)) {
@@ -313,9 +261,7 @@ export function createSourceFingerprint(deps: {
   return { getSourceFingerprint, resetSourceFingerprint: () => (fingerprintValue = undefined) };
 }
 
-// Everything a report carries that the run, not a measurement pass, knows:
-// accumulated warnings, the CSS decision, provider candidates, the noise
-// probe, the applied preset and the compiler the harness used.
+// Everything a report carries that the run, rather than a measurement pass, knows.
 export function createHarnessContextAttacher(deps: {
   runWarnings: string[];
   cssReport: CssReport;
@@ -335,26 +281,20 @@ export function createHarnessContextAttacher(deps: {
     const { providerCandidates, transitiveProviderCandidates, noiseProbe, contextRetries, activeTransforms, harness } =
       deps.state();
     if (runWarnings.length > 0) {
-      // One entry per distinct text, in first-occurrence order,
-      // counted when the run produced it more than once. The three sites that
-      // collect `harness.warnings` each append the whole static pre-build list,
-      // so a run that rebuilt its harness recorded identical sentences twice.
+      // Every site collecting harness.warnings appends the whole pre-build list, so texts repeat.
       report.warnings = dedupeWarnings([...(report.warnings ?? []), ...runWarnings]);
     }
     if (cssReport) report.css = cssReport;
 
-    // A static import is not a finding. It becomes one only once a render
-    // actually failed, which is what keeps a healthy run's report unchanged.
+    // A static import becomes a finding only once a render failed; a healthy report is unchanged.
     if (providerCandidates.length > 0 && renderFailed(report)) {
       report.providerCandidates = providerCandidates;
-      // Additive, only when there is at least one -- a report
-      // whose every candidate is direct stays exactly as it printed before.
+      // Additive: a report whose every candidate is direct prints exactly as it did.
       if (transitiveProviderCandidates.length > 0) {
         report.transitiveProviderCandidates = transitiveProviderCandidates;
       }
     }
 
-    // Assembled from signals the run already produced, plus the one probe.
     // A run whose machine was busy must say so before anyone reads its numbers.
     if (noiseProbe.length > 0) {
       let unstableCount = 0;
@@ -373,10 +313,7 @@ export function createHarnessContextAttacher(deps: {
         contextRetries,
       });
       report.noise = noise;
-      // The JSON carries the full text — the machine sentence, the
-      // provisional-numbers sentence, and (once the baseline step below knows a
-      // comparison happened) the baseline sentence. The terminal and the
-      // markdown fold shorten it to one line, in report/terminal.ts.
+      // The JSON carries the full text; report/terminal.ts shortens it to one line.
       const noiseWarning = formatNoiseWarning(noise, report.baseline !== undefined);
       if (noiseWarning) {
         report.warnings = dedupeWarnings([...(report.warnings ?? []), noiseWarning]);
@@ -401,8 +338,7 @@ export function createHarnessContextAttacher(deps: {
   };
 }
 
-// The import-graph walk and everything it decides, before a harness directory
-// or a dev server exists.
+// The import-graph walk and everything it decides, before a harness or dev server exists.
 export function runPreflightPhase(input: {
   options: AnalyzeOptions;
   projectRoot: string;
@@ -423,9 +359,7 @@ export function runPreflightPhase(input: {
   let transitiveProviderCandidates: string[] = [];
   let transformHits: PreflightHit[] = [];
   let activeTransforms: string[] | undefined;
-  // Before any harness directory or dev server exists. A component whose
-  // graph reaches server-only code cannot mount in a browser at all, and the
-  // check costs a source walk, not a boot.
+  // A graph reaching server-only code cannot mount at all, and this costs a walk, not a boot.
   progress("preflight: walking the import graph");
   const preflight = runPreflight({
     projectRoot,
@@ -434,22 +368,14 @@ export function runPreflightPhase(input: {
     componentName: detectComponentExport(harnessPath, options.target).name,
     ...(vueCompiler ? { vueCompiler } : {}),
   });
-  // Folded in before the hard-hit check below runs, so a sync component
-  // whose JSX composes an async server component one hop away gates
-  // identically to targeting that child directly.
+  // Folded in before the hard-hit check, so a composed child gates as a direct target would.
   preflight.hard.push(...composedChildPreflightHits(harnessPath, projectRoot));
-  // entries above is [harnessPath, wrapPath?] -- see providersFromEntry's
-  // own comment (project/preflight.ts) for why a hit discovered only
-  // through the wrapper is excluded here rather than mislabeled as
-  // something the component imports.
+  // A hit reached only through the wrapper is excluded here: see providersFromEntry.
   const componentEntryRelative = toPosix(path.relative(projectRoot, path.resolve(harnessPath)));
   const componentOwnProviders = providersFromEntry(preflight.providers, componentEntryRelative);
   // Recorded now, published only if a combo actually fails to render.
   providerCandidates = providerCandidateLabels(componentOwnProviders);
-  // The same labels, restricted to hits reached only transitively --
-  // providerCandidateLabels' own dedup runs independently over this
-  // filtered subset, so a label present in both arrays is byte-identical
-  // between them (report/hints.ts matches by exact string).
+  // report/hints.ts matches by exact string, so a label in both arrays must be byte-identical.
   transitiveProviderCandidates = providerCandidateLabels(
     componentOwnProviders.filter((hit) => !isDirectProviderHit(hit)),
   );
@@ -458,25 +384,19 @@ export function runPreflightPhase(input: {
   const loadableTransforms = new Set(
     (options.noTransforms ? [] : detectProjectTransforms(projectRoot)).map((t) => t.code),
   );
-  // The classifier in `project/preflight-gates.ts`, shared with the dry
-  // run's own warning list, so the two modes cannot disagree about which
-  // transform hits are worth a warning or in which order they are said.
+  // Shared with the dry run's warning list, so the two modes agree on which hits warn, and when.
   const candidateTransformHits = classifyProjectTransformHits(projectRoot, preflight.transforms, {
     ...(options.noTransforms ? { noTransforms: true } : {}),
   });
   transformHits = candidateTransformHits.map(({ hit }) => hit);
-  // Named up front, and again on the way out if the run dies: a transform
-  // the harness cannot apply is the first thing to check.
+  // Named up front, and again if the run dies: an unappliable transform is the first suspect.
   for (const { hit, availability } of candidateTransformHits) {
     runWarnings.push(PROJECT_TRANSFORM_WARNING(hit, availability));
   }
   if (loadableTransforms.size > 0) {
     activeTransforms = [...loadableTransforms].sort();
   }
-  // Wired into --explain-props (pipeline/explain-props.ts's explainProps)
-  // but never into the default run's own warning list. Zero cost when the
-  // project has no next.config/webpack.config matching the shape (a single
-  // probe-order file read).
+  // The dry run pushes this same line, so both modes disclose an aliased react-dom.
   if (framework === "react") {
     const bundlerAlias = detectBundlerReactDomAlias(projectRoot);
     if (bundlerAlias) {
@@ -487,19 +407,14 @@ export function runPreflightPhase(input: {
     if (options.noPreflight) {
       runWarnings.push(PREFLIGHT_BYPASSED_WARNING(preflight.hard));
     } else {
-      // A preflight hard-rejection, not a build/runtime failure —
-      // nothing has been built yet, so the diagnosis is already complete.
-      // The marker lets the outer catch below skip stacking accumulated
-      // warnings (e.g. an unrelated css-preprocessor note) on top of it.
+      // Nothing is built yet, so the diagnosis is complete and the outer catch adds nothing to it.
       throw new PreflightHardRejectionError(preflightFailureMessage(preflight.hard));
     }
   }
   return { providerCandidates, transitiveProviderCandidates, transformHits, activeTransforms };
 }
 
-// A stylesheet that resolved on disk and still could not be read at the first
-// real request: drop it, record why on every file that went with it, and
-// measure the component unstyled.
+// Drop the stylesheet, record why on every file that went with it, and measure unstyled.
 export async function recoverFromUnreadableStylesheet(
   err: unknown,
   deps: {
@@ -513,17 +428,7 @@ export async function recoverFromUnreadableStylesheet(
   },
 ): Promise<void> {
   const { resolvedCss, cssReport, composedHarnessOpts, onWarning, resetSourceFingerprint, rebuildHarness, enterHarnessPage } = deps;
-  // A discovered stylesheet can resolve fine on disk and still fail to
-  // compile because something it references internally does not (e.g. a
-  // build tool's generated CSS file that is gitignored/build-only) --
-  // entryStylesheetImports' own resolution never sees that nested
-  // reference, only the dev server's real transform pipeline does, at this
-  // first real request. Policy: skip unresolvable build artifacts and
-  // measure anyway wherever possible -- the component still renders, just
-  // unstyled. Scoped to ENOENT alone (stylesheetReadFailureTarget), so a
-  // stylesheet that resolves and then fails to *compile* (a real project
-  // error, e.g. an invalid sass mixin) is untouched and still fails the run
-  // loudly.
+  // ENOENT only (stylesheetReadFailureTarget): a sheet that fails to compile still fails the run.
   const message = err instanceof Error ? err.message : String(err);
   const missingTarget =
     resolvedCss.files.length > 0 ? stylesheetReadFailureTarget(message) : undefined;
@@ -533,17 +438,11 @@ export async function recoverFromUnreadableStylesheet(
   resolvedCss.files = [];
   cssReport.files = [];
   cssReport.layer = "unreadable";
-  // Each dropped file keeps its entry and carries the path that was
-  // actually tried plus the reason it was dropped, so a JSON reader sees
-  // which stylesheet was dropped instead of `layer: "unreadable"` with no
-  // record, indistinguishable from a project that had none.
-  // Only one file caused the ENOENT. The others were dropped with it
-  // when the harness rebuilt without any stylesheet, so "not readable at X"
-  // is false of them; they keep the byte and rule counts buildCssReport had
-  // already computed.
+  // Every dropped file keeps an entry: layer "unreadable" alone cannot say which sheet went.
   const priorDetails = cssReport.details ?? [];
   cssReport.details = droppedFiles.map((file) => {
     const prior = priorDetails.find((d) => d.file === file);
+    // Only one file caused the ENOENT; "not readable at X" would be false of the rest.
     const causedIt = missingTarget.split("\\").join("/").endsWith(file);
     return {
       file,
@@ -558,21 +457,14 @@ export async function recoverFromUnreadableStylesheet(
   delete cssReport.noEntryInPackage;
   delete cssReport.runtimeEngines;
   delete cssReport.runtimeEnginesRecognised;
-  // The early cache-lookup fingerprint (tryReuseStoredVerdict, above)
-  // may already have memoized a value computed with the now-dropped
-  // file still in it; un-memoize so a later --save-baseline call
-  // recomputes against the stylesheet this run actually measured with
-  // (none), not the one it started out intending to use.
+  // The cache lookup may have memoized a hash naming the dropped file; --save-baseline needs this.
   resetSourceFingerprint();
   await rebuildHarness({ ...composedHarnessOpts, cssFiles: undefined });
-  // Not wrapped again: a second failure here is a different, genuine
-  // problem (or the same page never recovering for an unrelated
-  // reason) and must propagate and fail the run like any other.
+  // Not wrapped again: a second failure is a different problem and must fail the run.
   await enterHarnessPage();
 }
 
-// What a run that died says: the accumulated warnings, the bundler failure
-// presented in the project's own terms, and the mount-abort hints.
+// What a run that died says: accumulated warnings, the bundler failure, the mount-abort hints.
 export async function classifyHarnessFault(input: {
   err: unknown;
   projectRoot: string;
@@ -581,38 +473,15 @@ export async function classifyHarnessFault(input: {
   runWarnings: string[];
 }): Promise<{ presented: string; combined: string[]; abortHints: string }> {
   const { err, projectRoot, resolvedPath, cssDecisionWarning, runWarnings } = input;
-  // transformHits's own warnings are already in runWarnings (pushed above),
-  // and the harness's own throw sites (harness/build.ts) attach their own
-  // buildWarnings on the error itself, so both sources fold into one block
-  // here.
-  // `cssDecisionWarning` is always a non-empty string, so `combined` is
-  // never empty and every throw that reaches here gets the block —
-  // including a thrown value that is not `instanceof Error`, which a naive
-  // `if (err instanceof Error)` guard would silently drop from
-  // accumulation.
+  // Warnings the harness attached to the error itself fold in with the run's own.
   const carried =
     err instanceof Error ? ((err as Error & { warnings?: string[] }).warnings ?? []) : [];
+  // cssDecisionWarning is never empty, so even a thrown non-Error still gets the warning block.
   const combined = [...new Set([cssDecisionWarning, ...runWarnings, ...carried])];
   const message = err instanceof Error ? err.message : String(err);
-  // Surface 2 of the shared pipeline (presentBundlerFailure,
-  // harness/bundler-failure.ts) -- the dev server booted fine
-  // (buildAndServe's own catch, in harness/build.ts, surface 1, never saw
-  // this) and a transform failed afterwards on a real request, arriving as
-  // page-error text inside a "did not become ready" / fatal-page-error
-  // message (e.g. a sass "Undefined mixin" error, a postcss ENOENT, a Vite
-  // import-resolve failure). Harmless to run on every other throw that
-  // reaches this catch too: the diagnosers match only specific raw bundler
-  // shapes, and the fallback stripper is conservative (keeps a frame
-  // pointing into the target repo).
+  // The dev server booted, then a transform failed on a real request; harmless on other throws.
   const presented = presentBundlerFailure(message, projectRoot, combined);
-  // A mount-phase abort throws before any report exists, so hintsForReport
-  // never runs and its catalog entries (e.g. "a missing provider needs
-  // --wrap pointing at a setup module") are otherwise unreachable for this
-  // failure path. The block is appended next to the accumulated warnings,
-  // so every consumer of this message shows it without a new channel.
-  // Both hints name a cause only from what this run read — the measured
-  // SFC's own setup block and the vite config keys the harness recorded as
-  // read-but-not-honored.
+  // A mount abort throws before any report exists, so hintsForReport never runs for this path.
   const abortHints = formatMountAbortHints(message, {
     usesInject: await measuredSfcUsesInject(resolvedPath, projectRoot, (warning) => {
       combined.push(warning);
@@ -622,8 +491,7 @@ export async function classifyHarnessFault(input: {
   return { presented, combined, abortHints };
 }
 
-// A trial mount that produced an empty root: say so, keep whatever the
-// never-composed path would have disclosed, and rebuild on the bare export.
+// Say so, keep what the never-composed path discloses, and rebuild on the bare export.
 export async function rollbackEmptyComposition(input: {
   page: import("playwright").Page;
   options: AnalyzeOptions;
@@ -647,12 +515,7 @@ export async function rollbackEmptyComposition(input: {
         writeFixtureScaffold(resolvedPath, componentExports ?? [], compositionTree),
       );
     }
-    // The rolled-back mount is about to measure the bare root
-    // alone, same shape as the never-composed case above. Checked before
-    // `compositionTree`/`componentExports` are cleared below: a root
-    // that self-wraps in one element (nonzero domNodeCount, so
-    // renderHealth never fires) but still declares recognized sibling
-    // parts must not read as an unqualified pass.
+    // Checked before the composition is cleared: a self-wrapping root must not read as a pass.
     {
       const rootName = compositionTree.root;
       const typeImportNames = await extractRelativeTypeImports(resolvedPath);
@@ -675,23 +538,16 @@ export async function recordStylesheetMatches(input: {
   onWarning: (warning: string) => void;
 }): Promise<void> {
   const { page, cssReport, onWarning } = input;
-// Read once, on the harness this run will actually measure on, before
-// throttling and before any traced window.
+// Read on the harness this run measures on, before throttling and any traced window.
 if (cssReport.details && cssReport.details.length > 0) {
   const stats = await probeStylesheetMatchStats(page);
   for (const stat of stats ?? []) {
-    // One direction only. `d.file.endsWith(stat.file)` plus `find`'s
-    // first hit could attach a probe result to the wrong entry whenever two
-    // discovered stylesheets share a trailing segment.
+    // One direction only: the reverse match misattaches when two sheets share a trailing segment.
     const normalized = stat.file.split("\\").join("/");
     const detail = cssReport.details.find((d) => normalized.endsWith(d.file));
     if (!detail) continue;
     detail.matchedRules = stat.matched;
-    // `stat.rules` is what the CSSOM probe actually read;
-    // `detail.rules` is the static count. The probe reports `rules: 0` for
-    // a sheet it could not find or could not read (cross-origin), and
-    // warning off the static count there asserts something about a sheet
-    // nothing inspected.
+    // The probe reports rules: 0 for a sheet it could not read, and detail.rules is only static.
     if (stat.rules > 0 && stat.matched === 0) {
       onWarning(STYLESHEET_MATCHED_NOTHING_WARNING(detail.file, stat.rules));
     }

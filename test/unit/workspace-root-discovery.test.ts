@@ -213,10 +213,7 @@ describe("package availability across workspace levels", () => {
     expect(isPackageAvailable("@tailwindcss/vite", member(), tmpDir)).toBe(true);
   });
 
-  // M75: the probe follows node's own lookup chain past the workspace root.
-  // Every loader in this codebase resolves through createRequire, which has no
-  // such bound, so stopping here reported packages the harness can import as
-  // absent. test/unit/package-availability-resolution.test.ts owns the rule.
+  // M75: createRequire has no such bound; package-availability-resolution.test.ts owns the rule.
   it("accepts a package installed above the workspace root", () => {
     makeTree({ "repo/package.json": "{}", "repo/packages/ui/package.json": "{}" });
     installPackage(tmpDir, "next");
@@ -245,9 +242,7 @@ describe("package availability across workspace levels", () => {
   });
 });
 
-// M72: Yarn PnP replaces node_modules with a virtual filesystem this harness
-// cannot resolve through, so it is detected and rejected rather than left to
-// fail with a raw resolution error.
+// M72: the harness can't resolve through Yarn PnP, so PnP is detected and rejected early.
 describe("Yarn PnP detection", () => {
   it("is false for a plain node_modules workspace", () => {
     makeTree({ "package.json": "{}" });

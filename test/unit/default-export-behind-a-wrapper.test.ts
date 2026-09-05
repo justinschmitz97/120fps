@@ -8,9 +8,7 @@ const FIXTURES = path.resolve(__dirname, "../../fixtures");
 
 const exportsOf = (file: string) => scanExports(fs.readFileSync(file, "utf-8"), file);
 
-// logto-F1: `export default forwardRef(Button)` was recorded as no default at
-// all, so the picker fell through to the first non-Provider export and the
-// header named `LinkButton` while the props table described `Button`.
+// logto-F1: forwardRef(Button) default read as none; picker fell to the first non-Provider export.
 
 describe("a default export written as a call wrapper", () => {
   it("binds the identifier the wrapper names", () => {

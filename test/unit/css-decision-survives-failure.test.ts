@@ -6,12 +6,7 @@ import { analyze } from "../../src/pipeline/index.js";
 import { formatStylesheetsLine, type CssReport } from "../../src/report/index.js";
 import type { ServerPool } from "../../src/harness/index.js";
 
-// M90: the stylesheet decision (`Stylesheets:` line) currently prints only
-// inside the final report block, so a run that throws before that block is
-// assembled discloses nothing — dub printed it in 0 of 12 runs. This suite
-// pins the fix: the same decision, formatted once, folded into the
-// crash-path "Warnings recorded before this failure:" block that already
-// survives a `buildAndServe` throw, for every thrown shape.
+// M90 (dub, 0 of 12 runs): the Stylesheets decision must fold into the crash-path warnings block.
 
 function poolThatThrows(err: unknown): ServerPool {
   return {
@@ -110,10 +105,7 @@ describe("M90: stylesheet decision survives a buildAndServe throw", () => {
     } catch (err) {
       thrown = err as Error;
     }
-    // Precise, not just "mentions the filename somewhere": the exact
-    // formatStylesheetsLine text (the actual "Stylesheets:"-prefixed
-    // decision line, distinct from the pre-existing fallback caveat
-    // warning), proving this is the M90 mechanism.
+    // The exact formatStylesheetsLine text, distinct from the pre-existing fallback caveat warning.
     expect(thrown!.message).toContain(
       formatStylesheetsLine({
         files: ["globals.css"],

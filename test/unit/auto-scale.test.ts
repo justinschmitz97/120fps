@@ -91,8 +91,7 @@ describe("detectScalingProps", () => {
   });
 
   it("matches scaling numeric names", () => {
-    // M103 (base-ui-F3): `max` alone left this list — it denotes a bound, not
-    // a quantity of rendered things. `maxItems` and the rest still match.
+    // M103 (base-ui-F3): `max` alone denotes a bound, not a quantity, and stays off this list.
     for (const name of ["count", "size", "length", "limit", "total", "depth", "level", "columns", "rows", "pages"]) {
       const schemas: PropSchema[] = [
         { name, kind: "number", required: true, values: [] },

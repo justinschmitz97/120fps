@@ -85,8 +85,6 @@ describe("extractExports", () => {
     });
   });
 
-  // ─── M24 D2: additional export forms, parse-only ───
-
   it("recognizes export default <Identifier>; (export assignment)", () => {
     const filePath = writeFixture("assign.tsx", `
       function Button() { return null; }

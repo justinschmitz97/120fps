@@ -4,15 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { explainProps, formatAccumulatedWarnings, FRAMEWORK_FLAG_NO_MOUNT_EFFECT_WARNING } from "../../src/pipeline/index.js";
 
-// element-plus F1/F2 (verify/V4): `packages/components/tabs/src/tabs.tsx` is a
-// pure-Vue render function in a repo that declares vue and no react-dom. The
-// refusal is right; the reason printed was "react-dom is not a dependency of
-// this project", which reads as an install problem and invites `npm i
-// react-dom`, a remedy that cannot help. The same run printed a
-// "Warnings recorded before this failure:" header with nothing under it, and
-// `--framework vue` was a silent no-op in the dry run while the real run
-// disclosed it.
-
+// element-plus F1/F2 (verify/V4): tabs.tsx mirrors a real project scan regression.
 describe("a React-extension file in a Vue project is refused for the reason that applies", () => {
   const tmpDirs: string[] = [];
 

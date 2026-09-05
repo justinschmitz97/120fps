@@ -4,12 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { scanExternalDeps } from "../../src/harness/index.js";
 
-// epic-stack-F1: `#app/utils/misc.tsx` is a Node subpath import declared in the
-// measured package's own `imports` map. Classified as a bare package it becomes
-// an `optimizeDeps.include` entry for `#app`, which Vite resolves against the
-// package's map, finds no `#app` key, and throws
-// `Missing "#app" specifier in "epic-stack-template" package` — a failure the
-// harness manufactured for a graph edge that resolves to a file on disk.
+// epic-stack-F1: a subpath import resolving to a real file must not become an optimizeDeps entry.
 const FIXTURE = path.resolve(import.meta.dirname, "..", "..", "fixtures", "imports-field-project");
 
 let tmpDir: string;
@@ -89,9 +84,7 @@ describe("a subpath import declared in the package's own imports map", () => {
     expect(scanExternalDeps(entry, tmpDir, [])).toEqual(["tokens-pkg"]);
   });
 
-  // M108 review: an imports entry may name a dependency instead of a local
-  // file. That package is an ordinary external import; dropped from the
-  // pre-bundle list, Vite discovers it on first page load and full-reloads.
+  // specs/milestones/m108-a-diagnosis-names-the-layer-that-failed.md: dropped from pre-bundle list.
   it("reports the package an imports entry points at, not the # specifier", () => {
     write("package.json", JSON.stringify({ name: "p", imports: { "#dep": "lodash-es" } }));
     const entry = write("List.tsx", `import { map } from "#dep";\nexport const List = map;\n`);

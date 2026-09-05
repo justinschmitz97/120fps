@@ -5,17 +5,10 @@ import { describePhaseBreakdown } from "./phases.js";
 import { presentWarnings } from "./terminal.js";
 import type { IsolationReport } from "../analysis/index.js";
 
-// Both formats derive from `Report` alone: no measurement state, no filesystem,
-// no network. 120fps emits what forges consume and never talks to a forge.
-
-// Curve, isolation, and cached reports ship `combos: []`: the mode's
-// real data lives in a different field. One dispatch point per serializer
-// keeps a future mode from silently rendering as "empty".
+// Curve, isolation and cached reports ship `combos: []`; their data lives in another field.
 type ReportMode = "combo" | "cached" | "curve" | "isolation" | "empty";
 
-// Serializer dispatch is about which field carries the numbers, so the combo
-// and cached shapes are still checked here. The curve/isolation split comes
-// from the report's own mode discriminator rather than a second guess.
+// The curve/isolation split comes from the report's own mode discriminator.
 function reportMode(report: Report): ReportMode {
   if (report.combos.length > 0) return "combo";
   if (report.cached) return "cached";
@@ -26,9 +19,7 @@ function reportMode(report: Report): ReportMode {
 }
 
 function isolationWarnSignal(iso: IsolationReport): boolean {
-  // computeIsolationVerdict (src/analysis/isolation.ts) never fails a run on StrictMode
-  // overhead by design: it only warns. That is the one isolation-native warn
-  // condition; anything else that flips `pass` is already a hard fail.
+  // computeIsolationVerdict (analysis/isolation.ts) only warns on StrictMode overhead.
   return !!iso.strictMode && !iso.strictMode.doubleInvokeClean;
 }
 
@@ -53,10 +44,7 @@ function ms(value: number | undefined): string {
   return typeof value === "number" ? `${value.toFixed(2)}ms` : "—";
 }
 
-// Table-cell content for the mount/rerender columns. Curve and isolation
-// reports carry real numbers elsewhere on `Report`; only a genuinely
-// unrecognized shape (no combos, no cached/curve/isolation field) has nothing
-// to show.
+// Only an unrecognized shape (no combos, no cached/curve/isolation field) has nothing to show.
 function modeTimings(report: Report): { mount: string; rerender: string } {
   switch (reportMode(report)) {
     case "combo": {
@@ -112,9 +100,7 @@ function escapeMdCell(value: string): string {
   return value.replace(/\|/g, "\\|");
 }
 
-// Points-with-growth-class for a curve report and, on failure, which
-// classification broke the verdict. Shared by the markdown detail block and
-// the JUnit failure body so both surfaces name the same numbers.
+// Shared by the markdown detail block and the JUnit failure body, so both name the same numbers.
 function curveFailureLines(cr: ScalingCurveReport, thresholds: Thresholds): string[] {
   const lines: string[] = [];
   if (cr.mountCurve.growthClass === "quadratic" || cr.mountCurve.growthClass === "exponential") {
@@ -134,12 +120,7 @@ function curveFailureLines(cr: ScalingCurveReport, thresholds: Thresholds): stri
   return lines;
 }
 
-// Isolation's own fail conditions (src/analysis/isolation.ts computeIsolationVerdict):
-// leak suspected, churn degradation past the limit, or mount past its budget.
-// Leak and churn are checked with the exact constants the pipeline uses, so
-// they never drift from what actually failed the run. Mount has no stored
-// budget on `Report` (isolation resolves a tiered budget analyze.ts does not
-// persist): reported by elimination only when nothing else explains the fail.
+// Mount has no stored budget on `Report`, so it is named by elimination only.
 function isolationFailureLines(iso: IsolationReport): string[] {
   const lines: string[] = [];
   if (iso.memory?.leakSuspected) {
@@ -230,9 +211,7 @@ export function formatMarkdown(reports: Report[]): string {
   for (const report of reports) {
     const timings = modeTimings(report);
     const cached = report.cached ? " _(cached)_" : "";
-    // The terminal's own breakdown, per component. A report with no
-    // phaseTimings -- an older JSON, a cached verdict -- is a dash: it did not
-    // spend zero seconds, it did not record where its seconds went.
+    // A dash means no phaseTimings were recorded, never zero seconds spent.
     const phases = describePhaseBreakdown(report.phaseTimings);
     lines.push(
       `| \`${escapeMdCell(report.componentPath)}\`${cached} | ${timings.mount} | ` +
@@ -241,8 +220,7 @@ export function formatMarkdown(reports: Report[]): string {
     );
   }
 
-  // Regression numbers go behind a fold: a sweep of thirty components must not
-  // outgrow a forge comment, and the JSON file remains the full reference.
+  // Behind a fold: a sweep of thirty components must not outgrow a forge comment.
   const withRegressions = reports.filter((r) => (r.baseline?.regressions.length ?? 0) > 0);
   if (withRegressions.length > 0) {
     lines.push("", "<details><summary>Regressions</summary>", "");
@@ -260,13 +238,7 @@ export function formatMarkdown(reports: Report[]): string {
     lines.push("</details>");
   }
 
-  // Curve and isolation reports carry more than two numbers; the summary row
-  // shows the headline value, this fold shows every scale point / phase, and
-  // on failure the same lines the JUnit failure body carries. Unlike the
-  // regressions fold, this one is not gated on failure: these numbers are
-  // always-relevant, and both modes are typically run one component at a
-  // time, so it does not threaten comment size the way a thirty-component
-  // regression list would.
+  // Not gated on failure: both modes run one component at a time, so size is no risk.
   const modeDetails = reports
     .map((report) => {
       const mode = reportMode(report);
@@ -290,10 +262,7 @@ export function formatMarkdown(reports: Report[]): string {
     lines.push("</details>");
   }
 
-  // README.md promises the markdown output carries the run's warnings. One
-  // fold per component that has any, deduped and counted exactly as the
-  // terminal prints them, so the two channels cannot disagree about what the
-  // run said.
+  // README.md promises the markdown output carries the run's warnings.
   for (const report of reports) {
     const warnings = presentWarnings(report);
     if (warnings.length === 0) continue;
@@ -342,8 +311,7 @@ function failureBody(report: Report): string {
     case "combo":
       for (const combo of report.combos) {
         if (combo.verdict !== "fail") continue;
-        // A render error fails without any budget being exceeded, so
-        // naming a tier here would send the reader after the wrong number.
+        // A render error exceeds no budget, so naming a tier misdirects the reader.
         if (combo.renderHealth === "error") {
           lines.push(
             `combo ${combo.comboIndex}: rendered 0 DOM nodes while the page threw: ` +

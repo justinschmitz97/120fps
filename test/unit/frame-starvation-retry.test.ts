@@ -15,10 +15,7 @@ import {
   targetClosedDegradedWarning,
 } from "../../src/browser/index.js";
 
-// M89: taxonomy's control — button.tsx dies in the delta pass with
-// `frame starvation: rAF fence exceeded 10000ms`, and the fence had no
-// retry at all. These tests exercise the bounded-retry + disclosed-
-// degradation mechanism directly, without a real browser.
+// M89: button.tsx died on an unretried frame-starvation fence; these test bounded retry + disclose.
 
 describe("isFrameStarvationError", () => {
   it("matches the fence's exact thrown message", () => {
@@ -102,7 +99,6 @@ describe("withFrameStarvationRetry", () => {
   });
 });
 
-// M89 harden.
 describe("M89 harden: withFrameStarvationRetry adversarial cases", () => {
   it("h1: starvation on the very last allowed attempt still recovers", async () => {
     let attempts = 0;
@@ -162,10 +158,7 @@ describe("M89 harden: withFrameStarvationRetry adversarial cases", () => {
     expect(MAX_FRAME_STARVATION_RETRIES).toBeLessThan(10);
   });
 
-  // M92 (1.5a, regression): enter() re-runs enterHarness's own independent
-  // style-settle fence. Previously that call sat outside any guard, so a
-  // starvation during recovery escaped this function uncaught -- the exact
-  // failure this retry exists to prevent, relocated one frame up.
+  // M92 (1.5a): enter() re-runs its own style-settle fence; a starvation there must not escape.
   it("h9: a starvation during enter() itself is caught and counts against the same bounded budget, then degrades", async () => {
     const enter = vi.fn(async () => {
       throw new Error("frame starvation: style settle fence exceeded 10000ms");
@@ -176,9 +169,7 @@ describe("M89 harden: withFrameStarvationRetry adversarial cases", () => {
     const onWarning = vi.fn();
     await expect(withFrameStarvationRetry(2, enter, body, onWarning)).resolves.toBeUndefined();
     expect(onWarning).toHaveBeenCalledWith(frameStarvationDegradedWarning(2));
-    // Bounded overall: body() is called at most MAX_FRAME_STARVATION_RETRIES+1
-    // times and enter() at most MAX_FRAME_STARVATION_RETRIES times, whether
-    // the starvation comes from body() alone or is mixed with enter().
+    // Bounded overall: body() runs at most MAX+1 times, enter() at most MAX times, mixed or not.
     expect(body.mock.calls.length).toBeLessThanOrEqual(MAX_FRAME_STARVATION_RETRIES + 1);
     expect(enter.mock.calls.length).toBeLessThanOrEqual(MAX_FRAME_STARVATION_RETRIES);
   });
@@ -228,21 +219,14 @@ describe("M89 harden: withFrameStarvationRetry adversarial cases", () => {
     const onWarning = vi.fn(() => {
       throw new Error("warning sink broke");
     });
-    // A broken warning sink is a caller bug; document that it currently
-    // propagates rather than being swallowed, so callers know onWarning
-    // must not throw.
+    // A broken warning sink is a caller bug; it propagates rather than being swallowed.
     await expect(withFrameStarvationRetry(0, enter, body, onWarning)).rejects.toThrow(
       "warning sink broke",
     );
   });
 });
 
-// M89 defect 1: taxonomy's run correctly degraded two starved combos, then
-// still died with `browserContext.newCDPSession: Target page, context or
-// browser has been closed` -- a closed target and a wedged trace pipeline
-// used to bypass this retry entirely (only frame starvation was guarded)
-// and abort the whole pass. Both are recovered the same way frame
-// starvation is: `enter` re-enters against a fresh CDP session.
+// M89 defect 1: a closed target or wedged trace pipeline must not bypass this retry either.
 
 describe("isTracingTimeoutError", () => {
   it("matches the CDP tracing-timeout message", () => {
@@ -337,9 +321,7 @@ describe("M89 defect 1: withFrameStarvationRetry covers all three stall signatur
   });
 
   it("a closed target reached only through enter()'s own retry (the exact live-proof shape) still degrades instead of escaping", async () => {
-    // The taxonomy failure: body() throws something enter() can fix, but
-    // enter() itself (refreshCdpSession's newCDPSession call) then throws
-    // the closed-target error because the browser is going away.
+    // Taxonomy failure: body() throws something fixable, but enter() then throws closed-target too.
     const enter = vi.fn(async () => {
       throw new Error("browserContext.newCDPSession: Target page, context or browser has been closed");
     });
@@ -379,7 +361,6 @@ describe("M89 defect 1: withFrameStarvationRetry covers all three stall signatur
     expect(enter).toHaveBeenCalledTimes(2);
   });
 
-  // M89 defect 1 harden.
   it("h12: the exact live-proof message (phase prefix + inner CDP method name) still classifies as target-closed, not frame starvation", () => {
     const live =
       "rerender phase failed on combo 1 of button.tsx: browserContext.newCDPSession: Target page, " +
@@ -415,9 +396,7 @@ describe("M89 defect 1: withFrameStarvationRetry covers all three stall signatur
       return "recovered";
     });
     const onWarning = vi.fn();
-    // enter() always throws a tracing-timeout, which counts against the same
-    // budget as body()'s target-closed stalls; on the last body() attempt
-    // body() no longer throws, so the loop returns before enter() runs again.
+    // enter() always throws tracing-timeout, sharing budget with body()'s target-closed stalls.
     const result = await withFrameStarvationRetry(10, enter, body, onWarning);
     expect(result).toBe("recovered");
     expect(onWarning).toHaveBeenCalledWith(targetClosedRetryWarning(10));
@@ -432,17 +411,7 @@ describe("M89 defect 1: withFrameStarvationRetry covers all three stall signatur
   });
 });
 
-// M89 defect 2 (live taxonomy proof): combo 2 correctly degrades via its
-// sample loop's withFrameStarvationRetry composition, then combo 3 fails the
-// whole run with a raw, unwrapped `frame starvation` error and *no* preceding
-// "retrying against a freshly re-entered harness session" warning -- proof
-// the failure never reached withFrameStarvationRetry at all. The cause is
-// not budget scoping (withFrameStarvationRetry's own `attempt` counter is a
-// fresh local per call, already isolated per combo/sample) but a coverage
-// gap: measureRerender's and measureMount's warmup calls (mountAndWait,
-// rerenderAndTrace, runMountUnmount) ran outside any retry wrapper.
-// `withWarmupRetry` closes that gap the same way the sample loops are
-// already guarded, sharing the pass's retryBudget the same way.
+// M89 defect 2: warmup calls (mountAndWait, rerenderAndTrace, runMountUnmount) must be guarded too.
 describe("withWarmupRetry", () => {
   it("returns true without warning when warmup succeeds on the first attempt", async () => {
     const enter = vi.fn(async () => {});
@@ -516,9 +485,7 @@ describe("withWarmupRetry", () => {
 });
 
 describe("M89 defect 2: per-combo scoping across a multi-combo run (mirrors measureRerender/measureMount's warmup-then-sample composition)", () => {
-  // Models the actual loop shape in src/measure.ts after this fix: a warmup
-  // step (withWarmupRetry) followed by a sample step (withFrameStarvationRetry),
-  // both sharing one enter() and one pass-scoped retryBudget across combos.
+  // Models measure.ts's loop: warmup (withWarmupRetry) then sample (withFrameStarvationRetry).
   async function runCombos(
     behavior: Array<{ warmupFails?: boolean; sampleFails?: boolean }>,
     onWarning: (warning: string) => void,

@@ -26,8 +26,7 @@ describe("attribution window edge cases", () => {
     expect(total).toBeLessThanOrEqual(mount.mount.samples[0]);
   }, 240_000);
 
-  // H2: warmup renders are discarded before recording, so they must not
-  // inflate the divisor or the sum.
+  // H2: warmup renders are discarded before recording; they must not inflate the divisor or sum.
   it("warmups stay out of the window count", async () => {
     const { mount, attribution } = await attributionFor("./fixtures/large-dom.tsx", {
       samples: 3,

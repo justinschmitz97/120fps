@@ -50,8 +50,7 @@ const FAST: AnalyzeOptions = {
 };
 
 describe("measured-state probe edge cases", () => {
-  // H1: the false-positive that would make the signal useless: a single
-  // passive effect setting state is the most common React shape there is.
+  // H1: a single passive-effect setState is the most common shape; false positive ruins the signal.
   it("H1: one useEffect setState settles inside the mount fence", async () => {
     const { page, harness } = await opened("./fixtures/m40-effect-once.tsx");
     try {
@@ -84,8 +83,7 @@ describe("measured-state probe edge cases", () => {
     }
   }, 90000);
 
-  // H3: a request left hanging by an earlier combo must not follow the next
-  // one around: pending is scoped by request id, not by count.
+  // H3: pending is scoped by request id, not count; earlier leftover can't follow the next combo.
   it("H3: a request from an earlier combo does not flag the next", async () => {
     const { page, harness } = await opened("./fixtures/m40-fetch-on-mount.tsx", async (p) => {
       await p.route("**/m40-stall", () => {});
@@ -133,7 +131,7 @@ describe("measured-state probe edge cases", () => {
         try {
           await (window as any).fetch("http://[bad");
         } catch {
-          /* expected */
+          // Expected: the malformed URL rejects.
         }
       });
       expect((await readNetworkProbe(page)).pending).toEqual([]);
@@ -184,8 +182,7 @@ describe("measured-state probe edge cases", () => {
     }
   }, 90000);
 
-  // H8: the probe re-installs on every enterHarness (page reloads mid-run,
-  // M30 context retry). A second install must not double-wrap fetch.
+  // H8: probe re-installs on enterHarness (M30 retry); second install must not double-wrap fetch.
   it("H8: installing twice does not double-count", async () => {
     const { page, harness } = await opened("./fixtures/m40-settled.tsx", async (p) => {
       await p.route("**/m40-ok", (route) => route.fulfill({ status: 200, body: "ok" }));
@@ -242,8 +239,7 @@ describe("measured-state probe edge cases", () => {
     }
   }, 90000);
 
-  // H13: send() throws when the request was never opened. No loadend is
-  // coming, so the id must not sit in the pending set forever.
+  // H13: send() throws if never opened; with no loadend coming, the id must not leak into pending.
   it("H13: a throwing send does not leak a pending id", async () => {
     const { page, harness } = await opened("./fixtures/m40-settled.tsx");
     try {
@@ -252,7 +248,7 @@ describe("measured-state probe edge cases", () => {
         try {
           xhr.send();
         } catch {
-          /* expected: not opened */
+          // Expected: send() throws because open() was never called.
         }
       });
       expect((await readNetworkProbe(page)).pending).toEqual([]);

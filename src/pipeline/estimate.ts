@@ -11,29 +11,21 @@ import { type PredictedMode, computeEffectiveSamples } from "./modes/context.js"
 
 export interface RunCostEstimate {
   estimatedMs: number;
-  // The counts the real run would measure: the same combo cap and the same
-  // `computeEffectiveSamples` the dispatcher applies.
+  // The counts the real run would measure: same combo cap, same computeEffectiveSamples.
   combos: number;
   samples: number;
-  // "baseline" means the per-phase numbers are this component's own, recorded
-  // by a `--save-baseline` run on this machine. "defaults" means they are the
-  // documented fleet medians and the line says so.
+  // "baseline": this machine's --save-baseline numbers; "defaults": documented fleet medians.
   source: "baseline" | "defaults";
 }
 
-// Fallback per-phase numbers used when no baseline is recorded. `fixedMs`
-// covers preflight, build, calibration and analysis; `perMountSampleMs` is
-// one mount sample; `perComboMs` covers the rerender, explore and
-// attribution work a combo carries beyond its mount samples.
+// fixedMs covers preflight, build, calibration and analysis; perComboMs the non-mount combo work.
 export const DEFAULT_PHASE_ESTIMATE = {
   fixedMs: 15_000,
   perMountSampleMs: 700,
   perComboMs: 2_500,
 };
 
-// An estimate, never a measurement: it multiplies per-unit costs by the units
-// the real run would measure. Nothing here starts a server, a browser or a
-// measurement.
+// An estimate, never a measurement: no server, no browser, no page.
 export function estimateRunCost(input: {
   combos: number;
   samples: number;
@@ -69,11 +61,7 @@ export function estimateRunCost(input: {
   };
 }
 
-// The units the mode this dry run predicts would actually measure. Curve mode
-// measures one point per scale point and applies no sample throttle; matrix
-// mode measures capped cells; the standard combo path measures the capped prop
-// combos *plus* the scale anchors `runComboMode` always appends, and throttles
-// samples against that larger count.
+// Curve mode applies no sample throttle; the combo path throttles against capped combos + anchors.
 function estimateMeasuredUnits(
   input: {
     schemas: PropSchema[];
@@ -99,10 +87,7 @@ function estimateMeasuredUnits(
   return { combos, samples: computeEffectiveSamples(combos, requested) };
 }
 
-// The dry run predicts costs without running anything: no server, no
-// browser, no measurement. A fixture or an auto-composed scene supplies one
-// combo; otherwise the real run's own combo generation, cap and sample
-// throttle decide the units.
+// A fixture supplies one combo; otherwise the real run's own cap and throttle decide the units.
 export function estimateExplainedRunCost(input: {
   schemas: PropSchema[];
   projectRoot: string;
@@ -118,8 +103,7 @@ export function estimateExplainedRunCost(input: {
   const { combos, samples } = estimateMeasuredUnits(input, cap, requested);
 
   const cpus = os.cpus();
-  // A truncated or hand-edited baseline file must not abort a dry run that
-  // measures nothing: the estimate falls back to the documented defaults.
+  // A truncated or hand-edited baseline must not abort a dry run; fall back to the defaults.
   const baseline = (() => {
     try {
       return loadBaseline(path.join(input.projectRoot, "120fps-baseline.json"));

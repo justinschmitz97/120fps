@@ -13,8 +13,6 @@ import { selectMatrixCombos, type PropCombination } from "../../src/props/index.
 import type { MountResult, RerenderResult } from "../../src/browser/index.js";
 import type { ExploreResult, StateGraph } from "../../src/analysis/index.js";
 
-// --- Helpers ---
-
 function makeEmptyGraph(): StateGraph {
   const nodes = new Map();
   nodes.set("abc", { id: "abc", depth: 0, interactions: [], pathFromRoot: [] });
@@ -93,8 +91,6 @@ function makeReport(overrides: Partial<Report> = {}): Report {
   };
 }
 
-// --- Contract 1: scale-probe identity ---
-
 describe("scale-probe identity", () => {
   it("strips __120fps_scaleN from combo.props and records scaleProbe", () => {
     const report = buildReport(baseInput(
@@ -134,8 +130,6 @@ describe("scale-probe identity", () => {
     expect(table).not.toContain("copies");
   });
 });
-
-// --- Contract 2: one curve per mechanism ---
 
 describe("scale-probe curve isolation", () => {
   it("does not fit a curve across real combos with merely differing DOM counts", () => {
@@ -197,8 +191,6 @@ describe("scale-probe curve isolation", () => {
   });
 });
 
-// --- Contract 3: header reconciliation ---
-
 describe("combo-count header excludes scale probes", () => {
   it("counts only prop combos in 'measured', and names scale probes separately", () => {
     const line = describeMode(makeReport({
@@ -239,8 +231,6 @@ describe("combo-count header excludes scale probes", () => {
     expect(line).not.toContain("0 measured");
   });
 });
-
-// --- Contract 4: matrix combo cap ---
 
 describe("selectMatrixCombos", () => {
   const axes = [
@@ -302,8 +292,6 @@ describe("MATRIX_CELL_CAP_WARNING", () => {
     expect(warning).toContain("--max-combos");
   });
 });
-
-// --- Contract 5: probe cost gating ---
 
 describe("boundScalePointsByProbeCost", () => {
   it("keeps every point when the cheapest probe is under the gate", () => {

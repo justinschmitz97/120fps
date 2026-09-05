@@ -28,13 +28,6 @@ export function parseEnvFile(text: string): Record<string, string> {
   return values;
 }
 
-// Verified against the installed Vite 6.4.2: the vite:define transform returns
-// early for a client environment outside a build, so config defines reach the
-// page through vite/dist/client/env.mjs, which walks each dotted key and assigns
-// it onto globalThis. Without one, `process` is undefined in the page and any
-// `process.env.X` throws. Keys are sorted before serialization, so the bare
-// object is created first and the specific keys are written into it.
-// Only public prefixes are exported: a .env also holds database URLs.
 export function readEnvDefines(
   memberRoot: string,
   workspaceRoot: string = findWorkspaceRoot(memberRoot),
@@ -57,21 +50,17 @@ export function readEnvDefines(
     }
   }
 
+  // Vite assigns each dotted define onto globalThis; without this, `process` is undefined.
   const defines: Record<string, string> = { "process.env": "{}" };
   for (const [key, value] of Object.entries(values)) {
+    // Public prefixes only: a .env also holds database URLs.
     if (!ENV_DEFINE_PREFIXES.some((prefix) => key.startsWith(prefix))) continue;
     defines[`process.env.${key}`] = JSON.stringify(value);
   }
   return defines;
 }
 
-// readEnvDefines reads .env/.env.local at the workspace and member levels and
-// forwards only NEXT_PUBLIC_*/VITE_*-prefixed keys as Vite defines —
-// process.env itself is defined as `{}`, so nothing from the invoking
-// shell's own environment ever reaches the page. A fatal page error whose
-// real cause is a missing env var needs to know whether that remedy even
-// applies here: this answers "does any env file exist at all", independent
-// of whether it defined a page-visible key.
+// Answers whether any env file exists, independent of whether it defined a page-visible key.
 export function hasAnyEnvFile(
   memberRoot: string,
   workspaceRoot: string = findWorkspaceRoot(memberRoot),

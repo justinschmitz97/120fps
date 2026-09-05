@@ -16,9 +16,7 @@ async function cli(args: string[]): Promise<{ code: number; stdout: string; stde
   }
 }
 
-// The unit tests exercise expandComponentPaths directly, which cannot catch a
-// module-initialisation order bug: `main()` runs at import time, and a const
-// declared below it is in the temporal dead zone. Only the real binary shows it.
+// Unit tests miss this: `main()` runs at import time, hitting a TDZ bug only the binary shows.
 describe("the built CLI expands paths", () => {
   it("reports a usage error naming the argument that matched nothing", async () => {
     const { code, stderr } = await cli(["./fixtures/definitely-not-here"]);
@@ -28,8 +26,7 @@ describe("the built CLI expands paths", () => {
   });
 
   it("does not crash on a directory argument", async () => {
-    // --help short-circuits before measuring, so this stays fast while still
-    // running the same module-initialisation path.
+    // --help short-circuits before measuring, keeping this fast on the same init path.
     const { code, stdout, stderr } = await cli(["./fixtures", "--help"]);
     expect(stderr).not.toContain("ReferenceError");
     expect(code).toBe(0);

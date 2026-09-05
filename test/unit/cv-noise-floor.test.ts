@@ -1,10 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { buildTimingWithCV } from "../../src/report/index.js";
 
-// M35: driven pacing shrinks medians to their busy cost; relative CV on a
-// sub-millisecond metric explodes while absolute noise stays trivial. The
-// unstable flag requires both: high relative CV AND noise above the 0.5ms
-// floor (M29's normalization floor).
+// M35: the unstable flag requires both high relative CV and noise above the 0.5ms floor (M29).
 describe("unstable flag has an absolute noise floor", () => {
   it("high relative CV with sub-floor absolute noise is stable", () => {
     const t = buildTimingWithCV([0.4, 0.6]); // cv 20%, stddev 0.1ms

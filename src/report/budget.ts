@@ -44,29 +44,19 @@ export interface BaselineEntry {
   interactions: Record<string, number>;
   tier: ComponentTier;
   env?: EnvFingerprint;
-  // Identity of the sources this entry measured, and the verdict of the
-  // run that saved it: together they let an unchanged component reuse the
-  // entry instead of re-measuring.
+  // With pass, lets an unchanged component reuse this entry instead of re-measuring.
   sourceFingerprint?: string;
   pass?: boolean;
-  // The scene the entry measured. Absent on baselines that recorded no
-  // scene at all: an unknown state is not a changed state.
+  // Absent when no scene was recorded: an unknown state is not a changed state.
   measuredState?: MeasuredState;
-  // When this slot was last written, for pruning. Absent means an older
-  // slot that predates this field, which is kept: absence is not age.
+  // Pruning timestamp; a slot without one is kept, because absence is not age.
   savedAt?: string;
-  // Where the recording run's minutes went, and the combo and sample
-  // counts it spent them on, so a later dry run can scale them to the run it
-  // is predicting. Never part of `computeEnvKey` or the baseline key: an entry
-  // that differs only here is still the same slot and is still reused.
+  // Outside computeEnvKey and the baseline key: an entry differing only here is the same slot.
   phaseTimings?: PhaseTimings;
   phaseUnits?: { combos: number; samples: number };
 }
 
-// The entry a dry run may estimate from. A dry run launches no
-// browser, so `chromiumVersion` cannot be part of the match; machine identity
-// is what the estimate depends on, and a mismatch falls back to the defaults
-// rather than presenting another machine's numbers as a prediction.
+// A dry run launches no browser, so chromiumVersion cannot be part of the match.
 export function selectPhaseTimingEntry(
   baseline: Baseline | null,
   componentPath: string,
@@ -89,9 +79,7 @@ export function selectPhaseTimingEntry(
   return candidates[0];
 }
 
-// Order-independent identity over file contents plus a config string.
-// Missing files hash as missing: absence is part of the identity, not an
-// error, so a deleted import invalidates the fingerprint like an edit does.
+// A missing file hashes as "missing", so a deleted import invalidates the fingerprint.
 export function computeSourceFingerprint(
   projectRoot: string,
   files: string[],
@@ -115,16 +103,14 @@ export function computeSourceFingerprint(
     .digest("hex");
 }
 
-// Keys are `<componentPath>#<envKey>`. A version-1 file's plain component
-// keys are rekeyed on load, so readers only ever see slots.
+// entries is keyed `<componentPath>#<envKey>`; a version-1 file is rekeyed on load.
 export interface Baseline {
   version: 1 | 2;
   timestamp: string;
   entries: Record<string, BaselineEntry>;
 }
 
-// What a run contributes to a baseline: the recorded entry plus the metric
-// names whose CV disqualifies them from a regression check.
+// unstable holds the metric names whose CV disqualifies them from a regression check.
 export interface BaselineMetrics {
   mount: number;
   rerender: number;
@@ -150,12 +136,9 @@ export interface BudgetComparison {
   missingInteractions: string[];
   envMatch: EnvMatch;
   envMismatches: string[];
-  // Set when baseline and current run measured different scenes. The
-  // comparison is skipped: a skeleton against settled content is a different
-  // component, not a regression.
+  // Different scenes; comparison skipped, because a skeleton is not a regression.
   measuredStateMismatch?: { baseline: MeasuredState; current: MeasuredState };
-  // The entry came from another environment's slot. Informational: such a
-  // comparison never fails a run.
+  // Another environment's slot; such a comparison never fails a run.
   crossEnvironment?: boolean;
   // The machine was too busy to compare against. No verdicts were drawn.
   skippedNoisy?: boolean;
@@ -198,8 +181,7 @@ export const UNKNOWN_ENV_WARNING =
 export const MISSING_CALIBRATION_NOTE =
   "calibration total duration missing; compared raw milliseconds";
 
-// Normalization divides by a small number, so sub-resolution movement can cross
-// a percentage tolerance. Below this raw delta nothing counts as a regression.
+// Normalizing divides by a small number, so sub-resolution movement can cross a tolerance.
 export const NORMALIZED_FLOOR_MS = 0.5;
 
 const CALIBRATION_DRIFT_BAND = 0.1;
@@ -211,13 +193,10 @@ const DEFAULT_TOLERANCE: ResolvedTolerance = {
   unmount: 20,
 };
 
-// Fields resolveComponentBudget/resolveTolerances read as budget numbers:
-// shared by `defaults`, each `components[...]` entry, and `tolerance`.
+// The numeric fields shared by `defaults`, each `components[...]` entry, and `tolerance`.
 const NUMERIC_BUDGET_FIELDS = ["mount", "rerender", "interaction", "unmount"] as const;
 
-// Renders a parsed JSON value for an error message: quoted for strings so
-// "5" is distinguishable from 5, typed for numbers/booleans, untyped for
-// null since JSON null has no ambiguous typeof to report.
+// Strings are quoted so "5" is distinguishable from 5 in the error message.
 function describeConfigValue(value: unknown): string {
   if (value === null) return "null";
   if (Array.isArray(value)) return `${JSON.stringify(value)} (array)`;
@@ -235,10 +214,7 @@ function checkBudgetNumber(configPath: string, keyPath: string, value: unknown):
   );
 }
 
-// Malformed-but-parseable values (mount: "fast", negative numbers, null)
-// would otherwise silently reach resolveComponentBudget/resolveTolerances and
-// produce nonsense budgets. Unknown keys are left untouched: forward compat
-// for fields a newer version of 120fps understands.
+// Unknown keys pass: forward compatibility with fields a newer 120fps understands.
 export function validateBudgetConfig(configPath: string, config: unknown): asserts config is BudgetConfig {
   if (config === null || typeof config !== "object" || Array.isArray(config)) {
     throw new Error(
@@ -267,9 +243,7 @@ export function validateBudgetConfig(configPath: string, config: unknown): asser
   }
 }
 
-// A monorepo keeps one committed policy at the workspace root; a member
-// that has its own config still wins, because the nearer file is the more
-// specific statement.
+// The nearer config wins: a member's own file overrides the workspace root's.
 export function loadBudgetConfig(projectRoot: string): BudgetConfig | null {
   for (const root of new Set([projectRoot, findWorkspaceRoot(projectRoot)])) {
     const configPath = path.join(root, "120fps.config.json");
@@ -315,13 +289,7 @@ export function resolveComponentBudget(
   };
 }
 
-// Bumped whenever a measurement changes meaning rather than value. Distinct
-// from `shape`, which versions which fields exist and must stay comparable.
-// 3: removed ~30ms of throttled idle (GC, DOM reads) before each traced
-// window; mount/unmount medians read up to ~6% higher than revision 2.
-// 4: drives frames instead of waiting for vsync; the narrower traced
-// windows carry less ambient frame work (interleaved A/B: mount ×1.03,
-// rerender ×1.00, unmount ×0.74).
+// Bumped whenever a measurement changes meaning, never when a value merely moves.
 export const METRICS_REVISION = 4;
 
 // Absent means an older baseline: domNodeCount counted the whole document.
@@ -346,8 +314,7 @@ export function buildEnvFingerprint(input: EnvFingerprintInput): EnvFingerprint 
     ...(input.css && input.css.length > 0 ? { css: input.css } : {}),
     ...(input.wrapper ? { wrapper: input.wrapper } : {}),
     ...(input.reactCompiler !== undefined ? { reactCompiler: input.reactCompiler } : {}),
-    // React is the absence of the field, which is what every older baseline
-    // records: writing it would make every stored entry incomparable.
+    // React is the absence of the field; writing it would make stored entries incomparable.
     ...(input.framework && input.framework !== "react" ? { framework: input.framework } : {}),
   };
 }
@@ -366,9 +333,7 @@ function sameCssList(a: string[] | undefined, b: string[] | undefined): boolean 
 // Feature fields change what is measured; no arithmetic rescues a difference.
 function featuresDiffer(a: EnvFingerprint, b: EnvFingerprint): boolean {
   return (
-    // A change in measurement revision (see METRICS_REVISION above) moves
-    // tier boundaries. Comparing across the change would read as a large
-    // improvement.
+    // A revision change moves tier boundaries; comparing across it reads as an improvement.
     metricsRevision(a) !== metricsRevision(b) ||
     a.mode !== b.mode ||
     !sameCssList(a.css, b.css) ||
@@ -384,11 +349,7 @@ function calibrationClose(a: number, b: number): boolean {
   return Math.abs(a - b) <= CALIBRATION_DRIFT_BAND * Math.max(a, b);
 }
 
-// The reuse gate needs machine identity, not thermal identity. A single
-// calibration sample swings 20–40% on a real machine (measured 41.7 vs 57.3
-// within one sweep), so requiring calibrationClose would make reuse a
-// lottery: drift changes measured values, never the verdict of unchanged
-// code.
+// Excludes calibration: one sample swings 20–40%, which would make reuse a lottery.
 export function sameMachineIdentity(
   baseline: EnvFingerprint | undefined,
   current: EnvFingerprint,
@@ -436,8 +397,7 @@ function msLabel(value: number): string {
   return Number.isFinite(value) ? `${value.toFixed(2)}ms` : String(value);
 }
 
-// Field-level differences behind a classification. nodeVersion is excluded so an
-// `identical` pair never produces mismatch text.
+// nodeVersion is excluded so an `identical` pair never produces mismatch text.
 export function describeEnvDiff(
   baseline: EnvFingerprint | undefined,
   current: EnvFingerprint,

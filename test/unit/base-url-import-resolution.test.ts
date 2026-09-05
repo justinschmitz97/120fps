@@ -33,9 +33,7 @@ function resolveWith(
   return undefined;
 }
 
-// baseUrl without paths is the CRA shape: `import Button from "components/Button"`
-// is resolved against baseUrl by tsc and by every bundler the project has ever
-// used, so the harness has to resolve it too.
+// baseUrl without paths is the CRA shape: tsc and every bundler resolve bare imports against it.
 describe("bare imports resolved against baseUrl", () => {
   const project = () =>
     mkProject({

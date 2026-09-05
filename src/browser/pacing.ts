@@ -1,13 +1,9 @@
 import { chromium, type Browser } from "playwright";
 
-// Headless Chromium paces rAF at 60 Hz no matter what, so every traced
-// window paid ~33 ms of vsync idle per double-rAF fence. With begin-frame
-// control the compositor produces frames when told to; the pump tells it to,
-// back-to-back, so a fence costs one protocol round trip (~2 ms) instead of
-// two vsync ticks. Frames still happen: driven, not scheduled: so samples
-// stay paint-inclusive.
+// Headless Chromium pins rAF to 60 Hz; a driven fence costs ~2 ms instead of two vsync ticks.
 export const MEASUREMENT_BROWSER_ARGS = [
   "--enable-begin-frame-control",
+  // Without this flag HeadlessExperimental.beginFrame is rejected; each driven frame then paints.
   "--run-all-compositor-stages-before-draw",
 ];
 
@@ -24,10 +20,7 @@ export interface FramePump {
   readonly disabled: boolean;
 }
 
-// Navigations make beginFrame fail transiently, so the error threshold is
-// generous: a pump that dies for real is caught by the rAF fence watchdog,
-// not by this counter. The holder is read on every frame so the pump follows
-// refreshCdpSession onto the replacement session.
+// Generous: navigations fail beginFrame transiently, and a dead pump is caught by the rAF fence.
 const PUMP_MAX_CONSECUTIVE_ERRORS = 120;
 const PUMP_BACKOFF_MS = 5;
 
@@ -51,6 +44,7 @@ export function createFramePump(
     let consecutive = 0;
     while (running) {
       try {
+        // Read per frame so the pump follows refreshCdpSession onto a replacement session.
         await holder.cdp.send("HeadlessExperimental.beginFrame", {});
         consecutive = 0;
       } catch {
@@ -79,10 +73,7 @@ export function createFramePump(
 
 export type MeasurementPacing = "driven" | "vsync";
 
-// Browser processes are project-agnostic; what a phase needs fresh is
-// page state, and a new context delivers that (its pages get their own
-// renderer process: V8 as cold as in a fresh browser). The pool holds at
-// most one driven and one vsync Chromium for its lifetime.
+// A new context gives a phase its own renderer with cold V8, so one browser per pacing suffices.
 export interface BrowserPool {
   acquire(driven: boolean): Promise<Browser>;
   stats(): { launched: number };

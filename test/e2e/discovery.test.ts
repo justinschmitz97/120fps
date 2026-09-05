@@ -185,7 +185,6 @@ describe("discoverInteractions e2e", () => {
     const p = await setup("./fixtures/interactive-basic.tsx");
     const descriptors = await discoverInteractions(p);
 
-    // Verify order by checking positions in DOM
     const positions = await p.evaluate((sels: string[]) => {
       const all = Array.from(document.querySelectorAll("*"));
       return sels.map((s) => {

@@ -20,22 +20,16 @@ import {
   readViteConfigData,
 } from "./vite-config.js";
 
-// Every pre-build fact `buildAndServe` derives from the filesystem alone —
-// no bundler, no dev server, no browser — so `--explain-props` can report a
-// broken vite.config alias, an unbuilt workspace dist/, a type-only package,
-// an unsupported Next module or a missing style engine without starting a
-// server.
+// Filesystem-only facts, so --explain-props reports without a bundler, server or browser.
 export interface StaticPreBuild {
   warnings: string[];
   viteConfig: ViteConfigData;
-  // The conditions the dev server resolves exports under — the vite
-  // config's own list, then the governing tsconfig's customConditions.
+  // The vite config's own list, then the governing tsconfig's customConditions.
   resolveConditions: string[];
   externalDeps: string[];
   styleTooling: StyleTooling;
   nextModules: { detected: boolean; activeShims?: string[]; unsupported: string[] };
-  // Consumed by buildAndServe, which must not rebuild them: `scanExternalDeps`
-  // appends its workspace-source rescue aliases to this same array.
+  // scanExternalDeps appends its workspace-source rescue aliases to this same array.
   aliases: Array<{
     find: RegExp;
     replacement: string;
@@ -43,19 +37,13 @@ export interface StaticPreBuild {
     fromWorkspaceRoot?: WorkspaceRootAliasSource;
   }>;
   importedSpecifiers: Set<string>;
-  // Every specifier the scan could not resolve to a package, an alias or an
-  // `imports` entry, so both modes report the same set without walking the
-  // graph again.
+  // Both modes report the same set without walking the graph again.
   unresolvedExternals: Array<{ specifier: string; importer: string }>;
   workspaceRoot: string;
 }
 
 
-// The pre-build half of `buildAndServe`, in call order, with nothing that
-// starts a process: `loadTsconfigAliases`, `readViteConfigData` (text-parsed,
-// never imported), `scanExternalDeps` (path probes), the Next shim inventory
-// and `resolveStyleTooling` (dependency probes). Warnings come back in exactly
-// the order `buildAndServe` produced them, and no message is reworded.
+// Warnings come back in buildAndServe's own order, with no message reworded.
 export function collectStaticPreBuildWarnings(
   projectRoot: string,
   opts: {
@@ -66,15 +54,11 @@ export function collectStaticPreBuildWarnings(
   },
 ): StaticPreBuild {
   const workspaceRoot = opts.workspaceRoot ?? findWorkspaceRoot(projectRoot);
-  // Alias construction and the scan both report what they could not
-  // resolve, and both feed the same run warnings.
   const warnings: string[] = [];
   const tsconfigAliases = loadTsconfigAliases(projectRoot, warnings, opts.componentPath);
   const detected = !opts.noShims && detectNextJs(projectRoot);
   const shimAliases = buildShimAliases(detected);
-  // What the project's own vite.config says, read as text. Its aliases sit
-  // below the tsconfig paths, which is the precedence a TypeScript project
-  // already assumes, and above the shims, which answer for one module each.
+  // Read as text; the project's vite.config is never imported.
   const viteConfig = readViteConfigData(projectRoot, workspaceRoot);
   if (viteConfig.configFile && viteConfig.ignoredKeys.length > 0) {
     warnings.push(
@@ -86,25 +70,22 @@ export function collectStaticPreBuildWarnings(
     );
   }
   warnings.push(...viteConfig.warnings);
-  // Decided here, so the dry run discloses the list the real run resolves
-  // with.
+  // Decided here, so the dry run discloses the list the real run resolves with.
   const serverConditions = resolveServerConditions(projectRoot, viteConfig.conditions, {
     forFile: opts.componentPath,
     workspaceRoot,
     ...(viteConfig.configFile ? { viteConfigFile: viteConfig.configFile } : {}),
   });
   if (serverConditions.warning) warnings.push(serverConditions.warning);
+  // Vite aliases sit below tsconfig paths, the precedence a TypeScript project assumes.
   const aliases: StaticPreBuild["aliases"] = [
     ...tsconfigAliases,
     ...viteConfig.aliases,
     ...shimAliases,
   ];
 
-  // The wrapper is imported by the entry, so its packages must be pre-bundled
-  // too: otherwise the first mount pays Vite's on-demand optimize cost.
   const importedSpecifiers = new Set<string>();
-  // Filled by the same walk that produces the include list, so the dry run
-  // reports what the real run's optimizer would have choked on.
+  // Filled by the same walk, so the dry run reports what the real optimizer would choke on.
   const unresolvedExternals: Array<{ specifier: string; importer: string }> = [];
   const reportedUnresolvedSpecifiers = new Set<string>();
   const externalDeps = [
@@ -120,6 +101,7 @@ export function collectStaticPreBuildWarnings(
         unresolvedExternals,
         reportedUnresolvedSpecifiers,
       ),
+      // Wrapper packages must be pre-bundled too, or the first mount pays the optimize cost.
       ...(opts.wrapPath
         ? scanExternalDeps(
             path.resolve(opts.wrapPath),
@@ -136,9 +118,7 @@ export function collectStaticPreBuildWarnings(
     ]),
   ];
 
-  // Shims are keyed by module specifier ("next/image"), which scanExternalDeps
-  // collapses to a package name ("next") for optimizeDeps: match on the raw
-  // specifiers instead.
+  // The scan collapses "next/image" to "next", so match shims on the raw specifiers.
   let activeShims: string[] | undefined;
   let unsupported: string[] = [];
   if (detected) {
@@ -150,9 +130,7 @@ export function collectStaticPreBuildWarnings(
     if (unsupported.length > 0) warnings.push(UNSUPPORTED_NEXT_MODULE_WARNING(unsupported));
   }
 
-  // The Tailwind plugin is decided by the project's dependency alone. A
-  // component using utility classes needs it whether or not a global stylesheet
-  // was found, and the styling engines nothing here can replicate say so once.
+  // Decided by the dependency alone: utility classes need it with no global stylesheet.
   const styleTooling = resolveStyleTooling(projectRoot, workspaceRoot, externalDeps);
   warnings.push(...styleTooling.warnings);
 

@@ -196,8 +196,14 @@ describe("H14: isolation branch scope", () => {
   });
 
   it("returns before the curve and matrix decisions", () => {
-    expect(analyzeSrc.indexOf("// --- Isolation mode ---"))
-      .toBeLessThan(analyzeSrc.indexOf("// --- Curve mode check ---"));
+    const isolationIdx = analyzeSrc.indexOf("return await runIsolationMode(ctx, options.isolation)");
+    const curveIdx = analyzeSrc.indexOf("const curveMatch = await resolveCurveMatch(ctx)");
+    const matrixIdx = analyzeSrc.indexOf("shouldAutoActivateMatrix(await ctx.getSchemas())");
+    expect(isolationIdx).toBeGreaterThan(-1);
+    expect(curveIdx).toBeGreaterThan(-1);
+    expect(matrixIdx).toBeGreaterThan(-1);
+    expect(isolationIdx).toBeLessThan(curveIdx);
+    expect(isolationIdx).toBeLessThan(matrixIdx);
     expect(branch).toContain("return report;");
   });
 });
@@ -276,8 +282,7 @@ describe("H16: multiple warnings in isolation output", () => {
   });
 });
 
-// H18b: the automatic JSX runtime must be pre-bundled, or Vite full-reloads
-// the harness page mid-measurement the first time a project is measured.
+// H18b: the automatic JSX runtime must be pre-bundled, or Vite full-reloads the harness page.
 describe("H18b: automatic JSX runtime is declared", () => {
   it("resolves both runtime entry points from the project", () => {
     expect(reactJsxRuntimeDeps(path.resolve("."))).toEqual([
@@ -287,18 +292,13 @@ describe("H18b: automatic JSX runtime is declared", () => {
   });
 
   it("returns nothing for a project that cannot resolve them", () => {
-    // The filesystem root has no node_modules above it on any OS; a literal
-    // "C:/" is a relative path on POSIX and resolves inside the repo, where
-    // react is a real dependency.
+    // Filesystem root has no node_modules above; on POSIX "C:/" is relative and resolves in-repo.
     const fsRoot = path.parse(process.cwd()).root;
     expect(withProductionResolution(() => reactJsxRuntimeDeps(fsRoot))).toEqual([]);
   });
 
   it("feeds optimizeDeps.include from buildAndServe", () => {
-    // M34 routes the list through unionCachedDeps as `stableInclude`; the
-    // runtime deps must feed that list, and the list must feed optimizeDeps.
-    // M57 moved the per-renderer half of the list into `rendererDeps`, which
-    // stableInclude spreads; the runtime deps still have to reach it.
+    // M34/M57: runtime deps must reach optimizeDeps through rendererDeps and stableInclude.
     const harnessSrc = src("harness/build.ts");
     const rendererBlock = harnessSrc.slice(
       harnessSrc.indexOf("const rendererDeps ="),
@@ -318,10 +318,7 @@ describe("H18b: automatic JSX runtime is declared", () => {
   });
 });
 
-// M83 #3 (element-plus-F4): report.pass must not be computed before
-// report.noise exists in the same function — a hostile machine's noise
-// classification has to be available to the verdict, not seventeen lines
-// too late.
+// M83 #3 (element-plus-F4): report.pass must be computed after report.noise exists, not before.
 describe("M83 #3: computeIsolationVerdict respects the noise classification", () => {
   it("suppresses a leak-only FAIL when the run's own noise sentinel says hostile", () => {
     const leaking = { memory: { leakSuspected: true, heapGrowth: 1, heapGrowthPerCycle: 1, gcPressure: 0 } };

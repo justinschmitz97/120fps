@@ -33,8 +33,7 @@ function mkRepo(files: Record<string, string>): string {
   return dir;
 }
 
-// ant-design: `prepare` is `is-ci || husky && dumi setup`; the script that
-// writes components/version/version.ts is `version`.
+// ant-design: real scripts; `prepare` is a lifecycle script, `version` is the actual generator.
 const ANT_DESIGN_SCRIPTS = {
   prepare: "is-ci || husky && dumi setup",
   build: "npm run compile",
@@ -123,9 +122,7 @@ describe("the package manager a repository actually uses", () => {
   });
 });
 
-// chakra-ui: packages/react/package.json main/module/types all point into a
-// dist/ that does not exist, so the workspace-root alias is the only reason
-// anything resolves at all.
+// chakra-ui: packages/react points into an unbuilt dist/; only the alias resolves it.
 describe("why an alias from the workspace root is load-bearing", () => {
   function chakra(distBuilt: boolean): string {
     const files: Record<string, string> = {
@@ -160,9 +157,7 @@ describe("why an alias from the workspace root is load-bearing", () => {
     expect(aliasedPackageMissingEntry("@absent/pkg", path.join(root, "packages", "app"))).toBeUndefined();
   });
 
-  // chakra's real shape: the aliased package is a workspace member, not an
-  // install — `packages/react` itself, whose main/module point into a dist/
-  // the repository has not built. Nothing under node_modules answers for it.
+  // chakra's real shape: aliased package is a workspace member with nothing under node_modules.
   it("follows the alias target to the workspace package that owns it", () => {
     const repo = mkRepo({
       "package.json": JSON.stringify({ name: "root", workspaces: ["packages/*"] }),
@@ -210,9 +205,7 @@ describe("why an alias from the workspace root is load-bearing", () => {
   });
 });
 
-// taxonomy: the run refuses with `Invalid environment variables` captured as a
-// page error and prints no next step, while NO_ENV_FILE_REMEDY_NOTE was
-// computed for that very run and only ever reached the fast-fail branch.
+// taxonomy: the computed remedy note reached only the fast-fail branch, never the timeout path.
 describe("the remedy for a refusal that arrived as a timeout", () => {
   const REMEDY = "No .env or .env.local found: add it to a .env file at the project root.";
 

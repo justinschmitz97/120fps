@@ -4,8 +4,7 @@ import ts from "typescript";
 import type { PropSchema } from "./schema.js";
 import { toPosix } from "../shared/index.js";
 
-// A value the entry resolves from the imported preset module at render time.
-// Functions and JSX cannot cross the CDP boundary; their position can.
+// Functions and JSX cannot cross the CDP boundary; their position in the preset can.
 export const PRESET_REF_KEY = "__120fps_preset";
 
 export interface PresetRef {
@@ -25,20 +24,16 @@ export interface PropPresets {
   entries: Map<string, unknown[]>;
 }
 
-// The preferred name first, then the
-// older one. `<stem>.props.tsx` next to a component is real component source in
-// several design systems, so a name alone never makes a file a preset.
+// `<stem>.props.tsx` is real component source in some design systems, so shape decides.
 const PRESET_SUFFIXES = [".120fps.props.tsx", ".120fps.props.ts", ".props.tsx", ".props.ts"];
 
 export interface PresetSibling {
   path: string;
-  // "preset" is the shape `loadPropPresets` reads: a default-exported object
-  // literal. Anything else is a file that only shares the name.
+  // "preset" is what loadPropPresets reads: a default-exported object literal.
   shape: "preset" | "no-default-export";
 }
 
-// The sibling that carries a preset's name without its shape, named so
-// a caller discloses it instead of dropping it.
+// Names a sibling that carries a preset's name without its shape, so a caller discloses it.
 export const PRESET_SHAPE_WARNING = (presetPath: string): string =>
   `${presetPath} exists, not a preset: no default-exported object literal ` +
   "(expected `export default { prop: [values] }`)";
@@ -55,8 +50,7 @@ function parsePresetFile(absolutePath: string): ts.SourceFile | undefined {
   );
 }
 
-// The first candidate carrying the preset shape wins; an earlier
-// candidate without it is kept for the disclosure and does not stop the search.
+// The first candidate with the preset shape wins; a shapeless earlier one keeps the search going.
 export function describePresetSibling(componentPath: string): PresetSibling | undefined {
   const ext = path.extname(componentPath);
   const stem = ext ? componentPath.slice(0, -ext.length) : componentPath;
@@ -71,18 +65,13 @@ export function describePresetSibling(componentPath: string): PresetSibling | un
   return shapeless === undefined ? undefined : { path: shapeless, shape: "no-default-export" };
 }
 
-// Mirrors fixture detection: adjacent to the component, named after it, shaped
-// like a preset.
+// Mirrors fixture detection: adjacent, named after the component, shaped like a preset.
 export function detectPropPresets(componentPath: string): string | undefined {
   const sibling = describePresetSibling(componentPath);
   return sibling?.shape === "preset" ? sibling.path : undefined;
 }
 
-// Literals are evaluated so they flow through the existing pipeline unchanged:
-// combos, deltas, matrix cells and curve anchors all compare real values.
-// Everything else keeps its position and is resolved in the page.
-// Exported because a Vue `withDefaults` object is the same problem: an AST
-// literal that has to become a real value without executing the module.
+// An AST literal becomes a real value without executing the module; anything else keeps a ref.
 export function literalValue(node: ts.Expression): { ok: true; value: unknown } | { ok: false } {
   if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
     return { ok: true, value: node.text };
@@ -153,8 +142,7 @@ function findDefaultExport(sf: ts.SourceFile): ts.ObjectLiteralExpression | unde
   return undefined;
 }
 
-// Parsed, never executed: a preset module imports browser-only code and JSX,
-// and running it in Node would be a second, worse module loader.
+// Parsed, never executed: a preset imports browser-only code and JSX.
 export function loadPropPresets(presetPath: string, projectRoot: string): PropPresets | undefined {
   const absolutePath = path.resolve(presetPath);
   const sf = parsePresetFile(absolutePath);
@@ -203,9 +191,7 @@ export interface AppliedPresets {
   unknown: string[];
 }
 
-// The kind a preset value implies, for a prop no extraction
-// produced a schema for. Values of differing kinds make the pool a union, the
-// same word the schema uses for a declared multi-shape prop.
+// Values of differing kinds make the pool a union, the word the schema uses for multi-shape.
 function inferPresetKind(values: unknown[]): PropSchema["kind"] {
   const kinds = new Set<PropSchema["kind"]>();
   for (const value of values) {
@@ -223,22 +209,12 @@ function inferPresetKind(values: unknown[]): PropSchema["kind"] {
   return [...kinds][0];
 }
 
-// Presets replace a prop's value pool rather than extending it: the point is to
-// measure the values the user says are representative, not those plus three
-// synthesized ones.
-//
-// The one case where a preset also ADDS. When extraction
-// produces nothing -- an Options-API `extends` component, whose own warning
-// names `<stem>.props.tsx` as the remedy -- there is no schema to replace, and
-// routing every preset key to `unknown` would tell the user the props they
-// just supplied "are not a prop of the measured component". With extraction
-// succeeding, an absent key is still genuinely absent and still reported:
-// silently measuring a mistyped key as a prop would drop a disclosure this
-// codebase does not drop.
+// A preset replaces a prop's value pool rather than extending it with synthesized values.
 export function applyPropPresets(
   schemas: PropSchema[],
   presets: PropPresets,
 ): AppliedPresets {
+  // Nothing extracted means no schema to replace, so the preset's keys become the schema.
   if (schemas.length === 0) {
     const added: PropSchema[] = [];
     const appliedNames: string[] = [];
@@ -261,10 +237,7 @@ export function applyPropPresets(
     const values = presets.entries.get(schema.name);
     if (values === undefined || values.length === 0) return schema;
     applied.push(schema.name);
-    // Whatever synthesis could not build, the preset supplies: the prop is
-    // measured with the preset value, not a stand-in. A preset always wins the
-    // provenance question the same way it already wins the value question —
-    // this is the only place `provenance: "preset"` is ever assigned.
+    // The preset wins the provenance question as it wins the value question; `degenerate` drops.
     const { degenerate: _replaced, ...rest } = schema;
     return { ...rest, values: [...values], provenance: "preset" as const };
   });

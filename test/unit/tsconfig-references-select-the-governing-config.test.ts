@@ -27,10 +27,7 @@ function mkProject(files: Record<string, string>): string {
   return dir;
 }
 
-// A create-vite root is `{ "files": [], "references": [...] }`: every compiler
-// option the project actually uses lives in the referenced config. Reading only
-// the nearest config yields no paths at all, so the run cannot resolve the
-// project's own `@/*` imports.
+// A create-vite root has empty files+references; the nearest config alone has no paths for @/*.
 describe("a references-only config hands over to the referenced config that covers the file", () => {
   it("picks the referenced config whose include covers the component", () => {
     const governing = resolveGoverningTsconfig(BUTTON);
@@ -93,14 +90,12 @@ describe("a references-only config hands over to the referenced config that cove
     expect(governing.viaReferences).toBe(false);
     const sentence = governing.warnings.join(" ");
     expect(sentence).toContain("no referenced config covers");
-    // The reference target that is missing is the one fact this sentence
-    // exists to report, so it is named.
+    // The missing reference target is the one fact this warning exists to report, so it is named.
     expect(sentence).toContain("tsconfig.gone.json (unreadable)");
   });
 
   it("builds the alias the referenced config declares, so the import resolves", () => {
-    // No warnings sink: the disclosure register is a printing concern, and the
-    // alias answer must not depend on whether anyone is listening.
+    // No warnings sink: disclosure is a printing concern; the alias answer must not depend on it.
     const aliases = loadTsconfigAliases(REFERENCES, undefined, BUTTON);
     const entry = aliases.find((a) => a.find.test("@/lib/utils"));
 
@@ -111,11 +106,9 @@ describe("a references-only config hands over to the referenced config that cove
   });
 });
 
-// The chosen config is not the one the README's "nearest one wins" sentence
-// names, so the run says which config it read and what that config supplied.
+// The chosen config differs from the README's nearest-one-wins story, so the run must name it.
 describe("the chosen referenced config is disclosed once", () => {
-  // The register spans the process, so the "once" assertions below describe
-  // this file's two calls, not whatever ran before them in the same worker.
+  // The disclosure register is process-global; reset isolates this file's calls per test.
   beforeEach(() => {
     resetGoverningDisclosures();
   });

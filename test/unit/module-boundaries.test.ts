@@ -2,16 +2,13 @@ import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 
-// ADR 0005 (specs/decisions/0005-module-layout-by-pipeline-stage.md): src/ is
-// stage directories, value imports point downward, and a value import into
-// another directory goes through that directory's index.js. This test is the
-// enforcement the ADR names; specs/milestones/M118-MAP.md holds the table.
+// ADR: specs/decisions/0005-module-layout-by-pipeline-stage.md; edges: specs/milestones/M118-MAP.md
 
 const SRC = path.resolve("src");
 
-// Rows import from columns, per the M118 map's "Allowed value-import edges".
-// "" is src/index.ts: the package surface, which re-exports every stage.
+// Rows import from columns; matches the ADR's allowed edge table.
 const ALLOWED_EDGES: Record<string, readonly string[]> = {
+  // "" is src/index.ts: the package surface that re-exports every stage.
   "": ["shared", "project", "props", "report", "harness", "browser", "analysis", "pipeline", "cli"],
   cli: ["shared", "project", "props", "report", "harness", "browser", "analysis", "pipeline"],
   pipeline: ["shared", "project", "props", "report", "harness", "browser", "analysis"],
@@ -24,9 +21,7 @@ const ALLOWED_EDGES: Record<string, readonly string[]> = {
   shared: [],
 };
 
-// The edges that exist after M118 wave 1. Wave 2 and wave 3 empty this list;
-// the assertions below fail both when a new violation appears and when an
-// entry here stops violating, so the list cannot lag behind the tree.
+// This allowlist empties across waves; assertions fail if it lags the tree in either direction.
 const ALLOWLIST: readonly { file: string; target: string; reason: string }[] = [];
 
 interface Edge {
@@ -56,9 +51,7 @@ function parentOf(rel: string): string {
   return slash === -1 ? "" : rel.slice(0, slash);
 }
 
-// The stage a path belongs to. A stage may group files in a nested directory
-// (src/pipeline/modes); those files are part of their stage, so an import
-// between them is not a cross-directory edge and needs no index.js hop.
+// A nested directory (src/pipeline/modes) is still part of its parent stage, not a cross edge.
 function directoryOf(rel: string): string {
   const slash = rel.indexOf("/");
   return slash === -1 ? "" : rel.slice(0, slash);
@@ -91,8 +84,7 @@ function readEdges(): Edge[] {
       }
       const [, clause, spec] = match;
       buffer = null;
-      // `import ... from "./${stem}"` inside a generated-entry template is
-      // output text, not an edge of this package.
+      // A generated-entry template's "./${stem}" is output text, not an edge of this package.
       if (!spec.startsWith(".") || spec.includes("${")) continue;
       const target = path.posix.normalize(path.posix.join(fromParent, spec));
       edges.push({
@@ -109,11 +101,7 @@ function readEdges(): Edge[] {
   return edges;
 }
 
-// A dynamic `import("…")` call. TypeScript's inline type query
-// (`import("../x/index.js").Foo`) has the identical `import(<string>)` shape;
-// its closing paren is always immediately followed by the `.Member` access
-// that makes it a type, never a runtime load, so that dot marks it typeOnly
-// the same way `import type` does for a static statement.
+// import("x").Foo is a type query, not a dynamic import; the trailing .Member marks it typeOnly.
 const DYNAMIC_IMPORT = /\bimport\(\s*["']([^"']+)["']\s*\)(\s*\.)?/g;
 
 function readDynamicEdges(): Edge[] {
@@ -146,10 +134,7 @@ const EDGES = readEdges();
 const DYNAMIC_EDGES = readDynamicEdges();
 const STATIC_CROSS_VALUE = EDGES.filter((e) => !e.typeOnly && e.fromDir !== e.toDir);
 const DYNAMIC_CROSS_VALUE = DYNAMIC_EDGES.filter((e) => !e.typeOnly && e.fromDir !== e.toDir);
-// Routing and the edge table apply to a dynamic value import exactly like a
-// static one. The cycle check does not: a dynamic import().then()/await never
-// runs while its module is being evaluated, so it cannot close a load-order
-// cycle the way a static import can, and STATIC_CROSS_VALUE alone feeds it.
+// A dynamic import() never runs during evaluation, so it can't close a load-order cycle.
 const CROSS_VALUE = [...STATIC_CROSS_VALUE, ...DYNAMIC_CROSS_VALUE];
 const key = (e: { file: string; target: string }) => `${e.file} -> ${e.target}`;
 
@@ -176,8 +161,7 @@ describe("module boundaries (ADR 0005)", () => {
     );
     const observed = [...new Set(violations.map((e) => key({ file: e.file, target: e.toDir })))].sort();
     const allowed = [...new Set(ALLOWLIST.map(key))].sort();
-    // Both directions: a new violation fails, and so does an allowlist entry
-    // whose edge is gone, so the list shrinks with the tree.
+    // Fails both ways: a new violation, and an allowlist entry whose edge is gone.
     expect({ observed, detail: detail.length ? detail : undefined }).toEqual({
       observed: allowed,
       detail: detail.length ? detail : undefined,

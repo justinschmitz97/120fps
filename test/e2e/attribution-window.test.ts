@@ -18,14 +18,12 @@ describe("attribution window", () => {
       expect(total).toBeGreaterThan(0);
       expect(total).toBeCloseTo(attribution.totalScriptingMs / traces.length, 6);
 
-      // Every window's script time nests inside that window's top-level events,
-      // so the per-mount breakdown cannot exceed the average mount.
+      // Each window's script time nests inside its top-level events, bounding the breakdown.
       const meanMount =
         mount.mount.samples.reduce((a, b) => a + b, 0) / mount.mount.samples.length;
       expect(total).toBeLessThanOrEqual(meanMount);
 
-      // The Mount column is a median of the same samples: same order of
-      // magnitude, not a multiple of the sample count.
+      // Mount's median comes from the same samples: totals stay the same order of magnitude.
       expect(total).toBeLessThan(mount.mount.median * 2);
     } finally {
       await harness.cleanup();

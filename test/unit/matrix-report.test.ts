@@ -181,8 +181,7 @@ describe("formatTable with matrixReport", () => {
     expect(output).toContain("717.30ms");
   });
 
-  // A cheap-to-mount cell that fails on an interaction is outside hotCells; the
-  // run reported FAIL while the table showed nothing but PASS.
+  // A cheap-to-mount cell failing on an interaction sits outside hotCells and was hidden.
   it("prints failing cells that are not among the hottest", () => {
     cellCounter = 0;
     const hot = [

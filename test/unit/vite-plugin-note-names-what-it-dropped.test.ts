@@ -13,9 +13,7 @@ import {
   withoutHonoredPluginNote,
 } from "../../src/pipeline/index.js";
 
-// M117 A3 (I10, dx-audit item 6): the note said `plugins` and named none of
-// them, so a reader could not tell whether the harness dropped anything that
-// mattered. The names come from the config's own text, in the config's order.
+// specs/milestones/m117-output-that-respects-the-reader.md A3: names the plugins, in config order.
 
 let tmpDir: string;
 
@@ -49,8 +47,7 @@ describe("the plugin names a vite.config declares", () => {
     expect(readViteConfigData(tmpDir).pluginNames).toEqual(["dts", "react"]);
   });
 
-  // M117 review: getText() returns the raw source slice, so a callee broken
-  // across lines put a newline inside a note that must stay one line.
+  // specs/milestones/m117-output-that-respects-the-reader.md: flatten a multi-line callee to one.
   it("keeps a callee written across lines on one line", () => {
     writeConfig(
       [
@@ -147,9 +144,7 @@ describe("the note a real run produces", () => {
   });
 });
 
-// M117 C3, C4 (lane C): the note must name no plugin whose transform this run
-// applied, and must disappear when that empties the list. The dry run and the
-// real run decide it from the same detection, so both print it or both omit it.
+// specs/milestones/m117-output-that-respects-the-reader.md C3/C4: dry and real runs agree.
 describe("the plugins the note leaves out", () => {
   const CONFIG = { configFile: "/p/vite.config.ts", ignoredKeys: ["plugins"] };
 
@@ -216,8 +211,7 @@ describe("the plugins the note leaves out", () => {
   });
 });
 
-// M117 C3 / I10 hand-off: the mount-abort hint reads the ignored keys off the
-// warning the run printed, and A3 rewrote that wording.
+// specs/milestones/m117-output-that-respects-the-reader.md: hint reads keys off the warning.
 describe("the ignored keys a mount-abort hint reads back", () => {
   it("reads the wording a run with named plugins prints", () => {
     expect(

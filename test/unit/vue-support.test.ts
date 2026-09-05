@@ -59,7 +59,6 @@ beforeAll(async () => {
   compiler = await loadVueCompiler(VUE_ROOT);
 });
 
-// C1: `.vue` is a component file the CLI accepts.
 describe("file support", () => {
   it("accepts a .vue path", () => {
     expect(hasAcceptedComponentExtension("./Button.vue")).toBe(true);
@@ -67,11 +66,7 @@ describe("file support", () => {
   });
 
   it("still rejects unmeasurable extensions", () => {
-    // M77 widens the accepted extensions to include `.ts` (M77 in
-    // specs/overview/02-milestones.md, "Changed contracts": ".js/.ts file is
-    // now a legal argument... it never was before"), gated by hasComponentShape
-    // rather than accepted on extension alone; `.d.ts` and a non-source
-    // double extension stay rejected, unaffected by that widening.
+    // M77: .ts is accepted here but gated by hasComponentShape elsewhere, not by extension alone.
     expect(hasAcceptedComponentExtension("./Button.ts")).toBe(true);
     expect(hasAcceptedComponentExtension("./types.d.ts")).toBe(false);
     expect(hasAcceptedComponentExtension("./styles.vue.css")).toBe(false);
@@ -104,7 +99,6 @@ describe("file support", () => {
   });
 });
 
-// C2: framework detection reads the manifest; the file's own type wins.
 describe("framework detection", () => {
   it("returns vue for a project that depends on vue and not react", () => {
     expect(detectFramework(VUE_ROOT)).toBe("vue");
@@ -134,7 +128,6 @@ describe("framework detection", () => {
   });
 });
 
-// C3: SFC block parsing, via the project's own compiler.
 describe("SFC parsing", () => {
   it("resolves the compiler from the project", () => {
     expect(compiler).toBeDefined();
@@ -225,9 +218,7 @@ describe("prop extraction", () => {
   });
 });
 
-// M80 scope 2: detectOptionsApiProps is the shallow, parse-only signal that
-// distinguishes "props declared in a form ADR 0002 excludes" from "genuinely
-// no props." Pure-function tests, independent of a real .vue fixture on disk.
+// M80: a shallow, parse-only signal per ADR 0002; tested as a pure function, no fixture needed.
 describe("detectOptionsApiProps: names the excluded declaration form", () => {
   it("names a runtime props object literal", () => {
     const source = `<script>\nexport default { name: "X", props: { label: String } };\n</script>`;
@@ -267,11 +258,7 @@ describe("detectOptionsApiProps: names the excluded declaration form", () => {
   });
 });
 
-// M80 scope 2: extractVueProps now calls detectOptionsApiProps exactly once,
-// only on the branch a .vue file with no <script setup> already falls
-// through (findDefineProps finds nothing in an empty virtual entry) --
-// verified against the real fixture project's own compiler and tsconfig, the
-// same path `extractProps` takes in production.
+// M80: detectOptionsApiProps runs once, only when the setup-block branch already found nothing.
 describe("extractProps discloses the excluded Options-API form via onWarning", () => {
   it("names the file and the form for a runtime props object (PrimeVue's BaseButton.vue shape)", async () => {
     const warnings: string[] = [];
@@ -287,8 +274,7 @@ describe("extractProps discloses the excluded Options-API form via onWarning", (
     expect(warnings[0]).toContain("OptionsProps.vue");
     expect(warnings[0]).toContain('"props"');
     expect(warnings[0]).toContain("OptionsProps.props.tsx");
-    // States, rather than merely omitting, that extraction did not fail and
-    // the component is not broken.
+    // States extraction did not fail and the component is not broken, not merely silent.
     expect(warnings[0]).toMatch(/did not fail/i);
     expect(warnings[0]).toMatch(/not broken/i);
   });
@@ -322,11 +308,7 @@ describe("extractProps discloses the excluded Options-API form via onWarning", (
     expect(warnings).toEqual([]);
   });
 
-  // M92 (element-plus-F3): previously silent (ADR 0002's own case, out of
-  // M80's scope) -- a runtime-object `defineProps({...})` call inside
-  // <script setup> is a deliberate scope exclusion exactly like the
-  // Options-API forms above, and must be worded as one, not left to fall
-  // through to the generic "extraction may have failed" message.
+  // M92 (element-plus-F3): a runtime defineProps({...}) call in setup is a scope exclusion too.
   it("names a <script setup> runtime defineProps(...) call as a scope exclusion (RuntimeProps.vue, element-plus's split-bar.vue shape)", async () => {
     const warnings: string[] = [];
     const schemas = await extractProps(path.join(VUE_ROOT, "RuntimeProps.vue"), {
@@ -343,10 +325,7 @@ describe("extractProps discloses the excluded Options-API form via onWarning", (
     expect(warnings[0]).toMatch(/not broken/i);
   });
 
-  // The mandated control case: a typed <script setup> defineProps<T>() SFC
-  // is completely unaffected -- same schemas as before, and detectOptionsApiProps
-  // is never even reached (findDefineProps finds a typed call, short-circuiting
-  // before the new branch).
+  // detectOptionsApiProps never runs: findDefineProps finds a typed call and short-circuits first.
   it("control case: a typed <script setup> defineProps<T>() SFC is unaffected", async () => {
     const warnings: string[] = [];
     const schemas = await extractProps(path.join(VUE_ROOT, "Button.vue"), {
@@ -361,15 +340,7 @@ describe("extractProps discloses the excluded Options-API form via onWarning", (
   });
 });
 
-// M80 scope 2 (the archived M76-M83 map's "two separate reasons" section, and the OPEN
-// WORK item this lane closes): extractSchemas (src/analyze.ts) is a private
-// closure with no exported seam, and no test/unit file in this repo calls
-// the full analyze() pipeline directly (that convention lives in test/e2e,
-// excluded from this run). The fix is that extractSchemas now performs
-// exactly the call proven below -- extractProps(file, { ...target, onWarning })
-// -- where before it passed no onWarning at all, so this warning (and every
-// other extractPropsDetailed can produce) was silently dropped on the real
-// measurement path even though --explain-props already showed it.
+// M80: extractSchemas dropped onWarning silently; real runs missed warnings --explain-props showed.
 describe("extractSchemas' onWarning wiring (src/analyze.ts) is the same call proven above", () => {
   it("extractProps(file, { onWarning }) is the call extractSchemas now performs, and it surfaces the warning", async () => {
     const warnings: string[] = [];
@@ -381,11 +352,7 @@ describe("extractSchemas' onWarning wiring (src/analyze.ts) is the same call pro
   });
 });
 
-// M92 (element-plus-F3): a Vue scope exclusion's zero-prop count must not
-// also carry the generic "extraction may have failed" text -- that phrase
-// implies a possible malfunction the run already knows is not what happened.
-// explainProps is --explain-props's own code path, exercised directly since
-// it needs no browser/harness.
+// explainProps is --explain-props's own code path; testable directly without a browser or harness.
 describe("explainProps does not stack the generic zero-props warning on a Vue scope exclusion (M92)", () => {
   it("shows only the scope-exclusion warning for a runtime defineProps({...}) call", async () => {
     const explained = await explainProps(path.join(VUE_ROOT, "RuntimeProps.vue"));
@@ -408,7 +375,6 @@ describe("explainProps does not stack the generic zero-props warning on a Vue sc
   });
 });
 
-// C5: the renderer adapter. React's entry is untouched; Vue's mounts an SFC.
 describe("renderer adapter", () => {
   const vueOpts = {
     componentRelative: "Button.vue",
@@ -480,7 +446,6 @@ describe("renderer adapter", () => {
   });
 });
 
-// C6: @vitejs/plugin-vue is loaded, not merely named.
 describe("plugin passthrough", () => {
   it("lists @vitejs/plugin-vue as a supported transform", () => {
     const entry = SUPPORTED_TRANSFORM_PLUGINS.find((p) => p.code === "vue");
@@ -491,13 +456,11 @@ describe("plugin passthrough", () => {
     expect(detectProjectTransforms(VUE_ROOT).map((t) => t.code)).toContain("vue");
   });
 
-  // A project with .vue files and no plugin keeps the M48 diagnosis.
   it("keeps the recognizer for projects without the plugin", () => {
     expect(recognizeTransform("./Child.vue")?.owner).toBe("@vitejs/plugin-vue");
   });
 });
 
-// C7: a baseline measured under one framework never compares against another.
 describe("environment fingerprint", () => {
   const machine: MachineInfo = {
     cpu: "test-cpu",
@@ -543,7 +506,6 @@ describe("environment fingerprint", () => {
   });
 });
 
-// C8: StrictMode is a React property with no Vue equivalent.
 describe("strictmode is a usage error under Vue", () => {
   it("rejects --isolate strictmode for a .vue component", () => {
     expect(strictModeUnsupported(["mount", "strictmode"], ["src/Button.vue"])).toBe(true);
@@ -568,7 +530,6 @@ describe("strictmode is a usage error under Vue", () => {
   });
 });
 
-// C9: wrapper and fixture conventions extend to .vue.
 describe("wrapper and fixtures", () => {
   it("probes for 120fps.setup.vue", () => {
     expect(WRAPPER_CANDIDATES).toContain("120fps.setup.vue");
@@ -592,7 +553,6 @@ describe("wrapper and fixtures", () => {
   });
 });
 
-// C10: preflight reads SFC script blocks, so its guarantees survive.
 describe("preflight", () => {
   it("catches a server-only import inside <script setup>", () => {
     const result = runPreflight({

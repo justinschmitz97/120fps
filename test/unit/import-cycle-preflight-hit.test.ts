@@ -28,8 +28,7 @@ function mkProject(files: Record<string, string>): string {
   return dir;
 }
 
-// excalidraw: DropdownMenu -> DropdownMenuContent -> App -> LayerUI -> MainMenu
-// -> DropdownMenu, with MainMenu reading DropdownMenu.Trigger at module scope.
+// excalidraw: DropdownMenu->...->MainMenu->DropdownMenu; reads Trigger at module scope.
 function cyclicProject(): string {
   return mkProject({
     "package.json": JSON.stringify({ name: "app", dependencies: { react: "19.0.0" } }),
@@ -43,8 +42,7 @@ describe("an import graph that returns to the measured module", () => {
   it("is reported as a soft hit, so the run still proceeds", () => {
     const root = cyclicProject();
     const result = runPreflight({ projectRoot: root, entries: [path.join(root, "DropdownMenu.tsx")] });
-    // A temp project has no node_modules, so preflight's install check fires;
-    // what matters here is that the cycle itself is never a hard rejection.
+    // No node_modules here trips the install check; only the cycle-as-non-hard result matters.
     expect(result.hard.some((hit) => hit.kind === "import-cycle")).toBe(false);
     const cycle = result.soft.find((hit) => hit.kind === "import-cycle");
     expect(cycle).toBeDefined();

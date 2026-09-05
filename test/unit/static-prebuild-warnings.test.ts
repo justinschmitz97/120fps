@@ -6,9 +6,7 @@ import { buildAndServe, collectStaticPreBuildWarnings } from "../../src/harness/
 const PROJECT = path.resolve("fixtures/vite-config-project");
 const COMPONENT = path.join(PROJECT, "src", "widget.tsx");
 
-// V6's rows 5 and 17-21: every one of these facts is a filesystem probe, and
-// every one of them was reachable only by starting a dev server, so a dry run
-// stayed silent about a config the real run reported on seconds later.
+// V6 rows 5, 17-21: filesystem-probe facts the dry run must report before a server starts.
 describe("pre-build facts a run can state without building", () => {
   it("names the vite.config keys the harness cannot honor", () => {
     const pre = collectStaticPreBuildWarnings(PROJECT, { componentPath: COMPONENT });
@@ -22,8 +20,7 @@ describe("pre-build facts a run can state without building", () => {
     expect(fs.readdirSync(PROJECT).filter((n) => n.startsWith(".120fps-harness-"))).toEqual([]);
   });
 
-  // I5's set-and-order pin: toEqual on arrays is order-sensitive, so this
-  // fails if either path reorders or drops a warning the other keeps.
+  // I5's set-and-order pin: toEqual on arrays is order-sensitive to a reordered or dropped warning.
   it("produces the warnings the harness itself would produce", async () => {
     const pre = collectStaticPreBuildWarnings(PROJECT, { componentPath: COMPONENT });
     const harness = await buildAndServe(COMPONENT);

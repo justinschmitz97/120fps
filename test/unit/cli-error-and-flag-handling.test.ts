@@ -197,8 +197,7 @@ describe("D8: --wrap / --css error wording matches analyze.ts", () => {
   });
 });
 
-// M72: engines: >=22 in package.json is declarative only; npx only soft-warns
-// below it. main() checks process.version itself, before any other work.
+// M72: package.json's engines field is declarative only; main() checks process.version itself.
 describe("node version gate", () => {
   it(`requires Node ${MIN_NODE_MAJOR}+`, () => {
     expect(MIN_NODE_MAJOR).toBe(22);
@@ -228,15 +227,7 @@ describe("node version gate", () => {
   });
 });
 
-// M79 behavior 2: no process.on("unhandledRejection"/"uncaughtException")
-// handler existed anywhere; Vite's fire-and-forget dependency-optimizer scan
-// could reject after buildAndServe's own try/catch already exited
-// successfully, which Node's default --unhandled-rejections=throw then
-// escalated to an uncaught exception with exit code 1 (documented at
-// cli.ts's own --help table as "a verdict failed" — wrong for a setup/harness
-// failure). resolveFatalProcessError is the pure decision the real
-// process.on handlers (registered only under isDirectRun, so importing
-// cli.ts from a test never installs them) apply.
+// M79 behavior 2: a post-catch rejection escalated to an uncaught exception; this is that decision.
 describe("M79 behavior 2: resolveFatalProcessError", () => {
   afterEach(() => {
     resetFatalProcessErrorGuard();
@@ -282,9 +273,7 @@ describe("M79 behavior 2: resolveFatalProcessError", () => {
   });
 });
 
-// M79 taxonomy-F1: readEnvDefines reads only .env/.env.local and defines
-// process.env as {} — neither --help nor README mentioned this at all
-// (both grepped, zero hits; see M79 in specs/overview/02-milestones.md).
+// M79 taxonomy-F1: --help/README never documented the .env-only contract; see 02-milestones.md.
 describe("M79 taxonomy-F1: --help documents the .env contract", () => {
   it("names .env / .env.local as the only source", () => {
     expect(helpText()).toContain(".env");

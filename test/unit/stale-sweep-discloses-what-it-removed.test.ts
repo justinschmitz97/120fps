@@ -36,9 +36,7 @@ function age(target: string, ms: number): void {
 // A pid the OS will not have handed out again.
 const DEAD_PID = 4_194_303;
 
-// base-ui-R1-verify-sweep: the next run removed the leftover and exited 0
-// without a word, so the user had no evidence the previous run had left
-// anything behind at all.
+// base-ui-R1-verify-sweep: the sweep removed a leftover silently, leaving no evidence of it.
 describe("what the next run's sweep removed", () => {
   it("names each removed directory and why it was stale", () => {
     const root = mkRoot();

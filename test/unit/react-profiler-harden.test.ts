@@ -12,8 +12,6 @@ import {
 } from "../../src/report/index.js";
 import { parseArgs } from "../../src/cli/index.js";
 
-// --- helpers ---
-
 function makeFiber(overrides: Partial<FiberInfo> = {}): FiberInfo {
   return {
     name: "Component",
@@ -68,10 +66,6 @@ function makeReport(overrides: Partial<Report> = {}): Report {
     ...overrides,
   };
 }
-
-// ====================================================================
-// Hardening tests
-// ====================================================================
 
 describe("H1: empty profiler snapshot diff", () => {
   it("produces empty diff with no re-renders", () => {

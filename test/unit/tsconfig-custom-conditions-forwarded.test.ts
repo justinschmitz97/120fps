@@ -7,10 +7,7 @@ const REFERENCES = path.resolve("fixtures/tsconfig-shapes/project-references");
 const BUTTON = path.join(REFERENCES, "src", "components", "Button.tsx");
 const APP_CONFIG = path.join(REFERENCES, "tsconfig.app.json").replace(/\\/g, "/");
 
-// react-spectrum's root declares `customConditions: ["source"]`, and react-aria
-// publishes its subpaths only under that condition with no dist/. Without the
-// condition the dev server answered 500 for every one of them; nothing in the
-// harness ever read customConditions.
+// react-aria subpaths resolve only under customConditions:['source']; unforwarded, dev server 500s.
 describe("customConditions from the governing config reach the dev server", () => {
   it("forwards the condition the referenced config declares", () => {
     const resolved = resolveServerConditions(REFERENCES, [], { forFile: BUTTON });
@@ -56,8 +53,7 @@ describe("customConditions from the governing config reach the dev server", () =
     expect(preBuild.resolveConditions).toEqual(["source"]);
   });
 
-  // The spec words A5 as a fact about the built server options, so the wiring
-  // between the resolved list and createServer is asserted, not only the list.
+  // Spec A5 concerns the built server options: assert createServer wiring, not just the list.
   it("reaches the server options the harness builds", () => {
     const compile = harnessServerCompileOptions("react", REFERENCES, REFERENCES, BUTTON, [
       "source",

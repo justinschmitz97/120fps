@@ -85,8 +85,7 @@ describe("parseMetrics", () => {
       { name: "FunctionCall", dur: 4_000, ph: "X", ts: 1_000 },
     ];
     const m = parseMetrics(events);
-    // FunctionCall (1000-5000) is fully nested inside EvaluateScript (0-10000);
-    // only the outer event's 10ms should be counted, not 10 + 4 = 14ms.
+    // FunctionCall (1000-5000) nests inside EvaluateScript (0-10000): only outer's 10ms counts.
     expect(m.scriptDuration).toBeCloseTo(10, 0);
     expect(m.totalDuration).toBeCloseTo(10, 0);
   });
@@ -186,8 +185,7 @@ describe("parseMetrics", () => {
 
 describe("parseTraceDuration nested event fix", () => {
   it("excludes nested event durations from totalDuration", () => {
-    // Parent: ts=100, dur=10000 (10ms)
-    // Child: ts=200, dur=3000 (3ms): nested inside parent
+    // v8.compile (ts=200) falls inside the FunctionCall span (100 to 10100): nested.
     const events: TraceEvent[] = [
       { name: "FunctionCall", dur: 10_000, ph: "X", ts: 100 },
       { name: "v8.compile", dur: 3_000, ph: "X", ts: 200 },
@@ -207,9 +205,7 @@ describe("parseTraceDuration nested event fix", () => {
   });
 
   it("handles deeply nested events", () => {
-    // Grandparent: ts=0, dur=20000
-    //   Parent: ts=100, dur=10000
-    //     Child: ts=200, dur=5000
+    // Three levels of nesting; only the outermost span's duration should count.
     const events: TraceEvent[] = [
       { name: "FunctionCall", dur: 20_000, ph: "X", ts: 0 },
       { name: "FunctionCall", dur: 10_000, ph: "X", ts: 100 },

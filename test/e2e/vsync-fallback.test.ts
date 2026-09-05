@@ -8,8 +8,7 @@ import {
   MEASUREMENT_BROWSER_ARGS,
 } from "../../src/browser/index.js";
 
-// H2: animation depends on props: the vsync fallback is a per-combo
-// decision, so one run carries both pacings.
+// H2: the vsync fallback is a per-combo decision, so one run carries both pacings.
 describe("combo-dependent animation", () => {
   it("mixes driven and vsync pacing across combos of one run", async () => {
     const harness = await buildAndServe("./fixtures/m35-conditional-anim.tsx");
@@ -23,8 +22,7 @@ describe("combo-dependent animation", () => {
       expect(results[0].pacing).toBe("driven");
       expect(results[1].hasAnimation).toBe(true);
       expect(results[1].pacing).toBe("vsync");
-      // Both combos keep full sample counts: the fallback re-measures, it
-      // never truncates.
+      // Both combos keep full sample counts: the fallback re-measures, never truncates.
       expect(results[0].mount.samples).toHaveLength(2);
       expect(results[1].mount.samples).toHaveLength(2);
     } finally {
@@ -33,8 +31,7 @@ describe("combo-dependent animation", () => {
   });
 });
 
-// H3: WAAPI animation started in a passive effect registers before the
-// first-sample detection that decides pacing.
+// H3: WAAPI animation from a passive effect registers before pacing's first-sample detection.
 describe("WAAPI animation from useEffect", () => {
   it("is detected and re-measured under vsync pacing", async () => {
     const harness = await buildAndServe("./fixtures/m35-waapi.tsx");
@@ -48,8 +45,7 @@ describe("WAAPI animation from useEffect", () => {
   });
 });
 
-// H13: the entry probe discriminates: beginFrame on a plain vsync browser
-// fails, which is exactly the signal openMeasurementSession's fallback needs.
+// H13: beginFrame fails on a plain vsync browser; that failure is the fallback's own signal.
 describe("probe discriminates begin-frame support", () => {
   it("beginFrame errors on a browser launched without the flags", async () => {
     const browser = await chromium.launch({ headless: true });
@@ -65,8 +61,7 @@ describe("probe discriminates begin-frame support", () => {
   });
 });
 
-// H15: in a begin-frame-controlled browser with no pump, the fence watchdog
-// converts the frame-starved hang into an error instead of waiting forever.
+// H15: with no frame pump, the fence watchdog converts a frame-starved hang into an error.
 describe("fence watchdog bounds frame starvation", () => {
   it("rafFence rejects within the watchdog bound when frames never come", async () => {
     const browser = await chromium.launch({
@@ -85,8 +80,7 @@ describe("fence watchdog bounds frame starvation", () => {
   }, 30_000);
 });
 
-// H18: an animated component through the full pipeline: the fallback path
-// composes with calibration, explore, react analysis, and report building.
+// H18: the fallback path composes with calibration, explore, react analysis, and report building.
 describe("animated component through analyze()", () => {
   it("produces a report with vsync pacing and T3 animation classification", async () => {
     const report = await analyze("./fixtures/m35-animated.tsx", {

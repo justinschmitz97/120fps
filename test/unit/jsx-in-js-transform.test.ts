@@ -4,13 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { jsxInJsPlugin, resolveJsxImportSource, buildAndServe } from "../../src/harness/index.js";
 
-// M77: Vite's default esbuild.include (`/\.(m?ts|[jt]sx)$/`) excludes plain
-// `.js`, and forcing config.esbuild.loader to "jsx" globally would break
-// every typed .ts/.tsx file sharing the same esbuild plugin instance (esbuild
-// itself rejects TypeScript-only syntax under the "jsx" loader — verified:
-// `esbuild.transformSync('interface X{}', { loader: 'jsx' })` throws). A
-// narrow, own plugin ahead of Vite's own esbuild plugin gives `.js` outside
-// node_modules JSX support without touching what already works.
+// M77: Vite excludes .js from JSX transform; a global 'jsx' loader would break .ts/.tsx parsing.
 describe("jsxInJsPlugin", () => {
   const plugin = jsxInJsPlugin();
 
@@ -81,8 +75,7 @@ function mkProject(files: Record<string, string>): string {
   return dir;
 }
 
-// material-ui's `internal/svg-icons/Cancel.js`: module-scope JSX, no React
-// binding anywhere in the file, compiled under the repo's `"jsx": "react-jsx"`.
+// material-ui's internal/svg-icons/Cancel.js: module-scope JSX with no React binding in file.
 const NO_REACT_BINDING =
   "import createSvgIcon from './createSvgIcon';\n" +
   "export default createSvgIcon(<path d='M12 2' />, 'Cancel');\n";
@@ -147,23 +140,7 @@ describe("JSX in a project .js file compiles for the automatic runtime", () => {
   });
 });
 
-// M79 (adopted open item): root cause of the server.close() hang, found by
-// instrumenting process._getActiveHandles() during the hang — it reported
-// only the process's own stdio/IPC pipes, nothing server-related, meaning
-// nothing was pinning the event loop. The hang is Vite's dev server itself
-// never settling an internal await, not a leaked handle: transformRequest()
-// bypasses the HTTP middleware that normally ties a module's in-flight-
-// request bookkeeping to a response, so that bookkeeping (used by
-// server.close()'s own teardown sequence) is still pending the instant
-// close() is called back-to-back with no real page interaction in between.
-// A real measurement run never hits this: it is seconds between the first
-// transform and cleanup(), giving Vite's own internal tracking time to
-// settle on its own. Fix for any caller reaching the dev server outside
-// normal browser navigation (transformRequest, ssrLoadModule, etc.): await
-// the dev server's own public server.waitForRequestsIdle() before close().
-// Confirmed deterministic and fast (~any real request's settle time, no
-// arbitrary sleep needed) — this test previously hung indefinitely without
-// the wait and now completes well under a second.
+// M79: transformRequest()+close() without waitForRequestsIdle() hung the real dev server.
 describe("real-server regression (M77 fix, end to end)", () => {
   it("serves and transforms a real .js JSX file through the real dev server", async () => {
     const harness = await buildAndServe(path.resolve("fixtures/jsx-in-js.js"), {});
@@ -172,8 +149,7 @@ describe("real-server regression (M77 fix, end to end)", () => {
       const result = await harness.server.transformRequest(entryUrl);
       expect(result).not.toBeNull();
       expect(result!.code).toContain("jsx-in-js");
-      // Required before close()/cleanup() whenever the dev server is reached
-      // outside a real page load — see the comment above.
+      // transformRequest() outside a page load leaves close()'s bookkeeping pending; wait first.
       await harness.server.waitForRequestsIdle();
     } finally {
       await harness.cleanup();

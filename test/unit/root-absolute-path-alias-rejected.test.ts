@@ -22,10 +22,7 @@ function mkProject(paths: Record<string, string[]>): string {
   return dir;
 }
 
-// react-spectrum's root declares `paths: { "/*": ["./*"] }`. Vite merges user
-// aliases ahead of its own client alias, so an alias built from that key
-// rewrote `/@vite/client` and the harness entry into the workspace root: two
-// 404s and exit 2 before any component rendered.
+// react-spectrum's root paths key `/*` rewrote /@vite/client into the workspace root: 404s, exit 2.
 describe("a path alias that would capture every root-absolute URL", () => {
   it("builds no alias for a key whose non-wildcard prefix is empty", () => {
     const warnings: string[] = [];

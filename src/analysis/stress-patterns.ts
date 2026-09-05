@@ -14,14 +14,11 @@ export interface StressStep {
 export interface StressPattern {
   name: string;
   steps: StressStep[];
-  // The explorer records this edge's cost but does not let the resulting
-  // DOM define a state: a virtualized list rewrites its rows on every wheel
-  // step, and one node per scroll offset would drown the graph.
+  // A virtualized list rewrites rows on every wheel step; one node per offset would drown it.
   stateInvariant?: boolean;
 }
 
-// Ten steps each way. Fixed, because the per-event budget has to be known
-// before the sweep runs; the distance per step is what adapts to the container.
+// Fixed: the per-event budget must be known before the sweep runs, so distance per step adapts.
 export const SCROLL_SWEEP_STEPS = 10;
 
 const KEYBOARD_SWEEP_ROLES = new Set(["tab", "listbox", "combobox", "menu", "tree"]);
@@ -31,8 +28,7 @@ export function resolveStressPattern(
   descriptor: InteractionDescriptor,
   siblingSelectors?: string[],
 ): StressPattern {
-  // Highest priority: nothing else a scroll container offers is worth more
-  // than what its scroll handler costs.
+  // Highest priority: nothing else a scroll container offers costs what its scroll handler does.
   if (descriptor.type === "scroll") {
     return buildScrollSweep(descriptor.selector, descriptor.scrollAxis ?? "vertical");
   }
@@ -117,8 +113,7 @@ function buildMultiKeystroke(selector: string): StressPattern {
   return { name: "multi-keystroke", steps };
 }
 
-// 11 clicks: odd count so binary toggles end opposite their initial state,
-// keeping explorer state discovery (M4) able to see the transition.
+// Odd count, so a binary toggle ends opposite its initial state and the transition is visible.
 function buildRapidToggle11(selector: string): StressPattern {
   const steps: StressStep[] = [];
   for (let i = 0; i < 11; i++) {
@@ -127,8 +122,7 @@ function buildRapidToggle11(selector: string): StressPattern {
   return { name: "rapid-toggle-11", steps };
 }
 
-// Down then back up, ending where it started, so the state graph sees a round
-// trip rather than a one-way drift (rapid-toggle-11's end-state discipline).
+// Down then back up, ending where it started, so the graph sees a round trip, not a drift.
 function buildScrollSweep(selector: string, direction: "horizontal" | "vertical"): StressPattern {
   return {
     name: "scroll-sweep",
@@ -165,18 +159,11 @@ function mapTypeToAction(type: InteractionDescriptor["type"]): StressStep["actio
   }
 }
 
-// `open-close-10` is 20 clicks, each with a 3 s `page.click` timeout. Radix's
-// `modal` variant sets `body { pointer-events: none }` while the portal is
-// open, so 19 of those 20 clicks time out and one pattern alone spends 57 s —
-// inside a 60 s tracing window, on a phase whose own `--explore-budget` was
-// already exceeded. The remaining budget bounds the step loop, and how many
-// steps ran is returned so the caller can say so.
+// A Radix modal times out 19 of open-close-10's 20 clicks: 57 s, so the budget cuts it short.
 export interface StressPatternRun {
   stepsRun: number;
   stepsPlanned: number;
-  // A step whose action throws is swallowed below, so
-  // `stepsRun === stepsPlanned` alone cannot tell the caller the pattern ended
-  // where it started. A failed step leaves the page at an arbitrary state.
+  // A swallowed throw still counts as run, so only this tells the caller the state is arbitrary.
   stepsFailed: number;
   budgetExhausted: boolean;
 }
@@ -223,8 +210,7 @@ export async function executeStressPattern(
           if (!target) break;
           const half = Math.max(1, Math.floor((step.moveCount ?? SCROLL_SWEEP_STEPS * 2) / 2));
           const horizontal = step.direction === "horizontal";
-          // The wheel goes wherever the pointer is, so it has to sit over the
-          // container before the first tick.
+          // The wheel goes wherever the pointer is, so it must sit over the container first.
           await page.mouse.move(target.x, target.y);
           for (let i = 0; i < half; i++) {
             await page.mouse.wheel(horizontal ? target.delta : 0, horizontal ? 0 : target.delta);
@@ -262,8 +248,7 @@ export async function executeStressPattern(
         }
       }
     } catch {
-      // Element may have disappeared or become non-interactive. The step is
-      // counted as failed so the caller can invalidate the state it left.
+      // The step counts as failed, so the caller can invalidate the state it left.
       stepsFailed++;
     }
     await page.evaluate(
@@ -273,10 +258,7 @@ export async function executeStressPattern(
   return { stepsRun, stepsFailed, stepsPlanned: pattern.steps.length, budgetExhausted: false };
 }
 
-// Where to put the pointer and how far one wheel tick travels. The step size
-// adapts so a 10-row list traverses exactly its range while a virtualized list
-// reporting a 400,000px scrollHeight still stops after eight viewports:
-// representative either way, bounded always.
+// Step size adapts: a 10-row list traverses its range, a virtualized one stops after 8 viewports.
 async function scrollTarget(
   page: Page,
   selector: string,
@@ -292,8 +274,7 @@ async function scrollTarget(
         : (document.querySelector(sel) as HTMLElement | null);
       if (!el) return null;
 
-      // Smooth scrolling would measure easing duration instead of handler
-      // cost. Forcing `auto` is idempotent, so repeated sweeps see one state.
+      // Smooth scrolling would measure easing duration, not handler cost; auto is idempotent.
       el.style.scrollBehavior = "auto";
 
       const range = isHorizontal
@@ -308,8 +289,7 @@ async function scrollTarget(
         return { x: Math.floor(viewportW / 2), y: Math.floor(viewportH / 2), delta };
       }
       const rect = el.getBoundingClientRect();
-      // Clamped into the viewport: a wheel event at negative coordinates
-      // lands on nothing.
+      // Clamped into the viewport: a wheel event at negative coordinates lands on nothing.
       const x = Math.min(Math.max(rect.x + rect.width / 2, 1), viewportW - 1);
       const y = Math.min(Math.max(rect.y + rect.height / 2, 1), viewportH - 1);
       return { x, y, delta };
@@ -378,9 +358,7 @@ export async function findAriaGroupSiblings(
   );
 }
 
-// A step is not an event: every pattern enumerates one step per event except
-// pointer-drag, which carries 60 moves in a single step. Budgets are per
-// event, so a drag must not be compared as though it were one interaction.
+// pointer-drag carries 60 moves in one step; budgets are per event, so a step is not an event.
 export function countPatternEvents(pattern: StressPattern): number {
   const total = pattern.steps.reduce((sum, step) => sum + (step.moveCount ?? 1), 0);
   return total > 0 ? total : 1;

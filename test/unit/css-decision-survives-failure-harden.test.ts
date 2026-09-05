@@ -63,8 +63,7 @@ describe("M90 harden", () => {
     expect(thrown!.message).toContain("Stylesheets: none (--no-css)");
   });
 
-  // #2: an unrelated pre-existing warning (unocss transform note) and the
-  // css decision both survive together, deduped, neither dropping the other.
+  // #2: a pre-existing warning and the css decision survive together, deduped, neither dropped.
   it("#2 combines with an existing runWarnings entry without dropping either", async () => {
     let thrown: Error | undefined;
     try {
@@ -82,10 +81,7 @@ describe("M90 harden", () => {
     expect(occurrences).toBe(1);
   });
 
-  // #3: the caught value is preserved as .cause for a non-Error throw (not
-  // dropped by the accumulation rewrap). buildAndServe (harness.ts) wraps
-  // the original pool-acquire failure before analyze()'s own catch ever
-  // sees it, so this checks structural content, not object identity.
+  // #3: the accumulation rewrap must preserve a non-Error throw's content as .cause.
   it("#3 preserves the original thrown value's content as .cause for a non-Error throw", async () => {
     const original = { code: "EBOOM" };
     let thrown: (Error & { cause?: unknown }) | undefined;
@@ -101,8 +97,7 @@ describe("M90 harden", () => {
     expect(JSON.stringify(thrown!.cause)).toContain("EBOOM");
   });
 
-  // #4: repeated identical strings across runWarnings/carried/cssDecision
-  // collapse to one line each (Set-based dedup untouched by the css addition).
+  // #4: repeated identical strings across warning sources must collapse to one line each.
   it("#4 does not duplicate an accumulated warning that already equals the css decision text", async () => {
     let thrown: Error | undefined;
     try {

@@ -3,10 +3,7 @@ import { buildMatrixReport, formatTable, type ComboReport, type MatrixAxis, type
 import { generatePropMatrix, selectMatrixCombos, isMatrixEligible, matrixValues } from "../../src/props/index.js";
 import type { PropSchema } from "../../src/props/index.js";
 
-// twenty-F3: `Modal.tsx --matrix --max-combos 2` printed
-// `Prop Matrix (isOpen × …)` over two cells that both carried `isOpen: false`
-// — the header named an axis the run never crossed, and the two measured
-// cells were the state the tool itself reports as rendering nothing.
+// twenty-F3: the printed header named an axis (isOpen) both measured cells held at one value.
 
 function timing(median: number): TimingWithCV {
   return { samples: [median], median, p95: median, cv: 0, unstable: false };
@@ -93,9 +90,7 @@ describe("a matrix header describes the axes the run actually crossed", () => {
   });
 });
 
-// --help's "Combo caps" section promises the anchor cell is always kept.
-// twenty-F3 read as a violation of that promise; the selection (Lane B's
-// src/prop-gen-values.ts) keeps it, and the report is what has to say so.
+// --help promises the anchor cell survives every cap; twenty-F3 read as a violation of that.
 describe("the anchor cell survives every cell cap", () => {
   const SCHEMAS: PropSchema[] = [
     { name: "isOpen", kind: "boolean", required: true, values: [false, true] },
@@ -141,10 +136,7 @@ describe("the anchor cell survives every cell cap", () => {
   });
 });
 
-// dub-F1: `disabledTooltip` is not an axis and no cell carries it, so the
-// matrix measured a Switch without a tooltip — a different component from the
-// one the header describes. Lane B's `matrixHeldAbsentProps` answers which
-// props those are; the header is what makes the answer visible.
+// dub-F1: a prop held absent in every cell measured a component different from the header's claim.
 describe("non-axis props that no cell carries are named", () => {
   const combos = [
     cell(0, { isOpen: false, size: "small" }),
@@ -169,8 +161,7 @@ describe("non-axis props that no cell carries are named", () => {
   });
 });
 
-// dub's `variant` declares 12 values; an over-wide union becomes an axis over a
-// truncated set, so "crossed" alone would claim the whole union was measured.
+// dub: variant declares 12 values but only 8 fit as an axis; "crossed" alone would overclaim.
 describe("an axis whose union was truncated says how much of it was crossed", () => {
   const wideAxes: MatrixAxis[] = [
     { propName: "isOpen", values: [false, true] },

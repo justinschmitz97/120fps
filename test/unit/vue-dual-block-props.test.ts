@@ -23,9 +23,7 @@ function read(name: string): string {
   return fs.readFileSync(path.join(FIXTURES, name), "utf-8");
 }
 
-// nuxt-ui-F1: 122 of 124 components declare their props interface in a companion
-// <script lang="ts"> block. Only the <script setup> block reached the program, so
-// defineProps<BadgeProps>() named a type nothing declared.
+// nuxt-ui-F1: 122/124 components declare props in a companion <script lang="ts"> block.
 
 describe("an SFC that declares its props type in a companion script block", () => {
   it("extracts the interface the setup block's defineProps names", async () => {
@@ -87,8 +85,7 @@ describe("a defineProps type argument that does not resolve", () => {
   });
 });
 
-// element-plus-F5: select.vue is defineComponent({ props, setup() }) — Composition
-// API with a runtime props object, reported as "Vue's Options API".
+// element-plus-F5: select.vue (defineComponent({ props, setup() })) was misreported as Options API.
 
 describe("a component whose runtime props object is read by setup()", () => {
   it("is detected as a setup-props form rather than an Options-API one", () => {
@@ -125,8 +122,7 @@ describe("a component whose runtime props object is read by setup()", () => {
   });
 });
 
-// element-plus-F3: `value?: string | number` printed as `unknown` with no
-// disclosure, while every other multi-shape prop got one.
+// element-plus-F3: value?: string | number printed as unknown, with no union disclosure.
 
 describe("a prop declared string | number", () => {
   it("is typed as a union with a member per branch", async () => {
@@ -159,9 +155,7 @@ describe("a prop declared string | number", () => {
   });
 });
 
-// Review B-4: the one new resolution warning that did not route through
-// `presetRemedyClause`. With the preset file on disk and its props being
-// measured, "so no props were extracted. Add Badge.props.tsx" is false twice.
+// Review B-4: skips presetRemedyClause, so its remedy text can misstate a preset already on disk.
 
 describe("the unresolved-type warning next to a preset file", () => {
   it("does not tell the user to create a file that is already there", async () => {
@@ -198,8 +192,7 @@ describe("the unresolved-type warning next to a preset file", () => {
   });
 });
 
-// Review B-11: a jsx setup block beside a ts companion block was handed to a
-// `.ts` virtual file, where its JSX no longer parses.
+// Review B-11: pairing a jsx setup block with a ts companion sent JSX to a .ts virtual file.
 
 describe("the language the virtual module is parsed as", () => {
   it("is tsx when one block is jsx and the other is ts", () => {

@@ -14,8 +14,6 @@ function makeDescriptor(
   };
 }
 
-// --- Dispatch ---
-
 describe("pointer-drag dispatch", () => {
   it("role=slider → pointer-drag", () => {
     const desc = makeDescriptor({ role: "slider" });
@@ -48,8 +46,6 @@ describe("pointer-drag dispatch", () => {
   });
 });
 
-// --- Step structure ---
-
 describe("pointer-drag step structure", () => {
   it("has exactly 1 step with action pointer-drag", () => {
     const desc = makeDescriptor({ role: "slider", selector: "#slider" });
@@ -78,8 +74,6 @@ describe("pointer-drag step structure", () => {
   });
 });
 
-// --- Priority ---
-
 describe("pointer-drag priority", () => {
   it("slider role takes priority over keyboard-sweep (even with siblings)", () => {
     const desc = makeDescriptor({ role: "slider" });
@@ -105,8 +99,6 @@ describe("pointer-drag priority", () => {
     expect(pattern.name).toBe("pointer-drag");
   });
 });
-
-// --- Purity ---
 
 describe("pointer-drag purity", () => {
   it("same input produces same output", () => {

@@ -92,7 +92,6 @@ describe("portal discovery e2e", () => {
     });
 
     const portalDescs = descriptors.filter((d) => d.portal === true);
-    // Should find modal content and potentially popover content
     expect(portalDescs.length).toBeGreaterThanOrEqual(2);
   });
 

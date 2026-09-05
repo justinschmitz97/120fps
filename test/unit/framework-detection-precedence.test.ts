@@ -79,8 +79,7 @@ describe("framework detection precedence", () => {
   });
 });
 
-// Mounting non-React code as React is the failure the old `react` default
-// produced; an unreadable manifest is evidence of nothing.
+// Guard: unreadable manifest defaults to vanilla; react would mount non-React code as react.
 describe("framework detection on an unreadable manifest", () => {
   it("returns vanilla and warns when the manifest is missing", () => {
     const dir = path.join(tmpDir, "empty");
@@ -150,9 +149,7 @@ describe("framework resolution around the detector", () => {
   });
 });
 
-// M83 #4b (preact-app-F4): mount dispatch is purely extension-based; an
-// explicit --framework request that disagrees with what will actually mount
-// used to be silently discarded in both directions.
+// M83 #4b: mount dispatch is extension-based; a disagreeing --framework flag must warn, not vanish.
 describe("M83 #4b: --framework flag versus what actually mounts", () => {
   it("warns when --framework vanilla is requested on a .tsx file (mounts react anyway)", () => {
     const dir = path.join(tmpDir, "empty");

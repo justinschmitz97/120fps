@@ -5,9 +5,6 @@ import path from "node:path";
 import { explainProps } from "../../src/pipeline/index.js";
 import { scanJsxComposedLocalImports } from "../../src/props/index.js";
 
-// M91 harden: adversarial hypotheses against the RSC one-hop composition
-// gate and the JSX-composed-import scanner.
-
 describe("M91 harden: scanJsxComposedLocalImports", () => {
   it("#1 ignores a type-only import even when its name matches a JSX tag", () => {
     const src = [
@@ -17,13 +14,7 @@ describe("M91 harden: scanJsxComposedLocalImports", () => {
     expect(scanJsxComposedLocalImports(src, "page.tsx")).toEqual([]);
   });
 
-  // M92 (Item 3, commerce's app/page.tsx): a bare specifier is now collected
-  // by the scanner too -- commerce's real composed children are
-  // baseUrl-relative bare specifiers ("components/carousel", no leading
-  // "./"), which the scanner has no tsconfig context to classify on its own.
-  // Whether a bare specifier is a real npm package (excluded) or a local
-  // project file (kept) is decided downstream, at resolution time
-  // (resolveRelativeJsxChild in analyze.ts), not here.
+  // M92 (Item 3): the scanner collects bare specifiers; it lacks tsconfig context to classify them.
   it("#2 still collects a bare (non-relative) import -- classification moved downstream", () => {
     const src = [
       "import { Foo } from 'some-package';",
@@ -99,8 +90,6 @@ describe("M91 harden: composedChildPreflightHits via explainProps", () => {
     return { root };
   }
 
-  // #8: a broken/typo'd relative import composed as JSX must not crash the
-  // dry run — it simply resolves to nothing and is skipped.
   it("#8 a JSX-composed import that resolves to no file on disk does not crash", async () => {
     const { root } = isolatedProject("120fps-rsc-harden-missing-", {
       "package.json": JSON.stringify({ dependencies: { react: "18.3.1", "react-dom": "18.3.1" } }),
@@ -113,8 +102,6 @@ describe("M91 harden: composedChildPreflightHits via explainProps", () => {
     expect(explained.componentName).toBe("HomePage");
   });
 
-  // #9: a component that JSX-composes itself (self-referential) does not
-  // hang or infinitely recurse.
   it("#9 a self-composing component does not hang", async () => {
     const { root } = isolatedProject("120fps-rsc-harden-self-", {
       "package.json": JSON.stringify({ dependencies: { react: "18.3.1", "react-dom": "18.3.1" } }),
@@ -127,8 +114,7 @@ describe("M91 harden: composedChildPreflightHits via explainProps", () => {
     expect(explained.componentName).toBe("Tree");
   });
 
-  // #10: an async child reached only through a *type-only* JSX-adjacent
-  // import must not be gated (matches the scanner's own type-only exclusion).
+  // #10: a type-only JSX-adjacent import must not gate, per the scanner's own type-only exclusion.
   it("#10 a type-only import of an async component's type is not gated", async () => {
     const { root } = isolatedProject("120fps-rsc-harden-typeonly-", {
       "package.json": JSON.stringify({ dependencies: { react: "18.3.1", "react-dom": "18.3.1" } }),

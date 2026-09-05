@@ -13,8 +13,7 @@ import {
   type ResolvedTolerance,
 } from "../../src/report/index.js";
 
-// M45: entries are keyed by component x environment slot; selectBaselineEntry
-// resolves the slot for us so these assertions stay about the entry, not the key.
+// M45: selectBaselineEntry resolves the component x env key so assertions stay on the entry.
 function entryOf(baseline: Baseline | null, componentPath: string): BaselineEntry {
   return selectBaselineEntry(baseline, componentPath, "unused")!.entry;
 }

@@ -25,7 +25,6 @@ function schemasWithChildren(...names: string[]): Map<string, PropSchema[]> {
   return map;
 }
 
-// ─── H3: Two items share similar suffix ───
 
 describe("H3: multiple components with same role", () => {
   it("handles two title-like components", () => {
@@ -33,7 +32,6 @@ describe("H3: multiple components with same role", () => {
     const result = inferComposition(makeExports(...names), schemasWithChildren(...names));
     expect(result).not.toBeNull();
     const root = result!.structure[0];
-    // Both should appear somewhere in the tree
     const allComponents: string[] = [];
     function collect(node: any) {
       allComponents.push(node.component);
@@ -45,7 +43,6 @@ describe("H3: multiple components with same role", () => {
   });
 });
 
-// ─── H4: Root not duplicated in children ───
 
 describe("H4: root export not duplicated in children", () => {
   it("root only appears as outermost wrapper", () => {
@@ -59,22 +56,16 @@ describe("H4: root export not duplicated in children", () => {
   });
 });
 
-// ─── H5: Mixed exports with partial shared prefix ───
 
 describe("H5: mixed exports with partial prefix sharing", () => {
   it("only groups exports that share a common prefix with root", () => {
-    // "Dialog" is prefix of DialogTrigger, but not Button
-    // findRoot should find Dialog (shortest prefix of at least 1 other)
     const names = ["Button", "Dialog", "DialogTrigger"];
     const result = inferComposition(makeExports(...names), schemasWithChildren(...names));
-    // Dialog is root prefix of DialogTrigger, Button doesn't share prefix
-    // But findRoot checks which export name is prefix of ALL others: Button breaks this
-    // So this should return null since no single export is prefix of all others
+    // findRoot requires a candidate to prefix ALL other exports; Button breaks that for Dialog.
     expect(result).toBeNull();
   });
 });
 
-// ─── H7: Empty schemas map ───
 
 describe("H7: empty schemas map", () => {
   it("still produces valid tree with empty schemas", () => {
@@ -85,7 +76,6 @@ describe("H7: empty schemas map", () => {
   });
 });
 
-// ─── H9: compositionToJsx generates valid JSX ───
 
 describe("H9: compositionToJsx", () => {
   it("generates JSX for item-based template", () => {
@@ -136,7 +126,6 @@ describe("H9: compositionToJsx", () => {
   });
 });
 
-// ─── H10: Flat template without items → no repeatNode ───
 
 describe("H10: flat without items", () => {
   it("does not set repeatNode when no *Item exists", () => {
@@ -147,7 +136,6 @@ describe("H10: flat without items", () => {
   });
 });
 
-// ─── H12: List-based with items but no triggers ───
 
 describe("H12: list-based with items instead of triggers", () => {
   it("places items inside list when no triggers exist", () => {
@@ -157,22 +145,18 @@ describe("H12: list-based with items instead of triggers", () => {
     const root = result!.structure[0];
     const list = root.children.find((c) => c.component === "ToggleGroupList");
     expect(list).toBeDefined();
-    // Items should be inside list when no triggers
     const items = list!.children.filter((c) => c.component === "ToggleGroupItem");
     expect(items.length).toBe(3);
   });
 });
 
-// ─── H15: Nested suffixes ───
 
 describe("H15: deeply nested suffixes", () => {
   it("classifies by last matching suffix pattern", () => {
-    // "AccordionItemTrigger": suffix after root "Accordion" is "ItemTrigger"
-    // This matches "Trigger" at end → trigger role
+    // Suffix after root "Accordion" is "ItemTrigger", which matches "Trigger" at the end.
     const names = ["Accordion", "AccordionItem", "AccordionItemTrigger", "AccordionContent"];
     const result = inferComposition(makeExports(...names), schemasWithChildren(...names));
     expect(result).not.toBeNull();
-    // AccordionItemTrigger should be classified as trigger and placed inside items
     const root = result!.structure[0];
     const items = root.children.filter((c) => c.component === "AccordionItem");
     expect(items.length).toBe(3);

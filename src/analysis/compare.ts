@@ -29,7 +29,6 @@ export interface CompareCombo {
   working: CompareSideMetrics;
   reference: CompareSideMetrics;
   mountDeltaPercent: number;
-  // Whether the two sample sets are telling different stories at all.
   distinguishable: boolean;
 }
 
@@ -40,9 +39,7 @@ export interface CompareReport {
   warnings?: string[];
 }
 
-// Ranges, not means. Two medians always differ by something; only
-// non-overlapping spreads say the difference outlived the noise. Deliberately
-// not a t-test: no statistics machinery until this proves insufficient.
+// Only non-overlapping spreads say the difference outlived the noise; medians always differ.
 export function distinguishable(a: number[], b: number[]): boolean {
   if (a.length === 0 || b.length === 0) return false;
   const aMin = Math.min(...a);
@@ -91,16 +88,12 @@ export function validateCompareOptions(options: {
   return undefined;
 }
 
-// `.120fps-` prefixed so the stale-harness sweep and any human reading the repo
-// recognise it as ours; other agents work in this tree too.
+// `.120fps-` prefix: the stale-harness sweep and other agents must recognise the dir as ours.
 function worktreeDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), ".120fps-compare-"));
 }
 
-// Every level from the repository root down to the member that has an
-// install of its own, root first. Under pnpm workspaces the member's own
-// node_modules is where react or vue lives, so linking the repo root alone leaves
-// the reference side unable to resolve the renderer.
+// Under pnpm workspaces the renderer lives in the member's own node_modules, not just the root's.
 export function nodeModulesLinkDirs(repoRoot: string, memberRoot: string): string[] {
   const relative = path.relative(repoRoot, memberRoot);
   const inside = relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
@@ -115,9 +108,7 @@ export function nodeModulesLinkDirs(repoRoot: string, memberRoot: string): strin
   return dirs.filter((dir) => fs.existsSync(path.join(repoRoot, dir, "node_modules")));
 }
 
-// A fresh worktree has no install of its own, so the reference harness could
-// not resolve react at all. Junction on Windows (no privileges needed), symlink
-// elsewhere. Sound only because the lockfiles matched.
+// A fresh worktree has no install of its own; linking is sound only because the lockfiles matched.
 export function linkNodeModules(repoRoot: string, worktree: string, memberRoot: string): void {
   for (const dir of nodeModulesLinkDirs(repoRoot, memberRoot)) {
     const source = path.join(repoRoot, dir, "node_modules");
@@ -125,27 +116,21 @@ export function linkNodeModules(repoRoot: string, worktree: string, memberRoot: 
     if (fs.existsSync(target)) continue;
     try {
       fs.mkdirSync(path.dirname(target), { recursive: true });
+      // Junction on Windows: a directory symlink there needs privileges a plain user lacks.
       fs.symlinkSync(source, target, process.platform === "win32" ? "junction" : "dir");
     } catch {
-      // Without it the reference harness fails to boot and says so through the
-      // normal readiness path; a silent copy of node_modules would be worse.
+      // A boot failure surfaces through the normal readiness path; copying node_modules is worse.
     }
   }
 }
 
-// Windows fix: `git worktree remove` and a naive recursive delete both
-// walk into a junction rather than unlinking it, so removing the worktree
-// while linkNodeModules's links are still in place deletes files out of
-// repoRoot's real node_modules -- the one every other process in the repo,
-// including this one, is using. Called before either teardown path, so
-// neither ever sees the link. rmdirSync detaches a Windows junction without
-// touching its target; a POSIX dir symlink is removed with unlinkSync
-// instead, since POSIX rmdir refuses a path that is not itself a directory.
+// Worktree teardown walks into a junction and would delete through it into the real node_modules.
 export function unlinkNodeModules(worktree: string, repoRoot: string, memberRoot: string): void {
   for (const dir of nodeModulesLinkDirs(repoRoot, memberRoot)) {
     const target = path.join(worktree, dir, "node_modules");
     try {
       if (!fs.lstatSync(target).isSymbolicLink()) continue;
+      // rmdirSync detaches a Windows junction; POSIX rmdir refuses a symlink, so unlinkSync there.
       if (process.platform === "win32") fs.rmdirSync(target);
       else fs.unlinkSync(target);
     } catch {
@@ -158,18 +143,12 @@ function git(args: string[], cwd: string): string {
   return execFileSync("git", args, { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] }).trim();
 }
 
-// Best-effort, mirroring sweepStaleHarnessDirs/sweepStaleTmpDirs: a SIGKILL or
-// OOM mid-compare escapes the `finally` block's own `git worktree remove` and
-// leaves <repoRoot>/.git/worktrees/<name> registered with no working
-// directory behind it. Nothing else sweeps that, so it accumulates forever
-// and can collide with a fresh `worktree add`. Never blocks a compare run:
-// a corrupted .git, a missing `git`, or repoRoot not being a repository at
-// all must not stop this from proceeding.
+// A SIGKILL mid-compare leaves .git/worktrees/<name> registered, and nothing else sweeps it.
 export function pruneStaleWorktrees(repoRoot: string): void {
   try {
     git(["worktree", "prune"], repoRoot);
   } catch {
-    // best-effort
+    // A corrupt .git, a missing git, or a non-repo root must not stop the compare.
   }
 }
 
@@ -211,8 +190,7 @@ export async function compareAgainstRef(
   const relativeComponent = toPosix(path.relative(repoRoot, resolved));
   const dir = worktreeDir();
   const warnings: string[] = [];
-  // Working and reference sides can each fail to settle fonts independently;
-  // one line per distinct message either way.
+  // Both sides can fail to settle fonts independently; one line per distinct message.
   const onWarning = (warning: string): void => {
     if (!warnings.includes(warning)) warnings.push(warning);
   };
@@ -227,9 +205,7 @@ export async function compareAgainstRef(
     pruneStaleWorktrees(repoRoot);
     git(["worktree", "add", "--detach", dir, ref], repoRoot);
 
-    // The lockfile guard is what makes the next step sound: identical
-    // dependency sets mean the reference side can resolve through the working
-    // tree's install rather than needing one of its own.
+    // Identical dependency sets are what let the reference side resolve through this install.
     if (lockfileHash(repoRoot) !== lockfileHash(dir)) {
       throw new Error(DEPENDENCY_DRIFT_ERROR(ref));
     }
@@ -242,8 +218,7 @@ export async function compareAgainstRef(
       );
     }
 
-    // Combos come from the working tree's schema: it is the side the user is
-    // asking about, and a prop it does not have is not a question they asked.
+    // The working tree's schema: a prop it does not have is not a question the user asked.
     const schemas = await extractProps(resolved);
     let combos: PropCombination[] = generateCombinations(schemas);
     if (combos.length === 0) combos = [{}];
@@ -290,9 +265,7 @@ export async function compareAgainstRef(
       let workingNodes = 0;
       let referenceNodes = 0;
 
-      // The whole point of the mode: sample i of one side, then sample i of the
-      // other, inside one thermal and contention window. Sequential
-      // whole-run-then-whole-run comparison is what this exists to replace.
+      // Interleaved per sample, so both sides share one thermal and contention window.
       for (let s = 0; s < samples; s++) {
         const a = await runMountUnmount(sessionWorking.page, sessionWorking.session.cdp, props, s === 0);
         const b = await runMountUnmount(sessionReference.page, sessionReference.session.cdp, props, s === 0);
@@ -341,12 +314,9 @@ export async function compareAgainstRef(
     if (pool) await pool.closeAll();
     if (harnessWorking) await harnessWorking.cleanup();
     if (harnessReference) await harnessReference.cleanup();
-    // Detach linkNodeModules's junction(s) before either teardown path below
-    // walks the worktree tree, or that walk deletes through them into
-    // repoRoot's real node_modules.
+    // Detach the junctions before teardown walks the worktree and deletes through them.
     unlinkNodeModules(dir, repoRoot, projectRoot);
-    // Every exit path: a leaked worktree interferes with every other tool in
-    // the repo, not just this one.
+    // Every exit path: a leaked worktree interferes with every other tool in the repo.
     try {
       git(["worktree", "remove", "--force", dir], repoRoot);
     } catch {

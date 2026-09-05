@@ -12,8 +12,7 @@ import {
   optionsAllowVerdictReuse,
 } from "../../src/pipeline/index.js";
 
-// D1: a matrix run returns before applyBaselineWorkflow, so every baseline flag
-// on it is a no-op. The run must say so.
+// D1: a matrix run returns before applyBaselineWorkflow, so every baseline flag on it is a no-op.
 describe("D1: matrix mode discloses that baselines do not apply", () => {
   it("--save-baseline on a matrix run counts as a baseline request", () => {
     expect(baselineWorkflowRequested({ saveBaseline: true })).toBe(true);
@@ -49,8 +48,7 @@ describe("D1: matrix mode discloses that baselines do not apply", () => {
   });
 });
 
-// D2: mode-disable flags are fully described by the mode the fingerprint
-// records, so they must not disqualify reuse the way mode-enable flags do.
+// D2: mode-disable flags are fully described by the fingerprint's mode; they must not block reuse.
 describe("D2: verdict reuse gate", () => {
   it("plain --check is eligible", () => {
     expect(optionsAllowVerdictReuse({ check: true })).toBe(true);
@@ -126,8 +124,7 @@ describe("D2: verdict reuse gate", () => {
   });
 });
 
-// D3: the flag that controls reuse was invisible to --help's own parity guard,
-// because a flag missing from both sides of it passes.
+// D3: a flag missing from both --help and KNOWN_FLAGS passes the parity guard undetected.
 describe("D3: --no-cache is discoverable", () => {
   it("is a known flag", () => {
     expect(KNOWN_FLAGS.has("--no-cache")).toBe(true);
@@ -142,8 +139,7 @@ describe("D3: --no-cache is discoverable", () => {
   });
 });
 
-// D4: two whole-run modes; the run does one or the other. Silent curve-wins
-// hid the fact that --matrix was ignored.
+// D4: curve/matrix are exclusive modes; a silent curve-win hid that --matrix was ignored.
 describe("D4: --curve conflicts with --matrix", () => {
   it("errors naming both flags", () => {
     const args = parseArgs(["./Button.tsx", "--curve", "--matrix"]);
@@ -176,8 +172,7 @@ describe("D4: --curve conflicts with --matrix", () => {
   });
 });
 
-// D5: the reuse relaxation is only reachable if the CLI encodes a disable as
-// `false` rather than dropping it.
+// D5: reuse relaxation is reachable only if the CLI encodes a disable as `false`, not by omission.
 describe("D5: CLI encodes mode disables as false", () => {
   it("--no-matrix resolves to false", () => {
     expect(resolveMatrixOption({ noMatrix: true })).toBe(false);

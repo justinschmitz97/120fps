@@ -162,7 +162,6 @@ describe("formatJUnit: XML output", () => {
   });
 });
 
-// C3: the flags.
 describe("parseArgs: report-path flags", () => {
   it("takes a path for each format", () => {
     const args = parseArgs(["./Button.tsx", "--report-md", "out.md", "--report-junit", "out.xml"]);

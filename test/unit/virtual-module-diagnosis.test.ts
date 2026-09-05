@@ -23,8 +23,7 @@ function projectWith(files: Record<string, string>): { root: string; entry: stri
     fs.mkdirSync(path.dirname(abs), { recursive: true });
     fs.writeFileSync(abs, content);
   }
-  // M78: these fixtures test transform recognition, not install state; an
-  // empty node_modules keeps them decoupled from the new not-installed check.
+  // M78: empty node_modules decouples transform recognition from the not-installed check.
   fs.mkdirSync(path.join(root, "node_modules"), { recursive: true });
   return { root, entry: path.join(root, "Card.tsx") };
 }

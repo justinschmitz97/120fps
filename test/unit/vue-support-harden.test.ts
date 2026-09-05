@@ -42,7 +42,6 @@ function entry(componentRelative: string, extra: Record<string, unknown> = {}): 
   } as Parameters<typeof generateEntry>[0]);
 }
 
-// H1: Vue's own file convention is kebab-case, which is not an identifier.
 describe("H1: kebab-case SFC filenames", () => {
   it("derives a valid identifier", () => {
     expect(vueComponentName("a/my-button.vue")).toBe("MyButton");
@@ -52,8 +51,7 @@ describe("H1: kebab-case SFC filenames", () => {
 
   it("reaches the entry as a real import binding", () => {
     const src = entry("my-button.vue");
-    // M106 A4: the entry imports the module as a namespace and selects the
-    // export at runtime, so a type-only name cannot break the ESM link.
+    // M106 A4: namespace import + runtime selection; a type-only name can't break the link.
     expect(src).toContain('import * as __120fps_mod from "/my-button.vue"');
     expect(src).toContain('const MyButton = __120fps_selectExport("default");');
     expect(src).toContain("h(MyButton,");
@@ -68,7 +66,6 @@ describe("H1: kebab-case SFC filenames", () => {
   });
 });
 
-// H2: a leading digit is not a valid identifier start.
 describe("H2: filenames that cannot start an identifier", () => {
   it("prefixes rather than emitting a syntax error", () => {
     expect(vueComponentName("a/2col.vue")).toBe("Component2col");
@@ -76,7 +73,6 @@ describe("H2: filenames that cannot start an identifier", () => {
   });
 });
 
-// H3: an SFC with <script setup> but no defineProps.
 describe("H3: no defineProps", () => {
   it("extracts nothing and stays mountable", async () => {
     expect(await extractProps(path.join(VUE, "NoProps.vue"))).toEqual([]);
@@ -108,12 +104,10 @@ describe("H5: factory defaults in withDefaults", () => {
   });
 });
 
-// H6: an inline type literal, not a named interface.
 describe("H6: inline props type", () => {
   it("resolves the same way", async () => {
     const schemas = await extractProps(path.join(VUE, "Text.vue"));
-    // M84: PropSchema gained an additive `provenance` field, populated for
-    // every schema; a plain "test" placeholder string carries "placeholder".
+    // M84: provenance marks a synthesized "test" placeholder value as "placeholder".
     expect(schemas).toEqual([
       { name: "text", kind: "string", required: true, values: ["test"], provenance: "placeholder" },
     ]);
@@ -128,8 +122,7 @@ describe("H7: aliased prop types", () => {
   });
 });
 
-// H8: a <script> block that produces no component fails module evaluation in
-// the browser; the run must say so before booting anything.
+// H8: a script producing no component fails browser module evaluation; the run must say so first.
 describe("H8: SFCs that produce no component", () => {
   it("recognizes a plain script with no default export", () => {
     const src = fs.readFileSync(path.join(VUE, "Broken.vue"), "utf-8");
@@ -146,8 +139,7 @@ describe("H8: SFCs that produce no component", () => {
     expect(sfcProducesComponent(src, "Ok.vue", compiler!)).toBe(true);
   });
 
-  // The shape that looks most correct and fails hardest: the Vue compiler
-  // treats an empty <script setup> as absent.
+  // Looks most correct, fails hardest: the Vue compiler treats an empty <script setup> as absent.
   it("rejects an empty <script setup> next to a named-export script", () => {
     const src = `<script lang="ts">export const viewport = { width: 1 };</script>\n<script setup lang="ts"></script>\n<template><i/></template>`;
     expect(sfcProducesComponent(src, "Empty.vue", compiler!)).toBe(false);
@@ -166,8 +158,7 @@ describe("H8: SFCs that produce no component", () => {
   });
 });
 
-// H9: preflight has to see through an SFC edge, or every guarantee below the
-// measured file silently becomes a no-op.
+// H9: preflight must see through an SFC edge, or every guarantee past it silently becomes a no-op.
 describe("H9: preflight through .vue edges", () => {
   it("finds a server-only import one SFC deep", () => {
     const result = runPreflight({
@@ -191,7 +182,6 @@ describe("H9: preflight through .vue edges", () => {
   });
 });
 
-// H10: a `</script>` sequence inside the script block.
 describe("H10: script-block boundaries", () => {
   it("ends the block where the browser would", () => {
     const src = `<script setup lang="ts">\nconst s = "a";\n</script>\n<template><i>{{ s }}</i></template>`;
@@ -204,7 +194,6 @@ describe("H10: script-block boundaries", () => {
   });
 });
 
-// H11: auto-scale must fan out inside one wrapper element (M26).
 describe("H11: auto-scale fan-out", () => {
   it("renders N instances in one element", () => {
     const src = entry("Text.vue");
@@ -213,8 +202,7 @@ describe("H11: auto-scale fan-out", () => {
     expect(src.match(/renderTree\(/g)?.length).toBe(1);
   });
 
-  // A manual `scale(n)` export lives in the SFC's plain <script> block and
-  // returns a VNode; the entry dispatches to it instead of fanning out.
+  // A manual scale(n) export in the SFC's <script> block returns a VNode instead of fanning out.
   it("dispatches to a manual scale export when one exists", () => {
     const src = generateEntry({
       componentRelative: "Grid.vue",
@@ -256,7 +244,6 @@ describe("H12: prop presets on a .vue component", () => {
   });
 });
 
-// H13: the M39 fingerprint must move when the SFC does.
 describe("H13: source fingerprint tracks the SFC", () => {
   const scratch = path.join(VUE, "tmp-fingerprint");
   const sfc = path.join(scratch, "Scratch.vue");
@@ -298,7 +285,6 @@ describe("H13: source fingerprint tracks the SFC", () => {
   });
 });
 
-// H14: a project with .vue files and no plugin keeps the M48 diagnosis.
 describe("H14: Vue project without @vitejs/plugin-vue", () => {
   it("loads no vue transform", () => {
     expect(detectProjectTransforms(NOPLUGIN).map((t) => t.code)).not.toContain("vue");
@@ -315,16 +301,11 @@ describe("H14: Vue project without @vitejs/plugin-vue", () => {
   });
 });
 
-// H15: no vue at all: extraction degrades rather than throwing.
 describe("H15: Vue compiler unavailable", () => {
-  // vitest exports NODE_PATH into pnpm's hoisted store, so every package
-  // resolves from everywhere inside a test process; a failed resolution is only
-  // observable with it removed. Both specifiers are probed synchronously before
-  // the first await, so wrapping the call is enough.
+  // vitest leaks pnpm's NODE_PATH, masking failures unless withProductionResolution strips it.
   it("resolves to undefined outside a Vue project", async () => {
     resetVueCompilerCache();
-    // Filesystem root, not "C:/": that literal is a relative path on POSIX and
-    // would probe the repo's own node_modules.
+    // Uses the real filesystem root, not "C:/": that string is a relative path on POSIX.
     const loaded = await withProductionResolution(() =>
       loadVueCompiler(path.parse(process.cwd()).root),
     );
@@ -343,7 +324,6 @@ describe("H15: Vue compiler unavailable", () => {
   });
 });
 
-// H16: only strictmode is refused; the other isolation phases are fine.
 describe("H16: isolation phases under Vue", () => {
   it("allows every phase but strictmode", () => {
     for (const phase of ["mount", "rerender", "unmount", "memory"]) {
@@ -357,7 +337,6 @@ describe("H16: isolation phases under Vue", () => {
   });
 });
 
-// H17: the M25 stylesheet block leads the Vue entry too.
 describe("H17: stylesheet injection into the Vue entry", () => {
   it("imports the stylesheet before the runtime and the component", () => {
     const src = entry("Button.vue", { cssImports: ["/app/globals.css"] });
@@ -374,14 +353,12 @@ describe("H17: stylesheet injection into the Vue entry", () => {
 describe("H18: dependency scanning through SFCs", () => {
   it("follows a relative .vue import and collects real packages", () => {
     const deps = scanExternalDeps(path.join(VUE, "Nested.vue"), VUE, []);
-    // `vue` is declared by the renderer list, and the walk must not leave the
-    // project through Child.vue.
+    // vue is declared by the renderer list; the walk must not leave the project via Child.vue.
     expect(deps).not.toContain("./Child.vue");
     expect(deps.every((d) => !d.startsWith("."))).toBe(true);
   });
 });
 
-// H19: an SFC whose setup throws must not read as a silent pass.
 describe("H19: a throwing SFC", () => {
   it("still extracts its declared props", async () => {
     const schemas = await extractProps(path.join(VUE, "Throws.vue"));
@@ -389,7 +366,6 @@ describe("H19: a throwing SFC", () => {
   });
 });
 
-// H20: the React entry is untouched by everything above.
 describe("H20: React entry is unchanged", () => {
   it("contains no Vue vocabulary at all", () => {
     const src = generateEntry({
@@ -403,8 +379,7 @@ describe("H20: React entry is unchanged", () => {
     for (const token of ["createApp", "nextTick", "shallowRef", "default: () =>"]) {
       expect(src).not.toContain(token);
     }
-    // Vue's hyperscript call, as its own identifier: a bare "h(" substring also
-    // occurs inside ordinary method names ("push("), which says nothing.
+    // \b guards against "h(" inside ordinary calls like "push(", not just Vue's hyperscript.
     expect(src).not.toMatch(/\bh\(/);
     expect(src).toContain("createRoot(container)");
     expect(src).toContain("__120fpsInStrict");

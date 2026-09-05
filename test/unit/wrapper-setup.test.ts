@@ -41,7 +41,6 @@ function probe(wrapRelative?: string): string {
 
 const API_ASSIGNMENT = "(window as any).__120fps = {";
 
-// C1: readiness implies setup completed.
 describe("setup runs before the control API is exposed", () => {
   for (const [name, build] of [
     ["standard", entry],
@@ -87,7 +86,6 @@ describe("setup is bounded", () => {
   });
 });
 
-// C3: the report says whether setup was in play.
 describe("the control API discloses setup", () => {
   it("exposes hasSetup and teardown when a wrapper is present", () => {
     const code = setupApiBlock(WRAP);

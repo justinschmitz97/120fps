@@ -61,9 +61,7 @@ describe("H4: depth-1 path replay", () => {
       combos: [{}],
     });
     const graph = results[0].graph;
-    // Should have at least the initial state and one toggled state
     expect(graph.nodes.size).toBeGreaterThanOrEqual(2);
-    // Depth-1 node should have a non-empty pathFromRoot
     for (const [, node] of graph.nodes) {
       if (node.depth > 0) {
         expect(node.pathFromRoot.length).toBe(node.depth);
@@ -121,10 +119,8 @@ describe("H8: discovery varies by state", () => {
       combos: [{}],
     });
     const graph = results[0].graph;
-    // Initial state should have the toggle button
     const initial = graph.nodes.get(graph.initialNodeId)!;
     expect(initial.interactions.length).toBeGreaterThan(0);
-    // Non-initial states should also have interactions recorded
     for (const [id, node] of graph.nodes) {
       if (id !== graph.initialNodeId) {
         expect(node.interactions).toBeDefined();
@@ -168,7 +164,6 @@ describe("H12: wall clock stops mid-sample", () => {
       maxWallClockMs: 5000,
       combos: [{}],
     });
-    // Should have stopped before exhausting all possibilities
     expect(results[0].graph.wallClockMs).toBeLessThan(10000);
   }, 30000);
 });
@@ -185,7 +180,6 @@ describe("H14: adaptive deepening prioritization", () => {
     const graph = results[0].graph;
     expect(graph.nodes.size).toBeGreaterThanOrEqual(1);
     expect(graph.edges.length).toBeGreaterThan(0);
-    // All edges should have valid timing data
     for (const edge of graph.edges) {
       expect(edge.samples.length).toBeGreaterThan(0);
       expect(edge.median).toBeGreaterThanOrEqual(0);
@@ -197,7 +191,6 @@ describe("H14: adaptive deepening prioritization", () => {
 describe("H15: browser cleanup on error", () => {
   it("cleans up browser even when exploration is cut short by limits", async () => {
     harness = await buildAndServe("./fixtures/counter.tsx");
-    // Very tight limits to force early termination
     const results = await explore(harness, {
       samples: 2,
       maxNodes: 2,

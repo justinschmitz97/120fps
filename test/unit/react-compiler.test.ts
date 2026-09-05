@@ -36,8 +36,7 @@ function writePkg(pkg: unknown, dir = tmpDir): void {
   );
 }
 
-// A resolvable stand-in package inside the project's own node_modules, so
-// resolution can be observed without depending on what 120fps itself installs.
+// Stub lives in the project's own node_modules so resolution can't depend on 120fps's installs.
 function installStub(
   options: { version?: string | null; name?: string; dir?: string } = {},
 ): string {
@@ -79,8 +78,6 @@ function makeReport(overrides: Partial<Report> = {}): Report {
 function optimizations(overrides: Partial<ReactOptimizations> = {}): ReactOptimizations {
   return { memoBailout: false, contextFanOut: false, ...overrides };
 }
-
-// --- K1 detection ---
 
 describe("detectReactCompiler", () => {
   it("names the package the contract keys on", () => {
@@ -148,8 +145,6 @@ describe("detectReactCompiler", () => {
   });
 });
 
-// --- K2 resolution ---
-
 describe("resolveReactCompiler", () => {
   it("resolves from the project's node_modules, not 120fps's", () => {
     const entry = installStub();
@@ -211,8 +206,7 @@ describe("loadReactCompilerPlugin", () => {
   });
 });
 
-// --- K1 + K3 decision ---
-
+// K1 + K3: auto-detection and the forced on/off override are exercised together here.
 describe("resolveReactCompilerState", () => {
   it("stays inactive when nothing is detected", () => {
     writePkg({ dependencies: { react: "19" } });
@@ -307,8 +301,6 @@ describe("resolveReactCompilerState", () => {
   });
 });
 
-// --- K3 CLI ---
-
 describe("--react-compiler / --no-react-compiler parsing", () => {
   it("registers both flags", () => {
     expect(KNOWN_FLAGS.has("--react-compiler")).toBe(true);
@@ -353,8 +345,6 @@ describe("--react-compiler / --no-react-compiler parsing", () => {
     expect(resolveReactCompilerFlag(args)).toBe(false);
   });
 });
-
-// --- K4 React analysis reinterpretation ---
 
 describe("hasReactWarning under an active compiler", () => {
   it("warns on a memo bailout when the compiler did not run", () => {
@@ -410,8 +400,6 @@ describe("hasReactWarning under an active compiler", () => {
   });
 });
 
-// --- K5 reporting ---
-
 describe("Report.reactCompiler", () => {
   it("renders the header line with the version when active", () => {
     const reactCompiler: ReactCompilerReport = {
@@ -457,8 +445,6 @@ describe("Report.reactCompiler", () => {
     expect(out).toContain(REACT_COMPILER_DISABLED_WARNING);
   });
 });
-
-// --- K6 measurement continuity ---
 
 describe("EnvFingerprint.reactCompiler", () => {
   const base = {

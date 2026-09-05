@@ -24,13 +24,11 @@ import {
   detectComponentName,
 } from "../modes/context.js";
 
-// The curve run activates on an explicit --curve flag or on the first
-// detected scaling prop; fixtures and composed scenes never take it.
+// Activates on an explicit --curve flag or the first detected scaling prop; never on a fixture.
 export async function resolveCurveMatch(ctx: ModeContext): Promise<ScalingPropMatch | undefined> {
   const { curveMode } = ctx.options;
   if (curveMode === false) return undefined;
-  // A curve the user asked for and did not get must say so; auto-detection
-  // that finds nothing asked for nothing.
+  // A curve the user asked for and did not get must say so; auto-detection asked for nothing.
   const explicit = curveMode === true || typeof curveMode === "object";
   if (ctx.useFixture || ctx.composed) {
     if (explicit) {
@@ -52,9 +50,7 @@ export async function resolveCurveMatch(ctx: ModeContext): Promise<ScalingPropMa
       reason: "explicit --curve flag",
     };
   }
-  // Extraction is cached by getSchemas: the matrix check and the standard
-  // path would otherwise re-extract the same file, which costs real time on
-  // a large project.
+  // getSchemas caches: the matrix check and the standard path would otherwise re-extract.
   const matches = detectScalingProps(await ctx.getSchemas());
   if (matches.length === 0) {
     if (explicit) {
@@ -121,26 +117,18 @@ export async function runCurveMode(ctx: ModeContext, match: ScalingPropMatch): P
     phaseClock: ctx.phaseClock,
   });
 
-  // A sweep that never moved the DOM measured no growth. The verdict still
-  // stands on the timings; only the growth class is disowned.
+  // A sweep that never moved the DOM measured no growth; only the growth class is disowned.
   if (isDomFlat(curveReport.points)) {
     curveReport.domFlat = true;
     runWarnings.push(SCALING_NO_EFFECT_WARNING(curveReport.propName));
   }
 
-  // A curve report has scale points, not combos, so the per-combo gate
-  // cannot reach it. A point that rendered nothing while the page reported
-  // an error still has to fail the run, whether that report arrived as a
-  // throw or only as a logged error: nothing rendered and the page
-  // complained about it either way. The two cases are told apart in the
-  // warning text below, not in this filter.
+  // Points miss the per-combo render-health gate; a logged error counts as much as a throw.
   const brokenPoints = curveMounts.filter(
     (m) => m.domNodeCount === 0 && hasPageErrors(m.pageErrors),
   );
   if (brokenPoints.length > 0) {
-    // The structural counterpart to CURVE_RENDER_ERROR_WARNING's formatted
-    // string below, populated at the same point so the two never drift by
-    // construction rather than by convention.
+    // Structural counterpart to CURVE_RENDER_ERROR_WARNING, filled here so the two cannot drift.
     curveReport.renderErrorPoints = brokenPoints.map((broken) => ({
       n: curveScalePoints[broken.comboIndex] ?? broken.comboIndex,
       pageErrors: renderDrain(broken.pageErrors!),
@@ -156,8 +144,7 @@ export async function runCurveMode(ctx: ModeContext, match: ScalingPropMatch): P
     );
   }
 
-  // A curve every one of whose points rendered nothing measured no growth
-  // of anything, whether or not the page said so.
+  // Nothing rendered at any N leaves no growth to classify, whether or not the page said so.
   const everyPointEmpty =
     curveReport.points.length > 0 && curveReport.points.every((p) => p.domNodeCount === 0);
   if (everyPointEmpty && brokenPoints.length === 0) {
@@ -184,25 +171,20 @@ export async function runCurveMode(ctx: ModeContext, match: ScalingPropMatch): P
   if (ctx.wrapper) attachWrapperReport(report, ctx.wrapper);
   ctx.attachHarnessContext(report);
 
-  // A component whose only interesting prop is an array auto-activates this
-  // mode; it must still run this pass so the render fan-out combo mode's
-  // siblings disclose reaches console and JSON here too, not just there.
+  // An auto-activated curve still runs this pass, so the render fan-out disclosure reaches JSON.
   const curveReact = await collectReactOptimizations(ctx, scaleCombos, await ctx.getSchemas(), report);
   for (const [comboIndex, opts] of curveReact) {
     const point = curveReport.points[comboIndex];
     if (point) point.reactOptimizations = opts;
   }
 
-  // The run's own timing breakdown travels on the report it returns.
   report.phaseTimings = ctx.phaseClock.timings();
   writeReportJson(report, options.jsonPath);
 
   return report;
 }
 
-// Auto-scaling sweep on the standard path. Attaches mount/rerender scaling
-// curves for the first detected scaling prop to every combo of an
-// already-built report; measured at the full requested sample count.
+// Measured at ctx.samples: the combo path's throttled count does not apply to this sweep.
 export async function applyAutoScalingCurves(
   ctx: ModeContext,
   report: Report,
@@ -243,11 +225,7 @@ export async function applyAutoScalingCurves(
     metric: r.stable.median,
   }));
 
-  // The sibling-copies probe already carries its own scale-probe curve
-  // (buildReport): overwriting it here with the real detected-prop curve
-  // would silently replace a synthetic-copies fact with an unrelated one
-  // under the same field. Only combos that are not scale probes take this
-  // curve.
+  // Scale probes already carry buildReport's synthetic-copies curve; only other combos take this.
   if (mountPoints.length >= 2) {
     const curve = computeScalingCurve(mountPoints);
     for (const combo of report.combos) {
@@ -274,19 +252,12 @@ export const CURVE_RENDER_ERROR_WARNING = (n: number, messages: string[]): strin
   `scale point N=${n} rendered 0 DOM nodes while the page threw, so the curve describes a ` +
   `broken render: ${messages.join("; ")}`;
 
-// The same fact without the throw: React can log a missing provider through
-// console.error and render nothing, so "while the page threw" would be
-// false even though nothing rendered.
+// React can log a missing provider and render nothing, so "the page threw" would be false here.
 export const CURVE_EMPTY_POINT_WITH_ERRORS_WARNING = (n: number, messages: string[]): string =>
   `scale point N=${n} rendered 0 DOM nodes and the page reported: ${messages.join("; ")}. The ` +
   "curve describes a render that did not happen.";
 
-// Every point empty, nothing reported. The growth class would be fitted
-// over a component that rendered nothing at any N. Prefixed `scale point
-// N=` — the same shape `renderFailed` (pipeline/remedies.ts) and
-// hintsForReport's curve branch already match — so an all-empty curve
-// publishes `providerCandidates` and reaches the provider hint. `N=all`
-// names the whole sweep rather than a point that does not exist.
+// The "scale point N=" prefix keeps renderFailed (remedies.ts) matching, so provider hints fire.
 export const CURVE_ALL_POINTS_EMPTY_WARNING = (propName: string): string =>
   `scale point N=all rendered 0 DOM nodes: the component renders nothing across the whole ` +
   `${propName} sweep, so there is no growth to classify.`;

@@ -18,10 +18,7 @@ function schema(name: string): PropSchema {
   return { name, kind: "string", required: false, values: ["test"] };
 }
 
-// primevue-F1: 271 of 279 components declare props through `extends`, an ADR 0002
-// exclusion whose warning names `<stem>.props.tsx` as the remedy. `applyPropPresets`
-// was `schemas.map(...)`, so with nothing extracted the remedy could never apply.
-
+// primevue-F1: 271/279 declare via extends (ADR 0002); schemas.map failed on nothing extracted.
 describe("a preset for a component whose extraction produced nothing", () => {
   it("adds a schema for every preset key", () => {
     const result = applyPropPresets(

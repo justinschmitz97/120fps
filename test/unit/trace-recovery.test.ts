@@ -35,9 +35,7 @@ function fakeCdp(options?: { failEnd?: boolean; completeOnEnd?: boolean }) {
   return cdp;
 }
 
-// A trace that fails must leave the CDP session stoppable. Otherwise the F6
-// retry reruns the body and the next Tracing.start reports "already started",
-// which is what the dogfooding run hit on trnscrpt/content-sections.tsx.
+// F6: a failed trace must leave the session stoppable, or Tracing.start reports already started.
 describe("a failed trace leaves tracing stopped", () => {
   it("attempts Tracing.end when the traced action throws", async () => {
     const cdp = fakeCdp();
@@ -63,8 +61,7 @@ describe("a failed trace leaves tracing stopped", () => {
     await collectTrace(cdp as never, async () => {
       throw new Error("Execution context was destroyed");
     }).catch(() => {});
-    // The fake rejects a second start only if the first was never balanced by
-    // an end; recovery must have balanced it.
+    // The fake rejects a second start only if the first was never balanced by an end.
     const ends = cdp.sent.filter((s) => s.method === "Tracing.end").length;
     expect(ends).toBeGreaterThanOrEqual(1);
   });

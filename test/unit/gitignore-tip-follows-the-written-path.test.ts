@@ -8,10 +8,7 @@ import {
   harnessLeftoverDirs,
 } from "../../src/cli/index.js";
 
-// M117 A1, A2 (dx-audit, shadcn-admin/dialog-real2.log:67): the tip fired for
-// a report written to a directory outside the repository, because the gate
-// only ever looked at the file's basename. It now follows the resolved path,
-// and names only the patterns the paths that fired it need.
+// specs/milestones/m117-output-that-respects-the-reader.md: resolved path, not basename.
 
 const tmpDirs: string[] = [];
 

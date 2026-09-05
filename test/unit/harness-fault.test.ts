@@ -6,12 +6,7 @@ import type { MountResult } from "../../src/browser/index.js";
 import type { ExploreResult, StateGraph } from "../../src/analysis/index.js";
 import type { PropSchema } from "../../src/props/index.js";
 
-// M85: a combo whose fatal crash traces to a harness-synthesized value with a
-// risky provenance must not count as the component's own failure. Fixtures
-// mirror the two live repros: radix-primitives' `asChild=true` (a "contract"
-// prop synthesized truthy with no satisfying child) and commerce's nested
-// `label.currencyCode: "text"` (a "placeholder" value whose text appears
-// verbatim in the page's own thrown error).
+// M85: a crash traced to a risky-provenance synthesized value must not count as its own failure.
 
 type Schema = PropSchema & { provenance?: PropProvenance };
 

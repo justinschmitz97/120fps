@@ -16,7 +16,6 @@ import {
   type Report,
 } from "../../src/report/index.js";
 
-// --- helpers ---
 
 let tmpDir: string;
 
@@ -83,7 +82,6 @@ const baseMachine = {
   chromiumVersion: "120.0.0.0",
 };
 
-// --- detectNextJs ---
 
 describe("detectNextJs", () => {
   it("returns true when next is in dependencies", () => {
@@ -111,7 +109,6 @@ describe("detectNextJs", () => {
   });
 });
 
-// --- SHIM_MODULES ---
 
 describe("SHIM_MODULES", () => {
   it("covers every shimmed Next.js runtime module", () => {
@@ -138,7 +135,6 @@ describe("SHIM_MODULES", () => {
   });
 });
 
-// --- buildShimAliases ---
 
 describe("buildShimAliases", () => {
   it("returns aliases for all modules when hasNextJs is true", () => {
@@ -171,7 +167,6 @@ describe("buildShimAliases", () => {
   });
 });
 
-// --- parseArgs --no-shims ---
 
 describe("parseArgs --no-shims", () => {
   it("parses --no-shims flag", () => {
@@ -191,7 +186,6 @@ describe("parseArgs --no-shims", () => {
   });
 });
 
-// --- Report.nextJsShims ---
 
 describe("Report.nextJsShims", () => {
   it("buildReport passes through nextJsShims from input", () => {
@@ -238,7 +232,6 @@ describe("Report.nextJsShims", () => {
   });
 });
 
-// --- formatTable with nextJsShims ---
 
 describe("formatTable with nextJsShims", () => {
   it("shows shim line when nextJsShims is present", () => {
@@ -260,7 +253,6 @@ describe("formatTable with nextJsShims", () => {
   });
 });
 
-// --- Shim file existence ---
 
 describe("shim files exist on disk", () => {
   it("all shim .js files exist in dist/shims/", () => {

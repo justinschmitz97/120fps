@@ -15,7 +15,6 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-// M86 MUST: a required prop is never dropped by the cap.
 describe("M86: required props bypass the cap", () => {
   it("config (required) survives even with >32 competing DOM props", async () => {
     resetExtractionCache();
@@ -35,8 +34,6 @@ describe("M86: required props bypass the cap", () => {
   });
 });
 
-// M86 MUST: a prop the component's own source references by name outranks
-// an inherited prop it does not.
 describe("M86: source-referenced props outrank Tier-3 inherited volume", () => {
   it("onClick survives because the component body references props.onClick", async () => {
     resetExtractionCache();

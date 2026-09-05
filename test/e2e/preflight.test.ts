@@ -59,8 +59,7 @@ describe("preflight gates the run", () => {
       noPreflight: false,
       jsonPath: "test-results/m42-builtin.json",
     }).catch((err: Error) => err);
-    // Vite may or may not boot a builtin-importing module; either way the
-    // preflight must not have been the thing that stopped it.
+    // Vite may or may not boot a builtin-importing module; preflight must not be what stops it.
     if (report instanceof Error) {
       expect(report.message).not.toMatch(/Cannot measure this component/);
     } else {

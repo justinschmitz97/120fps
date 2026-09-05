@@ -4,12 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { analyze, explainProps } from "../../src/pipeline/index.js";
 
-// M91 (commerce-F3): a sync component's JSX can compose an async Server
-// Component one hop away — the import-graph walk only asks whether
-// entries[0] itself is async, so `app/page.tsx` passed --explain-props clean
-// and then died with an obscure `__dirname is not defined` on the full run.
-// Targeting the async child directly already produces a correct rejection;
-// this suite proves both modes now reach it through the parent too.
+// M91 (commerce-F3): import-graph walk checked only entries[0], missing a one-hop async child.
 
 describe("M91: RSC one-hop composition gate", () => {
   const tmpDirs: string[] = [];
@@ -123,13 +118,7 @@ describe("M91: RSC one-hop composition gate", () => {
     expect(thrown!.message).toMatch(/React Server Component/);
   });
 
-  // M92 (Item 3): commerce's REAL app/page.tsx composes its children as
-  // baseUrl-relative bare specifiers ("components/carousel", no leading
-  // "./"), not the relative form the fixture above uses. Before the fix,
-  // scanJsxComposedLocalImports excluded every bare specifier outright, so
-  // the one-hop walk found zero composed children for exactly this shape --
-  // explainProps passed clean and the full run died later with an obscure
-  // `__dirname is not defined`.
+  // Guard: do not exclude bare specifiers outright; commerce's real children are baseUrl-relative.
   it("gates a baseUrl-relative bare specifier composed child, matching commerce's real shape", async () => {
     const { root } = isolatedProject("120fps-rsc-bareurl-", {
       "package.json": JSON.stringify({ dependencies: { react: "18.3.1", "react-dom": "18.3.1" } }),
@@ -159,10 +148,7 @@ describe("M91: RSC one-hop composition gate", () => {
     expect(thrown!.message).toMatch(/React Server Component/);
   });
 
-  // A bare specifier that resolves into node_modules is a real dependency,
-  // not a local composed child, and must stay excluded end to end -- the
-  // classification the old dot-prefix filter used to provide, now done by
-  // resolveRelativeJsxChild at resolution time instead.
+  // A bare specifier into node_modules is a real dependency; resolveRelativeJsxChild excludes it.
   it("does not gate a bare specifier that resolves into node_modules", async () => {
     const { root } = isolatedProject("120fps-rsc-barepkg-", {
       "package.json": JSON.stringify({

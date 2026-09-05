@@ -2,10 +2,7 @@ import { describe, it, expect } from "vitest";
 import { runWithSplitErrorWindows, nextComboIndex, type RerenderResult } from "../../src/browser/index.js";
 import type { PageErrorDrain } from "../../src/browser/index.js";
 
-// The rerender pass mounts combo `ci`'s props and then rerenders into
-// `combos[ci+1]`'s props. A single error window over both made every error the
-// next combo's props raised look like combo `ci`'s own (V1, radix Label #1/#6).
-// These tests drive the sequencing directly with a fake page-error buffer.
+// One error window over mount+rerender misattributed the next combo's errors to combo `ci` (V1).
 
 function createFakeCapture() {
   let buffer: string[] = [];
@@ -148,14 +145,7 @@ describe("page errors around a prop-change rerender", () => {
   });
 });
 
-// The whole delta-loop window is transition by construction. The loop's
-// `mountAndWait(props)` re-mounts combo N's props over the page state the
-// PREVIOUS sample's `rerenderAndTrace(nextProps)` left behind, so an error it
-// raises is an N+1 -> N artefact (radix Label: leaving `asChild: true` throws a
-// Slot error while mounting N's props). Attributing that mount to N produced
-// both `[1 page error]` and `[-> #3: 1 page error]` on the same row. N's own
-// deterministic errors are already captured by the stable-sample pass that runs
-// before this window opens.
+// mountAndWait(N) runs over state the prior rerenderAndTrace left: errors are N+1->N, not N's own.
 
 describe("the mounts the prop-change loop performs with the combo's own props", () => {
   it("attributes an error raised anywhere in the delta loop to the transition", async () => {

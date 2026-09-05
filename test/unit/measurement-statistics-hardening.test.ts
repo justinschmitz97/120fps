@@ -78,8 +78,7 @@ describe("H4: P95 ordering invariant", () => {
   });
 });
 
-// H5: explore deepens on `edge.p95 > 1.5 * globalMedian`; the interpolated
-// estimate must keep a genuinely expensive edge above the bar.
+// H5: interpolated P95 must not push a genuinely expensive edge below the 1.5x deepening bar.
 describe("H5: adaptive deepening threshold", () => {
   it("an edge 3x the global median still clears 1.5x", () => {
     const globalMedian = 10;
@@ -95,8 +94,7 @@ describe("H5: adaptive deepening threshold", () => {
 // H6: churn parities of unequal length (odd sample count, partial cycle).
 describe("H6: odd churn sample counts", () => {
   it("uses both parities when one is shorter", () => {
-    // even (B): 10,10,10,10,30: 5 samples, so first/last 2 are compared:
-    // 20/10. odd (A): 5,5,5,5: flat.
+    // even (B) first/last-2 compare 20/10=2; odd (A) is flat at 5.
     const samples = [10, 5, 10, 5, 10, 5, 10, 5, 30];
     expect(computeChurnDegradation(samples)).toBeCloseTo(2, 10);
   });
@@ -117,16 +115,14 @@ describe("H7: churn series without evidence", () => {
   });
 
   it("an all-zero parity does not divide by zero", () => {
-    // even parity is all zeros (no ratio); odd parity carries the answer,
-    // (12+16)/2 over (4+8)/2.
+    // even parity is all zeros; odd parity carries the answer: (12+16)/2 over (4+8)/2.
     const ratio = computeChurnDegradation([0, 4, 0, 8, 0, 12, 0, 16]);
     expect(Number.isFinite(ratio)).toBe(true);
     expect(ratio).toBeCloseTo(14 / 6, 10);
   });
 });
 
-// H8: the churn timing keeps its cycle-level median/P95 while reading
-// dispersion inside a parity.
+// H8: churn timing keeps whole-cycle median/P95 while reading dispersion inside a parity.
 describe("H8: churn timing composition", () => {
   it("preserves the sample array verbatim", () => {
     const samples = [3, 9, 3, 9, 3, 9];
@@ -153,8 +149,7 @@ describe("H8: churn timing composition", () => {
   });
 });
 
-// H9: the churn verdict still fails on real degradation and passes on an
-// A/B cost gap alone.
+// H9: churn verdict fails on real degradation but passes a stable A/B cost gap alone.
 describe("H9: churn verdict", () => {
   it("passes a stable alternation with a large A/B gap", () => {
     const samples = Array.from({ length: 20 }, (_, i) => (i % 2 === 0 ? 1 : 100));

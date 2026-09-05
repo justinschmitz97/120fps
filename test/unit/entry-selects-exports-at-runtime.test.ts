@@ -8,9 +8,7 @@ const base = {
   hasScale: false,
 };
 
-// calcom's `Icon.tsx` re-exports a type as a value (`export { IconName, Icon }`).
-// A named ESM import of the export list fails to link at all —
-// "does not provide an export named 'IconName'" — before anything renders.
+// calcom's Icon.tsx re-exports a type as a value; a named ESM import fails to link.
 describe("how the generated entry reaches the component's exports", () => {
   it("imports the module as a namespace instead of naming bindings", () => {
     const entry = generateEntry(base);

@@ -8,10 +8,7 @@ import {
   UNRESOLVED_PREBUNDLE_ENTRY_WARNING,
 } from "../../src/harness/index.js";
 
-// epic-stack-F2: the dry run promised a run the dev server killed at
-// dep-optimization one minute later, because the scan walked past a specifier
-// that resolved to nothing without a word. Both modes read one static
-// pre-build, so the unresolved set and its wording belong to both of them.
+// epic-stack-F2: both modes read one static pre-build; unresolved set and wording are shared.
 
 const tmpDirs: string[] = [];
 
@@ -27,8 +24,7 @@ function isolatedProject(files: Record<string, string>): string {
     fs.mkdirSync(path.dirname(abs), { recursive: true });
     fs.writeFileSync(abs, content);
   }
-  // The version gate throws before any of the later probes run, so the project
-  // needs a react-dom the gate accepts.
+  // Version gate throws before later probes run, so the project needs a react-dom it accepts.
   const reactDom = path.join(root, "node_modules", "react-dom");
   fs.mkdirSync(reactDom, { recursive: true });
   fs.writeFileSync(

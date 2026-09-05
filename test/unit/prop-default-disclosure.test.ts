@@ -5,8 +5,7 @@ import { extractProps } from "../../src/props/index.js";
 const REACT = path.resolve(__dirname, "../../fixtures/own-props-rank");
 const VUE = path.resolve(__dirname, "../../fixtures/vue-dual-block");
 
-// calcom-F2: the union ordering already put the real default first, so the tool
-// knew the defaults and never said so.
+// calcom-F2: union ordering already put the real default first; the tool never disclosed it.
 
 describe("a prop whose default comes from the parameter's destructuring", () => {
   it("carries the declared default value", async () => {

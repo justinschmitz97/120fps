@@ -25,8 +25,7 @@ export interface InteractionDescriptor {
   ariaValueNow?: boolean;
   ariaOrientation?: string;
   cursor?: string;
-  // Present on any overflowing scroll container, including ones whose
-  // type stayed click/select because they are interactive in their own right.
+  // Present on any overflowing scroll container, even one whose type stayed click or select.
   scrollAxis?: ScrollAxis;
 }
 
@@ -96,15 +95,13 @@ export async function discoverInteractions(
     const results: any[] = [];
     const seen = new Set<Element>();
 
-    // Overflow style alone is not a scroll container: content has to
-    // actually exceed the box, or every `overflow: auto` wrapper in the tree
-    // would claim a wheel sweep it cannot answer. Vertical wins when both
-    // axes scroll: that is the axis a wheel drives.
     const SCROLLABLE_OVERFLOW = new Set(["auto", "scroll", "overlay"]);
     function scrollAxisOf(el: Element): string {
       const style = window.getComputedStyle(el);
+      // Vertical is checked first: it is the axis a wheel drives when both axes scroll.
       if (
         SCROLLABLE_OVERFLOW.has(style.overflowY) &&
+        // Content must exceed the box, or every `overflow: auto` wrapper claims a wheel sweep.
         el.scrollHeight > el.clientHeight + 1
       ) {
         return "vertical";
@@ -414,7 +411,7 @@ export async function discoverInteractions(
       walkTree(rootEl, "");
     }
 
-    // Walk body children outside #root for portal content
+    // Portal content renders outside #root, so body children are walked as well.
     for (const child of Array.from(document.body.children)) {
       if (!(child instanceof Element)) continue;
       if (SKIP_BODY_TAGS.has(child.tagName)) continue;
@@ -424,10 +421,7 @@ export async function discoverInteractions(
       walkTree(child, "", true);
     }
 
-    // A plain list long enough to overflow the viewport scrolls the
-    // document, not a container: that scrollport is the component's, so it
-    // gets a descriptor of its own. `:root` is the selector the scroll step
-    // recognises as "wheel over the viewport".
+    // A list overflowing the viewport scrolls the document; `:root` names that scrollport.
     const scrollport = document.scrollingElement;
     if (scrollport && scrollport.scrollHeight > scrollport.clientHeight + 1) {
       results.push({
@@ -468,7 +462,6 @@ export async function discoverInteractions(
     return rootDescriptors;
   }
 
-  // Phase 2: trigger-first portal probing
   const portalDescriptors = await probePortals(page, rootDescriptors, options.remount);
   return [...rootDescriptors, ...portalDescriptors];
 }
@@ -493,9 +486,7 @@ export function toDescriptor(raw: RawElement): InteractionDescriptor {
   return desc;
 }
 
-// Scroll only claims the type when nothing else does. A scrollable listbox is
-// still a listbox: its keyboard sweep measures more than a wheel would, and
-// changing its type would silently drop that coverage.
+// Scroll claims the type only when nothing else does; a listbox's keyboard sweep covers more.
 const NATIVE_INTERACTIVE_TAGS = new Set([
   "BUTTON", "A", "INPUT", "TEXTAREA", "SELECT", "SUMMARY",
 ]);

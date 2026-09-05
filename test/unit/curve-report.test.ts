@@ -184,11 +184,7 @@ describe("formatTable with scalingCurveReport", () => {
   });
 });
 
-// M79 gap (chakra-ui-F1): a structural signal for a broken scale point,
-// populated by runCurveMode alongside CURVE_RENDER_ERROR_WARNING so the two
-// never drift by construction, read here without any warnings string at all
-// — proving formatCurveOutput reads the field structurally, not by matching
-// a "scale point N=" convention.
+// M79 gap (chakra-ui-F1): formatCurveOutput reads the field structurally, not a warnings string.
 describe("formatTable marks a broken scale point structurally", () => {
   it("marks the broken row's Growth cell with [render error]", () => {
     const cr = makeCurveReport({

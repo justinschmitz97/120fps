@@ -54,16 +54,12 @@ export const MATRIX_AUTO_ACTIVATED_NOTICE = (cellCount: number): string =>
   `Matrix mode auto-activated: measuring all ${cellCount} prop combinations, which multiplies run time ` +
   `roughly ${cellCount}x versus a single combo. Use --no-matrix to disable.`;
 
-// A run is one whole-run mode or the other: an explicit --matrix must not
-// silently lose to an auto-activated curve mode.
+// A run is one whole-run mode or the other: an explicit --matrix must not lose in silence.
 export const MATRIX_SUPPRESSED_BY_CURVE_WARNING = (propName: string): string =>
   `--matrix did not activate: curve mode auto-activated on ${propName} first, and a run is one ` +
   "whole-run mode or the other. Re-run with --no-curve to force matrix instead.";
 
-// The other two branches that make the matrix unreachable: an
-// auto-composed scene and a fixture. Both must say so instead of falling
-// through to `progress("mode: prop combos")` in silence, matching the
-// curve suppressor above.
+// A composed scene also makes the matrix unreachable; say so instead of falling through silently.
 export const MATRIX_SUPPRESSED_BY_COMPOSITION_WARNING = (rootName: string): string =>
   `--matrix did not activate: an auto-composed scene rooted at ${rootName} supplies the props, and ` +
   "a composed scene measures one combo. Re-run with --no-auto-compose to force matrix instead.";
@@ -80,16 +76,12 @@ export const MATRIX_SUPPRESSED_BY_FIXTURE_WARNING = (
       ? "Re-run against the component file without --fixture to force matrix instead."
       : "Re-run against the component file, not this fixture, to force matrix instead.");
 
-// An explicit --matrix bypasses shouldAutoActivateMatrix's 2-eligible-axis
-// floor; when the component genuinely has none, the run still prints a
-// matrix table with one anchor-combo cell and needs to explain why.
+// An explicit --matrix bypasses shouldAutoActivateMatrix's 2-axis floor; no-axis runs land here.
 export const MATRIX_NO_AXES_WARNING =
   "matrix mode found no boolean or small-union prop to cross: the single cell shown is the anchor " +
   "combo, not a real matrix. Re-run --explain-props to see why no prop qualified as an axis.";
 
-// The matrix path returns before the baseline workflow ever runs, so a
-// baseline flag on a matrix run does nothing at all. Per-cell baselines are
-// a feature with their own schema; the run's job here is to stop pretending.
+// The matrix path returns before the baseline workflow runs, so every baseline flag is a no-op.
 export const MATRIX_BASELINE_WARNING =
   "matrix runs do not participate in baselines: --save-baseline stores nothing and " +
   "--check/--budget compare nothing. Re-run with --no-matrix to save or check a baseline " +
@@ -107,10 +99,7 @@ export async function runMatrixMode(ctx: ModeContext, matrixAutoActivated: boole
   const { options, harness, samples, cpuThrottle, warmupRuns, pool, onWarning, runWarnings, machine, calibration, thresholds, explicitThresholds } = ctx;
   const schemas = await ctx.getSchemas();
   let matrixCombos = generatePropMatrix(schemas);
-  // The axis list is what the header claims was crossed, so it has to come
-  // from the same source `generatePropMatrix` built the cells from:
-  // `matrixAxesFor` answers both what the axes are and what each one
-  // declares versus crosses, so the header cannot describe a different set.
+  // Axes come from the same schemas the cells did, so the header cannot describe a different set.
   const matrixAxes: MatrixAxis[] = matrixAxesFor(schemas).map((axis) => ({
     propName: axis.propName,
     values: axis.values,
@@ -119,23 +108,18 @@ export async function runMatrixMode(ctx: ModeContext, matrixAutoActivated: boole
       : {}),
   }));
 
-  // Full cartesian cell count the axes describe, independent of whichever
-  // fallback generatePropMatrix applied to fit MAX_MATRIX_CELLS.
+  // Independent of whichever fallback generatePropMatrix applied to fit MAX_MATRIX_CELLS.
   const fullMatrixCells = matrixAxes.reduce((acc, a) => acc * a.values.length, 1);
   if (fullMatrixCells > matrixCombos.length) {
     runWarnings.push(MATRIX_PAIRWISE_COVER_WARNING(matrixCombos.length, fullMatrixCells));
   }
 
-  // An explicit --matrix bypasses shouldAutoActivateMatrix's 2-axis floor
-  // entirely; a component with zero boolean/small-union props still gets
-  // here and would otherwise print an unexplained "Prop Matrix ()".
+  // Without this the run prints an unexplained "Prop Matrix ()" header.
   if (matrixAxes.length === 0) {
     runWarnings.push(MATRIX_NO_AXES_WARNING);
   }
 
-  // --max-combos bounds cells measured once matrix mode auto-activates too,
-  // not just the plain-combo path, keeping the base cell and single-axis
-  // deviations first.
+  // --max-combos bounds matrix cells too, keeping the base cell and single-axis deviations first.
   const matrixComboCap = options.maxCombos ?? DEFAULT_MEASURED_COMBOS;
   if (matrixCombos.length > matrixComboCap) {
     const keptIndices = selectMatrixCombos(matrixCombos, matrixAxes, matrixComboCap);
@@ -143,21 +127,16 @@ export async function runMatrixMode(ctx: ModeContext, matrixAutoActivated: boole
     matrixCombos = keptIndices.map((i) => matrixCombos[i]);
   }
 
-  // This path returns before applyBaselineWorkflow, so every baseline flag
-  // on it is a no-op. Auto-activated or asked for, the run says so.
   if (baselineWorkflowRequested(options)) {
     runWarnings.push(MATRIX_BASELINE_WARNING);
   }
 
-  // Upfront, before measurement starts: the reader should know the run is
-  // about to multiply before it does, not after. --ci stays JSON-only.
+  // Printed before measurement, so the reader learns the run multiplies; --ci stays JSON-only.
   if (matrixAutoActivated && !options.ci) {
     process.stdout.write(MATRIX_AUTO_ACTIVATED_NOTICE(matrixCombos.length) + "\n");
   }
 
-  // Same cost throttle the plain-combo path applies: a forced --matrix run
-  // with many cells must not skip it just because it took the matrix branch
-  // instead.
+  // The same throttle the plain-combo path applies; a forced --matrix must not escape it.
   const matrixEffectiveSamples = computeEffectiveSamples(matrixCombos.length, samples);
   if (matrixEffectiveSamples < samples) {
     runWarnings.push(
@@ -185,7 +164,6 @@ export async function runMatrixMode(ctx: ModeContext, matrixAutoActivated: boole
     onWarning,
   });
 
-  // Explore only hot cells (top 5 by mount median)
   const sortedMounts = [...matrixMounts].sort((a, b) => b.mount.median - a.mount.median);
   const hotIndices = sortedMounts.slice(0, 5).map((m) => m.comboIndex);
   const hotCombos = hotIndices.map((i) => matrixCombos[i]);
@@ -204,7 +182,6 @@ export async function runMatrixMode(ctx: ModeContext, matrixAutoActivated: boole
     : [];
   const matrixExplores = restoreComboIndices(rawExplores, hotIndices);
 
-  // Delta analysis for compound effects
   let matrixDeltas: PropDelta[] | undefined;
   if (!options.skipDeltas && schemas.length > 0) {
     const deltaPairs = generateDeltaPairs(schemas);
@@ -221,8 +198,7 @@ export async function runMatrixMode(ctx: ModeContext, matrixAutoActivated: boole
     if (missingPairs.length > 0) {
       const missingCombos = [...new Set(missingPairs.flatMap((p) => [JSON.stringify(p.baseCombo), JSON.stringify(p.flipCombo)]))].filter((k) => !measured.has(k)).map((k) => JSON.parse(k) as PropCombination);
       if (missingCombos.length > 0) {
-        // Same effective count as the sweep: a cell measured at full N
-        // would merge a differently-estimated number into one report.
+        // Same effective count as the sweep: full N would merge a differently-estimated number.
         const extraMounts = await measureMount(harness, { samples: matrixEffectiveSamples, cpuThrottle, warmupRuns, combos: missingCombos, pool });
         const extraRerenders = await measureRerender(harness, { samples: matrixEffectiveSamples, cpuThrottle, warmupRuns, combos: missingCombos, animatedComboIndices: animatedIndices(extraMounts), pool });
         const measuredExtraRerenders = measuredOnly(extraRerenders);
@@ -259,8 +235,7 @@ export async function runMatrixMode(ctx: ModeContext, matrixAutoActivated: boole
     ...(harness.nextJsShims && harness.nextJsShims.length > 0 ? { nextJsShims: harness.nextJsShims } : {}),
   });
 
-  // Before buildMatrixReport, because a cell projects the combo's verdict
-  // and a react warning can demote it.
+  // Before buildMatrixReport: a cell projects the combo's verdict, and a react warning demotes it.
   const matrixReact = await collectReactOptimizations(ctx, matrixCombos, schemas, report);
   for (const combo of report.combos) {
     const opts = matrixReact.get(combo.comboIndex);
@@ -281,18 +256,13 @@ export async function runMatrixMode(ctx: ModeContext, matrixAutoActivated: boole
   if (ctx.wrapper) attachWrapperReport(report, ctx.wrapper);
   ctx.attachHarnessContext(report);
 
-  // The run's own timing breakdown travels on the report it returns.
   report.phaseTimings = ctx.phaseClock.timings();
   writeReportJson(report, options.jsonPath);
 
   return report;
 }
 
-// Pairwise deltas shared by the standard combo path and the matrix path:
-// pairs whose combos the sweep already measured reuse those numbers, the
-// rest are measured at the same effective sample count. A pair is reported
-// only when both sides measured both timings; a side the pass never reached
-// contributes no delta rather than a fabricated 0.00 ms.
+// A pair needs both sides' timings; a side the pass never reached yields no delta, not 0.00 ms.
 export function propDeltasFromMeasured(
   pairs: DeltaPair[],
   measured: Map<string, { mount: number; rerender?: number }>,
@@ -327,9 +297,7 @@ export async function measureStandardPropDeltas(
   }
   if (pairs.length === 0) return undefined;
 
-  // `rerender` stays absent until a rerender was actually measured for that
-  // combo. The rerender pass can end before the mount pass does, so a
-  // mount-only combo is an ordinary outcome.
+  // The rerender pass can end before the mount pass does, so a mount-only combo is ordinary.
   const measured = new Map<string, { mount: number; rerender?: number }>();
   for (const m of measuredOnly(mounts)) {
     const key = JSON.stringify(m.props);
@@ -343,10 +311,7 @@ export async function measureStandardPropDeltas(
     }
   }
 
-  // The combos this pass still owes a measurement: a combo the mount pass
-  // omitted (frame starvation, a wedged page) must not report a fabricated
-  // 0 ms delta. The pass-level bound in browser/measure.ts makes an omitted
-  // combo an ordinary outcome here, not a rarity.
+  // A combo the mount pass omitted (frame starvation, a wedged page) must not report a 0 ms delta.
   const needed: PropCombination[] = [];
   const requested = new Set<string>();
   for (const pair of pairs) {
@@ -360,12 +325,7 @@ export async function measureStandardPropDeltas(
   }
 
   if (needed.length > 0) {
-    // measureMount/measureRerender tag their own thrown errors
-    // "mount"/"rerender" (browser/measure.ts), which caps any stall hint at
-    // --no-attribution regardless of who called them; wrong here, since
-    // this pass never runs attribution tracing at all. retagPhaseError
-    // re-enriches the untagged original cause under "delta" so the hint
-    // names the flag that actually skips this code path.
+    // measureMount tags its throws "mount"; retag as "delta" so the hint names the flag that skips.
     const deltaPhaseContext = { phase: "delta" as const, component: path.basename(harness.componentPath) };
     let extraMounts: MountResult[];
     try {

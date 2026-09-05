@@ -8,9 +8,7 @@ import {
 } from "../../src/pipeline/index.js";
 import { PRESET_SHAPE_WARNING } from "../../src/props/index.js";
 
-// radix-themes-F1, epic-stack-F3, logto-F4: a sibling that carries a preset's
-// name without its shape was dropped in silence, and the remedy that named it
-// asked the user to create a file that was already there.
+// radix-themes-F1, epic-stack-F3, logto-F4: a preset-shaped sibling was dropped silently.
 const DIR = path.resolve("fixtures/preset-collision");
 const fixture = (name: string): string => path.join(DIR, name);
 const REPO_ROOT = process.cwd();
@@ -57,9 +55,7 @@ describe("a sibling that carries a preset's name without its shape", () => {
 });
 
 describe("an extraction remedy a loaded preset already answers", () => {
-  // `tone?: "solid" | { level: number }` is a union the extraction really
-  // collapses; an all-string-literal union produces no warning at all, so it
-  // could not tell a working filter from a deleted one.
+  // tone's mixed union must warn; an all-string union would not, hiding a filter that got deleted.
   it("prints for a collapsed union when no preset names the prop", async () => {
     const explained = await explainProps(fixture("no-preset-tone.tsx"), {});
     expect(
@@ -80,9 +76,7 @@ describe("an extraction remedy a loaded preset already answers", () => {
   });
 });
 
-// The real run filters one warning at a time as extraction produces it
-// (src/analyze.ts's `extractSchemas` sink), through the same two functions the
-// dry run applies to the collected list.
+// The real run filters warnings one at a time via extractSchemas, same functions as the dry run.
 describe("the real run's own remedy filter", () => {
   const union = (prop: string): string =>
     `Warning: prop "${prop}" in wide.tsx is a union of 2 different shapes ("solid" | ` +
@@ -109,9 +103,7 @@ describe("the real run's own remedy filter", () => {
   });
 });
 
-// logto-F4: the capped-extraction remedy is rendered from the extraction
-// record after the preset has been applied, so a run that loaded a preset
-// never asks for the file it just read.
+// logto-F4: remedy renders after the preset applies, so it never re-asks for the same file.
 describe("the capped-extraction remedy in a run that applied a preset", () => {
   it("names the preset the run already loaded", async () => {
     const explained = await explainProps(fixture("wide.tsx"), {});

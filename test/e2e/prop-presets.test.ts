@@ -75,9 +75,7 @@ describe("presets flow through a measured run", () => {
     // projectRoot-relative, like every other path the report records.
     expect(report.propPresets?.path).toBe("fixtures/m44-preset-literal.props.ts");
     expect(report.propPresets?.props).toContain("label");
-    // The synthesized pool is gone. Auto-scale combos carry only a fan-out
-    // count (M61: on `scaleProbe`, not `props`), so they are not prop combos
-    // and have no label to check.
+    // Auto-scale combos carry only a fan-out count (M61 scaleProbe), not props: excluded here.
     const propCombos = report.combos.filter((c) => c.scaleProbe === undefined);
     expect(propCombos.length).toBeGreaterThan(0);
     expect(propCombos.every((c) => c.props.label === "from-preset")).toBe(true);

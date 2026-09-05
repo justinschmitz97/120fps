@@ -13,16 +13,13 @@ function warnTsconfigOnce(configPath: string, detail: string): void {
 }
 
 
-// The same options prop extraction resolves under, so a preflight walk follows
-// the same tsconfig paths the measured graph does.
+// The same options prop extraction uses, so preflight follows the measured graph's paths.
 export function projectCompilerOptions(absolutePath: string): ts.CompilerOptions {
   return createCompilerOptions(path.resolve(absolutePath));
 }
 
 
-// The reader keeps quiet about a config it could not read, so the caller that
-// asked prints the message once. Its sentence names the path this function
-// already has, so the path is not repeated inside the detail.
+// The caller's sentence already names configPath, so the detail drops the marker prefix.
 function readFailureDetail(warnings: string[], configPath: string): string {
   const marker = `could not parse tsconfig at ${configPath}: `;
   const failure = warnings.find((warning) => warning.startsWith(marker));
@@ -30,10 +27,7 @@ function readFailureDetail(warnings: string[], configPath: string): string {
 }
 
 
-// The reader surfaces only the diagnostics the run discloses (a broken extends
-// chain). An option declared with the wrong value type warns here once per
-// config, read from the governing config's own compilerOptions without
-// globbing the project's files a second time.
+// The shared reader surfaces only extends breakage; a wrong-typed option is diagnosed here.
 function declaredOptionDiagnostic(configPath: string): string | undefined {
   const configFile = ts.readConfigFile(configPath, ts.sys.readFile);
   const raw = configFile.config as { compilerOptions?: unknown } | undefined;
@@ -47,9 +41,7 @@ function declaredOptionDiagnostic(configPath: string): string | undefined {
   if (converted.errors.length > 0) {
     return ts.flattenDiagnosticMessageText(converted.errors[0].messageText, " ");
   }
-  // A malformed include/files key, or an invalid option inside an extends base,
-  // never reaches convertCompilerOptionsFromJson. Parsing without globbing
-  // surfaces it; 18003 only says the fixture has no input files.
+  // convertCompilerOptionsFromJson never sees a bad include/files key or an extends option.
   const parsed = ts.parseJsonConfigFileContent(
     configFile.config,
     { ...ts.sys, readDirectory: () => [] },
@@ -57,20 +49,16 @@ function declaredOptionDiagnostic(configPath: string): string | undefined {
     undefined,
     configPath,
   );
+  // 18003 only says the config matched no input files, which is normal.
   const other = parsed.errors.find((diagnostic) => diagnostic.code !== 18003);
   return other ? ts.flattenDiagnosticMessageText(other.messageText, " ") : undefined;
 }
 
 
 export function createCompilerOptions(absolutePath: string): ts.CompilerOptions {
-  // The same search the harness builds aliases from, so one config
-  // governs both. The bound is the workspace root; a tree with no package.json
-  // anywhere has no project model, and the walk keeps its old reach.
-  // Through the shared reader, so a references-only root hands
-  // extraction the referenced config that covers this file, which is the
-  // config the harness aliases and the dev server resolve from.
   const startDir = path.dirname(absolutePath);
   const memberRoot = findProjectRoot(startDir);
+  // The shared reader, so extraction and the harness aliases resolve from the same config.
   const governing = resolveGoverningTsconfig(
     absolutePath,
     memberRoot === undefined ? undefined : findWorkspaceRoot(memberRoot),
@@ -84,14 +72,12 @@ export function createCompilerOptions(absolutePath: string): ts.CompilerOptions 
     jsx: ts.JsxEmit.ReactJSX,
     esModuleInterop: true,
     skipLibCheck: true,
-    // A .jsx target is outside the program without this, so extraction has no
-    // source file to read and reports the component as unparsable.
+    // Without allowJs a .jsx target is outside the program and reads as unparsable.
     allowJs: true,
   };
 
   if (governing.nearestConfigPath && !tsconfigPath) {
-    // A config that could not be read keeps its one warning, and
-    // extraction continues on the defaults above.
+    // An unreadable config is not fatal: extraction continues on the defaults above.
     warnTsconfigOnce(
       governing.nearestConfigPath,
       readFailureDetail(governing.warnings, governing.nearestConfigPath),
@@ -107,8 +93,7 @@ export function createCompilerOptions(absolutePath: string): ts.CompilerOptions 
       skipLibCheck: true,
       moduleResolution: ts.ModuleResolutionKind.Bundler,
       module: ts.ModuleKind.ESNext,
-      // The measured file is named by the user: a project that excludes
-      // JavaScript from type checking still gets its .jsx component read.
+      // The user named the file, so a project that type-checks no JavaScript still reads .jsx.
       allowJs: true,
     };
   }

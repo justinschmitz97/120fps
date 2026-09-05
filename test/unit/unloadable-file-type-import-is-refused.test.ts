@@ -5,13 +5,7 @@ import path from "node:path";
 import { explainProps } from "../../src/pipeline/index.js";
 import { runPreflight, preflightFailureMessage } from "../../src/project/index.js";
 
-// directus `app/src/components/v-button.vue`: five files deep the graph reaches
-// `src/lang/translations/en-US.yaml`, which Vite parses as JavaScript because
-// the harness never loads the project's `@rollup/plugin-yaml`. The run died on
-// Vite's own `Failed to parse source for import analysis ... the .yaml file
-// format` after a browser had already booted, and the dry run predicted a clean
-// run. M94: a Vite failure is re-presented as a 120fps error naming target,
-// importer and remedy, never a raw stack.
+// M94: an unloaded file type's Vite failure must name target, importer, remedy, not a raw stack.
 
 const FIXTURE = path.resolve(import.meta.dirname, "..", "..", "fixtures", "yaml-loader-project");
 
@@ -88,8 +82,7 @@ describe("an import of a file type no supported transform can load", () => {
     const hit = preflight.hard.find((h) => h.kind === "unloadable-file-type");
     expect(hit?.transformCode).toBe("toml");
     expect(hit?.transformOwnerDeclared).toBeUndefined();
-    // M92: every printed sentence is true of this project. It declares no
-    // loader, so the message may not say it compiles the file with one.
+    // M92: every printed sentence must be true; a no-loader project can't be told it compiles.
     const message = preflightFailureMessage(preflight.hard);
     expect(message).toContain(
       "Nothing in this project declares a TOML loader plugin (e.g. @rollup/plugin-toml), " +
@@ -172,10 +165,7 @@ describe("the dry run's prediction of that refusal", () => {
   });
 });
 
-// A refusal that is not this one names an edge that fails before Vite reaches
-// the data file, and the promotion above appends to `hard` after every hit the
-// walk already found (both call sites then append composed-child hits after
-// that), so precedence cannot be positional.
+// hard hits append in discovery order; precedence must be checked by content, not list position.
 describe("a component that reaches both a data file and an earlier refusal", () => {
   it("is still reported by the refusal that is not the data file", () => {
     const message = preflightFailureMessage([
@@ -195,10 +185,7 @@ describe("a component that reaches both a data file and an earlier refusal", () 
   });
 });
 
-// The dry run reads a Vue graph only through the project's own SFC parser, so
-// what it finds two SFCs down is pinned by behaviour, not by a source grep.
-// (The refusal when no compiler resolves has its own file:
-// vue-target-without-sfc-compiler-is-refused.test.ts.)
+// Reads via the SFC parser; no-compiler case: vue-target-without-sfc-compiler-is-refused.test.ts.
 describe("the dry run on a real Vue project", () => {
   const VUE_FIXTURE = path.resolve(import.meta.dirname, "..", "..", "fixtures", "vue-project");
 
@@ -212,8 +199,7 @@ describe("the dry run on a real Vue project", () => {
   });
 });
 
-// The run path needs a browser to reach a report, so what is pinned here is
-// that it refuses through the same gate with the same message builder.
+// The run path needs a browser; this pins only that it shares the gate and message builder.
 describe("the run path's own refusal", () => {
   const analyzeSrc = fs.readFileSync(path.resolve("src/pipeline/analyze.ts"), "utf-8");
 
@@ -224,10 +210,7 @@ describe("the run path's own refusal", () => {
     );
   });
 
-  // directus `src/components/v-button.vue`: the run path walks the graph with
-  // the project's SFC parser and reached the `.yaml` five files down; the dry
-  // run walked without one, stopped at the first `.vue` import and predicted a
-  // clean run. Both call sites now load the same compiler.
+  // directus v-button.vue: dry run stopped at the first .vue import; both paths load one compiler.
   it("walks a Vue graph with the same compiler the dry run loads", () => {
     const explainSrc = fs.readFileSync(path.resolve("src/pipeline/explain-props.ts"), "utf-8");
     const explain = explainSrc.slice(

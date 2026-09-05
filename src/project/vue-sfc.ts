@@ -3,11 +3,7 @@ import path from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 
-// The compiler is never a 120fps dependency: the project's own Vue version is
-// the one that must compile its own components (the same precedent as the
-// React Compiler integration). Under pnpm only `vue/compiler-sfc` resolves from a project that
-// declares `vue`: `@vue/compiler-sfc` is a transitive dependency and is not
-// linked at the top level. The bare package name is the npm/yarn fallback.
+// Under pnpm only vue/compiler-sfc resolves; the bare package name is the npm/yarn fallback.
 export const VUE_SFC_SPECIFIERS = ["vue/compiler-sfc", "@vue/compiler-sfc"];
 
 export interface SfcBlock {
@@ -30,17 +26,14 @@ export interface SfcScript {
   content: string;
   // "ts" | "tsx" | "js" | whatever the author wrote; "js" when unstated.
   lang: string;
-  // The setup block calls `inject(`. A provide/inject
-  // hint may name that cause only from evidence the run read.
+  // A provide/inject hint may name that cause only from evidence the run read.
   usesInject: boolean;
 }
 
-// `inject(` as a setup block writes it, including `inject<T>(key)`. The lookbehind
-// keeps `useInject(` and `ctx.inject(` out: only Vue's own injector counts.
+// The lookbehind keeps useInject( and ctx.inject( out: only Vue's own injector counts.
 const INJECT_CALL = /(?<![\w$.])inject\s*[<(]/;
 
-// A commented-out `inject(` is not read evidence. The
-// hint may name provide/inject only from a call the block actually makes.
+// A commented-out inject( is not evidence the block makes that call.
 const COMMENT = /\/\*[\s\S]*?\*\/|\/\/.*/g;
 
 function callsInject(content: string): boolean {
@@ -51,8 +44,7 @@ export function isVueFile(filePath: string): boolean {
   return /\.vue$/i.test(filePath);
 }
 
-// Cached per lookup directory. Two entries (project root, component dir) cost
-// one extra `require.resolve`; Node caches the module itself.
+// Two entries (project root, component dir) cost one extra require.resolve.
 const compilerCache = new Map<string, Promise<VueSfcCompiler | undefined>>();
 
 export function resetVueCompilerCache(): void {
@@ -60,9 +52,7 @@ export function resetVueCompilerCache(): void {
   compilerFailures.clear();
 }
 
-// Why each specifier failed, per lookup directory. A bare
-// `catch {}` here would hide a fixture that resolves no compiler at all:
-// tests would go red with the loader saying nothing about the cause.
+// A bare catch {} would hide a fixture that resolves no compiler at all.
 const compilerFailures = new Map<string, string[]>();
 
 export function vueCompilerLoadFailures(fromDir: string): string[] {
@@ -110,31 +100,17 @@ export function VUE_COMPILER_MISSING(projectRoot: string): string {
   );
 }
 
-// The stronger of two block languages: the virtual file needs the script kind
-// that parses both blocks.
+// The virtual file needs the one script kind that parses both blocks.
 function strongerLang(setupLang: string | undefined, companionLang: string | undefined): string {
   const langs = [setupLang, companionLang].filter((lang): lang is string => typeof lang === "string");
   if (langs.includes("tsx")) return "tsx";
-  // `<script setup lang="jsx">` beside `<script lang="ts">` needs
-  // a `.tsx` virtual file. Handing that JSX to a `.ts` one stops it parsing.
+  // Handing JSX to a .ts virtual file stops it parsing.
   if (langs.includes("jsx") && langs.includes("ts")) return "tsx";
   if (langs.includes("ts")) return "ts";
   return setupLang ?? companionLang ?? "js";
 }
 
-// A `<script setup>` block is still what makes an SFC readable: the Options API
-// and plain-`<script>` SFCs mount fine (the plugin compiles them) but carry no
-// `defineProps` type argument, so they extract no props, the same outcome as an
-// untyped React component. Returning `undefined` for them is load-bearing —
-// `extractVueProps` (props/vue.ts) reads it as "this is an Options-API
-// candidate" and `preflight.ts` reads it as "contributes no module".
-//
-// When a companion `<script>` block sits beside the setup
-// block, its content is prepended. That is the only place an SFC can
-// `export interface` its props type, and nuxt-ui's own components rely on
-// exactly that pattern, so without it `defineProps<BadgeProps>()` would name
-// a type nothing in the program declared. Companion first matches Vue's own
-// `compileScript` order.
+// undefined is load-bearing: extractVueProps (props/vue.ts) reads it as Options-API candidate.
 export function parseSfcScript(
   source: string,
   filename: string,
@@ -151,11 +127,11 @@ export function parseSfcScript(
   if (!block || typeof block.content !== "string") return undefined;
   const companion = descriptor?.script;
   const companionContent = typeof companion?.content === "string" ? companion.content : "";
+  // A companion <script> is the only place an SFC can export interface its props type.
   const content = companionContent.trim() ? `${companionContent}\n${block.content}` : block.content;
   return {
     content,
-    // Read once, here, so a hint about provide/inject rests on
-    // the same text the props extraction read.
+    // Read once here, so the hint rests on the same text the props extraction read.
     usesInject: callsInject(content),
     lang: strongerLang(
       typeof block.lang === "string" ? block.lang : undefined,
@@ -164,21 +140,7 @@ export function parseSfcScript(
   };
 }
 
-// Distinguishes "genuinely no props" from "props declared in a
-// form ADR 0002 excludes" (Options-API `props: {}`, `extends: BaseX`,
-// `mixins: [...]`) for a `.vue` file with no `<script setup>` to serve.
-// Shallow by design: inspects only the top-level default-exported object
-// literal's own property names, not a full evaluation of the Options API
-// object -- an indirect `const X = {...}; export default X;` is out of reach,
-// same tradeoff `scanExports`/`scanRelativeTypeImports` (props/exports.ts, props/composition.ts)
-// already accept for a same-file, parse-only scan. Priority props > extends >
-// mixins when more than one key is present: a component's own runtime props
-// object is the most direct evidence, inheritance the fallback signal.
-// `defineComponent({ props: selectProps, setup(props, ...) })`
-// is Vue's Composition API reading a runtime props object, not the classic
-// Options API. `"setup-props"` names that shape so the warning can. An
-// inheritance form stays `"extends"`/`"mixins"` whatever the body uses:
-// inheritance is the Options-API mechanism either way.
+// Tells "genuinely no props" from "props in a form ADR 0002 excludes" for an SFC with no setup.
 export function detectOptionsApiProps(
   source: string,
   filename: string,
@@ -194,6 +156,7 @@ export function detectOptionsApiProps(
   const block = descriptor?.script;
   if (!block || typeof block.content !== "string" || block.content.trim() === "") return undefined;
 
+  // Shallow by design: the top-level default export only, no evaluation of the Options object.
   const scriptFile = ts.createSourceFile(filename, block.content, ts.ScriptTarget.Latest, false);
   const literal = defaultExportObjectLiteral(scriptFile);
   if (!literal) return undefined;
@@ -204,6 +167,7 @@ export function detectOptionsApiProps(
     if (name) keys.add(name);
   }
 
+  // A component's own runtime props object is the most direct evidence; inheritance a fallback.
   if (keys.has("props")) return keys.has("setup") ? "setup-props" : "props";
   if (keys.has("extends")) return "extends";
   if (keys.has("mixins")) return "mixins";
@@ -223,9 +187,7 @@ function objectLiteralPropertyName(property: ts.ObjectLiteralElementLike): strin
   return undefined;
 }
 
-// `export default {...}` directly, or a one-argument wrapper call around the
-// same shape (`defineComponent({...})`, `Vue.extend({...})`): the wrapper
-// call itself declares nothing, so only its first argument is inspected.
+// A wrapper call declares nothing, so only its first argument is inspected.
 function defaultExportObjectLiteral(
   sourceFile: ts.SourceFile,
 ): ts.ObjectLiteralExpression | undefined {
@@ -241,14 +203,7 @@ function defaultExportObjectLiteral(
   return undefined;
 }
 
-// A component whose template root carries none of these directives
-// always produces a real root element once mounted -- an unconditional root
-// reporting zero DOM in the harness's combo phase is the harness's own
-// miscount (see generateVueEntry), not the component legitimately rendering
-// nothing. A root gated by one of these can legitimately render nothing, so
-// detection stays conservative: only the confirmed-unconditional shape is
-// reported true, matching detectOptionsApiProps's own shallow, parse-only
-// style (inspects the first tag's own attributes, not a full template AST).
+// An unconditional root reporting zero DOM is the harness's miscount (harness/entry.ts).
 const CONDITIONAL_ROOT_DIRECTIVE = /\bv-if\s*=|\bv-show\s*=|\bv-for\s*=/;
 
 export function templateHasUnconditionalRoot(
@@ -270,11 +225,7 @@ export function templateHasUnconditionalRoot(
   return !CONDITIONAL_ROOT_DIRECTIVE.test(match[2]);
 }
 
-// The virtual module the script block is type-checked as. Named `<sfc>.ts` in
-// the SFC's own directory so relative imports, tsconfig `paths` and the
-// checker's module resolution all behave exactly as they do for the real file.
-// Only `tsx` needs a name of its own; JavaScript parses as TypeScript, and an
-// untyped block contributes no declarations either way.
+// Named in the SFC's own directory so relative imports and paths resolve as for the real file.
 export function virtualScriptPath(vuePath: string, lang: string): string {
   return `${vuePath}.${lang === "tsx" ? "tsx" : "ts"}`;
 }

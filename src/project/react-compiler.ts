@@ -8,9 +8,7 @@ export const REACT_COMPILER_PACKAGE = "babel-plugin-react-compiler";
 export const REACT_COMPILER_DISABLED_WARNING =
   "React Compiler is installed but disabled for this run; rerender costs will be higher than production.";
 
-// The plugin defaults its target to React 19 when none is passed,
-// so an undetectable React major would compile against a runtime the project
-// may not have, undisclosed. An undisclosable target keeps the compiler off.
+// The plugin defaults to React 19, so an undetectable major keeps the compiler off entirely.
 export function reactCompilerTargetUnknownWarning(projectRoot: string): string {
   return (
     `the installed React version could not be read from ${projectRoot}, so the React Compiler ` +
@@ -25,17 +23,12 @@ export function reactCompilerResolutionWarning(projectRoot: string): string {
   );
 }
 
-// Package presence is the whole signal: next.config.* can be TypeScript and can
-// compute its own config, which is a large evaluation surface for one boolean.
-// Declared, never merely resolvable: the compiler rewrites the code that gets
-// measured, so a hoisted transitive copy must not switch it on. The
-// workspace root counts as a declaration; a hoisted install does not.
+// Declared, never merely resolvable: the compiler rewrites the code that gets measured.
 export function detectReactCompiler(projectRoot: string): boolean {
   return isPackageDeclared(REACT_COMPILER_PACKAGE, projectRoot);
 }
 
-// Walking up from the resolved entry reaches the package's own manifest in any
-// layout; the package.json subpath does not, because an exports map may hide it.
+// The package.json subpath can be hidden by an exports map; walking up cannot.
 function readCompilerVersion(pluginPath: string): string | undefined {
   let dir = path.dirname(pluginPath);
   while (true) {
@@ -78,14 +71,11 @@ export interface ReactCompilerState {
   version?: string;
   pluginPath?: string;
   warning?: string;
-  // The React major the transform compiles for, and why it did not
-  // run when the runtime that major needs is absent.
   target?: ReactCompilerTarget;
   skipped?: { target: string; missingModule: string };
 }
 
-// At most one warning per state, so the disabled note and the resolution note
-// can never both reach the report.
+// At most one warning per state, so two notes can never both reach the report.
 export function resolveReactCompilerState(
   projectRoot: string,
   requested: boolean | undefined,
@@ -116,8 +106,7 @@ export function resolveReactCompilerState(
     };
   }
   const installedTarget = detectReactMajor(projectRoot);
-  // A react that IS installed answers for the major by itself: an unreadable or
-  // pre-17 install is an unknown target, never the declared range's answer.
+  // An installed react answers for the major itself; the declared range is never its fallback.
   const target =
     installedTarget ??
     (installedPackageDir("react", projectRoot) ? undefined : declaredReactMajor(projectRoot));
@@ -130,8 +119,7 @@ export function resolveReactCompilerState(
     };
   }
   const runtime = reactCompilerRuntime(target);
-  // The runtime probe reads what is installed, so it only speaks when react
-  // itself is installed; a declared-only target has nothing to probe.
+  // The probe reads what is installed, so a declared-only target has nothing to probe.
   if (installedTarget && reactCompilerRuntimeDeps(projectRoot, target).length === 0) {
     return {
       detected,
@@ -151,12 +139,7 @@ export function resolveReactCompilerState(
   };
 }
 
-// Compiled output imports react/compiler-runtime. @vitejs/plugin-react only
-// pre-bundles that module when it recognises the babel plugin by its bare name,
-// and K2 requires the project-resolved absolute path, so the import has to be
-// declared here: otherwise Vite discovers it on the first page load and forces
-// a full reload that destroys the execution context mid-measurement. React 18
-// projects have no such module; there the entry is skipped.
+// Undeclared, Vite discovers it on first load and full-reloads, destroying the context.
 export function reactCompilerRuntimeDeps(
   projectRoot: string,
   target: ReactCompilerTarget = "19",
@@ -170,10 +153,7 @@ export function reactCompilerRuntimeDeps(
   }
 }
 
-// The compiler emits the runtime import its target
-// names, so the target has to be the React the project installs. React 19
-// ships the runtime inside react itself; 17 and 18 take it from the separate
-// react-compiler-runtime package the project installs beside them.
+// The target must be the React the project installs: the compiler emits that runtime import.
 export type ReactCompilerTarget = "17" | "18" | "19";
 
 export function detectReactMajor(projectRoot: string): ReactCompilerTarget | undefined {
@@ -182,8 +162,7 @@ export function detectReactMajor(projectRoot: string): ReactCompilerTarget | und
   return majorOf(readProjectManifest(reactDir)?.version);
 }
 
-// With no react installed the declared range is the only evidence of the major
-// there is. An install that reads always wins over it.
+// With no react installed the declared range is the only evidence of the major there is.
 function declaredReactMajor(projectRoot: string): ReactCompilerTarget | undefined {
   const manifest = readProjectManifest(projectRoot) as
     | {
@@ -215,8 +194,7 @@ export function reactCompilerRuntime(target: ReactCompilerTarget): {
     : { module: "react-compiler-runtime", package: "react-compiler-runtime" };
 }
 
-// An option the plugin defaults for us is an option this run cannot
-// disclose, so the target is always passed explicitly once it is known.
+// A defaulted option is one this run cannot disclose, so a known target is always passed.
 export function reactCompilerBabelOptions(
   target: ReactCompilerTarget | undefined,
 ): Record<string, string> {
@@ -236,12 +214,7 @@ export function reactCompilerRuntimeMissingWarning(
   );
 }
 
-// Vite transforms the generated .tsx entry with the automatic JSX runtime, so
-// the page imports react/jsx-dev-runtime even though nothing declares it. Left
-// undeclared, Vite discovers it on the first page load of a project whose
-// optimizer cache is cold, pre-bundles it, and full-reloads: destroying the
-// execution context mid-measurement. Resolved from the project: React 16 has no
-// automatic runtime, and an unresolvable include aborts server start.
+// The generated entry imports the JSX runtime, which a cold optimizer would full-reload for.
 export function reactJsxRuntimeDeps(projectRoot: string): string[] {
   const projectRequire = createRequire(path.join(projectRoot, "/"));
   const deps: string[] = [];
@@ -250,7 +223,7 @@ export function reactJsxRuntimeDeps(projectRoot: string): string[] {
       projectRequire.resolve(dep);
       deps.push(dep);
     } catch {
-      // Not available in this React version.
+      // An unresolvable optimizeDeps include aborts server start.
     }
   }
   return deps;

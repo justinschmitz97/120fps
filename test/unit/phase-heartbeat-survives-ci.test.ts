@@ -1,10 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { resolveProgressReporter } from "../../src/pipeline/index.js";
 
-// Review A2: `--ci` owns stdout for JSON, so progress reporting is silenced
-// there. Lane A's run watchdog re-arms on each phase boundary; silenced with
-// the console output, a CI run degrades to one total-budget abort that cannot
-// say which phase hung.
+// Review A2: --ci silences console progress; onPhase must still fire so the watchdog can re-arm.
 
 describe("phase boundaries reach the watchdog on every path", () => {
   it("still fires under --ci, where console progress is silenced", () => {

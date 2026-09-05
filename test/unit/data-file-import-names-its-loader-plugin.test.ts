@@ -4,14 +4,10 @@ import os from "node:os";
 import path from "node:path";
 import { runPreflight, recognizeTransform, declaredTransformOwner } from "../../src/project/index.js";
 
-// directus: `app/src/lang/translations/en-US.yaml` is loaded by the
-// `@rollup/plugin-yaml` its own vite.config declares. Vite cannot parse a YAML
-// file without that plugin, so the run ended on a parse error that never named
-// the plugin the project had all along.
+// directus: en-US.yaml needs @rollup/plugin-yaml, or its parse error never names the plugin.
 const FIXTURE = path.resolve(import.meta.dirname, "..", "..", "fixtures", "yaml-loader-project");
 
-// The project's own SFC parser, reduced to the one thing the import walk reads:
-// the script block's text.
+// Minimal SFC parser stub: only the script block text, the one thing the import walk reads.
 const vueCompiler = {
   parse: (source: string) => {
     const match = /<script[^>]*>([\s\S]*?)<\/script>/.exec(source);
@@ -79,9 +75,7 @@ describe("an import of a file type Vite cannot load on its own", () => {
   });
 
 
-  // Review: TypeScript 5 leaves `baseUrl` undefined for a tsconfig that
-  // declares only `paths` (every Vite template's shape), and the alias walk
-  // used to give up there, so the directus fix never applied.
+  // TS5 leaves `baseUrl` undefined for a tsconfig that declares only `paths` (every Vite template).
   it("follows the alias when the tsconfig declares paths without baseUrl", () => {
     fs.writeFileSync(path.join(tmpDir, "package.json"), JSON.stringify({ name: "p" }));
     fs.writeFileSync(

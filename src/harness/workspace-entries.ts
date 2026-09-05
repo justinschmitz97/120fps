@@ -10,10 +10,7 @@ import {
 } from "../project/index.js";
 import { isFile, toPosix } from "../shared/index.js";
 
-// True when an installed package's realpath sits inside workspaceRoot with
-// no node_modules segment between them — the standard signal that an install
-// is a symlink back into the monorepo's own source tree, not a hoisted
-// external copy.
+// No node_modules segment between the two: a symlink into the monorepo, not a hoisted copy.
 export function isWorkspaceSibling(pkgDir: string, workspaceRoot: string): boolean {
   let real: string;
   try {
@@ -42,9 +39,7 @@ export function declaresRuntimeEntry(manifest: Record<string, unknown> | undefin
   return ["source", "exports", "module", "main"].some((field) => manifest[field] !== undefined);
 }
 
-// A declared entry names a build output, and the source it was built from
-// sits at the same path with the build directory dropped and a source
-// extension applied (`dist/shared/index.js` -> `shared/index.ts`).
+// The source sits at the declared path with the build dir dropped: dist/a/i.js -> a/i.ts.
 function sourceCandidatesFor(real: string, declared: string): string[] {
   const normalized = toPosix(declared).replace(/^\.\//, "");
   const withoutExtension = (value: string) => value.replace(/\.[^./]+$/, "");
@@ -81,8 +76,7 @@ type WorkspaceSourceEntry = {
   declaredExists: boolean;
 };
 
-// The source an unbuilt workspace sibling declares, whatever layout it uses.
-// `<pkg>/src` is the last fallback, not the only candidate.
+// `<pkg>/src` is the last fallback, not the only candidate: siblings use any layout.
 export function resolveWorkspaceSourceEntry(
   real: string,
   manifest: Record<string, unknown> | undefined,
@@ -124,9 +118,7 @@ export function resolveWorkspaceSourceEntry(
   };
 }
 
-// An `exports` subpath key gets the same derivation as the root entry. A key
-// whose declared target already resolves needs no source counterpart and
-// keeps the resolution it has today.
+// A key whose declared target already resolves needs no source counterpart.
 export function workspaceSubpathSourceEntries(
   real: string,
   manifest: Record<string, unknown> | undefined,

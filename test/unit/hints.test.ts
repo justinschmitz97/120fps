@@ -144,7 +144,6 @@ describe("hint copy", () => {
   });
 
   it("names an action rather than restating the finding", () => {
-    // Every hint body contains at least one imperative the reader can act on.
     const verbs = /\b(wrap|hoist|move|return|remove|split|check|look|abort|add|point|take|start)\b/i;
     for (const id of ids) {
       expect(HINTS[id].lines.join(" ")).toMatch(verbs);
@@ -170,7 +169,6 @@ describe("hint copy", () => {
   });
 });
 
-// C3: presentation.
 describe("presentation", () => {
   it("prints nothing when there is nothing to say", () => {
     expect(formatHints([])).toBe("");

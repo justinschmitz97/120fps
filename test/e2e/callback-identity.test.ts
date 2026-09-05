@@ -22,8 +22,7 @@ describe("callback identity", () => {
     const deltas = opts?.callbackIdentityDeltas ?? [];
     expect(deltas).toHaveLength(1);
     expect(deltas[0].propName).toBe("onAction");
-    // The stable arm lets the memoized subtree bail out, so the effect is the
-    // whole subtree render rather than a few percent of drift.
+    // Stable callback lets the memoized child bail out, so fresh vs. stable spans a whole render.
     expect(deltas[0].freshMs!).toBeGreaterThan(deltas[0].stableMs! * 3);
   }, 240_000);
 

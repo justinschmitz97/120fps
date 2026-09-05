@@ -44,11 +44,7 @@ function buildAllDeltaPairs(schemas: PropSchema[]): DeltaPair[] {
         });
       }
     } else if (s.kind === "object" && !s.required && !s.degenerate) {
-      // A degenerate schema has no real value to flip to (base and
-      // flip would be the same fabricated stand-in), so it does not
-      // participate in its own delta pair; it still flows into `anchor` via
-      // `resolveAnchorValue`, which resolves it to `undefined` for every
-      // other prop's pair.
+      // A degenerate schema's base and flip would be the same stand-in, so it gets no pair.
       const firstVal = s.values.length > 0 ? s.values[0] : {};
       objectPairs.push({
         propName: s.name,
@@ -73,9 +69,7 @@ export function generateDeltaPairs(schemas: PropSchema[]): DeltaPair[] {
   return buildAllDeltaPairs(schemas).slice(0, MAX_DELTA_PAIRS);
 }
 
-// Total delta pairs the prop space could produce before the MAX_DELTA_PAIRS
-// cap truncates them: lets a caller detect and disclose truncation without
-// re-deriving the counting logic.
+// The uncapped count, so a caller can disclose truncation without re-deriving it.
 export function countDeltaPairSpace(schemas: PropSchema[]): number {
   return buildAllDeltaPairs(schemas).length;
 }

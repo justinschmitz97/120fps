@@ -15,8 +15,7 @@ afterEach(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
-// A workspace whose root manifest carries the tooling and whose member declares
-// only what the given sections say.
+// Root manifest carries the tooling; the member declares only what the caller passes, if anything.
 function makeWorkspace(rootManifest: unknown, memberManifest: unknown = {}): string {
   fs.writeFileSync(path.join(tmpDir, "pnpm-workspace.yaml"), 'packages:\n  - "packages/*"\n');
   fs.writeFileSync(path.join(tmpDir, "package.json"), JSON.stringify(rootManifest));
@@ -97,8 +96,7 @@ describe("React Compiler detection across workspace levels", () => {
     expect(detectReactCompiler(member)).toBe(true);
   });
 
-  // The compiler rewrites the measured code, so a hoisted transitive copy is
-  // not enough: some manifest has to say the project ships it (M27 H14).
+  // Compiler rewrites measured code; a hoisted copy alone isn't a declaration that it ships it.
   it("ignores a plugin that is installed but declared nowhere", () => {
     const member = makeWorkspace({});
     installPackage(tmpDir, "babel-plugin-react-compiler");
@@ -147,10 +145,7 @@ describe("project transform detection across workspace levels", () => {
   });
 });
 
-// M83 #8 (primevue-Probe1): resolution via the hoisted-transitive-copy
-// fallback is correct and by design (M75) — only the disclosure was
-// missing. A plugin resolved that way, not declared in this project's own
-// package.json (at either workspace level), now names itself.
+// Hoisted-copy resolution is correct by design; this block only tests the disclosure warning.
 describe("HOISTED_TRANSFORM_WARNING disclosure", () => {
   it("warns for a plugin resolved only via the hoisted fallback, not declared anywhere", () => {
     const member = makeWorkspace({});

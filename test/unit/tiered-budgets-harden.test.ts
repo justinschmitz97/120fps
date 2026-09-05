@@ -53,21 +53,18 @@ const baseMachine = {
   os: "Linux 6.0", nodeVersion: "v20.0.0", chromiumVersion: "120.0.0.0",
 };
 
-// H1: domNodeCount=0
 describe("H1: classifyTier with domNodeCount=0", () => {
   it("classifies as T1", () => {
     expect(classifyTier({ domNodeCount: 0, hasPortal: false, hasScaling: false, hasAnimation: false })).toBe("T1");
   });
 });
 
-// H3: exact boundaries
 describe("H3: exact tier boundaries", () => {
   it("domNodeCount=11 is T2", () => {
     expect(classifyTier({ domNodeCount: 11, hasPortal: false, hasScaling: false, hasAnimation: false })).toBe("T2");
   });
 });
 
-// H4: all flags true
 describe("H4: portal + animation + scaling all true", () => {
   // M64: T3 is a floor. 200 nodes already exceed it, so the size tier stands.
   it("keeps T4 when the size tier is above the portal/animation floor", () => {
@@ -75,7 +72,6 @@ describe("H4: portal + animation + scaling all true", () => {
   });
 });
 
-// H5: rerenderChange exceeds tier budget → warn (not fail)
 describe("H5: computeVerdict with rerenderChange exceeding tier budget", () => {
   it("warns when rerenderChange exceeds 1.5x tier rerender budget", () => {
     const combo = makeCombo({
@@ -94,7 +90,6 @@ describe("H5: computeVerdict with rerenderChange exceeding tier budget", () => {
   });
 });
 
-// H6: timing equals budget exactly
 describe("H6: timing at exact budget boundary", () => {
   it("mount exactly at T1 budget (14ms) passes", () => {
     const combo = makeCombo({
@@ -115,7 +110,6 @@ describe("H6: timing at exact budget boundary", () => {
   });
 });
 
-// H7: --flat-thresholds with other flags
 describe("H7: --flat-thresholds with --no-deltas and --no-auto-scale", () => {
   it("all flags parsed together", () => {
     const result = parseArgs(["./Button.tsx", "--flat-thresholds", "--no-deltas", "--no-auto-scale"]);
@@ -126,7 +120,6 @@ describe("H7: --flat-thresholds with --no-deltas and --no-auto-scale", () => {
   });
 });
 
-// H8: multiple combos with different tiers in formatTable
 describe("H8: formatTable with multiple tiers", () => {
   it("shows different tiers for different combos", () => {
     const r = makeReport({
@@ -142,7 +135,6 @@ describe("H8: formatTable with multiple tiers", () => {
   });
 });
 
-// H9: buildReport with empty mounts and tiered budgets
 describe("H9: buildReport with 0 combos", () => {
   it("produces pass=true, tieredBudgets=true", () => {
     const report = buildReport({
@@ -161,7 +153,6 @@ describe("H9: buildReport with 0 combos", () => {
   });
 });
 
-// H10: scaling curve + explicit mount override
 describe("H10: scaling T4 with explicit mount override", () => {
   it("uses explicit mount but tier rerender budget", () => {
     const report = buildReport({
@@ -178,16 +169,13 @@ describe("H10: scaling T4 with explicit mount override", () => {
       thresholds: { ...DEFAULT_THRESHOLDS, mountMs: 20 },
       explicitThresholds: { mountMs: true },
     });
-    // Tier per-combo based on DOM count
     expect(report.combos[0].tier).toBe("T1");
     expect(report.combos[1].tier).toBe("T4");
-    // mount 10ms < explicit 20ms → passes mount check
-    // Rerender uses T4 budget (16ms), default rerender [0] median 0 → passes
+    // Explicit mount (20ms) passes at 10ms; default rerender also passes T4's tier budget.
     expect(report.combos[1].verdict).toBe("pass");
   });
 });
 
-// H11: JSON serialization includes tier fields
 describe("H11: JSON serialization of tier fields", () => {
   it("tier and tieredBudgets appear in serialized report", () => {
     const report = buildReport({
@@ -212,14 +200,12 @@ describe("H11: JSON serialization of tier fields", () => {
   });
 });
 
-// H12: negative domNodeCount
 describe("H12: classifyTier with negative domNodeCount", () => {
   it("returns T1 (≤12 check passes)", () => {
     expect(classifyTier({ domNodeCount: -1, hasPortal: false, hasScaling: false, hasAnimation: false })).toBe("T1");
   });
 });
 
-// H13: explicit rerender override + tier mount budget
 describe("H13: partial override: explicit rerender, tier mount", () => {
   it("uses tier mount but explicit rerender", () => {
     const report = buildReport({
@@ -244,7 +230,6 @@ describe("H13: partial override: explicit rerender, tier mount", () => {
   });
 });
 
-// H14: TIER_BUDGETS values not accidentally mutated
 describe("H14: TIER_BUDGETS immutability", () => {
   it("T1 budget values remain unchanged after verdict computation", () => {
     const combo = makeCombo({
@@ -257,10 +242,8 @@ describe("H14: TIER_BUDGETS immutability", () => {
   });
 });
 
-// H15: interaction at exact T2 boundary
 describe("H15: interaction at exactly T2's per-event budget passes", () => {
-  // M33 E2: T2 allows 50ms for one event, so the boundary moved from the
-  // 250ms aggregate to 50ms per event.
+  // M33 E2: T2's boundary is 50ms per event, not the 250ms aggregate other tiers use.
   it("50ms single-event interaction passes T2", () => {
     const combo = makeCombo({
       mount: { samples: [10], median: 10, p95: 10, cv: 0, unstable: false },

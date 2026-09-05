@@ -65,8 +65,7 @@ describe("stylesheetRuleCount", () => {
   });
 
   it("counts zero for bare at-rules with no body (dub-F2 shape)", () => {
-    // Three @tailwind directives: zero comments, zero @import/@charset/@use,
-    // and no `{`. Rule count 0 here is not "only comments and imports".
+    // Rule count 0 here comes from no braces at all, not from being only comments and imports.
     const file = write("a.css", "@tailwind base;\n@tailwind components;\n@tailwind utilities;\n");
     expect(stylesheetRuleCount(file)).toBe(0);
   });
@@ -75,8 +74,7 @@ describe("stylesheetRuleCount", () => {
     const file = path.join(tmpDir, "huge.css");
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, '@import "pkg";'.padEnd(2 * 1024 * 1024 + 1, " "));
-    // Content alone would be rule count 0 (pure passthrough); the size guard
-    // means this is never actually read, so it must not report 0.
+    // Content is 0 (pure passthrough); the size guard skips reading it, so this must not report 0.
     expect(stylesheetRuleCount(file)).toBeGreaterThan(0);
   });
 });
@@ -155,8 +153,7 @@ describe("fallback candidate disqualification inside discoverGlobalCss", () => {
   });
 
   it("falls through a disqualified candidate to a real stylesheet underneath", () => {
-    // Padded via a stripped comment (not raw rule content) so the placeholder
-    // outranks the real file by size and the walk visits it first.
+    // Padded via a stripped comment, not real rules, so the placeholder outranks the real file.
     write("src/styles.css", '@import "pkg";\n' + "/* padding */".repeat(50));
     const real = write("src/theme/tokens.css", ".a{color:red}".padEnd(50, " "));
     const warnings: string[] = [];
@@ -174,8 +171,7 @@ describe("fallback candidate disqualification inside discoverGlobalCss", () => {
   });
 
   it("does not disqualify an evidence-backed entry import that is itself near-empty", () => {
-    // Scope's opening principle: the two disqualification checks apply only
-    // to the largest-stylesheet fallback layer, never to layers 1-3.
+    // Scope's opening principle: the disqualification checks apply only to the fallback layer.
     const css = write("src/reset.css", "");
     write("index.html", '<script type="module" src="/src/main.tsx"></script>');
     write("src/main.tsx", 'import "./reset.css";');
@@ -190,8 +186,7 @@ describe("CSS_PLACEHOLDER_SKIPPED_WARNING / CSS_RESET_SKIPPED_WARNING", () => {
     expect(CSS_RESET_SKIPPED_WARNING("reset.css")).toContain("reset.css");
   });
 
-  // M92 regression (dub-F2): the message must not claim a file's content is
-  // "only comments and imports" when rule count 0 came from something else.
+  // M92 regression (dub-F2): rule count 0 can come from something other than comments and imports.
   it("does not claim the file is only comments and imports", () => {
     expect(CSS_PLACEHOLDER_SKIPPED_WARNING("src/styles.css")).not.toContain(
       "only comments and imports",
@@ -247,9 +242,7 @@ describe("CSS_FALLBACK_WARNING opts", () => {
     expect(warning).not.toContain("this package has no application entry");
   });
 
-  // M92 regression (excalidraw-F6): the pick is ranked by size, not
-  // arbitrary, even when no import chain corroborates it -- the wording must
-  // not read as "no evidence at all" for a pick the run demonstrably ranked.
+  // M92 regression (excalidraw-F6): a size-ranked pick must not be described as having no evidence.
   it("does not claim the pick has no evidence when it was ranked by size", () => {
     const warning = CSS_FALLBACK_WARNING("css/styles.scss", {
       onlyCandidate: false,

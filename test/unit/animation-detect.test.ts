@@ -10,7 +10,6 @@ import {
 import { buildReport, type BuildReportInput } from "../../src/pipeline/index.js";
 import { detectAnimations } from "../../src/browser/index.js";
 
-// --- helpers ---
 
 function makeCombo(overrides: Partial<ComboReport> = {}): ComboReport {
   return {
@@ -69,7 +68,6 @@ function makeReport(overrides: Partial<Report> = {}): Report {
   };
 }
 
-// --- detectAnimations export ---
 
 describe("detectAnimations export", () => {
   it("is exported as a function", () => {
@@ -77,7 +75,6 @@ describe("detectAnimations export", () => {
   });
 });
 
-// --- buildReport with hasAnimation on MountResult ---
 
 describe("buildReport animation detection integration", () => {
   it("small DOM (<=12) with hasAnimation=true produces T3", () => {
@@ -241,7 +238,6 @@ describe("buildReport animation detection integration", () => {
   });
 });
 
-// --- formatTable with animation ---
 
 describe("formatTable animation display", () => {
   it("shows [anim] suffix when hasAnimation=true and tier is set", () => {

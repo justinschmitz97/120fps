@@ -28,8 +28,7 @@ function write(name: string, content: string): string {
 const fwd = (p: string) => p.replace(/\\/g, "/");
 const srcAlias = () => [{ find: /^@\//, replacement: `${fwd(tmpDir)}/src/` }];
 
-// Every specifier the scanner misses is a package Vite discovers on demand,
-// which reloads the page in the middle of a measurement (M34).
+// A missed specifier is a package Vite discovers on demand, reloading the page mid-measurement.
 describe("dynamic import and require specifiers", () => {
   it("follows a dynamically imported local module", () => {
     write("Lazy.tsx", `import "lazy-only-pkg";\nexport default function Lazy() { return null; }\n`);
@@ -179,9 +178,7 @@ describe("resolution targets beyond source files and index files", () => {
   });
 });
 
-// M76: a workspace-sibling package whose own root has no resolvable entry and
-// is never imported bare contributes the subpath actually scanned instead of
-// its unresolvable collapsed root name.
+// M76: a workspace sibling with no resolvable root, never imported bare, contributes its subpath.
 describe("workspace-sibling subpath substitution", () => {
   function mkWorkspace(): { workspaceRoot: string; member: string } {
     const workspaceRoot = tmpDir;
@@ -231,21 +228,11 @@ describe("workspace-sibling subpath substitution", () => {
 
     const warnings: string[] = [];
     const pkgs = scanExternalDeps(entry, member, [], undefined, warnings);
-    // M76's collapse decision keeps the bare name once anything in the graph
-    // imports it bare, matching today's behavior — proven here because the
-    // bare name has no resolvable root either, so it only reaches M77's/M94's
-    // separate, later exclusion check if M76 actually added it.
-    // M94: @scope/ui is a workspace sibling (linked via node_modules, not a
-    // real install), so the honest "no resolvable source, may still fail at
-    // request time" wording applies here, not the type-only claim — this
-    // fixture has no src/ directory either, so it falls all the way through
-    // to that no-source branch.
+    // M76 keeps the bare name once anything imports it bare; then M77/M94's exclusion applies.
     expect(warnings).toContain(UNBUILT_WORKSPACE_PACKAGE_NO_SOURCE_WARNING("@scope/ui", undefined));
+    // M94: a linked workspace sibling gets the "may fail at request time" wording, not type-only.
     expect(warnings).not.toContain(TYPE_ONLY_PACKAGE_WARNING("@scope/ui"));
-    // M77/M94: that bare name has no resolvable root entry or src/, so the
-    // later exclusion check removes it from the final list instead of
-    // leaving an unresolvable optimizeDeps entry there — the fixes compose
-    // without reintroducing calcom-F1's crash.
+    // M77/M94: exclusion removes the unresolvable bare name too, without reintroducing calcom-F1.
     expect(pkgs).not.toContain("@scope/ui");
   });
 
@@ -274,20 +261,15 @@ describe("workspace-sibling subpath substitution", () => {
 
     const warnings: string[] = [];
     const pkgs = scanExternalDeps(entry, tmpDir, [], undefined, warnings);
-    // M76: not a workspace sibling, so the subpath collapses to the bare
-    // root exactly as it always has — never substituted.
+    // M76: not a workspace sibling, so the subpath always collapses to the bare root.
     expect(pkgs).not.toContain("no-entry-pkg/subpath");
-    // This particular fixture's bare root also happens to have no runtime
-    // entry (`main: ""`), so M77's separate, later check removes it too.
+    // Bare root also has no runtime entry (main: ""), so M77's separate check removes it too.
     expect(warnings).toContain(TYPE_ONLY_PACKAGE_WARNING("no-entry-pkg"));
     expect(pkgs).not.toContain("no-entry-pkg");
   });
 });
 
-// M77: a bare specifier that resolves to an installed package with no
-// runtime entry is almost certainly type-only. Left in optimizeDeps.include
-// it aborts Vite's boot before any per-file transform gets a chance to elide
-// the import the way it would without the eager pre-bundle.
+// M77: a no-runtime-entry package is type-only; left in optimizeDeps.include it aborts Vite's boot.
 describe("type-only package exclusion", () => {
   function mkNoEntryPackage(name: string): void {
     const dir = path.join(tmpDir, "node_modules", name);
@@ -350,8 +332,7 @@ describe("type-only package exclusion", () => {
     const pkgs = scanExternalDeps(entry, tmpDir, [], undefined, warnings);
 
     expect(pkgs).toContain("nowhere-to-be-found");
-    // M110 (A1) reports the entry the pre-bundle cannot resolve; this case is
-    // about the exclusion warnings, which stay silent.
+    // M110 (A1) reports unresolvable entries elsewhere; this case is only about exclusion warnings.
     expect(warnings.filter((w) => !w.includes("resolves to no installed package"))).toEqual([]);
   });
 });

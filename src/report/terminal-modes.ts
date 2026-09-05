@@ -45,8 +45,7 @@ export function formatTable(report: Report): string {
   if (report.reactCompiler?.active) {
     const details: string[] = [];
     if (report.reactCompiler.version) details.push(`v${report.reactCompiler.version}`);
-    // The target the transform compiled for, beside the version that
-    // compiled it, so a React 18 project reads which React its output assumes.
+    // Beside the version, so a React 18 project reads which React the output assumes.
     if (report.reactCompiler.target) details.push(`target ${report.reactCompiler.target}`);
     const suffix = details.length > 0 ? ` (${details.join(", ")})` : "";
     lines.push(`React Compiler: active${suffix}`);
@@ -75,9 +74,7 @@ export function formatTable(report: Report): string {
   let hasUnstable = false;
 
   for (const combo of report.combos) {
-    // A scale-probe combo's curve describes N sibling copies of the
-    // whole component, not a real prop: it must never read as "auto:
-    // <prop>", which is the real detected-prop mechanism's label.
+    // A scale probe's curve is over sibling copies, so it must never read as "auto: <prop>".
     let scaling = "-";
     if (combo.scalingCurve) {
       scaling = combo.scaleProbe !== undefined
@@ -124,8 +121,7 @@ export function formatTable(report: Report): string {
       const stepSuffix = interaction.steps && interaction.steps > 1
         ? ` = ${perStepCost(interaction).toFixed(2)}ms x ${interaction.steps} steps`
         : "";
-      // Naming the planned count next to the run count is what
-      // stops `x 3 steps` reading as a complete open-close-10 cycle.
+      // The planned count stops `x 3 steps` reading as a complete open-close-10 cycle.
       const truncatedSuffix = interaction.stepsPlanned
         ? ` [truncated: ${interaction.steps ?? 0} of ${interaction.stepsPlanned} steps, explore budget]`
         : "";
@@ -182,19 +178,14 @@ export function formatTable(report: Report): string {
   lines.push(
     report.pass ? "Result: PASS" : "Result: FAIL",
   );
-  // Prop combos only, the same filter `describeMode` applies — a footer
-  // counting the sibling-copies scale probes would contradict the
-  // "measured N of M prop combos" warning printed two lines below it.
+  // Prop combos only, the same filter `describeMode` applies.
   appendWarnRollup(
     lines,
     report,
     report.combos.filter((c) => c.scaleProbe === undefined).map((c) => c.verdict),
     "combos",
   );
-  // The React pass demotes any `pass` combo with a finding to `warn`
-  // after buildReport returned, scale probes included, and report/ci.ts reads
-  // `combos.some(v === "warn")` unfiltered. Without this line the console shows
-  // no rollup at all while the CI status says `warn`.
+  // report/ci.ts reads `combos.some(v === "warn")` unfiltered, scale probes included.
   appendScaleProbeWarnRollup(lines, report);
 
   if (hasUnstable) {
@@ -206,15 +197,12 @@ export function formatTable(report: Report): string {
   appendEmptyRenderNote(lines, report);
 
   const totalInteractions = report.combos.reduce((sum, c) => sum + c.interactions.length, 0);
-  // A composed fixture cannot fix a component that throws, so the suggestion is
-  // withheld exactly when the silence already has a stated cause.
+  // A fixture cannot fix a component that throws, so the suggestion is withheld.
   const hasRenderError = report.combos.some((c) => c.renderHealth === "error");
   if (totalInteractions === 0 && !report.fixturePath && !hasRenderError) {
     const stem = path.basename(report.componentPath, path.extname(report.componentPath));
     const dir = path.dirname(report.componentPath);
-    // detectFixture only ever accepts
-    // `${stem}.fixture.vue` for a Vue target (never `.fixture.tsx`) — the
-    // suggestion must name a file the loader will actually find.
+    // detectFixture accepts only `.fixture.vue` for a Vue target, so the name must match.
     const suggestedExt = isVueFile(report.componentPath) ? "vue" : "tsx";
     const hint = path.join(dir, `${stem}.fixture.${suggestedExt}`);
     lines.push(`0 interactions found. Consider creating ${hint} with composed children.`);
@@ -229,32 +217,24 @@ export function formatTable(report: Report): string {
   return lines.join("\n");
 }
 
-// What the row says about the page's health, appended to the verdict cell
-// so the reader never has to correlate a 0 in the DOM column with a section
-// further down.
+// On the verdict cell, so a 0 in the DOM column needs no section further down.
 function renderHealthMarks(combo: ComboReport): string {
   const marks: string[] = [];
   if (combo.renderHealth === "error") marks.push("render error");
   else if (combo.renderHealth === "empty") marks.push("no DOM");
   else if (combo.disclosureReason === "uncomposed") marks.push("uncomposed");
   else if (combo.disclosureReason === "propsExcluded") marks.push("props excluded");
-  // Independent of the health marks above — a row can render
-  // perfectly well and still have measured none of the component's own props.
+  // Independent of the marks above: a healthy row can still have applied no props.
   if (combo.measuredWithoutProps) marks.push("no props applied");
-  // The numbers on this row are real and describe a graphic that
-  // drew nothing, which no other column can show.
+  // No other column can show that the render drew nothing.
   if ((combo.unresolvedSpriteRefs?.length ?? 0) > 0) marks.push("unresolved sprite");
-  // Named separately from "render error" — the render did fail, and
-  // that mark stays, but this one is what tells the reader the failure is
-  // not being counted against the component.
+  // Beside "render error": this mark is what says the failure is not the component's.
   if (combo.harnessFault) marks.push(`harness fault: ${combo.harnessFault.propName}`);
   const count = combo.pageErrors?.length ?? 0;
   if (count > 0 && combo.renderHealth !== "error") {
     marks.push(`${count} page error${count === 1 ? "" : "s"}`);
   }
-  // Independent of the combo's own tag above — a row can carry both, and
-  // the arrow is what tells the reader the second set was not this combo's
-  // own render.
+  // The arrow says the second set came from a different combo's props.
   const transition = combo.transitionPageErrors;
   if (transition && transition.errors.length > 0) {
     const n = transition.errors.length;
@@ -327,19 +307,14 @@ function formatCurveOutput(lines: string[], report: Report): string {
   lines.push(header);
   lines.push("-".repeat(header.length));
 
-  // A scale point the page threw on stops printing a bare Growth
-  // cell — mirrors renderHealthMarks's bracket convention exactly, so the
-  // table never reads as a healthy curve that merely fit a class the reader
-  // cannot cross-check.
+  // Mirrors renderHealthMarks's bracket convention, so a broken point never reads as healthy.
   const brokenNs = new Set((cr.renderErrorPoints ?? []).map((p) => p.n));
   for (let i = 0; i < cr.points.length; i++) {
     const p = cr.points[i];
     const isLast = i === cr.points.length - 1;
     let growth = isLast ? cr.mountCurve.growthClass : "";
     if (brokenNs.has(p.n)) growth += " [render error]";
-    // A DOM of 0 in a column of growing counts is the only
-    // signal this row measured a render that did not happen. Said in words, on
-    // the row itself, so the reader is not left cross-checking the source.
+    // A DOM of 0 is otherwise the only signal that this row measured no render.
     else if (p.renderHealth === "empty") growth += ` [renders nothing at N=${p.n}]`;
     lines.push(
       padCurveRow([
@@ -355,11 +330,9 @@ function formatCurveOutput(lines: string[], report: Report): string {
   }
 
   lines.push("");
-  // Every curve `hintsForReport` reads for superlinearity, so a hint can never
-  // cite a class this screen does not show.
+  // Every curve `hintsForReport` reads, so no hint cites a class this screen omits.
   lines.push(`Growth: mount ${cr.mountCurve.growthClass}, rerender ${cr.rerenderCurve.growthClass}`);
-  // A growth class is only as good as the points behind it, so which
-  // points it is not fitted over belongs next to it, never further down.
+  // The excluded points belong next to the class, never further down.
   if (cr.fitExcludedPoints && cr.fitExcludedPoints.length > 0) {
     lines.push(
       `  fitted over the points that rendered; N=${cr.fitExcludedPoints.join(", ")} rendered ` +
@@ -381,9 +354,7 @@ function formatCurveOutput(lines: string[], report: Report): string {
     lines.push("⚠ Unstable results (CV>15%): consider increasing sample count");
   }
 
-  // A component whose only interesting prop is an array auto-activates
-  // curve mode; the fan-out its combo-mode siblings disclose in full would
-  // otherwise be missing here with no note that a pass was skipped.
+  // Curve mode auto-activates, so this section must disclose what combo mode would.
   appendReactSection(
     lines,
     cr.points.map((p) => ({ label: `N=${p.n}`, opts: p.reactOptimizations })),
@@ -409,8 +380,7 @@ function formatHeap(bytes: number): string {
   return `${bytes}B`;
 }
 
-// An explicit --curve that falls back to another mode answers a different
-// question than the one asked, and the mode line alone reads like success.
+// The mode line alone reads like success when an explicit --curve fell back.
 export const CURVE_NOT_ACTIVATED_WARNING = (reason: string): string =>
   `--curve did not activate: ${reason}. The numbers below answer a different question ` +
   `than "does it scale with its data?".`;
@@ -434,19 +404,14 @@ export function formatCurveViolation(violation: CurveViolation): string {
   return `${metric} crosses its ${budget} ${where} (N=${violation.crossingN}: ${median}).`;
 }
 
-// The same mark combo mode's renderHealthMarks prints for
-// disclosureReason, scoped to the one field a MatrixCell actually carries —
-// a cell has no renderHealth/pageErrors/harnessFault of its own to mark.
+// A MatrixCell carries no renderHealth, pageErrors or harnessFault to mark.
 function matrixCellDisclosureMark(cell: MatrixCell): string {
   if (cell.disclosureReason === "uncomposed") return " [uncomposed]";
   if (cell.disclosureReason === "propsExcluded") return " [props excluded]";
   return "";
 }
 
-// `Prop Matrix (isOpen × size)` claims both props were
-// crossed. Under a cell cap that keeps the anchor plus one single-axis
-// deviation, one of them was not. Printed only when the claim needs the
-// correction, so a full matrix's output is byte-identical to before.
+// The header claims every axis was crossed; a cell cap can leave one of them held.
 function appendAxisCoverage(lines: string[], mr: MatrixReport): void {
   const coverage = mr.axisCoverage ?? [];
   const held = coverage.filter((a) => a.measuredValues <= 1);
@@ -454,8 +419,7 @@ function appendAxisCoverage(lines: string[], mr: MatrixReport): void {
   const heldLabel = held
     .map((a) => `${a.propName}=${a.measuredValues === 0 ? "absent" : formatCellValue(a.heldValue)}`)
     .join(", ");
-  // An axis whose union was truncated to fit the matrix crossed fewer values
-  // than the component declares, and "crossed" alone would hide that.
+  // "crossed" alone would hide an axis truncated to fit the matrix.
   const crossed = coverage
     .filter((a) => a.measuredValues > 1)
     .map((a) =>
@@ -478,8 +442,7 @@ function formatMatrixOutput(lines: string[], report: Report): string {
   const mr = report.matrixReport!;
   const axisNames = mr.axes.map((a) => a.propName);
 
-  // A cell can pass on mount yet fail on an interaction, so showing only the
-  // hottest cells can print an all-PASS table above a FAIL result.
+  // Hottest cells alone can print an all-PASS table above a FAIL result.
   const shown = [...mr.hotCells];
   const extraFailures = mr.failingCells.filter(
     (f) => !shown.some((c) => c.comboIndex === f.comboIndex),
@@ -524,8 +487,7 @@ function formatMatrixOutput(lines: string[], report: Report): string {
       const propParts = Object.entries(effect.props)
         .filter(([name]) => axisNames.includes(name))
         .map(([name, val]) => `${name}=${String(val)}`);
-      // A cell can cost *less* than its parts predict; "above" was printed for
-      // both signs, which contradicted the number next to it.
+      // A cell can cost less than its parts predict, so the word follows the sign.
       const deltaStr = effect.compoundDelta >= 0
         ? `+${effect.compoundDelta.toFixed(1)}ms`
         : `${effect.compoundDelta.toFixed(1)}ms`;
@@ -538,13 +500,10 @@ function formatMatrixOutput(lines: string[], report: Report): string {
   const pass = report.pass ? "PASS" : "FAIL";
   lines.push(`Result: ${pass}`);
   appendWarnRollup(lines, report, mr.cells.map((c) => c.verdict), "cells");
-  // A cell's own `disclosureReason` (copied from the combo
-  // it projects, see buildMatrixReport) is what the row mark reads; page
-  // errors themselves still live only on the combo, so this block is unchanged.
+  // Page errors live only on the combo, never on the cell.
   appendPageErrors(lines, report);
   appendEmptyRenderNote(lines, report);
-  // Matrix cells are combos, so the section reads
-  // from the same field combo mode reads.
+  // Matrix cells are combos, so this reads the same field combo mode reads.
   appendReactSection(
     lines,
     report.combos.map((c) => ({ label: `Combo #${c.comboIndex}`, opts: c.reactOptimizations })),

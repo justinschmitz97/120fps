@@ -4,12 +4,7 @@ import path from "node:path";
 import { watchdogAbortOutput, RUN_WATCHDOG_ABORT_ERROR } from "../../src/cli/index.js";
 import { measuredOnly } from "../../src/browser/index.js";
 
-// midday-NEW1, end-game fix-up. The watchdog abort printed its own sentence and
-// nothing else: no roots line (M111 A4), no total (M115 A1), no report -- and
-// then a second, unrelated `Error: Cannot read properties of undefined
-// (reading 'props')` from the analyze() call that kept running under the
-// closing pools, so the run ended on an error about the teardown rather than on
-// what it had measured.
+// midday-NEW1: the abort's roots/total got lost behind a later, unrelated teardown crash.
 
 const cliSrc = fs.readFileSync(path.resolve("src", "cli/main.ts"), "utf-8");
 const COMPONENT = path.resolve("fixtures", "simple.tsx");
@@ -79,11 +74,7 @@ describe("the abort owns the run's one error and its exit", () => {
   });
 });
 
-// The error the abort printed second, at its source: measureMount and
-// measureRerender return one slot per combo and leave the slot of a combo that
-// measured nothing unset. On midday every delta combo from 22 on degraded, so
-// the delta pass read `.props` of a hole -- `Cannot read properties of
-// undefined (reading 'props')`, thrown out of analyze() after 20 minutes.
+// midday-NEW1 root cause: reading .props of an unset slot crashes; measuredOnly must drop holes.
 
 describe("a measurement pass that omitted combos", () => {
   it("hands its iterating consumers only the combos that measured", () => {

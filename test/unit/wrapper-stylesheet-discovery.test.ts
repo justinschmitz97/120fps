@@ -4,21 +4,14 @@ import os from "node:os";
 import path from "node:path";
 import { resolveCssFiles, resolveWrapPath } from "../../src/pipeline/index.js";
 
-// mantine-F1: the three stylesheets a MantineProvider setup module imports are
-// exactly the ones the measured render needs, and discovery walked the project
-// entry only. A `120fps.setup.tsx` sitting at the project root importing
-// `@mantine/core/styles.css` was invisible, so the run measured unstyled and
-// said nothing about it.
+// mantine-F1: a project-root 120fps.setup.tsx importing styles.css was invisible to discovery.
 
 const tmpDirs: string[] = [];
 afterEach(() => {
   for (const dir of tmpDirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
 });
 
-// No project entry and no conventional global stylesheet: the only thing that
-// can find `theme.css` is the wrapper's own import. A second, larger sheet
-// buried elsewhere is what the largest-file fallback picks when nothing else
-// does, so the two outcomes are distinguishable.
+// theme.css is reachable only via the wrapper import; huge.css is the largest-file fallback's pick.
 function project(): { root: string; wrap: string } {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "120fps-wrap-css-"));
   tmpDirs.push(root);

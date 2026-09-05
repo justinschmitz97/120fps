@@ -20,8 +20,7 @@ describe("D12: multi-path parsing", () => {
     expect(args.error).toMatch(/--fixture/);
   });
 
-  // Superseded by M32 D5: a directory argument expands to many components, so
-  // --json names where reports go rather than being ambiguous.
+  // M32 D5: a directory argument expands to many components; --json names where reports go.
   it("accepts explicit --json with multiple paths", () => {
     const args = parseArgs(["./A.tsx", "./B.tsx", "--json", "out.json"]);
     expect(args.error).toBeUndefined();

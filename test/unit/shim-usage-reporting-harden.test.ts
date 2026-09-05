@@ -30,7 +30,6 @@ function shimAlias(module: string, replacement: string) {
   return { find: new RegExp(`^${escaped}$`), replacement, isShim: true };
 }
 
-// H1: shim module imported only transitively (two hops away)
 describe("H1: transitive shim import", () => {
   it("records the specifier when a local helper (not the entry) imports it", () => {
     const shimTarget = stub("shims/next-image.js");
@@ -48,7 +47,6 @@ describe("H1: transitive shim import", () => {
   });
 });
 
-// H2: imported via re-export
 describe("H2: re-exported shim import", () => {
   it("records the specifier for `export { default as Img } from \"next/image\"`", () => {
     const shimTarget = stub("shims/next-image.js");
@@ -79,7 +77,6 @@ describe("H2: re-exported shim import", () => {
   });
 });
 
-// H3: multiple shim modules imported at once
 describe("H3: multiple shim modules at once", () => {
   it("records every shim module the graph imports, in SHIM_MODULES order", () => {
     const imageTarget = stub("shims/next-image.js");
@@ -109,7 +106,6 @@ describe("H3: multiple shim modules at once", () => {
   });
 });
 
-// H4: user project has its own local module shadowing a shim name
 describe("H4: non-shim alias shadows a shim-shaped specifier", () => {
   it("does not record the specifier when a non-shim alias (e.g. tsconfig paths) wins the match", () => {
     // No isShim flag: mirrors a user's own tsconfig `next/image` -> local path.
@@ -140,7 +136,6 @@ describe("H4: non-shim alias shadows a shim-shaped specifier", () => {
   });
 });
 
-// H5: --no-shims path (no shim aliases registered at all)
 describe("H5: shims disabled entirely", () => {
   it("buildShimAliases(false) yields no aliases, so a next/image import is a genuine external specifier", () => {
     const alias = buildShimAliases(false);
@@ -150,16 +145,13 @@ describe("H5: shims disabled entirely", () => {
     const specs = new Set<string>();
     const pkgs = scanExternalDeps(entry, tmpDir, alias, specs);
 
-    // Still recorded as a raw specifier (existing behavior): it is the
-    // harness's `if (hasNextJs)` gate, not scanExternalDeps, that suppresses
-    // activeShims when shims are off.
+    // Raw specifier recorded regardless; the harness's hasNextJs gate suppresses activeShims here.
     expect(specs.has("next/image")).toBe(true);
     // "next" itself is BLOCKED from optimizeDeps regardless.
     expect(pkgs).not.toContain("next");
   });
 });
 
-// H6: non-TSX (Vue-style) file content is scanned the same way
 describe("H6: Vue-flavored source file", () => {
   it("still records a shim-redirected specifier when the extension is .vue", () => {
     const shimTarget = stub("shims/next-image.js");
@@ -176,7 +168,6 @@ describe("H6: Vue-flavored source file", () => {
   });
 });
 
-// H7: hyphenated shim module name (regex-special char) still resolves and records
 describe("H7: hyphenated module name via buildShimAliases", () => {
   it("next-video/player is recorded through its real alias", () => {
     const aliases = buildShimAliases(true);
@@ -192,7 +183,6 @@ describe("H7: hyphenated module name via buildShimAliases", () => {
   });
 });
 
-// H8: a relative path that textually resembles a shim module must not pollute specifiersOut
 describe("H8: relative path shaped like a shim module name", () => {
   it("./next/image (relative import) is never treated as a bare specifier", () => {
     stub("next/image.tsx");
@@ -211,7 +201,6 @@ describe("H8: relative path shaped like a shim module name", () => {
   });
 });
 
-// H9: wrap-path style dual scan shares the specifiersOut set across two entry points
 describe("H9: two independent scans sharing one specifiersOut set", () => {
   it("unions shim usage from a component scan and a separate wrapper scan", () => {
     const imageTarget = stub("shims/next-image.js");

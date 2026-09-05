@@ -13,8 +13,7 @@ afterAll(async () => {
   if (browser) await browser.close();
 });
 
-// A plain vsync browser: the measurement args put Chromium on driven frames,
-// where rAF only advances when a CDP beginFrame is issued.
+// Chromium runs on driven frames here: rAF only advances when a CDP beginFrame is issued.
 async function opened(fixture: string): Promise<{ page: import("playwright").Page; harness: HarnessResult }> {
   browser ??= await chromium.launch({ headless: true });
   const harness = await buildAndServe(fixture);

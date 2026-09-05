@@ -2,10 +2,7 @@ import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 
-// ADR 0005 items 3 and 5: one responsibility per file, at most 800 lines, no
-// history in comments, one helper per fact. Each allowlist below records what
-// the tree holds today; an entry is deleted the moment its file meets the
-// rule, and every assertion fails in both directions so the lists cannot lag.
+// ADR 0005 items 3/5: line cap, no history tokens, one function per name; allowlists ratchet.
 
 const SRC = path.resolve("src");
 const LINE_LIMIT = 800;
@@ -39,10 +36,7 @@ function lineCount(text: string): number {
   return text.split("\n").length - (text.endsWith("\n") ? 1 : 0);
 }
 
-// A `/` starts a regex literal only where an expression is expected: after an
-// operator, punctuation, or one of these keywords, never right after a value
-// (identifier, number, `)`, `]`, or a closing quote) — the standard division
-// vs. regex-literal disambiguation, kept to the minimum this file needs.
+// A `/` starts a regex only after an operator or keyword, never right after a value.
 const REGEX_PRECEDING_KEYWORDS = new Set([
   "return", "typeof", "instanceof", "in", "of", "new", "delete", "void",
   "yield", "await", "case", "else", "do", "throw",
@@ -61,10 +55,7 @@ function regexLiteralAllowed(text: string, i: number): boolean {
   return c !== ")" && c !== "]" && c !== "`" && c !== '"' && c !== "'";
 }
 
-// The end index just past a regex literal starting at `start`, honoring `\`
-// escapes and a `[...]` character class (where an unescaped `/` does not
-// close the regex), or null if no unescaped `/` closes it on the same line —
-// then not a regex literal after all, so the caller falls back to `i++`.
+// End index past the regex at `start`, honoring `\` escapes and `[...]`; null if unterminated.
 function regexLiteralEnd(text: string, start: number): number | null {
   let i = start + 1;
   let inClass = false;
@@ -95,14 +86,10 @@ function regexLiteralEnd(text: string, start: number): number | null {
   return i;
 }
 
-// The `//` and `/* */` text of a file, with string literals, template
-// literals and regex literals skipped so a warning's own wording, or a `"`
-// or `'` inside a regex literal (e.g. `/"/g`), never counts as a comment or
-// flips the quote state.
+// Comment text only: strings, templates and regexes are skipped so their content isn't misread.
 function commentText(text: string): string {
   const comments: string[] = [];
-  // A `#!` shebang is not JS/TS syntax; its slashes are not division or a
-  // regex start, so it is skipped whole before the tokenizer begins.
+  // A `#!` shebang isn't JS syntax; skip it whole so its slashes don't confuse the tokenizer.
   let i = text.startsWith("#!") ? (text.indexOf("\n") === -1 ? text.length : text.indexOf("\n")) : 0;
   let inBlock = false;
   let blockStart = 0;
@@ -180,8 +167,7 @@ describe("module ratchets (ADR 0005)", () => {
       const lines = lineCount(read(rel));
       if (lines > LINE_LIMIT) observed[rel] = lines;
     }
-    // A file over the limit with no cap is a new offender; a cap whose file
-    // now fits must be deleted. Both surface as a difference in the key set.
+    // An uncapped file over the limit, or a cap whose file now fits, both show as a key-set diff.
     expect(Object.keys(observed).sort()).toEqual(Object.keys(LINE_CAPS).sort());
     const grown = Object.entries(observed)
       .filter(([rel, lines]) => lines > (LINE_CAPS[rel] ?? LINE_LIMIT))

@@ -1,7 +1,5 @@
 import { createElement, forwardRef, type Ref } from "react";
 
-// Shared by the <Image> component and getImageProps: both strip the same
-// Next.js-only props down to what a plain <img> understands.
 function stripImageProps(props: Record<string, unknown>): Record<string, unknown> {
   const {
     fill, priority, loader, quality, placeholder, blurDataURL, sizes,
@@ -26,9 +24,7 @@ const Image = forwardRef(function Image(
 
 export default Image;
 
-// A real named export of next/image (14.1+) passes Image's own prop
-// transformation through to a caller-supplied element (canvas, a themed
-// <picture> source) instead of rendering <Image> itself.
+// next/image 14.1+ exports this so a caller can apply the props to its own element.
 export function getImageProps(
   props: Record<string, unknown>,
 ): { props: Record<string, unknown> } {

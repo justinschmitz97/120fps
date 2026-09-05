@@ -154,9 +154,7 @@ describe("the declared-but-unbuilt stylesheet warning", () => {
   });
 });
 
-// M112 review: the producer half was covered end to end and the report half
-// was covered on a cast literal, so the forward through `resolveCssFiles` was
-// the one seam nothing crossed.
+// specs/milestones/m112-presets-and-remedies-name-real-files.md: last seam through resolveCssFiles.
 describe("the declaration reaching the report", () => {
   it("carries the declared-but-unbuilt target from discovery into the Stylesheets line", () => {
     const resolved = resolveCssFiles({}, DECLARED_ABSENT, []);
@@ -170,9 +168,7 @@ describe("the declaration reaching the report", () => {
   });
 });
 
-// M112 review: the early return sits above the runtime layer, so a package
-// that declares an unbuilt stylesheet and styles at runtime used to lose M82's
-// outcome and be told it was measured unstyled.
+// specs/milestones/m112-presets-and-remedies-name-real-files.md: keeps M82's runtime verdict.
 describe("a declared-but-unbuilt stylesheet in a package that styles at runtime", () => {
   it("keeps the runtime engines and drops the measured-unstyled claim", () => {
     write(

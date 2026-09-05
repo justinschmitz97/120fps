@@ -10,7 +10,7 @@ export async function probePortals(
     (d) => !d.portal && (d.type === "click" || d.type === "focus"),
   );
 
-  // Batch-check which triggers have ARIA portal hints (aria-haspopup indicates popup content)
+  // aria-haspopup narrows the probe set: every probe below costs a remount plus an interaction.
   const portalHintSelectors: string[] = await page.evaluate(
     (selectors: string[]) => {
       const results: string[] = [];
@@ -20,7 +20,7 @@ export async function probePortals(
           if (el && el.getAttribute("aria-haspopup")) {
             results.push(sel);
           }
-        } catch { /* ignore */ }
+        } catch { /* a discovered selector need not be valid CSS */ }
       }
       return results;
     },
@@ -88,7 +88,6 @@ export async function probePortals(
       () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))),
     );
 
-    // Walk new portal content
     const portalRaw: RawElement[] = await page.evaluate(
       (rootSelectors: string[]) => {
         const known = new Set<Element>();
@@ -101,7 +100,7 @@ export async function probePortals(
             node = walker.nextNode() as Element | null;
           }
         }
-        // Also mark elements already discovered by selector
+        // Marking them known keeps a trigger that lives outside #root out of the portal results.
         for (const sel of rootSelectors) {
           try {
             const el = document.querySelector(sel);

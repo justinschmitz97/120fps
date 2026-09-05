@@ -71,13 +71,9 @@ export interface HarnessResult {
   wrapRelative?: string;
   cssFiles?: string[];
   reactCompiler?: ReactCompilerState;
-  // The project's own vite.config resolve.alias entries, already merged
-  // into this harness's own alias list — so an alias that matches
-  // "react-dom" genuinely changes what this server mounts, not just what a
-  // manifest claims. resolveReactDomIdentity's second parameter reads this.
+  // resolveReactDomIdentity reads this: an alias matching "react-dom" changes what mounts.
   viteAliases?: Array<{ find: RegExp; replacement: string }>;
-  // Build-time advisories (e.g. a shared server whose frozen dep list
-  // misses this component's scan). analyze() forwards them to the report.
+  // Build-time advisories, e.g. a shared server whose frozen dep list misses this scan.
   warnings?: string[];
 }
 
@@ -88,9 +84,7 @@ export function SWEEP_DEP_WARNING(missing: string[]): string {
   );
 }
 
-// Names both the cause (whatever Vite or the address check reported) and
-// where: the one detail that turns "something failed" into something a user
-// can act on (check the harness dir, or the underlying message, for why).
+// Names the harness dir: the detail that turns "something failed" into something actionable.
 export function VITE_START_FAILED(harnessDir: string, detail: string): string {
   return `Failed to start Vite dev server in ${harnessDir}: ${detail}`;
 }
@@ -104,14 +98,11 @@ export interface BuildHarnessOptions {
   reactCompiler?: boolean;
   // Reuse one dev server per config tuple across a sweep.
   serverPool?: ServerPool;
-  // Absolute path to a `<stem>.props.tsx` preset module, imported by the
-  // entry so non-serializable preset values resolve in the page.
+  // Imported by the entry so non-serializable preset values resolve in the page.
   presetPath?: string;
-  // Skip the project's own Vite transforms (measure what the harness can
-  // compile on its own).
+  // Measure what the harness can compile on its own.
   noTransforms?: boolean;
-  // The export named by `<file>#Export`, imported instead of the one the
-  // selection order would pick.
+  // The export named by `<file>#Export`, instead of the one the selection order picks.
   target?: string;
 }
 
@@ -127,25 +118,18 @@ export async function buildAndServe(
   const componentDir = path.dirname(absoluteComponentPath);
   const projectRoot = findProjectRoot(componentDir) ?? componentDir;
 
-  // Validate before creating the harness dir so a rejected wrapper or an
-  // unresolvable forced compiler leaves nothing behind
+  // Validated before the harness dir exists, so a rejected wrapper leaves nothing behind.
   const wrapRelative = options?.wrapPath
     ? resolveWrapper(options.wrapPath, projectRoot)
     : undefined;
   const reactCompiler = resolveReactCompilerState(projectRoot, options?.reactCompiler);
-  // Only the resolution failure is a surprise worth printing; the disabled note
-  // is a consequence of the user's own flag and travels in the report.
+  // Only the resolution failure is a surprise worth printing; the disabled note is in the report.
   if (options?.reactCompiler !== false && reactCompiler.warning) {
     process.stderr.write(`Warning: ${reactCompiler.warning}\n`);
   }
 
-  // An SFC that compiles to no component would otherwise surface as a 30s
-  // readiness timeout with a module-resolution message attached, naming the
-  // harness instead of the file to fix. Checked here so nothing is left behind.
   const renderer = rendererFor(absoluteComponentPath);
-  // Computed once, ahead of entry generation, so a bare (non-composed)
-  // Vue mount can wrap its render only when the template root is safe to
-  // force non-zero -- see templateHasUnconditionalRoot.
+  // Computed ahead of entry generation, so a bare Vue mount wraps only a safe template root.
   let vueUnconditionalRoot = false;
   if (renderer === "vue") {
     const compiler = await loadVueCompiler(projectRoot);
@@ -156,6 +140,7 @@ export async function buildAndServe(
       ];
       for (const sfc of sfcs) {
         if (!isVueFile(sfc)) continue;
+        // An SFC compiling to no component would otherwise be a 30s readiness timeout.
         if (!sfcProducesComponent(fs.readFileSync(sfc, "utf-8"), sfc, compiler)) {
           throw new Error(SFC_NO_COMPONENT(toPosix(path.relative(projectRoot, sfc))));
         }
@@ -170,11 +155,8 @@ export async function buildAndServe(
     }
   }
 
-  // react-dom/client is forced into optimizeDeps.include below, and an
-  // unresolvable include aborts Vite's optimizer with an esbuild path dump.
   if (renderer === "react") {
-    // I2: the Vue-project question first — otherwise a Vue `.tsx` fails as a
-    // missing react-dom install, which is not why it cannot be measured.
+    // The Vue-project question first: a Vue `.tsx` must not fail as a missing react-dom install.
     assertRendererSupported(absoluteComponentPath, projectRoot);
     assertReactDomClient(projectRoot);
   }
@@ -183,8 +165,7 @@ export async function buildAndServe(
   const sweepWarnings: string[] = [];
   sweepStaleHarnessDirs(projectRoot, sweepWarnings);
 
-  // Place harness files inside the target project so Vite resolves aliases
-  // (createHarnessDir adds it to activeHarnessDirs itself).
+  // Placed inside the target project so Vite resolves the project's own aliases.
   const harnessDir = createHarnessDir(projectRoot);
   const harnessDirName = path.basename(harnessDir);
 
@@ -237,8 +218,7 @@ export async function buildAndServe(
     });
   }
 
-  // The Vue entry has no JSX, so it is a .ts file: and index.html has to name
-  // whichever one was written.
+  // The Vue entry has no JSX, so it is a .ts file and index.html has to name the one written.
   const entryFile = renderer === "vue" ? "entry.ts" : "entry.tsx";
   const indexHtml = `<!DOCTYPE html>
 <html>
@@ -249,9 +229,7 @@ export async function buildAndServe(
   fs.writeFileSync(path.join(harnessDir, entryFile), entryTsx);
   fs.writeFileSync(path.join(harnessDir, "index.html"), indexHtml);
 
-  // The single computation of every pre-build fact this run needs.
-  // `explainProps` calls the same function for a dry run, so both paths
-  // produce the same warnings in the same order.
+  // explainProps calls the same function, so both paths produce the same warnings in order.
   const workspaceRoot = findWorkspaceRoot(projectRoot);
   const preBuild = collectStaticPreBuildWarnings(projectRoot, {
     componentPath: absoluteComponentPath,
@@ -264,8 +242,7 @@ export async function buildAndServe(
   const alias = preBuild.aliases;
   const activeShims = preBuild.nextModules.activeShims;
 
-  // A Vue project has no react to pre-bundle, and an unresolvable include
-  // aborts server start: so the renderer decides the base list, not a union.
+  // A Vue project has no react to pre-bundle, and an unresolvable include aborts server start.
   const rendererDeps =
     renderer === "vue"
       ? ["vue"]
@@ -286,11 +263,7 @@ export async function buildAndServe(
   const plugins: unknown[] = styleTooling.tailwind
     ? await loadTailwindVitePlugin(projectRoot)
     : [];
-  // Tailwind 3 enters through PostCSS and resolves its own
-  // config against `process.cwd()`, so the shell directory decided whether the
-  // member's CSS built at all. Rebuilding the member's declared pipeline with
-  // the config path resolved from the member takes that decision away from the
-  // shell without replacing a single plugin the member declared.
+  // Rebuilding the member's declared pipeline takes the config decision away from the shell.
   const tailwind3Postcss =
     styleTooling.tailwind3ConfigPath && styleTooling.tailwind3PostcssConfigFile
       ? await loadTailwind3PostcssPipeline(
@@ -301,10 +274,7 @@ export async function buildAndServe(
           (warning) => configWarnings.push(warning),
         )
       : undefined;
-  // Unconditional and cheap (a no-op for every file outside a
-  // non-node_modules `.js`); array position does not matter for ordering
-  // relative to Vite's own esbuild plugin, since `enforce: "pre"` alone
-  // decides that.
+  // `enforce: "pre"` alone decides ordering against Vite's own esbuild plugin, not position.
   plugins.push(
     jsxInJsPlugin(resolveJsxImportSource(projectRoot, workspaceRoot, absoluteComponentPath)),
   );
@@ -320,8 +290,7 @@ export async function buildAndServe(
     plugins.push(...(await loadReactCompilerPlugin(reactCompiler.pluginPath!, reactCompiler.target)));
   }
 
-  // The project's own transforms, resolved from its own node_modules with
-  // server hooks stripped. Load failure warns and continues.
+  // Resolved from the project's own node_modules with server hooks stripped.
   const transformWarnings: string[] = [];
   const transformEntries = options?.noTransforms
     ? []
@@ -334,51 +303,34 @@ export async function buildAndServe(
     );
   }
 
-  // Vite refuses to serve a file outside its allow list. Undefined for a
-  // project whose alias targets are all inside its own root, which keeps
-  // Vite's defaults everywhere they already worked.
-  // Vite's own default is the one root it searches for; widening never narrows
-  // it, so its answer joins the list whenever the list exists at all.
-  // Vite serves nothing outside its allow list, so a component reached
-  // through /@fs/ needs its own directory named.
   const aliasAllow = fsAllowDirs(
     projectRoot,
     workspaceRoot,
     alias,
+    // A component reached through /@fs/ needs its own directory named.
     componentRelative.startsWith("@fs/") ? [componentDir] : [],
   );
+  // Widening never narrows, so Vite's own default root joins whenever the list exists at all.
   const fsAllow = aliasAllow && [...new Set([...aliasAllow, searchForWorkspaceRoot(projectRoot)])];
 
-  // Without these the page has no `process` at all, and a component
-  // reading process.env throws before it renders.
+  // Without these the page has no `process`, and a component reading process.env throws.
   const define = readEnvDefines(projectRoot, workspaceRoot);
 
-  // The rebuilt Tailwind 3 pipeline wins over the inherited config directory:
-  // it is that directory's config, already loaded, with the config path the
-  // member's own search would have found.
+  // The rebuilt pipeline wins over the inherited config directory: same config, member's path.
   const postcssOption: string | { plugins: unknown[] } | undefined =
     tailwind3Postcss ?? styleTooling.postcssConfigDir;
 
   const bootServer = async (): Promise<ViteDevServer> => {
     const created = await createServer({
       root: projectRoot,
-      // The project's vite.config is not ours to run: its plugins target the
-      // project's own Vite major (a rolldown plugin-react in a Vite 6 container
-      // fails every transform), and its server options are not measurement-safe.
-      // Aliases and the plugins we do need are reconstructed above by hand.
+      // Not ours to run: its plugins target the project's own Vite major, not this container.
       configFile: false,
       logLevel: "silent",
       plugins: plugins as never,
       define,
-      // The project's own static directory, recovered from the config text: its
-      // fonts 404 otherwise and every text metric becomes a fallback-font one.
+      // The project's own static directory: its fonts 404 otherwise and text metrics go fallback.
       ...(viteConfig.publicDir ? { publicDir: viteConfig.publicDir } : {}),
-      // Vite searches from its root up to its own idea of the workspace root,
-      // which a lockfile-only monorepo root does not satisfy; naming the
-      // directory is a no-op wherever its own walk already reaches.
-      // postcss and the folded preprocessor options share one `css`
-      // object — twenty declares both, and passing either alone dropped the
-      // other.
+      // One `css` object: passing postcss or preprocessorOptions alone drops the other.
       ...(postcssOption || viteConfig.preprocessorOptions
         ? {
             css: {
@@ -392,21 +344,13 @@ export async function buildAndServe(
       server: {
         port: 0,
         strictPort: false,
-        // With the overlay on, Vite renders transform failures into a DOM element
-        // and logs nothing; with it off the client console.errors the full
-        // message, which the page-error capture turns into a usable diagnosis.
+        // Overlay off: the client console.errors the full message, which page-error capture reads.
         hmr: { overlay: false },
-        // Nothing edits files during a measurement run, so file watching is
-        // pure cost: chokidar's initial scan of a real repo (a Next.js .next/
-        // dir has thousands of files) saturates the fs threadpool exactly when
-        // the first module loads, and a watcher-triggered reload mid-measurement
-        // is the failure the context retry in browser/retry.ts exists for.
+        // Nothing edits files during a run; a watcher-triggered reload mid-run is a failure.
         watch: null,
         ...(fsAllow ? { fs: { allow: fsAllow } } : {}),
       },
-      // What the project's tsconfig says about `jsx` never decides
-      // how the harness compiles its .ts/.tsx/.jsx. Resolve
-      // conditions carry the governing tsconfig's customConditions.
+      // The project's tsconfig `jsx` never decides how the harness compiles its own entry.
       ...(compileOptions.esbuild ? { esbuild: compileOptions.esbuild } : {}),
       resolve: {
         alias,
@@ -431,8 +375,7 @@ export async function buildAndServe(
   ];
   try {
     if (options?.serverPool) {
-      // The tuple that shapes a server; anything else is per-component and
-      // lives in the harness dir, not the server.
+      // The tuple that shapes a server; anything else is per-component and lives in its dir.
       const poolKey = JSON.stringify([
         projectRoot,
         [...cssFiles].sort(),
@@ -452,22 +395,12 @@ export async function buildAndServe(
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    // Surface 1 of the shared pipeline (presentBundlerFailure) -- the
-    // dev server itself never started. Vite/esbuild's message blaming a
-    // workspace-internal package's package.json fields when
-    // the real problem is that the package was never built is the first
-    // diagnoser this chain tries; every other shape falls through in turn,
-    // stripBundlerStackFrames as the universal last resort.
+    // The dev server never started; presentBundlerFailure diagnoses the message shapes in turn.
     const detail = presentBundlerFailure(message, projectRoot, buildWarnings);
-    // The common, caught-and-rethrown failure shape. cleanup() is only ever
-    // constructed on the success path, so this catch is the one place the
-    // directory would otherwise leak on every one of these.
+    // cleanup() is only constructed on the success path, so this catch must remove the dir.
     fs.rmSync(harnessDir, { recursive: true, force: true });
     forgetHarnessDirIfRemoved(harnessDir);
-    // Everything buildWarnings would have carried on the success
-    // path travels with the thrown error too, so a crash after a computed
-    // warning (VITE_CONFIG_IGNORED_WARNING, an unreplicated style engine, a
-    // transform-load failure) does not silently drop it.
+    // Warnings travel with the thrown error too, so a crash never silently drops one.
     throw Object.assign(new Error(VITE_START_FAILED(harnessDir, detail)), {
       cause: err,
       warnings: buildWarnings,

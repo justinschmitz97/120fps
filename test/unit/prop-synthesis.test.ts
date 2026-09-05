@@ -33,7 +33,6 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-// Bug 1: cva VariantProps
 describe("cva variant unions", () => {
   it("enumerates variant keys through VariantProps<typeof x>", async () => {
     const schemas = await extractProps(fixture("cva-button.tsx"));
@@ -61,7 +60,6 @@ describe("cva variant unions", () => {
   });
 });
 
-// Bug 2: duplicate combos
 describe("combo de-duplication", () => {
   it("an optional prop with an empty pool does not double the space", () => {
     const schemas: PropSchema[] = [
@@ -93,7 +91,6 @@ describe("combo de-duplication", () => {
   });
 });
 
-// Bug 3: tuples
 describe("tuple props", () => {
   it("a 2-tuple of strings produces two real strings", async () => {
     const schemas = await extractProps(fixture("tuple-pair.tsx"));
@@ -121,7 +118,6 @@ describe("tuple props", () => {
   });
 });
 
-// Bug 4: object domain types
 describe("object synthesis", () => {
   it("shapes a nested domain object instead of {}", async () => {
     const schemas = await extractProps(fixture("domain-object.tsx"));
@@ -171,7 +167,6 @@ describe("object synthesis", () => {
   });
 });
 
-// Bug 5: Map / Set
 describe("collection props", () => {
   it("a Map prop carries its entries instead of {}", async () => {
     const schemas = await extractProps(fixture("collections.tsx"));
@@ -204,7 +199,6 @@ describe("collection props", () => {
   });
 });
 
-// Bug 6: computed / foreign props types
 describe("computed props types", () => {
   it("enumerates a props type whose members are declared in node_modules", async () => {
     const schemas = await extractProps(fixture("foreign-props.tsx"));
@@ -212,12 +206,7 @@ describe("computed props types", () => {
     expect(get(schemas, "port").kind).toBe("number");
   });
 
-  // M81 section 2: the DOM surface of a primitive's ComponentProps is now
-  // ranked and capped instead of silently erased. The primitive's own props
-  // (checked: boolean -> Tier 1; orientation: literal union -> Tier 1;
-  // onCheckedChange: locally declared -> Tier 2) all still survive, alongside
-  // the inherited surface up to the 32-prop cap, with an honest warning
-  // naming the true (uncapped) total.
+  // Own Tier 1/2 props survive the 32-prop cap; the warning discloses the true uncapped total.
   it("ranks and caps the DOM surface of a primitive's ComponentProps instead of dropping it", async () => {
     const stderr = captureStderr();
     const schemas = await extractProps(fixture("component-props.tsx"));

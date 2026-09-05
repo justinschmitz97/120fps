@@ -38,8 +38,7 @@ describe("busy-loop probe", () => {
     browser ??= await chromium.launch({ headless: true });
     const page = await browser.newPage();
     try {
-      // Not an assertion about this machine's quietness: only that the probe
-      // itself does not manufacture dispersion out of nothing.
+      // Not an assertion about this machine's quietness: the probe must not manufacture dispersion.
       const timings = await probeMachineNoise(page, 9);
       expect(computeCvPercent(timings)).toBeLessThan(100);
     } finally {

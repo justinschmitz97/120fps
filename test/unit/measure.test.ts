@@ -8,11 +8,7 @@ import {
   FONT_LOAD_FAILED_WARNING,
 } from "../../src/browser/index.js";
 
-// M70: the one place a font-timeout run becomes a warning, shared by every
-// phase (harness entry, explore, react-analysis attribution) that calls
-// settleStyles and previously discarded its result.
-// M74 (B10): extended to also carry which font families failed to load at
-// all, since fonts.ready resolves regardless of a per-face load failure.
+// M70/M74: the one shared place a font-timeout becomes a warning, also naming failed families.
 describe("reportFontSettle", () => {
   it("calls onWarning with the font-settle warning when settling failed", () => {
     const warnings: string[] = [];
@@ -201,14 +197,12 @@ describe("tryCollectGarbage", () => {
   });
 });
 
-// H44: descending-sorted input
 describe("H44: pre-sorted descending input", () => {
   it("P95 handles descending input", () => {
     expect(computeP95([10, 8, 6, 4, 2])).toBeCloseTo(9.6, 10);
   });
 });
 
-// H45: floating-point precision
 describe("H45: floating-point precision", () => {
   it("median of two close floats", () => {
     expect(computeMedian([0.1 + 0.2, 0.3])).toBeCloseTo(0.3, 10);
@@ -219,7 +213,6 @@ describe("H45: floating-point precision", () => {
   });
 });
 
-// H46: very large sample arrays (statistical correctness)
 describe("H46: large sample arrays", () => {
   it("P95 of 1000 sequential values", () => {
     const samples = Array.from({ length: 1000 }, (_, i) => i + 1);
@@ -232,7 +225,7 @@ describe("H46: large sample arrays", () => {
   });
 });
 
-// H47: trace with mixed categories: parseTraceDuration ignores cat, only checks name + ph
+// parseTraceDuration ignores cat; it classifies script events by name and ph only.
 describe("H47: mixed trace categories", () => {
   it("sums all X-phase events regardless of cat, classifies by name", () => {
     const events = [
@@ -247,7 +240,7 @@ describe("H47: mixed trace categories", () => {
   });
 });
 
-// H48: trace with negative dur (shouldn't happen, but defensive)
+// Negative dur shouldn't occur in real traces; this test covers it defensively.
 describe("H48: negative duration in trace event", () => {
   it("treats negative dur as valid number (passes through)", () => {
     const events = [
@@ -259,7 +252,6 @@ describe("H48: negative duration in trace event", () => {
   });
 });
 
-// H49: trace with undefined/null fields
 describe("H49: malformed trace events", () => {
   it("handles event with no cat field", () => {
     const events = [
@@ -278,7 +270,6 @@ describe("H49: malformed trace events", () => {
   });
 });
 
-// H50: samples array with outlier
 describe("H50: outlier in samples", () => {
   it("median is robust to single extreme outlier", () => {
     expect(computeMedian([1, 2, 3, 4, 10000])).toBe(3);
@@ -289,7 +280,6 @@ describe("H50: outlier in samples", () => {
   });
 });
 
-// H51: computeMedian/P95 with NaN
 describe("H51: NaN in samples", () => {
   it("computeMedian with NaN produces NaN (no crash)", () => {
     const result = computeMedian([1, NaN, 3]);

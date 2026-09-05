@@ -23,8 +23,7 @@ function mkProject(paths: Record<string, string[]>): string {
   return dir;
 }
 
-// A pattern whose wildcard shape does not match its target used to produce a
-// regex that could never match any specifier, so the alias was silently absent.
+// Mismatched wildcard shapes must warn, not silently build a regex matching nothing.
 describe("wildcard shape mismatch in tsconfig paths", () => {
   it("emits no alias and one warning when the pattern has a wildcard and the target has none", () => {
     const dir = mkProject({ "@/*": ["./src"] });
@@ -48,12 +47,7 @@ describe("wildcard shape mismatch in tsconfig paths", () => {
     expect(warnings[0]).toContain("./src/*");
   });
 
-  // M93: a pattern-side wildcard that is not the whole trailing segment used
-  // to warn (this exact fixture). Both sides carry exactly one wildcard, so
-  // it now builds a working capture-group alias instead -- see
-  // test/unit/wildcard-alias-capture.test.ts for the mid-path and
-  // extension-suffixed target shapes (mantine, material-ui) this milestone
-  // was written to fix.
+  // M93: one wildcard per side builds a capture-group alias; see wildcard-alias-capture.test.ts.
   it("no longer warns about a wildcard that is not a trailing path segment: both sides have exactly one, so it builds an alias", () => {
     const dir = mkProject({ "@*": ["./src/*"] });
     const warnings: string[] = [];

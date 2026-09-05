@@ -1,6 +1,4 @@
-// Deep clone for a synthesized prop value: an array, a plain object bag, or
-// one of the two builtins synthesis actually produces (Date, RegExp). A class
-// instance is a value, not a field bag, and passes through unchanged.
+// Date and RegExp: all synthesis produces. A class instance is a value; not cloned.
 export function cloneDeep(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(cloneDeep);
   if (value instanceof Date) return new Date(value.getTime());

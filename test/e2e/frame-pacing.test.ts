@@ -58,8 +58,7 @@ describe("measureMount pacing", () => {
       const names = new Set(
         (results[0].mountTraces ?? []).flat().map((e) => e.name),
       );
-      // Frames are driven, not scheduled: paint work must still land in
-      // every combo's traces.
+      // Frames are driven, not scheduled: paint work must still land in every combo's traces.
       expect(
         names.has("Paint") || names.has("PrePaint") || names.has("Layerize"),
       ).toBe(true);

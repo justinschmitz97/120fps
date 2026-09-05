@@ -21,9 +21,7 @@ const parse = async (file: string) => {
   return parseSfcScript(fs.readFileSync(abs, "utf-8"), abs, compiler!);
 };
 
-// ark-F2: the run blamed a Vue plugin for a provide/inject failure. A hint may
-// name a cause only from evidence the run read, so the parse records whether
-// the measured setup block calls `inject(` at all.
+// ark-F2: a hint may name a cause only from evidence read, so parse records any inject( call.
 
 describe("what a measured SFC's setup block reads", () => {
   it("records an inject call in the setup block", async () => {
@@ -39,9 +37,7 @@ describe("what a measured SFC's setup block reads", () => {
   });
 });
 
-// The compiler resolution failure the swallowed catch hid: two test files went
-// red for weeks because `vue/compiler-sfc` resolved from nowhere and the loader
-// returned undefined without saying why.
+// A swallowed catch hid vue/compiler-sfc resolution failures; two suites stayed red for weeks.
 
 describe("a project the Vue compiler does not resolve from", () => {
   it("records why each specifier failed", async () => {

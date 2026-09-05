@@ -3,8 +3,7 @@ import path from "node:path";
 import { describe, it, expect } from "vitest";
 import { unionCachedDeps } from "../../src/harness/index.js";
 
-// M34: optimizeDeps.include must converge to a stable superset per project, so
-// the per-component scan variation stops invalidating Vite's dep cache hash.
+// M34: optimizeDeps.include converges to a stable per-project superset, avoiding cache-hash churn.
 describe("unionCachedDeps", () => {
   it("unions include with previously optimized deps, deduped and sorted", () => {
     const metadata = JSON.stringify({
@@ -47,9 +46,7 @@ describe("unionCachedDeps", () => {
   });
 });
 
-// M34: nothing edits files during a measurement run; the watcher's initial
-// scan of a real repo saturates the fs threadpool exactly when the first
-// module loads (~9s of the ~11s first navigation on a Next.js project).
+// M34: no files change in a measurement run; the initial fs watch scan saturates the threadpool.
 describe("harness server does not watch files", () => {
   it("passes watch: null to the dev server", () => {
     const src = fs.readFileSync(path.resolve("src", "harness/build.ts"), "utf-8");

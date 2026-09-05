@@ -14,8 +14,7 @@ import {
 } from "../../report/index.js";
 import { type AnalyzeOptions } from "../analyze.js";
 
-// Shared by the plain-combo and forced-matrix paths so a large cell/combo
-// count throttles samples identically in either mode.
+// Shared by the plain-combo and forced-matrix paths so a large count throttles identically.
 export function computeEffectiveSamples(comboCount: number, samples: number): number {
   return comboCount > 20
     ? Math.max(3, Math.min(samples, Math.floor(200 / comboCount)))
@@ -27,17 +26,12 @@ export const EFFECTIVE_SAMPLES_WARNING = (
   requested: number,
   comboCount: number,
 ): string =>
-  // `comboCount` is every measured row, scale probes included, which is the
-  // true input to the sample budget and a different number from the mode
-  // line's prop-combo count. This message says "measurements", not
-  // "combos", so the two numbers cannot be read as the same noun.
+  // Says "measurements", not "combos": comboCount includes scale probes the mode line excludes.
   `measured ${effective} samples per measurement instead of the requested ${requested}: ` +
   `${comboCount} measurements exceed the per-run sample budget. Dispersion (CV, P95) is ` +
   `estimated from ${effective} samples.`;
 
-// Everything the mode branches (isolation, curve, matrix, standard combos)
-// share once the harness is built, the session calibrated, and composition
-// rollback settled. Built exactly once per run, right before mode dispatch.
+// Built once per run, after harness build, calibration and composition rollback, before dispatch.
 export interface ModeContext {
   options: AnalyzeOptions;
   harness: HarnessResult;
@@ -57,16 +51,13 @@ export interface ModeContext {
   relativeComponent: string;
   inputIsFixture: boolean;
   useFixture: boolean;
-  // Which renderer mounted the scene. Gates the React optimization pass and
-  // travels into the baseline environment record.
+  // Gates the React optimization pass and travels into the baseline environment record.
   framework: "react" | "vue" | "vanilla";
   fixturePath?: string;
   fixtureAutoDetected: boolean;
   composed: boolean;
   compositionTree?: CompositionTree;
-  // See BuildReportInput.disclosureReason. Curve mode and isolation mode
-  // compute their own pass/fail independently of buildReport and never read
-  // this; only the combo/matrix path (both call buildReport) does.
+  // See BuildReportInput.disclosureReason; only the combo/matrix path reaches buildReport.
   disclosureReason?: "uncomposed" | "propsExcluded";
   wrapper?: WrapperReport;
   cssReport?: CssReport;
@@ -74,27 +65,17 @@ export interface ModeContext {
   onWarning: (warning: string) => void;
   // One line per phase boundary, already silenced in CI mode.
   progress: (line: string) => void;
-  // The clock the progress reporter charges, so every mode branch puts the
-  // same run's breakdown on the report it returns.
+  // The clock the progress reporter charges, so each branch reports the same run's breakdown.
   phaseClock: PhaseClock;
   getSchemas: () => Promise<PropSchema[]>;
   getSourceFingerprint: () => Promise<string>;
   attachHarnessContext: (report: Report) => void;
 }
 
-// The dry run and the real dispatcher must agree on precedence: the real
-// dispatcher returns at curve before the matrix branch is ever reached, so
-// a dry run that treated curve and matrix as independent booleans could
-// promise a matrix run the real run would never reach. One function, in the
-// dispatcher's own precedence, read by both.
+// The dry run must agree with the dispatcher's precedence: curve returns before matrix is reached.
 export type PredictedMode = "isolation" | "curve" | "matrix" | "combo";
 
-// What a dry run can actually decide: everything the real run reads from
-// the filesystem prints in both modes; three classes need the browser and
-// can never move into the dry run: a module that throws while it evaluates
-// (an env-validation schema run against process.env), a provider or context
-// that throws at render, and a synthesized value the component rejects at
-// runtime while accepting it by type.
+// The three classes listed here need a browser and can never move into the dry run.
 export const DRY_RUN_RUNTIME_ONLY_NOTE =
   "Every refusal decidable from the filesystem is printed above. Three classes are not: a module " +
   "that throws while it evaluates, a provider or context that throws at render, and a value this " +
@@ -104,8 +85,7 @@ export const DRY_RUN_RUNTIME_ONLY_NOTE =
 export function predictMode(input: {
   isolation: boolean;
   curve: boolean;
-  // `!matrixDisabled && !useFixture && !composed` (analyze.ts's matrix branch):
-  // a fixture or a composed scene owns its own props, so no matrix applies.
+  // A fixture or a composed scene owns its own props, so no matrix applies (analyze.ts).
   matrixEligible: boolean;
   matrixRequested: boolean;
   matrixAutoActivates: boolean;
@@ -116,11 +96,7 @@ export function predictMode(input: {
   return "combo";
 }
 
-// Gated by the same two conditions the combo-mode pass uses, so every mode
-// that measured a React tree can disclose what the profiler saw. Warnings
-// are written straight onto the already-built report for the same reason
-// combo mode does it: the run's shared `runWarnings` array has already been
-// flushed by this point.
+// Gated as the combo-mode pass is, so every mode that measured a React tree discloses the same.
 export async function collectReactOptimizations(
   ctx: ModeContext,
   combos: PropCombination[],
@@ -139,6 +115,7 @@ export async function collectReactOptimizations(
     warmupRuns: 1,
     fnPropNames,
     pool: ctx.pool,
+    // ctx.runWarnings is already flushed by this point, so warnings go onto the built report.
     onWarning: (warning) => {
       if (!(report.warnings ?? []).includes(warning)) {
         report.warnings = [...(report.warnings ?? []), warning];
@@ -147,14 +124,12 @@ export async function collectReactOptimizations(
   });
 }
 
-// The report names the component the harness imports and renders, so both
-// read the same resolver. The filename fallback lives inside it.
+// The harness imports what this names, so both read the same resolver and its filename fallback.
 export function detectComponentName(componentPath: string, target?: string): string {
   return detectComponentExport(componentPath, target).name;
 }
 
-// Rerender passes inherit animation knowledge from the mount pass over the
-// same combo list, so animated combos never measure under driven pacing.
+// Rerenders inherit animation knowledge from mount, so animated combos avoid driven pacing.
 export function animatedIndices(mounts: MountResult[]): number[] {
   return mounts.filter((m) => m?.hasAnimation).map((m) => m.comboIndex);
 }

@@ -17,7 +17,6 @@ function descriptor(overrides: Partial<InteractionDescriptor> = {}): Interaction
   };
 }
 
-// C1: dispatch.
 describe("scroll-sweep dispatch", () => {
   it("wins over every other pattern for a scroll descriptor", () => {
     expect(resolveStressPattern(descriptor()).name).toBe("scroll-sweep");
@@ -43,7 +42,6 @@ describe("scroll-sweep dispatch", () => {
   });
 });
 
-// C2: the sweep is a round trip, and each wheel tick is one budgeted event.
 describe("sweep shape and budget", () => {
   it("runs the same number of ticks in each direction", () => {
     const pattern = resolveStressPattern(descriptor());

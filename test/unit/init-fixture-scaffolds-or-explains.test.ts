@@ -4,8 +4,7 @@ import path from "node:path";
 import { initFixtureOutcome } from "../../src/pipeline/index.js";
 import { buildUncomposedFixtureScaffold, fixtureScaffoldPath } from "../../src/props/index.js";
 
-// radix-themes-F3: `--init-fixture` was accepted on the never-composed path --
-// the path whose own warning recommends it -- and wrote nothing, said nothing.
+// radix-themes-F3: --init-fixture must write and report something on the never-composed path.
 const COMPONENT = path.resolve("fixtures/uncomposed-bare-alias/panel.tsx");
 const TARGET = fixtureScaffoldPath(COMPONENT);
 const SIBLINGS = ["PanelRootHeader", "PanelRootBody"];
@@ -72,8 +71,7 @@ describe("the scaffold's import clause", () => {
   });
 
   it("leaves a sibling that is not a same-file export out of the import", () => {
-    // M80's base-ui shape: the sibling is a type-only import from another
-    // file, so importing it here would not resolve on the advertised re-run.
+    // M80 (base-ui): sibling is a type-only import elsewhere; importing it here would not resolve.
     const source = buildUncomposedFixtureScaffold("panel", "Panel", ["PanelTab"], [
       { name: "Panel", isDefault: false },
     ]);

@@ -50,8 +50,7 @@ import {
 } from "./trace.js";
 import { computeMedian } from "../shared/index.js";
 
-// Read from the page, not from Node: the wrapper module may import CSS and
-// browser-only packages, so its `viewport` export only exists in the browser.
+// Read from the page: the wrapper may import browser-only packages, so Node cannot evaluate it.
 export async function applyWrapperViewport(page: Page): Promise<void> {
   const viewport = await page.evaluate(
     () => (window as any).__120fps?.viewport as { width?: unknown; height?: unknown } | undefined,
@@ -63,9 +62,7 @@ export async function applyWrapperViewport(page: Page): Promise<void> {
   await page.setViewportSize({ width: Math.round(width), height: Math.round(height) });
 }
 
-// A begin-frame-controlled browser produces no frames without the pump, so a
-// hung fence means a dead pump, not a slow component. The watchdog turns that
-// hang into a failed run instead of an infinite wait.
+// Under begin-frame control a hung fence means a dead pump, never a slow component.
 const RAF_FENCE_TIMEOUT_MS = 10_000;
 
 export async function rafFence(page: Page): Promise<void> {
@@ -87,25 +84,10 @@ export async function rafFence(page: Page): Promise<void> {
   );
 }
 
-// `withFrameStarvationRetry` bounds one
-// combo; nothing bounds a pass. A renderer that wedges (an infinite render
-// loop from one combo's props, a crashed target that re-enters into the same
-// wedge) starves every combo that follows, so a delta pass could spend its
-// bounded retries on every remaining combo and make no progress until the
-// run watchdog's timeout -- no report, no verdict. Three combos in a row that
-// measured nothing is the signal that the page, not the combo, is what failed:
-// the pass stops there and the run reports what it measured.
+// `withFrameStarvationRetry` bounds one combo; a wedged page starves every combo after it.
 export const MAX_CONSECUTIVE_DEGRADED_COMBOS = 3;
 
-// Both measurement passes keep one slot per
-// combo (`new Array(combos.length)`) and leave the slot of a combo that measured
-// nothing unset, so their result arrays are sparse. `for..of` yields `undefined`
-// for a hole -- an unguarded read of `.props` off it throws a TypeError about
-// the teardown instead of producing a report (`animatedIndices` in
-// pipeline/modes/context.ts already meets the same holes and guards with
-// `m?.`). Positional consumers (`buildCurveReport`, report/stats.ts) still
-// need the holes to line up with their scale points, so the arrays keep them
-// and every iterating consumer asks for the measured entries.
+// Result arrays keep their holes so positional consumers line up; iterators filter here.
 export function measuredOnly<T>(results: T[]): NonNullable<T>[] {
   return results.filter((r): r is NonNullable<T> => r !== undefined && r !== null);
 }
@@ -135,8 +117,7 @@ export function createDegradedPassBound(
     degraded(position: number): boolean {
       run++;
       if (run < MAX_CONSECUTIVE_DEGRADED_COMBOS) return false;
-      // A bound that trips on the pass's last combo skipped nothing: the pass
-      // reached its end, so warning about it would be noise.
+      // A bound tripping on the pass's last combo skipped nothing, so a warning would be noise.
       const skipped = total - position - 1;
       if (skipped > 0) onWarning?.(measurementAbandonedWarning(phase, run, skipped));
       return true;
@@ -150,8 +131,7 @@ export function createDegradedPassBound(
 export interface WrapperOverhead {
   overheadMs: number;
   domNodes: number;
-  // Read from the page rather than parsed from the wrapper source: the
-  // control API knows whether the export was actually a callable setup.
+  // Read from the page: only the control API knows the export was a callable setup.
   hasSetup: boolean;
 }
 
@@ -194,10 +174,7 @@ export async function measureWrapperOverhead(
   };
 }
 
-// A combo measured straight after a different combo pays that combo's cold
-// start in its first sample. The first combo of a pass also absorbs the
-// process-level JIT warmup; every later one needs a single render. 0 stays 0:
-// an explicit opt-out is honoured.
+// The first combo pays process-level JIT warmup, later ones only a cold start; 0 stays 0.
 export function warmupsForPosition(position: number, warmupRuns: number): number {
   return position === 0 ? warmupRuns : Math.min(1, warmupRuns);
 }
@@ -233,10 +210,7 @@ export async function mountAndTrace(
   return parseTraceDuration(await traceMount(page, cdp, props)).totalDuration;
 }
 
-// domNodeCount/hasAnimation/measuredState are read only when collectDomInfo is
-// set: their values are per-combo facts, and reading them per sample would pay
-// a getComputedStyle sweep under the CPU throttle on every sample. Every
-// probe runs between traced windows, never inside one.
+// Per-combo facts: reading them per sample would pay a getComputedStyle sweep under throttle.
 export async function runMountUnmount(
   page: Page,
   cdp: CDPSession,
@@ -258,9 +232,7 @@ export async function runMountUnmount(
 
   const mountEvents = await traceMount(page, cdp, props);
 
-  // The watch is armed first: `countComponentNodes` and `detectAnimations` cost
-  // real time under the throttle, and content arriving while they run belongs
-  // to the component, not to a gap in our instrumentation.
+  // Armed first: the probes below cost real time, and content arriving then is the component's.
   if (collectDomInfo) await beginMutationWatch(page);
 
   const nodeCount = collectDomInfo
@@ -268,8 +240,7 @@ export async function runMountUnmount(
     : { rootNodes: 0, orphanNodes: 0 };
   const domNodeCount = totalComponentNodes(nodeCount);
 
-  // Read in the same between-traces window as the node
-  // count, on the same `collectDomInfo` gate, so no traced sample pays for it.
+  // Same between-traces window as the node count, so no traced sample pays for it.
   const unresolvedSpriteRefs = collectDomInfo ? await collectUnresolvedSpriteRefs(page) : [];
 
   const hasAnimation = collectDomInfo ? await detectAnimations(page) : false;
@@ -306,11 +277,7 @@ export async function runMountUnmount(
   };
 }
 
-// The combo's own error window closes before any rerender into the
-// next combo's props opens the transition's window. One window over both
-// would make an error the next combo's props raised read as this combo's
-// own. The sequencing lives here so the attribution is verifiable without a
-// browser.
+// The combo's own error window closes before the transition's opens, or errors cross over.
 export async function runWithSplitErrorWindows(
   capture: Pick<PageErrorCapture, "drain">,
   result: RerenderResult,
@@ -319,10 +286,7 @@ export async function runWithSplitErrorWindows(
   let own = capture.drain();
   if (hasPageErrors(own)) result.pageErrors = own;
   if (!transition) return result;
-  // A transition body may close the combo's own window again when it can
-  // prove a sub-step belongs to the combo itself. The rerender pass does not
-  // call it -- see the spec's Design note -- but the seam is what makes the
-  // window boundary testable at all.
+  // The seam lets a transition body reclaim the combo's window for a sub-step it can prove.
   const claimOwnWindow = (): void => {
     const drained = capture.drain();
     if (!hasPageErrors(drained)) return;
@@ -411,20 +375,14 @@ export async function measureRerender(
     };
     await enter();
     const retryBudget = createRetryBudget();
-    // The same pass-level bound the mount
-    // pass carries -- a wedged page starves every combo that follows.
+    // A wedged page starves every combo that follows, so the pass carries its own bound.
     const passBound = createDegradedPassBound("rerender", indices.length, options.onWarning);
 
     for (const [position, ci] of indices.entries()) {
       inFlight.combo = ci;
       const props = combos[ci];
 
-      // Warmup on this combo's own props (results discarded, never recorded).
-      // Guarded by withWarmupRetry the same way the sample loops
-      // below are — without this, a starvation during warmup would escape
-      // retry entirely and fail the whole pass instead of omitting just this
-      // combo. An exhausted warmup omits the combo (its slot in `results`
-      // stays unset) rather than propagating.
+      // Guarded like the sample loops: an unretried warmup stall would fail the whole pass.
       const warmups = warmupsForPosition(position, warmupRuns);
       if (warmups > 0) {
         const warmed = await withWarmupRetry(
@@ -446,11 +404,7 @@ export async function measureRerender(
         }
       }
 
-      // Stable rerender: mount with props, then rerender with same props N times.
-      // A frame-starvation failure retries (bounded) against a freshly
-      // re-entered session; a sample that still starves after the bound is
-      // omitted (not pushed), not thrown — the delta pass's extra rerender
-      // calls are exactly where this fires.
+      // A sample that still starves after the bounded retries is omitted, never thrown.
       const stableSamples: number[] = [];
       for (let s = 0; s < sampleCount; s++) {
         const sample = await withFrameStarvationRetry(
@@ -471,16 +425,9 @@ export async function measureRerender(
         if (sample !== undefined) stableSamples.push(sample);
       }
 
-      // Every sample for this combo starved out even after retrying: the
-      // combo is omitted entirely (a disclosed partial result — the pass
-      // continues to the rest of the combos) rather than reporting a
-      // misleading all-zero timing for a combo nothing was actually measured
-      // on.
+      // A combo nothing measured is omitted, never reported as a misleading all-zero timing.
       if (stableSamples.length === 0) {
-        // A combo nothing was measured on still opened an
-        // error window. Leaving it undrained would attribute its errors to the
-        // next combo's own window, the exact mis-attribution this guards
-        // against. The warmup path above already drains before its `continue`.
+        // It still opened an error window; undrained, its errors land on the next combo.
         ms.errorCapture.drain();
         if (passBound.degraded(position)) break;
         continue;
@@ -494,14 +441,12 @@ export async function measureRerender(
         pacing: ms.pacing,
       };
 
-      // Prop-change rerender: mount with current props, rerender with next combo's props.
-      // The pairing follows the full combo list, so partitioning by pacing
-      // cannot change which combo rerenders into which.
-      // Skip when either combo is a scale combo: cross-scale rerenders are not meaningful
       let transition: TransitionWindow | undefined;
       if (combos.length > 1) {
+        // Follows the full combo list, so partitioning by pacing cannot change the pairing.
         const nextIndex = nextComboIndex(ci, combos.length);
         const nextProps = combos[nextIndex];
+        // Cross-scale rerenders are not meaningful, so either side being scale skips this.
         const isScale = "__120fps_scaleN" in props;
         const nextIsScale = "__120fps_scaleN" in nextProps;
         if (!isScale && !nextIsScale) {
@@ -518,12 +463,7 @@ export async function measureRerender(
                       enter,
                       async () => {
                         await suspendThrottle(ms.session.cdp, cpuThrottle, () => tryCollectGarbage(ms.session.cdp));
-                        // No own-window claim here. This mount lands on
-                        // the page state the PREVIOUS sample's rerender left
-                        // behind (combo ci+1's props), so an error it raises is
-                        // a `ci+1 -> ci` transition artefact, not this combo's
-                        // own. The whole delta-loop window is transition by
-                        // construction; see the spec's Design note.
+                        // Lands on the previous rerender's state: a transition artefact.
                         await mountAndWait(ms.page, props);
                         return rerenderAndTrace(ms.page, ms.session.cdp, nextProps);
                       },
@@ -542,8 +482,7 @@ export async function measureRerender(
         }
       }
 
-      // Two windows, not one — this combo's own renders, then the
-      // rerender into `combos[ci+1]`'s props.
+      // Two windows: this combo's own renders, then the rerender into the next combo's props.
       await runWithSplitErrorWindows(ms.errorCapture, result, transition);
 
       results[ci] = result;
@@ -590,16 +529,12 @@ export async function measureMount(
   }
 
   const results: MountResult[] = new Array(combos.length);
-  // Combos whose first sample detects a running animation: animation cost is
-  // time-based, so driven frames change how much of it lands inside the traced
-  // window. They are re-measured entirely under vsync pacing.
+  // Animation cost is time-based, so driven frames change how much lands in a traced window.
   const vsyncQueue: number[] = [];
 
-  // Tracked rather than passed, so a failure in a pass preamble reports
-  // the phase alone and one inside a combo reports the combo too.
+  // Tracked so a preamble failure reports the phase alone and a combo failure adds the combo.
   const inFlight = createPhaseTracker("mount", harness);
-  // Errors seen by a combo's driven attempt before it bailed to the vsync
-  // queue; merged into the result the re-measurement writes.
+  // Errors the driven attempt saw before bailing; merged into the re-measurement's result.
   const carriedErrors = new Map<number, PageErrorDrain | undefined>();
 
   const runPass = async (
@@ -617,21 +552,13 @@ export async function measureMount(
     };
     await enter();
     const retryBudget = createRetryBudget();
-    // Combos that measured nothing, back to
-    // back. Reset by any combo that measures.
     const passBound = createDegradedPassBound("mount", indices.length, options.onWarning);
 
     for (const [position, ci] of indices.entries()) {
       inFlight.combo = ci;
       const props = combos[ci];
 
-      // Warmup: JIT + module cache stabilization, on this combo's own props
-      // (results discarded, never recorded).
-      // Guarded by withWarmupRetry the same way the sample loop
-      // below is — without this, a starvation during warmup would escape
-      // retry entirely and fail the whole pass instead of omitting just this
-      // combo. An exhausted warmup omits the combo (its slot in `results`
-      // stays unset) rather than propagating.
+      // Guarded like the sample loop: an unretried warmup stall would fail the whole pass.
       const warmupCount = warmupsForPosition(position, warmupRuns);
       if (warmupCount > 0) {
         const warmed = await withWarmupRetry(
@@ -668,10 +595,7 @@ export async function measureMount(
         heapBefore = pre.usedSize;
       } catch { /* CDP method may not be available */ }
 
-      // A frame-starvation failure retries (bounded) against a freshly
-      // re-entered session; a sample that still starves after the bound is
-      // skipped, not thrown — the delta pass's own extra mount calls are one
-      // of the two places this fires.
+      // A sample that still starves after the bounded retries is skipped, never thrown.
       for (let s = 0; s < sampleCount; s++) {
         const run = await withFrameStarvationRetry(
           ci,
@@ -704,17 +628,13 @@ export async function measureMount(
           measuredState = run.measuredState;
         }
       }
-      // Closes this combo's window over the page's error stream. A combo
-      // that bails to the vsync queue keeps what the driven attempt saw, so the
-      // re-measurement adds to it rather than replacing it.
+      // A combo that bails to the vsync queue keeps what the driven attempt saw.
       const drained = ms.errorCapture.drain();
       if (bailed) {
         carriedErrors.set(ci, mergeDrains(carriedErrors.get(ci), drained));
         continue;
       }
-      // Every sample for this combo starved out even after retrying —
-      // omitted entirely (a disclosed partial result), not reported as an
-      // all-zero mount that nothing was actually measured on.
+      // A combo nothing measured is omitted, never reported as an all-zero mount.
       if (mountSamples.length === 0) {
         if (passBound.degraded(position)) break;
         continue;
@@ -740,8 +660,7 @@ export async function measureMount(
         mountTraces,
         pacing: ms.pacing,
         ...(hasPageErrors(pageErrors) ? { pageErrors: pageErrors! } : {}),
-        // Additive, and absent when there is nothing to say, so a
-        // component with no portals and no broken sprites reports as before.
+        // Absent when there is nothing to say, so a portal-free component reports as before.
         ...(orphanNodes > 0 ? { orphanNodes } : {}),
         ...(unresolvedSpriteRefs.length > 0 ? { unresolvedSpriteRefs } : {}),
       };
@@ -754,8 +673,7 @@ export async function measureMount(
       runPass(
         driven,
         combos.map((_, i) => i),
-        // A probe fallback already runs the whole pass under vsync: nothing to
-        // bail to in that case.
+        // A probe fallback already runs the whole pass under vsync: nothing to bail to.
         driven.pacing === "driven",
       ),
     );

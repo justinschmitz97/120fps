@@ -2,7 +2,6 @@ import { describe, it, expect } from "vitest";
 import { buildAndServe } from "../../src/harness/index.js";
 import { measureMount } from "../../src/browser/index.js";
 
-// H53: heavy computation during mount: timing should be non-trivial
 describe("H53: heavy computation mount", () => {
   it("measures component with expensive render", async () => {
     const harness = await buildAndServe("./fixtures/heavy-mount.tsx");
@@ -20,7 +19,6 @@ describe("H53: heavy computation mount", () => {
   });
 });
 
-// H54: deeply nested object props: serialization handles depth
 describe("H54: deeply nested object props", () => {
   it("serializes and passes nested config object", async () => {
     const harness = await buildAndServe("./fixtures/deep-props.tsx");
@@ -46,7 +44,6 @@ describe("H54: deeply nested object props", () => {
   });
 });
 
-// H55: multiple function props: all get serialized correctly
 describe("H55: multiple function props", () => {
   it("serializes all function props and component renders", async () => {
     const harness = await buildAndServe("./fixtures/many-callbacks.tsx");
@@ -69,7 +66,6 @@ describe("H55: multiple function props", () => {
   });
 });
 
-// H56: empty props object (no keys at all)
 describe("H56: empty props object", () => {
   it("handles completely empty props", async () => {
     const harness = await buildAndServe("./fixtures/no-props.tsx");
@@ -86,7 +82,6 @@ describe("H56: empty props object", () => {
   });
 });
 
-// H57: single combo with many samples
 describe("H57: high sample count", () => {
   it("works with 5 samples per combo", async () => {
     const harness = await buildAndServe("./fixtures/no-props.tsx");
@@ -104,14 +99,12 @@ describe("H57: high sample count", () => {
   });
 });
 
-// H58: auto-extract combos (no combos override)
 describe("H58: auto-extract combos from component path", () => {
   it("auto-extracts combos for button component", async () => {
     const harness = await buildAndServe("./fixtures/button.tsx");
     try {
       const results = await measureMount(harness, { samples: 2 });
-      // Button has label(string), variant(3 values), disabled(bool), onClick(fn), children(reactnode)
-      // Should produce multiple combos
+      // Button's label/variant/disabled/onClick/children props each add a dimension.
       expect(results.length).toBeGreaterThan(1);
     } finally {
       await harness.cleanup();

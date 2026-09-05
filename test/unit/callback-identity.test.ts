@@ -7,8 +7,7 @@ import {
 
 const MARKER = "__120fps_fn__";
 
-// The builder ships to the browser as source; evaluating it here tests the real
-// thing rather than a copy.
+// The builder ships to the browser as source; evaluating it here tests the real thing, not a copy.
 function loadBuilder(): (
   props: Record<string, unknown>,
   cache: Map<string, unknown>,
@@ -86,8 +85,7 @@ describe("callback identity significance", () => {
   });
 
   it("rejects the A/A control that produced the dogfood false positive", () => {
-    // Measured on fixtures/m66-callback-sensitive.tsx with both arms rendering
-    // the stable callback: identical treatment, +18.1ms apparent effect.
+    // m66-callback-sensitive.tsx, both arms rendering the stable callback: +18.1ms apparent effect.
     expect(
       computeCallbackIdentityDelta(
         [268.51, 255.779, 285.561],

@@ -5,10 +5,7 @@ import { extractProps, resetExtractionCache } from "../../src/props/index.js";
 const M84 = path.resolve("./fixtures/m84");
 const fixture = (name: string): string => path.join(M84, name);
 
-// M84 MUST: a name-based value heuristic that applies to a top-level prop
-// applies identically at every depth of a nested object. commerce's control:
-// currencyCode at top level synthesizes "USD"; label.currencyCode one level
-// down must synthesize the same value, not the generic "test" placeholder.
+// A name-based value heuristic must apply at every nesting depth, not only the top level.
 describe("M84: nested currencyCode synthesizes the same value as top-level", () => {
   it("label.currencyCode synthesizes USD, not the generic string placeholder", async () => {
     resetExtractionCache();

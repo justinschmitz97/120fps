@@ -14,8 +14,7 @@ import { literalValue } from "./presets.js";
 import type { ExportInfo, PropSchema } from "./schema.js";
 import { REACT_TYPE_PACKAGE } from "./synthesize.js";
 
-// One component declaration per entry, in source order, with the export
-// facts that decide which of them the harness will actually render.
+// Source order: selectTargetCandidate falls back to the first entry.
 interface ComponentCandidate {
   name: string;
   declaration:
@@ -28,17 +27,12 @@ interface ComponentCandidate {
     | ts.ExportAssignment;
   exported: boolean;
   isDefault: boolean;
-  // Names the module exports this declaration under, when they differ from the
-  // local one (`export { Core as AliasWidget }`).
+  // Export names that differ from the local one: `export { Core as AliasWidget }`.
   aliases: string[];
 }
 
 
-// The package.json whose `main`/`module`/`exports["."]` names this exact entry,
-// searched upward a bounded number of levels. Only that package.json's
-// `types`/`typings` describes this entry; a package.json further up (MUI's
-// `packages/mui-material/package.json` relative to `src/Badge/Badge.js`)
-// describes its own barrel and must not be read as this component's contract.
+// Only the package.json naming this exact entry types it; one further up types its own barrel.
 function declaringPackageTypes(absolutePath: string): string | undefined {
   let dir = path.dirname(absolutePath);
   for (let level = 0; level < 5; level++) {
@@ -69,9 +63,7 @@ function declaringPackageTypes(absolutePath: string): string | undefined {
 }
 
 
-// ADR 0004: the resolution every importer of `./<stem>` already performs.
-// `ts.resolveModuleName` prefers a `.d.ts` over the `.js` beside it, which is
-// exactly the ranking a consumer of the package type-checks against.
+// ADR 0004: resolveModuleName prefers the `.d.ts` beside the `.js`, as an importer resolves it.
 export function resolveEntryDeclaration(
   absolutePath: string,
   options: ts.CompilerOptions,
@@ -84,8 +76,7 @@ export function resolveEntryDeclaration(
 }
 
 
-// The declared component's props, read the way an importer reads them: the
-// exported symbol's first call signature's first parameter.
+// Props as an importer reads them: the exported symbol's first call signature's first parameter.
 export function propsFromDeclaration(
   declarationPath: string,
   program: ts.Program,
@@ -123,12 +114,9 @@ export function propsFromDeclaration(
 
 interface BoundProps {
   type: ts.Type;
-  // The function the type came from, when one was reachable: the source of
-  // the destructured parameter names the self-consistency guard compares.
+  // Source of the destructured names the self-consistency guard compares.
   fn?: ts.SignatureDeclaration;
-  // Set only by the last resort in `bindProps` — the call signatures of
-  // the binding's own type, rather than an annotated parameter. A JS entry's
-  // sibling declaration outranks this one (ADR 0004).
+  // bindProps's last resort; a JS entry's sibling declaration outranks it (ADR 0004).
   viaTypeFallback?: boolean;
 }
 
@@ -136,8 +124,7 @@ interface BoundProps {
 const IDENTIFIER_HOPS = 8;
 
 
-// The one stem rule. Shared with `detectComponentExport` so the harness
-// renders the component whose props were extracted.
+// Shared with detectComponentExport so the harness renders the component whose props were read.
 export function normalizeComponentName(name: string): string {
   return name.replace(/[^a-z0-9]/gi, "").toLowerCase();
 }
@@ -203,9 +190,7 @@ function collectComponentCandidates(sourceFile: ts.SourceFile): ComponentCandida
       }
       const fn = extractFunctionFromInitializer(node.expression);
       candidates.push({
-        // A local declaration named by the assignment is pushed earlier and
-        // wins selection; this entry carries files whose default export names
-        // something declared elsewhere.
+        // A local declaration of the name was pushed earlier and wins selection.
         name: identifier?.text ?? "default",
         declaration: fn ?? node,
         exported: true,
@@ -241,18 +226,14 @@ function collectComponentCandidates(sourceFile: ts.SourceFile): ComponentCandida
 }
 
 
-// Selection order: default export > file-stem match after dropping
-// non-alphanumerics > first exported component > first declaration. The last
-// step only applies to files that export nothing at all.
+// Order: default export > stem match > first exported > first declaration (nothing exported).
 function selectTargetCandidate(
   candidates: ComponentCandidate[],
   fileName: string,
   sourceText: string,
   explicitTarget?: string,
 ): ComponentCandidate | undefined {
-  // `<file>#Export` names the component the harness will import, so the
-  // schema follows it rather than the selection order. Aliases count: the name
-  // the module exports under is the name the user can type.
+  // `<file>#Export` names what the harness imports, so it outranks the order below; aliases count.
   if (explicitTarget) {
     const named = candidates.find((c) =>
       [c.name, ...c.aliases].some((name) => name === explicitTarget),
@@ -271,12 +252,7 @@ function selectTargetCandidate(
     );
     if (stemMatch) return stemMatch;
 
-    // Export order and declaration order can diverge — heroui's
-    // `export { BadgeRoot, BadgeLabel, BadgeAnchor }` puts `BadgeRoot` first
-    // in `scanExports`'s order, while declaration order puts `BadgeAnchor`
-    // first. `detectComponentExport` reads `scanExports`'s order, so this
-    // fallback reads the same order: one selection function over one export
-    // list keeps the two picks from diverging.
+    // scanExports order rather than declaration order: detectComponentExport reads the same list.
     const measured = selectMeasuredExport(scanExports(sourceText, fileName), fileName);
     const measuredMatch = measured
       ? exported.find((c) => [c.name, ...c.aliases].includes(measured))
@@ -288,10 +264,7 @@ function selectTargetCandidate(
 }
 
 
-// The export a run measures, from one list of exports. `scanExports`
-// lives in this file and `detectComponentExport` (src/harness/exports.ts)
-// imports from here, so the harness's own pick routes through this same
-// order (a `Provider` rule is the third clause).
+// One pick for both: src/harness/exports.ts's detectComponentExport delegates here.
 export function selectMeasuredExport(
   exports: ExportInfo[],
   fileName: string,
@@ -316,8 +289,7 @@ export function selectMeasuredExport(
 const PROVIDER_EXPORT_SUFFIX = /Provider$/;
 
 
-// `memo(Inner)` / `forwardRef(Inner)` / `Inner`: the identifier a wrapper chain
-// ultimately names, when it names one.
+// The identifier a wrapper chain names: `memo(Inner)`, `forwardRef(Inner)`, `Inner`.
 export function identifierBehind(expression: ts.Expression): ts.Identifier | undefined {
   if (ts.isIdentifier(expression)) return expression;
   if (ts.isCallExpression(expression) && expression.arguments.length > 0) {
@@ -389,8 +361,7 @@ function bindProps(
     }
   }
 
-  // const Component: FC<Props> = <anything callable>, or a default export whose
-  // component was declared in another module.
+  // `const Component: FC<Props> = <callable>`, or a default export declared in another module.
   const type = checker.getTypeAtLocation(
     ts.isExportAssignment(declaration) ? expression : declaration.name,
   );
@@ -407,9 +378,7 @@ function bindProps(
 }
 
 
-// The literal defaults a destructured first parameter
-// declares (`{ loading = false, color = "primary" }`). A non-literal default
-// (a call, a variable) is not recorded rather than guessed at.
+// A non-literal default (a call, a variable) is left unrecorded rather than guessed at.
 export function destructuredParameterDefaults(
   fn: ts.SignatureDeclaration | undefined,
 ): Map<string, unknown> {
@@ -428,9 +397,7 @@ export function destructuredParameterDefaults(
   if (!param) return defaults;
   if (ts.isObjectBindingPattern(param.name)) collect(param.name);
 
-  // calcom's Button destructures in the body, not in the parameter list
-  // (`function Button(props) { const { loading = false, ... } = props; }`), the
-  // same shape `sourceReferencedPropNames` already walks for.
+  // A component may destructure props in the body instead of the parameter list.
   const body = fn && "body" in fn ? fn.body : undefined;
   if (!body || !ts.isIdentifier(param.name)) return defaults;
   const paramName = param.name.text;
@@ -451,9 +418,7 @@ export function destructuredParameterDefaults(
 }
 
 
-// The pre-hooks convention, `Component.defaultProps = {...}` at the
-// top level of the component's own file. Parse-only, same shallow tradeoff
-// `detectOptionsApiProps` accepts.
+// Parse-only: a top-level `Component.defaultProps = {...}` in the component's own file.
 export function defaultPropsAssignment(
   sourceFile: ts.SourceFile,
   targetName: string,
@@ -481,10 +446,7 @@ export function defaultPropsAssignment(
 }
 
 
-// The default is recorded on the schema. `reorderValues` matches Vue's
-// `withDefaults` behavior: the declared default leads the pool. A React
-// default is disclosed without changing which values are measured in which
-// order.
+// reorderValues puts the default first, as Vue's withDefaults does; a React default keeps order.
 export function applyDeclaredDefaults(
   schemas: PropSchema[],
   defaults: Map<string, unknown>,
@@ -503,8 +465,7 @@ export function applyDeclaredDefaults(
 }
 
 
-// Names bound out of a destructured first parameter, renames resolved to the
-// source property and rest elements ignored.
+// A rename resolves to the source property; a rest element is dropped.
 export function destructuredParameterNames(fn: ts.SignatureDeclaration | undefined): string[] {
   const param = fn?.parameters[0];
   if (!param || !ts.isObjectBindingPattern(param.name)) return [];
@@ -524,8 +485,7 @@ function overlapsDestructuring(bound: BoundProps, names: string[]): boolean {
 }
 
 
-// Whether the target declares a parameter at all. A component that takes none
-// has no props to miss, so its empty schema is an answer rather than a failure.
+// A component that declares no parameter has no props to miss: its empty schema is an answer.
 function expectsProps(candidate: ComponentCandidate): boolean {
   const declaration = candidate.declaration;
   if (
@@ -541,8 +501,7 @@ function expectsProps(candidate: ComponentCandidate): boolean {
     : declaration.initializer;
   if (!expression) return false;
   const fn = extractFunctionFromInitializer(expression);
-  // An initializer that is not a function literal (an alias, a factory call)
-  // may still be a component; its parameter list is not visible here.
+  // An alias or a factory call may still be a component; its parameter list is invisible here.
   return fn ? fn.parameters.length > 0 : true;
 }
 
@@ -559,33 +518,22 @@ export interface PropsBinding {
   targetName?: string;
   // 1-based source line of the target's declaration.
   targetLine?: number;
-  // The target's first-parameter annotation, when it is a computed type: the
-  // only case where an empty schema is a resolution failure rather than a fact.
+  // Set only for a computed annotation: the one case where an empty schema is a failure.
   computedAnnotation?: string;
-  // The function the props type was bound to, when one was reachable —
-  // threaded through so `typeToSchema` can read which prop names the
-  // component's own body references by name.
+  // Threaded to typeToSchema so it can read which prop names the component's body references.
   fn?: ts.SignatureDeclaration;
-  // The type came from the binding's own call signatures, the last resort
-  // in `bindProps`. A JS entry's sibling declaration outranks it (ADR 0004).
+  // A JS entry's sibling declaration outranks this binding (ADR 0004).
   viaTypeFallback?: boolean;
-  // Nothing bound to the measured target while another declaration in the
-  // same file did bind. Reported only once the declaration fallback has also
-  // come up empty.
+  // Another declaration in the file bound while the target did not; reported after the fallback.
   unboundTargetHijacked?: boolean;
-  // The module the binding was read from, when the
-  // measured file only re-exports the component another module declares.
+  // Set when the measured file only re-exports the component another module declares.
   targetFile?: string;
-  // The barrel and the specifier that did not
-  // resolve. A cause the filesystem decides, so no props table is a fact about
-  // this file rather than a failed extraction.
+  // The unresolved barrel hop: an empty props table is then a fact about the file.
   unresolvedReExport?: { barrel: string; specifier: string };
 }
 
 
-// A type reference with arguments (`ComponentProps<typeof X>`,
-// `VariantProps<typeof x>`), a `typeof`/indexed access, or a composition of
-// them. A plain `interface Props` that yields nothing yields nothing honestly.
+// A plain `interface Props` that yields nothing is honest; a computed annotation is not.
 function computedAnnotationText(node: ts.TypeNode | undefined): string | undefined {
   if (!node) return undefined;
   const isComputed = (n: ts.TypeNode): boolean => {
@@ -599,8 +547,7 @@ function computedAnnotationText(node: ts.TypeNode | undefined): string | undefin
 }
 
 
-// The `export`-inclusive start of the declaration, 1-based, so a dry run can
-// point at the line a reader would open.
+// The `export`-inclusive start, 1-based, so a dry run points at the line a reader opens.
 function declarationLine(sourceFile: ts.SourceFile, node: ts.Node): number | undefined {
   const statement =
     ts.isVariableDeclaration(node) && node.parent?.parent ? node.parent.parent : node;
@@ -664,8 +611,7 @@ export function findComponentPropsType(
 
   let bound = bindProps(target, checker, byName);
 
-  // Self-consistency: a props type that shares no key with what the target
-  // destructures did not come from the target. Prefer one that does.
+  // A props type that shares no key with the target's destructuring did not come from the target.
   const destructured = destructuredParameterNames(
     bound?.fn ??
       (ts.isFunctionDeclaration(target.declaration) ? target.declaration : undefined),
@@ -697,9 +643,7 @@ export function findComponentPropsType(
     };
   }
 
-  // Reported by the caller, after the sibling declaration has had its turn:
-  // emitting here would flag every MUI `.js` component whose declaration
-  // resolves all sixteen props as unresolvable.
+  // The caller reports this after the sibling declaration's turn; here it would misflag JS entries.
   if (expectsProps(target)) {
     const hijacker = candidates.some(
       (candidate) => candidate !== target && bindProps(candidate, checker, byName),
@@ -711,13 +655,7 @@ export function findComponentPropsType(
 }
 
 
-// ADR 0004: `React.forwardRef<T, P = {}>` with an unannotated render
-// parameter types the binding as `ForwardRefExoticComponent<RefAttributes<any>>`,
-// whose first call signature's parameter has exactly two properties: `ref` from
-// `RefAttributes` and `key` from `Attributes`. Neither is a prop of the
-// component. Origin matters as much as the name: a component that declares its
-// own `ref` prop in its own file keeps it, because that declaration does not
-// live in React's type packages.
+// ADR 0004: forwardRef's wrapper supplies ref and key; a component's own `ref` declaration stays.
 const REACT_AMBIENT_ATTRIBUTES = new Set(["ref", "key"]);
 
 

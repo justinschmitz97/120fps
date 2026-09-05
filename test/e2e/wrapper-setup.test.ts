@@ -82,7 +82,7 @@ describe("setup failure surfaces", () => {
           timeout: 3000,
         })
         .catch(() => {
-          /* expected: setup rejected, so the API is never exposed */
+          // Expected: setup rejected, so the API is never exposed.
         });
       expect(errors.errors.join("\n")).toContain("m41 setup failed on purpose");
     } finally {
@@ -115,10 +115,8 @@ describe("setup turns a stubbed request into an action", () => {
   }, 300000);
 });
 
-// H1..H4: hardening.
 describe("hardening", () => {
-  // H1: teardown is session-scoped; running it per unmount would dismantle
-  // the mocks the remaining samples depend on.
+  // H1: teardown is session-scoped; running it per unmount would dismantle the mocks.
   it("H1: teardown runs at session close, not between samples", async () => {
     const harness = await buildAndServe("./fixtures/button.tsx", {
       wrapPath: path.resolve("./fixtures/wrap-setup-async.tsx"),
@@ -166,8 +164,7 @@ describe("hardening", () => {
     }
   }, 90000);
 
-  // H4: an entry without a wrapper must not gain a top-level await or any
-  // reference to a module it never imported.
+  // H4: an entry without a wrapper must not gain a top-level await or an unimported reference.
   it("H4: a wrapper-less run still reaches readiness", async () => {
     const harness = await buildAndServe("./fixtures/button.tsx");
     const page = await (await getBrowser()).newPage();

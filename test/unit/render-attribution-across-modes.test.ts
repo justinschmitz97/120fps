@@ -4,12 +4,7 @@ import type { ReactOptimizations } from "../../src/analysis/index.js";
 import type { MountResult, RerenderResult } from "../../src/browser/index.js";
 import type { ExploreResult, StateGraph } from "../../src/analysis/index.js";
 
-// commerce-F1: Gallery and VariantSelector auto-activate curve mode because
-// their only interesting props are arrays, and curve mode never ran the React
-// analysis pass at all — so the Gallery → GridTileImage → Label → Price
-// fan-out that combo-mode siblings disclose in full was absent from console
-// and JSON alike, with no note that the pass had been skipped.
-
+// commerce-F1: curve mode skipped React analysis, silently dropping the fan-out combo mode shows.
 const calibration: CalibrationResult = { totalDuration: 10, scriptDuration: 5 };
 const thresholds: Thresholds = {
   mountMs: 50, interactionMs: 400, interactionStepMs: 67, relativeMount: 2.0, rerenderMs: 16,

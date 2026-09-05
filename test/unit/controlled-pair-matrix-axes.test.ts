@@ -14,8 +14,7 @@ const DIALOG_DEFAULTS = path.resolve(
   "../../fixtures/controlled-pair/DialogDefaults.tsx",
 );
 
-// fluentui-F1: all four Dialog cells set `open` and `defaultOpen` together,
-// which `useControllableState` rejects, so every cell measured the error path.
+// fluentui-F1: all four Dialog cells set `open`/`defaultOpen` together, which the hook rejects.
 
 describe("a matrix over a controlled/uncontrolled prop pair", () => {
   let schemas: PropSchema[];
@@ -72,9 +71,7 @@ describe("the values a boolean axis is crossed over", () => {
   });
 });
 
-// M114 (review B-major): a twin that declares a default was routed through the
-// non-axis path, which held the declared value present in every cell -- the
-// pairing the milestone forbids, restored by the default the component wrote.
+// See specs/milestones/m114-disclosures-are-true-for-runtime-styling-props-and-page-errors.md B3.
 
 describe("a matrix over a pair whose twin declares a default", () => {
   let schemas: PropSchema[];

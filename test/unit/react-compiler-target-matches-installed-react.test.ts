@@ -4,11 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { detectReactMajor, reactCompilerBabelOptions, reactCompilerRuntimeDeps, resolveReactCompilerState, REACT_COMPILER_PACKAGE } from "../../src/project/index.js";
 
-// primer-react-F1: the compiler ran with an empty options object, defaulted to
-// React 19, emitted `import { c } from "react/compiler-runtime"`, and the
-// installed React 18.3.1 answered ERR_PACKAGE_PATH_NOT_EXPORTED. The project
-// passes `target: "18"` in its own babel config and installs
-// react-compiler-runtime; the harness read neither.
+// primer-react-F1: React 18 project got a React 19 compiler-runtime import it could not resolve.
 const FIXTURES = path.resolve(import.meta.dirname, "..", "..", "fixtures");
 
 let tmpDir: string;
@@ -129,8 +125,7 @@ describe("React Compiler runtime that the target needs but the project lacks", (
   });
 });
 
-// M108 review: with no readable target the plugin defaults to React 19 and the
-// run discloses neither the target nor the runtime it will import.
+// specs/milestones/m108-a-diagnosis-names-the-layer-that-failed.md: no silent default to 19.
 describe("React Compiler target that cannot be read", () => {
   it("keeps the transform off for a React 16 install", () => {
     useFixture("compiler-react18-project");

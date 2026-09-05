@@ -10,9 +10,7 @@ import {
 } from "../../src/pipeline/index.js";
 import { extractPropsDetailed } from "../../src/props/index.js";
 
-// gutenberg-F2 and react-spectrum-F3: a barrel printed `Props (0):` and then
-// the generic "extraction may have failed" sentence, whose floated malfunction
-// was false for a cause the filesystem decides.
+// gutenberg-F2, react-spectrum-F3: a barrel showed "Props (0):" plus a false failure hedge.
 const DIR = path.resolve("fixtures/barrel-reexport");
 const fixture = (name: string): string => path.join(DIR, name);
 const REPO_ROOT = process.cwd();
@@ -57,9 +55,7 @@ describe("a component reached through a re-export", () => {
     expect(explained.warnings).not.toContain(ZERO_PROPS_WARNING);
   });
 
-  // M114 review: the real run builds the same two disclosures from
-  // extractPropsDetailed's record, so the record the run reads carries the
-  // declaring module and produces byte-identical text.
+  // Both paths read the same extractPropsDetailed record, producing identical text.
   it("gives the measured run the same declaring module the dry run printed", async () => {
     const extracted = await extractPropsDetailed(fixture("index.tsx"), {});
     const explained = await explainProps(fixture("index.tsx"), {});

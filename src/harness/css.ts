@@ -29,9 +29,7 @@ const NEXT_ENTRY_STEMS = ["app/layout", "src/app/layout", "pages/_app", "src/pag
 const ENTRY_EXTENSIONS = [".tsx", ".jsx", ".ts", ".js"];
 const MODULE_SCRIPT_TAG = /<script\b[^>]*>/gi;
 
-// The module one html file loads. `rootDir` is the directory a root-absolute
-// `src="/x.js"` is resolved against — Vite's own `root`, which is the package
-// root only when the config declares no other one.
+// rootDir is Vite's own `root`, which is the package root only when the config declares none.
 function entryFromHtml(html: string, rootDir: string): string | undefined {
   let markup: string;
   try {
@@ -52,12 +50,7 @@ function entryFromHtml(html: string, rootDir: string): string | undefined {
   return undefined;
 }
 
-// The module the project's own toolchain starts from: what index.html loads, or
-// the module Next.js renders every route through.
-// The package root's own index.html still decides
-// first; a `root` the vite config declares and a foldable
-// `build.rollupOptions.input` are two more places one can be, and vuetify has
-// its only entry under the first of them.
+// The module the project's own toolchain starts from: index.html's, or Next.js's route entry.
 export function findProjectEntry(
   projectRoot: string,
   opts?: { configRoot?: string; rollupInputs?: string[] },
@@ -96,9 +89,7 @@ const STYLESHEET_SCAN_SKIP_DIRS = new Set([
 const STYLESHEET_SCAN_MAX_DEPTH = 8;
 const STYLESHEET_SCAN_MAX_ENTRIES = 4000;
 
-// Bounded walk shared by the largest-stylesheet fallback and the ranked
-// candidate list: a repository is big and this runs before anything is
-// measured.
+// Bounded walk: a repository is big and this runs before anything is measured.
 export function rankedStylesheets(projectRoot: string): Array<{ file: string; size: number }> {
   const found: Array<{ file: string; size: number }> = [];
   let visited = 0;
@@ -132,8 +123,7 @@ export function rankedStylesheets(projectRoot: string): Array<{ file: string; si
   };
 
   walk(projectRoot, 0);
-  // Descending by size; ties break on path so one project always yields one
-  // answer regardless of directory-traversal order.
+  // Ties break on path, so one project always yields one answer whatever the walk order.
   return found.sort((a, b) => b.size - a.size || (a.file < b.file ? -1 : a.file > b.file ? 1 : 0));
 }
 
@@ -144,41 +134,23 @@ export function largestStylesheet(projectRoot: string): string | undefined {
 
 export interface CssDiscovery {
   files: string[];
-  // "package-declared" is a pick made from the measured package's own
-  // manifest (`style`, `exports["./styles"]`, `exports[*].style`) — evidence
-  // the package itself published, distinct from a conventional filename.
+  // "package-declared" is evidence the package published, not a conventional filename.
   source: "entry" | "package-declared" | "candidate" | "fallback" | "runtime" | "none";
   // present only when source === "fallback"
   onlyCandidate?: boolean;
   noEntryInPackage?: boolean;
-  // present when source === "runtime", and on the "none" of a declared-but-
-  // unbuilt stylesheet whose package also styles at runtime.
+  // Present for "runtime", and on the "none" of a declared-but-unbuilt stylesheet.
   runtimeEngines?: string[];
-  // Whether the engines above are ones
-  // RUNTIME_STYLE_ENGINES names. `false` means the measured file imported a
-  // `makeStyles`/`createUseStyles`/`styled` binding from a package the list
-  // does not carry — an observation about one file, not a fact about the
-  // package's dependencies. Present whenever `runtimeEngines` is.
+  // False means a styling binding from a package RUNTIME_STYLE_ENGINES does not carry.
   runtimeEnginesRecognised?: boolean;
-  // The measured package's own declarations
-  // whose target is not on disk, as projectRoot-relative posix paths beside the
-  // manifest field that named them. Present only when `source` is "none"
-  // because the declaration is what stopped the size-ranked fallback.
+  // Present only when `source` is "none": the declaration stopped the size-ranked fallback.
   declaredMissing?: Array<{ field: string; path: string; buildCommand?: string }>;
 }
 
-// The fields a package uses to tell a bundler where its own
-// stylesheet is. Read in the order a "style" condition would be looked up, and
-// only for the measured package itself — never an ancestor application's
-// manifest.
-// A declaration whose target is absent must not
-// leave no trace: a package that names its own stylesheet and has not built
-// it reads differently from a package that names none. The two answers are kept
-// apart in the `StylesheetImportTarget` shape this file already uses, and the
-// declared arm carries the manifest field that named it so a remedy can quote
-// it back.
+// A package that names its own stylesheet and has not built it reads differently from none.
 export type PackageStylesheetCandidate = { file: string } | { declared: string; field: string };
 
+// Only the measured package's own manifest, never an ancestor application's.
 export function packageStylesheetCandidates(projectRoot: string): PackageStylesheetCandidate[] {
   const manifest = readProjectManifest(projectRoot);
   if (!manifest) return [];
@@ -215,16 +187,11 @@ export function packageStylesheetCandidates(projectRoot: string): PackageStylesh
   return targets;
 }
 
-// The package said where its stylesheet is; the
-// build that writes it has not run. Named by the field that declared it, the
-// path it points at and the package's own build script, on the rule that a
-// remedy quotes a script the manifest declares or none at all.
+// A remedy quotes a build script the manifest declares, or none at all.
 export function CSS_DECLARED_UNBUILT_WARNING(
   declarations: Array<{ field: string; path: string }>,
   buildCommand?: string,
-  // A package that declares an unbuilt stylesheet and also styles
-  // at runtime is not measured unstyled — that outcome stands, so the clause
-  // asserting it names the engines that do the styling instead.
+  // A package that also styles at runtime is not measured unstyled; name the engines instead.
   runtimeEngines: string[] = [],
 ): string {
   const named = declarations
@@ -259,9 +226,7 @@ export function CSS_BROKEN_IMPORT_SKIPPED_WARNING(file: string, specifier: strin
   );
 }
 
-// A candidate that carries rules is used as it is. A 0-rule passthrough
-// (heroui's `src/styles.css`: a comment and one `@import`) stands for the
-// stylesheet it imports, so that stylesheet is what gets injected.
+// A 0-rule passthrough stands for the stylesheet it imports, so that one gets injected.
 function expandPassthroughStylesheet(
   candidate: string,
   projectRoot: string,
@@ -288,10 +253,7 @@ export function relativeToRoot(file: string, projectRoot: string): string {
   return toPosix(path.relative(projectRoot, file));
 }
 
-// A stylesheet that resolves and reads fine can still fail to compile
-// because something it imports does not exist, depending on which surface
-// the failure reaches. Decidable here, from the filesystem, before any
-// server starts.
+// A stylesheet that reads fine can still fail to compile because an import does not exist.
 function brokenNestedImport(
   file: string,
   projectRoot: string,
@@ -304,33 +266,16 @@ function brokenNestedImport(
   return undefined;
 }
 
-// Evidence before convention. What the project's own entry imports is what
-// the project loads; a filename list is a guess, and the largest stylesheet in
-// the tree is a guess that says so.
-// The largest-stylesheet fallback distrusts itself before it fires (an
-// unbuilt placeholder or an opt-in reset by name is skipped and warned about),
-// and when nothing survives that walk, runtime CSS-in-JS is checked as a
-// first-class "no static stylesheet was ever going to exist" outcome before
-// falling all the way to "none".
-// `extraEntryFiles` are files the harness itself mounts
-// through (the resolved `--wrap`/`120fps.setup.*` module), read for their own
-// side-effect stylesheet imports exactly as the project entry is. A wrapper is
-// not an application entry, so it never changes `noEntryInPackage`: what it
-// changes is whether a stylesheet the run really loads is disclosed.
+// Evidence before convention: a filename list is a guess, and the size-ranked walk says so.
 export function discoverGlobalCss(
   projectRoot: string,
   warningsOut?: string[],
-  // The file the run measures, read only for the
-  // styling binding it imports. Absent means the unrecognised-engine branch is
-  // never taken, so the line stays "none found".
+  // A wrapper is no application entry, so it never changes `noEntryInPackage`.
   opts?: { extraEntryFiles?: string[]; measuredFile?: string },
 ): CssDiscovery {
   const workspaceRoot = findWorkspaceRoot(projectRoot);
   const aliases = loadTsconfigAliases(projectRoot);
-  // A file rejected by one layer stays rejected for every later one —
-  // shadcn's `app/globals.css` is both the entry's own import and a
-  // conventional filename, and re-picking it one layer down would undo the
-  // rejection the layer above just disclosed.
+  // A file rejected by one layer stays rejected: re-picking it would undo the disclosure.
   const rejected = new Set<string>();
   const injectable = (file: string): boolean => {
     if (rejected.has(file)) return false;
@@ -347,10 +292,7 @@ export function discoverGlobalCss(
     return false;
   };
 
-  // The entry chain is what the project's own config
-  // says it is. A `root` the config declares moves index.html out of the
-  // package root, and a foldable `build.rollupOptions.input` names an html
-  // file that is nowhere near either.
+  // The config decides where index.html is: a declared `root`, or a foldable rollup input.
   const viteConfig = readViteConfigData(projectRoot, workspaceRoot);
   const entry = findProjectEntry(projectRoot, {
     ...(viteConfig.root !== undefined ? { configRoot: viteConfig.root } : {}),
@@ -374,8 +316,7 @@ export function discoverGlobalCss(
     if (usable.length > 0) return { files: usable, source: "entry" };
   }
 
-  // What the package says about itself, above a filename
-  // convention and above the size-ranked guess.
+  // What the package says about itself, above a filename convention and the size-ranked guess.
   const packageDeclared = packageStylesheetCandidates(projectRoot);
   const declaredCandidates: Array<{ file: string; source: "package-declared" | "candidate" }> = [
     ...packageDeclared
@@ -395,10 +336,7 @@ export function discoverGlobalCss(
       injectable,
     );
     if (files.length === 0) {
-      // A passthrough that resolves to nothing: the same skip, and the same
-      // disclosure, an unbuilt placeholder has always had. Recorded as
-      // rejected so the ranked walk below skips it silently instead of
-      // repeating the warning this layer just made.
+      // Recorded as rejected so the ranked walk below skips it instead of warning twice.
       if (stylesheetRuleCount(candidate) === 0) {
         rejected.add(candidate);
         warningsOut?.push(CSS_PLACEHOLDER_SKIPPED_WARNING(relativeToRoot(candidate, projectRoot)));
@@ -408,10 +346,7 @@ export function discoverGlobalCss(
     return { files, source };
   }
 
-  // A package that declares its own stylesheet
-  // and has not built it yet is not a package without one. The size-ranked
-  // walk below would inject an unrelated file and call it the global sheet,
-  // so the declaration is disclosed and the walk never starts.
+  // A package that declares a stylesheet and has not built it is not a package without one.
   const declaredMissingTargets = packageDeclared.filter(
     (target): target is { declared: string; field: string } => "declared" in target,
   );
@@ -422,9 +357,7 @@ export function discoverGlobalCss(
       path: relativeToRoot(target.declared, projectRoot),
       ...(buildCommand !== undefined ? { buildCommand } : {}),
     }));
-    // The runtime layer sits below the ranked walk this return skips, so
-    // it is asked here: an unbuilt declaration plus emotion or styled-components
-    // is a package whose styling never needed a static stylesheet.
+    // Asked here because this return skips the runtime layer below the ranked walk.
     const declaredRuntimeEngines = detectRuntimeStyleEngines(projectRoot, workspaceRoot);
     warningsOut?.push(
       CSS_DECLARED_UNBUILT_WARNING(declaredMissing, buildCommand, declaredRuntimeEngines),
@@ -452,8 +385,7 @@ export function discoverGlobalCss(
       warningsOut?.push(CSS_RESET_SKIPPED_WARNING(relative));
       continue;
     }
-    // Preprocessor-missing is not one of the two disqualification checks: it
-    // stops the walk rather than skipping to the next-ranked candidate.
+    // Preprocessor-missing stops the walk rather than skipping to the next-ranked candidate.
     if (!preprocessorFor(candidate.file, projectRoot, workspaceRoot) && injectable(candidate.file)) {
       survivor = candidate;
     }
@@ -473,9 +405,7 @@ export function discoverGlobalCss(
     return { files: [], source: "runtime", runtimeEngines, runtimeEnginesRecognised: true };
   }
 
-  // No declared engine and no stylesheet anywhere. What the measured
-  // file imports is the last read left, and it decides between "none found"
-  // and an engine this recogniser cannot name.
+  // The measured file's own imports decide between "none found" and an unnameable engine.
   const unlisted = opts?.measuredFile
     ? unrecognisedRuntimeStyleEngine(opts.measuredFile)
     : undefined;

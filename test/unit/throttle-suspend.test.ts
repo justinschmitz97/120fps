@@ -15,8 +15,7 @@ function fakeCdp(log: SentCommand[], fail?: (method: string) => boolean) {
   } as never;
 }
 
-// M34: the CPU throttle may be suspended for inter-sample bookkeeping, but must
-// be restored before the next traced window.
+// M34: throttle suspended for bookkeeping must be restored before the next traced window.
 describe("suspendThrottle", () => {
   it("drops the rate to 1 around fn and restores the given rate", async () => {
     const log: SentCommand[] = [];
@@ -57,10 +56,7 @@ describe("suspendThrottle", () => {
   });
 
   it("propagates a failed suspend without running fn", async () => {
-    // Call sites sit inside withContextRetry: a dead session propagates, the
-    // retry re-enters the harness (which re-engages the throttle), and the
-    // whole sample body: GC included: runs again. Nothing may run at an
-    // unknown throttle state.
+    // withContextRetry re-enters and re-throttles on a dead session; fn must not run mid-recovery.
     const log: SentCommand[] = [];
     let ran = false;
     await expect(

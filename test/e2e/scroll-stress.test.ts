@@ -163,7 +163,6 @@ describe("sweep execution", () => {
   }, 90000);
 });
 
-// H1..H5: hardening.
 describe("hardening", () => {
   it("H1: a selector that matches nothing does not throw", async () => {
     const { page, harness } = await mounted("./fixtures/m43-scroll-container.tsx");

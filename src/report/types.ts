@@ -32,8 +32,7 @@ export interface TierBudget {
   mountMs: number;
   rerenderMs: number;
   interactionMs: number;
-  // Cost allowed for one interaction event. A frame at 120fps is 8.33ms, and
-  // measurements run under 4x CPU throttle, so one such frame is 33ms here.
+  // One 120fps frame is 8.33ms; under 4x CPU throttle it is the 33ms T1 allows per event.
   interactionStepMs: number;
 }
 
@@ -46,9 +45,7 @@ export const TIER_BUDGETS: Record<ComponentTier, TierBudget> = {
 
 export const CHURN_DEGRADATION_LIMIT = 2.0;
 
-// Above the ~2.4 KB/cycle floor that survives warmup, with 3x headroom under it
-// and 24x under the smallest leak observed. A 1 KB/cycle threshold sits inside
-// the floor and calls every component a leak.
+// 3x over the ~2.4 KB/cycle floor that survives warmup, 24x under the smallest leak seen.
 export const LEAK_BYTES_PER_CYCLE = 8192;
 
 export interface MachineInfo {
@@ -67,12 +64,10 @@ export interface CalibrationResult {
 
 export type EnvMatch = "identical" | "normalizable" | "incompatible" | "unknown";
 
-// Persisted per baseline entry. `shape` versions the fingerprint independently
-// of the baseline file's own version, so new fields never invalidate a file.
+// `shape` versions the fingerprint independently of the baseline file's own version.
 export interface EnvFingerprint {
   shape: 1;
-  // Measurement revision: absent or 1 means the DOM count was not yet
-  // component-scoped. A mismatch makes a baseline incomparable, not merely different.
+  // Absent or 1 means a document-wide DOM count; a mismatch makes a baseline incomparable.
   metrics?: number;
   cpu: string;
   cores: number;
@@ -87,9 +82,7 @@ export interface EnvFingerprint {
   css?: string[];
   wrapper?: string;
   reactCompiler?: boolean;
-  // Omitted for React, which every baseline without this field implicitly
-  // was, so those entries keep comparing. A different framework is a different
-  // renderer and a different measurement, never a regression.
+  // Omitted for React; a different renderer is a different measurement, never a regression.
   framework?: "vue" | "vanilla";
 }
 
@@ -109,14 +102,9 @@ export interface InteractionReport {
   relativeTiming: number;
   portal?: boolean;
   stressPattern?: string;
-  // Steps in the stress pattern behind `timing`. `timing.median` is the cost
-  // of all of them; the budget is per step.
-  // The steps that ran, so the per-step cost printed beside it
-  // divides by what was actually measured.
+  // `timing.median` covers every step; the budget is per step.
   steps?: number;
-  // Set when the explore wall clock cut the pattern short: how many steps the
-  // pattern would have run. The row says so, because a 3-of-20 cycle is not
-  // the interaction the pattern's name describes.
+  // Set when the explore clock cut the pattern short: a 3-of-20 cycle is another interaction.
   stepsPlanned?: number;
 }
 
@@ -134,68 +122,31 @@ export interface ComboReport {
   rerenderScalingCurve?: ScalingCurve | null;
   relativeMount: number;
   verdict: "pass" | "warn" | "fail";
-  // The wall clock the state graph already measured for this combo's
-  // exploration. Absent when this combo was never explored. The run-level
-  // `phaseTimings.explore` stays the phase interval and is never a sum of
-  // these.
+  // `phaseTimings.explore` stays the phase interval and is never a sum of these.
   exploreWallClockMs?: number;
   tier?: ComponentTier;
   hasAnimation?: boolean;
-  // Whether these numbers describe the settled component or a transient
-  // scene (skeleton, fallback, pre-response render).
+  // The settled component, or a transient scene (skeleton, fallback, pre-response render).
   measuredState?: MeasuredState;
   costAttribution?: CostAttribution;
   reactOptimizations?: ReactOptimizations;
-  // Uncaught exceptions and console.error output captured while this
-  // combo was measured, deduped with a (×N) repeat suffix. Absent when the
-  // page stayed quiet. Scoped to this combo's own windows (mount, stable
-  // rerender); what the prop-delta sub-probe's rerender into the next combo's
-  // props raised lives in `transitionPageErrors` instead.
+  // This combo's own windows only; the sub-probe's go to `transitionPageErrors`.
   pageErrors?: string[];
-  // Errors raised while the rerender
-  // pass drove this combo's props into `combos[toComboIndex]`'s props to price
-  // the prop delta. Reported on this row because this row's measurement is
-  // what observed them, excluded from this combo's `renderHealth`,
-  // `harnessFault` and verdict because this combo's own props are not what
-  // was rendering. The window also spans the re-mount that precedes each
-  // delta rerender, so this names a window, never a cause.
+  // Names a window, never a cause: excluded from this combo's renderHealth and verdict.
   transitionPageErrors?: { toComboIndex: number; errors: string[] };
-  // "error" = nothing rendered and the page threw, which can never be a
-  // pass. "empty" = nothing rendered and nothing threw, which is legal.
-  // Absent whenever the combo rendered at least one node.
+  // "error" = nothing rendered and the page threw; "empty" = nothing rendered, nothing threw.
   renderHealth?: "error" | "empty";
-  // The combo rendered something, but not the whole component: either a
-  // compound Root's declared sibling parts never composed in ("uncomposed"),
-  // or a Vue SFC's props were excluded by ADR 0002's TypeScript-only scope
-  // ("propsExcluded"). Absent whenever renderHealth already fully discloses
-  // the combo, and absent whenever no known-excluded shape was hit.
+  // The combo rendered part of the component; "propsExcluded" is ADR 0002's TypeScript scope.
   disclosureReason?: "uncomposed" | "propsExcluded";
-  // Interaction to Next Paint, in ms: the worst input-to-paint gap across
-  // this combo's explored interactions. Absent when exploration produced no
-  // interaction traces for the combo.
+  // Interaction to Next Paint in ms: the worst input-to-paint gap across the interactions.
   inp?: number;
-  // Set when this combo is the auto-scale sibling-copies probe (N whole
-  // extra trees mounted side by side), never a real prop variation. `props`
-  // never carries the `__120fps_scaleN` marker that produced it: this field
-  // is where that identity now lives.
+  // Sibling-copies probe: N extra trees mounted side by side, never a prop variation.
   scaleProbe?: number;
-  // The run applied none of the component's own props,
-  // because a fixture or an auto-composed scene supplied the render instead.
-  // `props: {}` on its own is ambiguous — a component with no props at all
-  // measures the same way — so the fact is stated rather than left to be
-  // inferred from an empty object.
+  // `props: {}` alone is ambiguous: a component with no props at all measures the same.
   measuredWithoutProps?: boolean;
-  // `<use href="#id">` targets this combo's render
-  // referenced and the document never defined. A same-document fragment
-  // reference issues no request, so the network capture is blind to it,
-  // and `<svg>` + `<use>` count as two real nodes — the render measured a
-  // graphic that drew nothing.
+  // `<use href="#id">` targets nothing defined: the render measured a graphic that drew nothing.
   unresolvedSpriteRefs?: string[];
-  // Set when this combo's fatal render crash is attributable to a value
-  // the harness synthesized (a risky `provenance`), not to the component.
-  // The underlying facts (`renderHealth: "error"`, `pageErrors`) stay on the
-  // combo unchanged; only the verdict is demoted (never left at "fail"), and
-  // `report.pass` ignores a combo that carries this field.
+  // The crash came from a synthesized value: the verdict is demoted, `report.pass` ignores it.
   harnessFault?: {
     propName: string;
     value: unknown;
@@ -221,14 +172,9 @@ export interface ScalingPoint {
   heapDelta: number;
   interactions: InteractionReport[];
   costAttribution?: CostAttribution;
-  // The same two-way split combo mode
-  // draws — "error" = nothing rendered and the page threw, "empty" = nothing
-  // rendered and nothing threw (a legal short-circuit, e.g. a component's own
-  // `if (options.length <= 1) return null`). Absent whenever the point
-  // rendered at least one node.
+  // "error" = nothing rendered and the page threw; "empty" = a legal short-circuit.
   renderHealth?: "error" | "empty";
-  // What the page raised while this point was measured, deduped exactly like
-  // a combo's. Absent when the page stayed quiet.
+  // Deduped with a (×N) repeat suffix, exactly like a combo's.
   pageErrors?: string[];
   // This point's React profiler snapshot, when the pass ran.
   reactOptimizations?: ReactOptimizations;
@@ -245,23 +191,13 @@ export interface ScalingCurveReport {
   interactionCurves: Record<string, ScalingCurve>;
   domGrowth: ScalingCurve;
   heapGrowth: ScalingCurve;
-  // Set when the DOM node count never changed across scale points: the growth
-  // class then describes nothing that was measured.
+  // Set when the DOM node count never moved: the growth class then describes nothing.
   domFlat?: boolean;
-  // Present exactly when the curve verdict is `fail`: what was violated and
-  // where, so the reader does not diff each N row against the budget by hand.
+  // Present exactly when the curve verdict is `fail`.
   violation?: CurveViolation;
-  // A structural counterpart to
-  // CURVE_RENDER_ERROR_WARNING's formatted string in report.warnings, so a
-  // consumer (hintsForReport, formatCurveOutput) can detect a broken scale
-  // point without matching a "scale point N=" prose convention. Populated in
-  // runCurveMode at the same point the warning is pushed, so the two never
-  // drift. Absent when every scale point rendered.
+  // Structural counterpart to CURVE_RENDER_ERROR_WARNING, so no consumer matches its prose.
   renderErrorPoints?: CurveRenderErrorPoint[];
-  // The N values left out of every curve fit because they
-  // rendered nothing. A fit over a zero-DOM point describes a render that did
-  // not happen. Absent when every measured point rendered, and absent when
-  // excluding them would leave fewer than two points to fit at all.
+  // N values left out of every fit: a fit over a zero-DOM point describes no render.
   fitExcludedPoints?: number[];
 }
 
@@ -280,8 +216,7 @@ export interface CurveViolation {
   budgetMs?: number;
   // First measured N at or above the budget.
   crossingN?: number;
-  // Largest measured N still under it. Absent when the smallest N already
-  // exceeded: the crossing then lies at or below the sweep's floor.
+  // Largest measured N still under it; absent when the smallest N already exceeded.
   lastPassingN?: number;
   medianMs?: number;
 }
@@ -289,9 +224,7 @@ export interface CurveViolation {
 export interface MatrixAxis {
   propName: string;
   values: unknown[];
-  // An over-wide union (>8 values) becomes an axis over a
-  // truncated value set, so `values.length` is what the matrix offered and
-  // this is what the component declares. Absent when nothing was truncated.
+  // What the component declares; `values.length` is what the truncated axis offered.
   declaredValueCount?: number;
 }
 
@@ -304,12 +237,9 @@ export interface MatrixCell {
   domNodeCount: number;
   tier: ComponentTier;
   verdict: "pass" | "warn" | "fail";
-  // Slowest interaction measured on this cell, or null when interactions were
-  // not explored for it (only the hottest cells are explored).
+  // Null when this cell was not explored; only the hottest cells are.
   worstInteractionMs: number | null;
-  // Copied from the combo this cell projects — combo mode already
-  // carries this mark and JSON field for the identical underlying combo, and
-  // a matrix run over the same component must not silently drop it.
+  // Copied from the combo this cell projects, so a matrix run does not drop the mark.
   disclosureReason?: "uncomposed" | "propsExcluded";
 }
 
@@ -321,10 +251,7 @@ export interface CompoundEffect {
   significance: "high" | "medium" | "low";
 }
 
-// What each declared axis was actually measured at, once the
-// cell cap has taken its slice. `measuredValues < declaredValues` means the
-// header's `a × b` overstates the run; `measuredValues === 1` means the axis
-// was held, and `heldValue` is what it was held at.
+// `measuredValues < declaredValues` means the header's `a × b` overstates the run.
 export interface MatrixAxisCoverage {
   propName: string;
   declaredValues: number;
@@ -335,15 +262,12 @@ export interface MatrixAxisCoverage {
 export interface MatrixReport {
   axes: MatrixAxis[];
   axisCoverage: MatrixAxisCoverage[];
-  // (Lane B `matrixHeldAbsentProps`): non-axis props that no cell
-  // carries at all. A cell that silently lost a prop reads as a cell the
-  // component rendered without it, which is a different measurement.
+  // Non-axis props no cell carries; a silently dropped prop is a different measurement.
   heldAbsentProps?: string[];
   cells: MatrixCell[];
   hotCells: MatrixCell[];
   coldCells: MatrixCell[];
-  // Every failing cell, regardless of mount cost. A cell can fail on an
-  // interaction while mounting cheaply, so it need not appear in hotCells.
+  // A cell can fail on an interaction while mounting cheaply, so hotCells can miss it.
   failingCells: MatrixCell[];
   compoundEffects: CompoundEffect[];
 }
@@ -395,97 +319,62 @@ export interface WrapperReport {
   hasSetup?: boolean;
 }
 
-// files are projectRoot-relative posix paths, in injection order.
 export interface CssReport {
+  // ProjectRoot-relative posix paths, in injection order.
   files: string[];
   autoDetected: boolean;
-  // Which discovery layer decided, so the outcome (including "none") is
-  // always disclosed, never just implied by an omitted key.
+  // Which discovery layer decided, so even "none" is disclosed rather than implied.
   layer:
     | "explicit"
     | "entry-chain"
     | "known-name"
-    // The measured package's own package.json named the
-    // stylesheet (`style`, `exports["./styles"]`, `exports[*].style`), and a
-    // 0-rule passthrough among them had its `@import` targets resolved one
-    // hop. "matched a conventional filename" is false for that pick — the
-    // package declared it, and nothing about the filename was consulted.
+    // The package's own package.json named the stylesheet; no filename convention applied.
     | "package-declared"
     | "largest-fallback"
     | "runtime"
     | "disabled"
     | "none"
-    // A stylesheet was discovered and looked resolvable, but
-    // something it references internally could not be read (Vite's real
-    // PostCSS pipeline is the only thing that ever sees that nested chain);
-    // it was dropped and the run measured unstyled instead of aborting.
-    // `files` is empty, same as "disabled" -- the dropped file names live in
-    // the warning that reported the drop, not here.
+    // Discovered but unreadable: dropped, and the run measured unstyled instead of aborting.
     | "unreadable";
-  // One entry per file in `files`, same order. Computed regardless of layer,
-  // so a near-empty stylesheet is distinguishable from a real one even when
-  // named explicitly via --css.
-  // Populated whenever `layer` is set, including the `unreadable` layer
-  // — an entry there names the file that was dropped and why, so the JSON
-  // says which stylesheet the run measured without instead of carrying an
-  // empty list that reads like "there were none".
-  // `matchedRules` is how many of this sheet's own rules matched at
-  // least one element under `#root` in the measured render. Absent when the
-  // probe did not run (no healthy mount to measure against).
+  // One entry per file in `files`, same order; an `unreadable` layer names the dropped file.
   details?: Array<{
     file: string;
     bytes: number;
     rules: number;
     unreadable?: string;
+    // Rules of this sheet that matched at least one element under `#root`.
     matchedRules?: number;
   }>;
-  // The stylesheets the measured package's own
-  // package.json declares (`style`, `exports[...].style`) whose target is not
-  // on disk yet, as projectRoot-relative posix paths. Present whenever the
-  // manifest declared one, so `layer: "none"` can say "declared, not built"
-  // instead of asserting nothing was declared.
+  // Declared by package.json but not on disk, so `layer: "none"` can say "declared, not built".
   declaredMissing?: string[];
-  // The same declarations with the manifest field that named
-  // each one and the package's own build command, when lane A's producer
-  // supplied them. The `none` branch names the field, the path and the
-  // command; without them it names the paths alone.
+  // The same declarations with the field that named each one and the build command.
   declaredMissingFields?: Array<{ field: string; path: string; buildCommand?: string }>;
   // present only when layer === "runtime"
   runtimeEngines?: string[];
-  // Whether the engines above are ones the
-  // recogniser names. `false` is a read of a `makeStyles`/`styled` import from
-  // a package the list does not carry, which is weaker evidence than a
-  // declared dependency and says so in its own wording. Absent reads as
-  // recognised, matching every producer that only ever resolved from the
-  // closed list.
+  // Absent reads as recognised; `false` is an import from an unlisted package, weaker evidence.
   runtimeEnginesRecognised?: boolean;
   // present only when layer === "largest-fallback"
   onlyCandidate?: boolean;
   noEntryInPackage?: boolean;
 }
 
-// `detected` is the package check, `active` is what actually ran; they diverge
-// when a flag overrides detection or when the package cannot be resolved.
+// `detected` is the package check, `active` is what ran; a flag can make them diverge.
 export interface ReactCompilerReport {
   active: boolean;
   detected: boolean;
   version?: string;
-  // The React major the transform compiled for, and the runtime that
-  // major needs when its absence is what kept the transform from running.
   target?: "17" | "18" | "19";
+  // The runtime that major needs, when its absence is what stopped the transform.
   skipped?: { target: string; missingModule: string };
 }
 
-// Which measurement this report describes. Same vocabulary as
-// `EnvFingerprint.mode`, so a report and the baseline slot it compares against
-// name their mode the same way.
+// Same vocabulary as `EnvFingerprint.mode`, so a report and its baseline slot agree.
 export type ReportMode = "combo" | "curve" | "matrix" | "isolation";
 
 export interface Report {
   version: 1;
   timestamp: string;
-  // Optional: every report written before this field existed, and every
-  // baseline entry, resolves through `deriveReportMode` instead.
+  // Optional: a report without it resolves through `deriveReportMode`.
   mode?: ReportMode;
   machine: MachineInfo;
   componentPath: string;
@@ -512,31 +401,19 @@ export interface Report {
   propPresets?: { path: string; props: string[] };
   // How trustworthy the machine was while this ran.
   noise?: NoiseReport;
-  // Recognizer codes of the project's own Vite transforms that compiled
-  // this run.
+  // Recognizer codes of the project's own Vite transforms that compiled this run.
   projectTransforms?: string[];
-  // Finding classes this run triggered. Ids, never prose: hints can be
-  // reworded without a schema change.
+  // Ids, never prose, so a hint can be reworded without a schema change.
   hints?: HintId[];
-  // Provider-dependent imports the preflight walk found, attached only
-  // when a combo actually failed to render: evidence for the render-error
-  // hint, never a finding on a healthy run.
+  // Attached only when a combo failed to render, never a finding on a healthy run.
   providerCandidates?: string[];
-  // The subset of providerCandidates reached only transitively
-  // (an intermediate file the component imports is what actually reaches
-  // the candidate, not the component itself) -- additive and backward
-  // compatible, so providerCandidates keeps naming every real candidate
-  // unfiltered exactly as before, while hints.ts uses this to pick honest
-  // wording ("component's import graph reaches X" instead of "component
-  // imports X") for exactly the entries listed here.
+  // Candidates reached only through an intermediate file, so hints.ts can word it honestly.
   transitiveProviderCandidates?: string[];
   css?: CssReport;
   reactCompiler?: ReactCompilerReport;
   warnings?: string[];
-  // Verdict reused from a fingerprinted baseline entry: source
-  // unchanged, environment identical, nothing was measured.
+  // Verdict reused from a baseline entry: source unchanged, environment identical.
   cached?: boolean;
-  // Where this run's minutes went. Absent on a cached verdict and on
-  // any report written before this field existed.
+  // Absent on a cached verdict: nothing was measured.
   phaseTimings?: PhaseTimings;
 }

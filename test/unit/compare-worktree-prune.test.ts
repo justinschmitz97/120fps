@@ -5,10 +5,7 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { pruneStaleWorktrees } from "../../src/analysis/index.js";
 
-// M70: a hard-killed --compare leaves <repo>/.git/worktrees/<name> registered
-// with no working directory behind it; nothing today sweeps that. These use a
-// real temp git repository, matching how reference-worktree-linking.test.ts
-// exercises linkNodeModules.
+// M70: a hard-killed --compare leaves a worktree registered with no directory behind it.
 
 function git(args: string[], cwd: string): string {
   return execFileSync("git", args, { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] }).trim();
@@ -37,8 +34,7 @@ describe("pruneStaleWorktrees", () => {
   it("clears a worktree registration whose directory was removed out from under git", () => {
     const worktreeDir = path.join(tmpDir, "orphan");
     git(["worktree", "add", "--detach", worktreeDir, "HEAD"], repoRoot);
-    // Simulates a SIGKILL/OOM that never reached the compare flow's own
-    // `git worktree remove` cleanup: the directory is gone, the metadata isn't.
+    // Simulates a SIGKILL/OOM that never reached the compare flow's own worktree-remove cleanup.
     fs.rmSync(worktreeDir, { recursive: true, force: true });
     expect(git(["worktree", "list"], repoRoot)).toContain("orphan");
 

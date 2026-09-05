@@ -6,10 +6,7 @@ import {
   VUE_OPTIONS_API_PROPS_WARNING,
 } from "../../src/props/index.js";
 
-// ZERO_PROPS_WARNING floats a possible malfunction ("extraction may have
-// failed"). Whenever the same run already named the cause of the zero count,
-// that phrase is false: element-plus-F3 found the pair stacked for a Vue scope
-// exclusion, and M97/M98 add two more causes with the same register.
+// element-plus-F3: ZERO_PROPS_WARNING stacked on an already-named cause is false; M97/M98 add more.
 
 describe("the generic zero-prop hedge yields to a stated cause", () => {
   it("recognizes a Vue scope exclusion", () => {

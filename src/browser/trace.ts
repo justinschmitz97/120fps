@@ -26,16 +26,7 @@ const SCRIPT_EVENT_NAMES = new Set([
   "v8.run",
 ]);
 
-// This bounds the FLUSH -- the window between
-// `Tracing.end` and `Tracing.tracingComplete` -- and nothing else. Arming it
-// before `Tracing.start` instead would cover the traced action too: an
-// `open-close-10` stress pattern on a Radix portal spends 20 clicks at a 3 s
-// `page.click` timeout each, and Radix `modal`'s `body { pointer-events: none }`
-// would make 19 of them time out. 57 s of interaction inside a 60 s window
-// would report itself as a tracing stall, and the raw CDP error would end
-// the run at exit 2. The
-// action is bounded by its caller (the explore pass's remaining wall clock, the
-// rAF fence elsewhere), which is where an action budget belongs.
+// Bounds the flush only: covering the traced action too would make a slow action read as a stall.
 export const TRACE_FLUSH_TIMEOUT_MS = 60_000;
 
 export function parseTraceDuration(events: TraceEvent[]): ParsedDuration {
@@ -74,7 +65,7 @@ export function parseTraceDuration(events: TraceEvent[]): ParsedDuration {
     }
   }
 
-  // Fallback: if no events had timestamps, use the old sum
+  // Without timestamps nesting is undetectable, so this sum can double-count nested events.
   if (xEvents.length === 0 && events.some((e) => e.ph === "X" && typeof e.dur === "number")) {
     for (const event of events) {
       if (event.ph !== "X" || typeof event.dur !== "number") continue;
@@ -102,13 +93,9 @@ export async function collectTrace(
 
   let timer: ReturnType<typeof setTimeout> | undefined;
   let completed = false;
-  // Armed at `Tracing.end`, not here. Declared now because the
-  // listener has to be attached before the action runs, or a fast flush would
-  // resolve into nothing.
+  // Declared here because the listener must attach before the action; armed at `Tracing.end`.
   let armFlushTimeout: () => void = () => {};
-  // Removed in the `finally` too. A trace that throws before the
-  // flush never fires this listener, and consecutive failures would
-  // accumulate them on the same CDP session.
+  // Removed in the `finally` too: a throw before the flush would pile listeners on the session.
   let onComplete: (() => void) | undefined;
   const traceComplete = new Promise<void>((resolve, reject) => {
     armFlushTimeout = () => {
@@ -152,10 +139,7 @@ export async function collectTrace(
     if (timer !== undefined) clearTimeout(timer);
     cdp.off("Tracing.dataCollected", onData);
     if (onComplete) cdp.off("Tracing.tracingComplete", onComplete);
-    // A trace that never completed leaves the session started, and the next
-    // Tracing.start then fails with "already been started": turning one lost
-    // sample into a dead run. Recovery is best-effort and never masks the
-    // original error.
+    // A started session makes the next `Tracing.start` fail with "already been started".
     if (failed) {
       try {
         await cdp.send("Tracing.end");
@@ -173,11 +157,9 @@ export interface MeasureOptions {
   cpuThrottle?: number;
   combos?: PropCombination[];
   warmupRuns?: number;
-  // Reuse pooled browsers (fresh context per session) instead of
-  // launching per pass.
+  // Reuse pooled browsers (fresh context per session) instead of launching per pass.
   pool?: BrowserPool;
-  // Called once per consumed context retry, so a survived reload still reaches
-  // the report instead of vanishing into a slightly slower run.
+  // Called once per consumed context retry, so a survived reload still reaches the report.
   onWarning?: (warning: string) => void;
 }
 
@@ -200,15 +182,11 @@ export interface MountResult {
   mountTraces?: TraceEvent[][];
   // Which frame pacing produced this combo's numbers.
   pacing?: MeasurementPacing;
-  // Everything the page threw or logged as an error while this combo was
-  // measured. Absent when the page stayed quiet.
+  // What the page threw or logged while this combo was measured; absent when it stayed quiet.
   pageErrors?: PageErrorDrain;
-  // How much of `domNodeCount` was rendered outside `#root`.
-  // Absent when the component rendered no portal content, so a report that
-  // never had portals is byte-identical.
+  // How much of `domNodeCount` rendered outside `#root`; absent keeps a portal-free report stable.
   orphanNodes?: number;
-  // `<use href="#id">` references whose id no element in
-  // the document defines. Absent when every sprite reference resolved.
+  // `<use href="#id">` references no element defines; absent when every sprite ref resolved.
   unresolvedSpriteRefs?: string[];
 }
 
@@ -220,17 +198,13 @@ export function buildTimingResult(samples: number[]): TimingResult {
   };
 }
 
-// Errors raised while this combo's props were rerendered into
-// `combos[toComboIndex]`'s props. Neither combo rendered those props on its
-// own, so the errors belong to the transition between the two.
+// Errors belong to the transition: neither combo rendered those props on its own.
 export interface TransitionPageErrors {
   toComboIndex: number;
   errors: PageErrorDrain;
 }
 
-// The prop-change rerender for one combo. `run` receives a callback
-// that closes the combo's OWN error window again, for the mounts of its own
-// props that the rerender loop performs.
+// `run`'s callback reclaims this combo's own error window for the mounts the loop performs.
 export interface TransitionWindow {
   toComboIndex: number;
   run: (claimOwnWindow: () => void) => Promise<void>;
@@ -250,9 +224,7 @@ export interface RerenderResult {
   transitionPageErrors?: TransitionPageErrors;
 }
 
-// The combo that follows `ci`, wrapping at the end of the list, so
-// the last row reports its transition to combo 0 rather than to a row that
-// does not exist.
+// Wraps at the end of the list, so the last row reports its transition to combo 0.
 export function nextComboIndex(comboIndex: number, comboCount: number): number {
   return comboCount > 0 ? (comboIndex + 1) % comboCount : 0;
 }
@@ -262,8 +234,7 @@ export interface MeasureRerenderOptions {
   cpuThrottle?: number;
   warmupRuns?: number;
   combos?: PropCombination[];
-  // Combo indices already known to animate (from the mount pass); they
-  // are measured under vsync pacing from the start.
+  // Combo indices the mount pass saw animate; measured under vsync pacing from the start.
   animatedComboIndices?: number[];
   // Reuse pooled browsers (fresh context per session).
   pool?: BrowserPool;

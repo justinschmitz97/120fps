@@ -19,9 +19,7 @@ function config(body: string): void {
   fs.writeFileSync(path.join(root, "vite.config.ts"), body);
 }
 
-// twenty declares its sass globals as a joined array of @use lines plus a
-// loadPaths entry; none of it reached the harness, so every component that used
-// one of those mixins failed the transform with `Undefined mixin`.
+// twenty: sass globals as a joined @use array plus loadPaths; unread by the harness, mixins failed.
 const TWENTY = `import { defineConfig } from 'vite';
 export default defineConfig({
   css: {
@@ -87,9 +85,7 @@ describe("preprocessor globals a text read can prove", () => {
     expect(data.preprocessorOptions).toBeUndefined();
   });
 
-  // One language's unfoldable additionalData used to set the blanket ignored
-  // key, whose text says preprocessor globals "are not replicated" — false for
-  // the run that replays another language's globals and this one's loadPaths.
+  // An unfoldable additionalData sets the blanket key, wrongly claiming nothing replicated.
   it("names the language and option it dropped instead of the whole block", () => {
     fs.mkdirSync(path.join(root, "src", "styles"), { recursive: true });
     config(

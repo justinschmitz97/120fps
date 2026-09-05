@@ -3,21 +3,12 @@ import fs from "node:fs";
 import type { EnvFingerprint } from "./types.js";
 import { metricsRevision, type Baseline, type BaselineEntry } from "./budget.js";
 
-// One committed baseline meets many machines. Rather than classifying the
-// resulting mismatch after the fact, entries get a slot per environment
-// so the mismatch mostly stops happening.
-//
-// Composite keys rather than a nested object: the map stays
-// `Record<string, BaselineEntry>`, sorted keys still group by component, and a
-// text merge of two branches touching different components still succeeds.
+// One slot per environment, so one committed baseline serves many machines.
 export const BASELINE_VERSION = 2;
 export const LEGACY_ENV_KEY = "legacy";
 const BASELINE_KEY_SEPARATOR = "#";
 
-// Slots are indexed by machine identity, not by measurement conditions.
-// Calibration is excluded: a single sample swings 20–40%, so gating on it
-// would fragment slots by thermal luck. Chromium is keyed by major
-// version only: patch bumps land weekly and have not been shown to move timing.
+// Identity is the machine; calibration is excluded because one sample swings 20–40%.
 export function computeEnvKey(env: EnvFingerprint | undefined): string {
   if (!env) return LEGACY_ENV_KEY;
   const identity = [
@@ -25,6 +16,7 @@ export function computeEnvKey(env: EnvFingerprint | undefined): string {
     env.cpu,
     env.cores,
     env.os,
+    // Major only: weekly patch bumps have not been shown to move timing.
     String(env.chromiumVersion ?? "").split(".")[0],
     env.cpuThrottle,
     env.samples,
@@ -32,8 +24,7 @@ export function computeEnvKey(env: EnvFingerprint | undefined): string {
     (env.css ?? []).join(","),
     env.wrapper ?? "",
     env.reactCompiler ? "1" : "0",
-    // Appended only when it is not React, so every slot written before this
-    // field existed keeps the key it was written under.
+    // Appended only for a non-React framework, so React slots keep a stable key.
     ...(env.framework ? [env.framework] : []),
   ].join("\0");
   return crypto.createHash("sha1").update(identity).digest("hex").slice(0, 8);
@@ -49,8 +40,7 @@ export function parseBaselineKey(key: string): { componentPath: string; envKey: 
   return { componentPath: key.slice(0, at), envKey: key.slice(at + 1) };
 }
 
-// A version-1 file is rekeyed in memory, so every reader sees slots and only
-// `saveBaseline` ever writes the new shape.
+// A version-1 file is rekeyed in memory; only saveBaseline writes the slot shape.
 function migrateEntries(parsed: Baseline): Record<string, BaselineEntry> {
   const entries: Record<string, BaselineEntry> = {};
   for (const [key, entry] of Object.entries(parsed.entries ?? {})) {
@@ -143,13 +133,11 @@ export const NO_ENV_BASELINE_WARNING = (componentPath: string): string =>
 
 export interface BaselineSelection {
   entry: BaselineEntry;
-  // True when no slot matched this environment and another machine's slot was
-  // used instead. Such a comparison informs; it never fails a run.
+  // Set when another machine's slot stood in; such a comparison never fails a run.
   crossEnvironment: boolean;
 }
 
-// Exact slot first. Otherwise the most recently saved slot for the component,
-// so the fallback is at least the freshest thing available.
+// Exact slot first, then the freshest slot saved for the component on any machine.
 export function selectBaselineEntry(
   baseline: Baseline | null,
   componentPath: string,

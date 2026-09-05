@@ -1,10 +1,6 @@
 const noop = () => {};
 
-// A real (non-type-only) runtime export in Next.js — the
-// class useSearchParams() returns. Mirrors real Next.js's own shape: a
-// URLSearchParams subclass whose mutating methods throw, so a component that
-// does `instanceof ReadonlyURLSearchParams` or attempts a mutation sees the
-// same contract it would against the real module.
+// A runtime export in Next.js, so a component's instanceof check has to see this class.
 export class ReadonlyURLSearchParams extends URLSearchParams {
   append(): never {
     throw new TypeError("ReadonlyURLSearchParams cannot be mutated");

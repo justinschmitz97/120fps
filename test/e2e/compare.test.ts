@@ -13,10 +13,7 @@ function gitClean(): boolean {
   }
 }
 
-// Compare refuses to run when the two sides' lockfiles differ, because the
-// reference side resolves through the working tree's install. A tree with
-// uncommitted dependency changes cannot exercise the happy path: that is the
-// guard working, not a failure to test around.
+// Guard, not a gap: a lockfile mismatch changes what the reference side's install resolves to.
 function lockfileMatchesHead(): boolean {
   try {
     execFileSync("git", ["diff", "--quiet", "HEAD", "--", "pnpm-lock.yaml", "package.json"], {
@@ -30,8 +27,7 @@ function lockfileMatchesHead(): boolean {
 
 const COMPARABLE = gitClean() && lockfileMatchesHead();
 
-// Compares a committed fixture against HEAD. The working tree copy is
-// unmodified, so this measures the machinery, not a change.
+// Fixture is committed and unmodified: this measures the machinery, not a change.
 describe("interleaved compare against a git ref", () => {
   it.skipIf(!COMPARABLE)(
     "measures both sides and reports a delta",
@@ -89,11 +85,7 @@ describe("interleaved compare against a git ref", () => {
   it.skipIf(!COMPARABLE)(
     "reports a component that does not exist at the ref",
     async () => {
-      // A tracked fixture would exist in the ref's worktree checkout too, so
-      // testing absence at the ref needs a component real in the working tree
-      // but never committed. mkdtemp under fixtures/ keeps it inside the repo
-      // (compareAgainstRef resolves repoRoot from the component's path) while
-      // staying untracked by construction, mirroring compiler.test.ts.
+      // Must exist in the tree but not at HEAD; mkdtemp under fixtures/ stays in-repo, untracked.
       const dir = fs.mkdtempSync(path.resolve("fixtures", "compare-ref-absent-"));
       const componentPath = path.join(dir, "component.tsx");
       fs.writeFileSync(componentPath, "export default function Untracked() { return null; }\n");

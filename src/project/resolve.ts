@@ -14,11 +14,7 @@ export function RESOLVE_CONDITIONS_WARNING(
   return `resolve.conditions [${conditions.join(", ")}] came from ${source}.`;
 }
 
-// react-aria publishes its subpaths only under
-// the `source` condition the consuming tsconfig declares, with no dist/ to
-// fall back to, and the dev server would answer 500 for every one of them;
-// nothing here ever read customConditions. The vite config's own list stays
-// first, so every export a project already resolved resolves the same way.
+// react-aria publishes subpaths only under the source condition its consumer's tsconfig names.
 export function resolveServerConditions(
   projectRoot: string,
   viteConditions: string[],
@@ -30,6 +26,7 @@ export function resolveServerConditions(
   );
   const declared = governing.options.customConditions ?? [];
   const added = declared.filter((condition) => !viteConditions.includes(condition));
+  // Vite's own list stays first, so every export a project already resolved is unchanged.
   const conditions = [...viteConditions, ...added];
   if (added.length === 0 || !governing.configPath) return { conditions };
   return {
@@ -46,8 +43,7 @@ export function resolveServerConditions(
 export const SOURCE_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".mts", ".cjs", ".cts", ".vue"];
 const EXTENSIONS = [...SOURCE_EXTENSIONS, ".json"];
 
-// A directory import answers through its manifest before its index file,
-// the way node and Vite resolve it.
+// A manifest answers before an index file, the way node and Vite resolve a directory.
 export function resolveDirectoryEntry(dir: string): string | undefined {
   const manifest = readJsonFile(path.join(dir, "package.json"));
   if (typeof manifest !== "object" || manifest === null || Array.isArray(manifest)) return undefined;
@@ -65,9 +61,7 @@ export function resolveDirectoryEntry(dir: string): string | undefined {
   return undefined;
 }
 
-// The root export of an "exports" map, in the order a bundler reads it. Nested
-// condition objects are followed one level, which covers { ".": { import: ... } }
-// and { ".": { node: { import: ... } } }.
+// The root export of an exports map, in the order a bundler reads its conditions.
 function conditionalEntry(value: unknown, depth = 0): string | undefined {
   if (typeof value === "string") return value;
   if (typeof value !== "object" || value === null || Array.isArray(value) || depth > 2) {
@@ -105,19 +99,12 @@ export function resolveTarget(target: string): string | undefined {
   return undefined;
 }
 
-// The alias that resolved a bare specifier matters for shim-usage
-// reporting, not just where it points: a shim alias redirects a real
-// package specifier to a local file, and that specifier is still "imported"
-// even though this function treats the result as local. Returning
-// viaShimAlias lets the caller record it without this function knowing
-// anything about SHIM_MODULES.
-// "no alias matched" and "an alias matched and its target is gone" are
-// different facts. Collapsing them into null would push a stale alias into
-// optimizeDeps.include as if a package by that name existed.
+// Collapsing "no alias" and "alias target gone" would push a ghost package into optimizeDeps.
 type LocalResolution =
   | {
       kind: "resolved";
       path: string;
+      // The caller records a shim-aliased specifier as imported, though it resolves local.
       viaShimAlias: boolean;
       viaWorkspaceRootAlias?: WorkspaceRootAliasSource;
     }
@@ -129,11 +116,7 @@ type LocalResolution =
     }
   | { kind: "unaliased" };
 
-// A package written for NodeNext resolution imports its
-// own modules with the extension of the build output (`./parse-now.js`), and
-// only the TypeScript source is on disk. Without this the walk stops at the
-// first file of an aliased sibling and never sees the siblings that file
-// imports. Same mapping TypeScript itself applies, source extensions only.
+// A NodeNext package imports ./x.js while only the TypeScript source is on disk.
 const TS_COUNTERPARTS: Record<string, string[]> = {
   ".js": [".ts", ".tsx"],
   ".mjs": [".mts"],
@@ -195,8 +178,7 @@ export function resolveLocalImport(
   };
 }
 
-// The manifest fields that can name a runtime entry, in the order the
-// source derivation tries them.
+// The manifest field that named a runtime entry, and the raw value it declared.
 export type DeclaredEntry = { field: string; declared: string };
 
 const EXPORT_ENTRY_CONDITIONS = ["development", "source", "import", "default", "require"];
@@ -229,9 +211,7 @@ export function exportsRootTargets(exportsField: unknown): string[] {
   return exportConditionTargets(record);
 }
 
-// Node's subpath-imports map, the way Vite reads it.
-// The conditions are the browser-development set Vite resolves a dev request
-// with; `types` and `node` deliberately absent, `require` last-resort only.
+// Vite's browser-development set: types and node deliberately absent, require last.
 const SUBPATH_IMPORT_CONDITIONS = [
   "source",
   "development",
@@ -252,8 +232,7 @@ function nearestManifestDir(fromDir: string): string | undefined {
   }
 }
 
-// Conditions are declaration-ordered in Node's algorithm: the first key this
-// resolver recognises wins, and an array is a fallback list.
+// Declaration order decides in Node's algorithm; an array is a fallback list.
 function pickConditionalTarget(value: unknown): string | undefined {
   if (typeof value === "string") return value;
   if (Array.isArray(value)) {
@@ -273,10 +252,7 @@ function pickConditionalTarget(value: unknown): string | undefined {
   return undefined;
 }
 
-// The file a "#"-prefixed specifier names, resolved through the `imports` map
-// of the importer's OWN package (a workspace member's map, not the measured
-// root's). Undefined when no map declares it: that specifier stays unresolved
-// and gets the generic missing-subpath diagnosis, never an optimizeDeps entry.
+// The importer's OWN package map, not the measured root's: a workspace member has its own.
 function pickSubpathImportTarget(
   importerFile: string,
   specifier: string,
@@ -323,11 +299,7 @@ export function resolveSubpathImport(
   return resolveTarget(target);
 }
 
-// An `imports` entry may point at a dependency ("#dep":
-// "lodash-es") instead of a file of the package's own. That edge is an
-// ordinary external import and belongs in the pre-bundle list; dropped, Vite
-// discovers it on the first page load and forces the full reload the
-// pre-bundle list exists to prevent.
+// An imports entry may name a dependency; dropped, Vite full-reloads on first page load.
 export function subpathImportPackage(
   importerFile: string,
   specifier: string,

@@ -35,7 +35,6 @@ describe("Report autoComposition fields", () => {
   it("report includes autoComposition when set in input", () => {
     const input = makeInput();
     const report = buildReport(input);
-    // Default: no autoComposition
     expect(report.autoComposition).toBeUndefined();
   });
 
@@ -63,8 +62,6 @@ describe("Report autoComposition fields", () => {
     expect(report.compositionTree).toEqual(tree);
   });
 });
-
-// ─── M80: disclosureReason downgrades a confident PASS to WARN ───
 
 describe("BuildReportInput.disclosureReason", () => {
   it("is absent by default: no disclosureReason and no verdict change", () => {

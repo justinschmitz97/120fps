@@ -23,7 +23,6 @@ describe("H1: scale function that throws for large N", () => {
   }, 180_000);
 });
 
-// H2: scale(0): zero items
 describe("H2: scale with zero in scale points", () => {
   it("handles scale(0) gracefully (empty render)", async () => {
     const jsonPath = path.join(os.tmpdir(), `120fps-harden-${Date.now()}.json`);
@@ -41,7 +40,6 @@ describe("H2: scale with zero in scale points", () => {
   }, 180_000);
 });
 
-// H8: rerender of component that renders null
 describe("H8: rerender of renders-null component", () => {
   it("produces valid report with rerender timing", async () => {
     const jsonPath = path.join(os.tmpdir(), `120fps-harden-${Date.now()}.json`);

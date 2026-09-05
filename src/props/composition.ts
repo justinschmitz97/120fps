@@ -3,8 +3,7 @@ import path from "node:path";
 import type { ExportInfo, PropSchema } from "./schema.js";
 import type { PropCombination } from "./values.js";
 
-// Props of a composition node. `text` is the payload of `__text__` nodes;
-// it stays inside props so the serialized tree shape is unchanged.
+// `text` is the payload of `__text__` nodes; inside props so the serialized shape is unchanged.
 export type CompositionNodeProps = PropCombination & { text?: string };
 
 export interface CompositionNode {
@@ -64,16 +63,7 @@ function classifySuffix(name: string, rootName: string): SuffixRole {
   return "unknown";
 }
 
-// `classifySuffix` assumes `name` starts with `rootName` (a fixed-length
-// slice), which silently misclassifies a bare Radix-convention alias (`List`
-// vs root `Tabs`: `"List".slice(4)` is `""`, so it reads as "unknown" even
-// though "List" plainly means `list`). Stemming by longest common
-// case-insensitive prefix instead classifies correctly whether the candidate
-// shares a literal prefix with the root (`TabsList` vs `Tabs`), shares none
-// at all (`List` vs `Tabs`), or the root itself carries a suffix the
-// candidate does not (`TabsPanel` vs `TabsRoot`, common stem `Tabs`).
-// Disclosure-only: `inferComposition` and `classifySuffix` are not called
-// from here and are not changed by it.
+// Longest common prefix, so a bare alias (`List` under root `Tabs`) still classifies.
 function classifyByStem(name: string, rootName: string): SuffixRole {
   const lowerName = name.toLowerCase();
   const lowerRoot = rootName.toLowerCase();
@@ -374,9 +364,7 @@ export interface CompositionTrial {
   error?: unknown;
 }
 
-// Structural inference cannot know a library's nesting rules. A tree that
-// mounts to an empty root is not a cheap component, it is a wrong guess, and
-// measuring it produces confident numbers about a scene the user never wrote.
+// An empty root is a wrong guess rather than a cheap component; measuring it invents a scene.
 export function shouldRollbackComposition(trial: CompositionTrial): boolean {
   if (trial.error !== undefined && trial.error !== null) return true;
   return !(trial.rootElements > 0);
@@ -386,19 +374,13 @@ export const COMPOSITION_EMPTY_WARNING = (rootName: string): string =>
   `auto-composed scene for ${rootName} rendered no elements; measured the bare export instead. ` +
   `Write a fixture that renders the real composition and pass --fixture <path>.`;
 
-// A sibling part declared by the measured file itself (a same-file
-// export, or — base-ui's shape — a same-file type-only relative import) that
-// the run never actually composed in.
+// A part the measured file declares (export or type-only relative import) that never composed in.
 export interface DeclaredSibling {
   name: string;
   role: SuffixRole;
 }
 
-// Fires precisely when: composition was not applied for this run, and the
-// file's own exports or same-file type-only relative imports still name at
-// least one part the existing SUFFIX_MAP taxonomy recognizes. Deduplicated by
-// role, not by name, so radix's prefixed/bare-alias pairs (TabsList and List)
-// count once — the first name encountered for a role wins.
+// Deduplicated by role, so an alias pair (TabsList, List) counts once: the first name wins.
 export function declaredCompositionSiblings(
   rootName: string,
   siblingExports: ExportInfo[], // same-file exports, resolved root excluded
@@ -425,13 +407,7 @@ export const UNCOMPOSED_SIBLINGS_WARNING = (root: string, siblings: string[]): s
   `none were composed in: every combo measured the bare ${root} export alone. Try --init-fixture ` +
   `to scaffold a fixture, or compose them yourself and pass --fixture.`;
 
-// Covers base-ui's shape, where the sibling parts a compound Root
-// declares live in adjacent files and never appear as same-file exports —
-// only as same-file type-only relative imports (`TabsRoot.tsx`'s `import
-// type { TabsTab } from '../tab/TabsTab'`). Collects the local name of every
-// `import type { X }` or `import { type X }` specifier whose module
-// specifier starts with `.`. Reads the same file `scanExports`-equivalent
-// export extraction already opens: no directory walk.
+// A compound Root may declare its parts only as type-only relative imports of adjacent files.
 export function scanRelativeTypeImports(sourceText: string, fileName: string): string[] {
   const sourceFile = ts.createSourceFile(fileName, sourceText, ts.ScriptTarget.Latest, false);
   const names: string[] = [];
@@ -461,22 +437,7 @@ export async function extractRelativeTypeImports(filePath: string): Promise<stri
   return scanRelativeTypeImports(sourceText, absolutePath);
 }
 
-// The opposite direction from scanRelativeTypeImports — a
-// file's own JSX return can compose a locally-imported component (an
-// ordinary value import, not type-only) that the import-graph walk never
-// singles out for its own async-ness, because that walk only asks whether
-// entries[0] itself is async. Collects the local import actually used as a
-// JSX tag, so a caller can hand each one to runPreflight as its own
-// entries[0] and reproduce the exact rejection a direct target would get.
-// Every non-type-only import is collected here, not only a `.`-prefixed
-// one -- commerce's real app/page.tsx composes its async children as
-// baseUrl-relative bare specifiers ("components/carousel", no leading "./"),
-// so a dot-prefix filter here would exclude them outright. Whether a given
-// specifier is actually a local project file (kept) or a real npm dependency
-// (not a composed child) needs tsconfig baseUrl/paths context this
-// source-only scan does not have; that classification happens at resolution
-// time in the caller (pipeline/fixtures.ts's resolveRelativeJsxChild), which
-// excludes anything that resolves into node_modules.
+// Bare specifiers count (baseUrl-relative children); resolveRelativeJsxChild drops node_modules.
 export function scanJsxComposedLocalImports(
   sourceText: string,
   fileName: string,
@@ -537,8 +498,7 @@ function renderNode(node: CompositionNode, depth: number): string {
   return `${pad}<${node.component}${props}>\n${inner}\n${pad}</${node.component}>`;
 }
 
-// The tree auto-composition attempted, written out so the user edits a wrong
-// guess instead of starting from an empty file.
+// Writes out the attempted tree so the user edits a wrong guess instead of an empty file.
 export function buildFixtureScaffold(
   stem: string,
   exports: ExportInfo[],
@@ -555,13 +515,11 @@ export function buildFixtureScaffold(
     ? `\n      {/* TODO: place ${unplaced.join(", ")}: auto-composition could not infer where they belong */}`
     : "";
 
-  // A fragment whenever the body is not exactly one element: two siblings
-  // under `return (...)` is a syntax error, and the TODO comment counts.
+  // Two siblings under `return (...)` is a syntax error, and the TODO comment counts as one.
   const needsFragment = tree.structure.length > 1 || todo !== "";
   const inner = needsFragment ? `    <>\n${body}${todo}\n    </>` : `${body}${todo}`;
 
-  // Extensionless: `./x.js` does not resolve to `x.tsx` under every project's
-  // moduleResolution, and Vite resolves the bare specifier in all of them.
+  // Extensionless: `./x.js` misses `x.tsx` under some moduleResolution; Vite resolves the stem.
   return `// Generated by 120fps --init-fixture.
 // Auto-composition inferred a tree for ${tree.root} that rendered nothing, so
 // the run measured the bare export instead. Edit this file to render the real
@@ -576,23 +534,15 @@ ${inner}
 `;
 }
 
-// The never-composed shape has no inferred tree to
-// write out — the run reached its disclosure precisely because `findRoot`
-// found none. The scaffold is the bound root plus one placeholder per declared
-// sibling, so the user edits placement instead of an empty file.
+// findRoot found no tree, so the scaffold is the bound root plus one placeholder per sibling.
 export function buildUncomposedFixtureScaffold(
   stem: string,
   root: string,
   siblings: string[],
-  // The measured file's own exports. A declared sibling that is not among
-  // them is a type-only relative import from another module (base-ui's
-  // shape): importing it here would not resolve, so it stays a placeholder
-  // with no import and the written file still compiles on the re-run this
-  // scaffold advertises.
+  // A sibling missing here is a foreign type-only import; left unimported so the file compiles.
   exports: ExportInfo[] = [],
 ): string {
-  // With no export list the caller knows nothing about the file, so every
-  // declared sibling keeps its named import.
+  // An empty export list means the caller knows nothing, so every sibling keeps its named import.
   const known = exports.length > 0;
   const isValueExport = (name: string): boolean =>
     !known || exports.some((e) => e.name === name && !e.isDefault);
@@ -615,8 +565,7 @@ export function buildUncomposedFixtureScaffold(
     ),
   ].join("\n");
 
-  // Same fragment rule as `buildFixtureScaffold`: two siblings under
-  // `return (...)` is a syntax error, and a comment counts as one.
+  // Same fragment rule as buildFixtureScaffold: two siblings under `return (...)` will not parse.
   const inner = todo === "" ? `      <${root} />` : `    <>\n      <${root} />\n${todo}\n    </>`;
 
   return `// Generated by 120fps --init-fixture.

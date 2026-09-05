@@ -55,8 +55,7 @@ describe("observed interaction windows", () => {
 
       const click = observed.events.find((e) => e.name === "click");
       expect(click).toBeDefined();
-      // The handler blocks 60ms, so the presentation-inclusive duration must
-      // clear the reporting threshold by a wide margin.
+      // Handler blocks 60ms; the duration must clear the threshold by a wide margin.
       expect(click!.durationMs).toBeGreaterThanOrEqual(EVENT_TIMING_THRESHOLD_MS);
       expect(click!.processingMs).toBeGreaterThan(0);
       expect(click!.delayMs).toBeGreaterThanOrEqual(0);
@@ -75,8 +74,7 @@ describe("observed interaction windows", () => {
       await settle(page);
 
       const observed = await readObservedWindow(page);
-      // LoAF is Chromium-only and version-dependent; when present it must carry
-      // real numbers rather than zeros.
+      // LoAF is Chromium-only and version-dependent; when present, values must be non-zero.
       if (observed.longFrames.length > 0) {
         expect(observed.longFrames[0].durationMs).toBeGreaterThan(0);
       }
@@ -96,8 +94,7 @@ describe("observed interaction windows", () => {
       const first = await readObservedWindow(page);
       expect(first.events.length).toBeGreaterThan(0);
 
-      // A fresh window with no interaction in it must be empty, even though the
-      // previous window's entries are still in the buffer.
+      // A fresh window must be empty even though the previous window's entries remain buffered.
       await beginObservedWindow(page);
       await settle(page);
       expect((await readObservedWindow(page)).events).toEqual([]);
@@ -123,9 +120,7 @@ describe("observed interaction windows", () => {
   }, 90000);
 
   it("observes the last interaction without a settle of the caller's own", async () => {
-    // An observer callback is queued after its frame presents, so a read that
-    // followed only the double-rAF fence a stress pattern ends with used to
-    // drop the entry it was opened for.
+    // Observer callbacks queue after their frame presents; a bare double-rAF fence can miss it.
     const { page, harness } = await mounted("./fixtures/m52-slow-click.tsx");
     try {
       await beginObservedWindow(page);
@@ -147,9 +142,7 @@ describe("observed interaction windows", () => {
 // C3: the timing source explore actually uses.
 describe("explore keeps timing with traces", () => {
   it("collects a trace per sample unless observer timing is asked for", async () => {
-    // Event Timing's 16ms floor is an order of magnitude above the per-step cost
-    // of a real component, so the observer path cannot be the default without
-    // reporting fast interactions as free.
+    // Event Timing's 16ms floor dwarfs a real component's cost; as default it would hide fast work.
     const harness = await buildAndServe("./fixtures/aria-tabs.tsx");
     try {
       const results = await explore(harness, {
@@ -177,8 +170,7 @@ describe("Event Timing reporting floor", () => {
       await page.click("button");
       await settle(page);
       const durations = (await readObservedWindow(page)).events.map((e) => e.durationMs);
-      // Every reported entry is at or above the threshold we asked for; nothing
-      // below it is observable, which is what bounds the mapping.
+      // Every entry is at or above the requested threshold; nothing below it is observable.
       expect(durations.every((d) => d >= EVENT_TIMING_THRESHOLD_MS - 1)).toBe(true);
       expect(durations.length).toBeGreaterThan(0);
     } finally {

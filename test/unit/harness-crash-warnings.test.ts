@@ -11,14 +11,6 @@ import {
 } from "../../src/harness/index.js";
 import { analyze } from "../../src/pipeline/index.js";
 
-// M79 behavior 1: two independent places already accumulate diagnostic
-// strings in a local array (harness.ts's buildWarnings, analyze.ts's
-// runWarnings) and both dropped the array on the throw path before this
-// milestone. These tests pin the fix at both layers, plus the M78 loose end
-// (excalidraw-F3's compounding note): a preflight *hard rejection* is a
-// complete diagnosis on its own and must not get accumulated warnings or an
-// unrelated transform note stacked on top of it.
-
 function poolThatThrows(err: unknown): ServerPool {
   return {
     async acquire(): Promise<never> {
@@ -39,10 +31,7 @@ function poolReturning(server: unknown): ServerPool {
   };
 }
 
-// assertReactDomClient's own probes (detectMissingInstall, readReactDomVersion)
-// are pure fs.existsSync / require.resolve checks against the given project
-// root's own node_modules chain — an isolated tmpDir needs a real-looking
-// react-dom on disk, matching react-version-boot-gate.test.ts's own pattern.
+// assertReactDomClient probes are fs.existsSync/require.resolve; needs a real-looking react-dom.
 function installReactDom(root: string): void {
   const pkgDir = path.join(root, "node_modules", "react-dom");
   fs.mkdirSync(pkgDir, { recursive: true });
@@ -63,9 +52,7 @@ describe("M79 1a: buildWarnings survive buildAndServe's throw path", () => {
       path.join(tmpDir, "package.json"),
       JSON.stringify({ dependencies: { react: "18.3.1", "react-dom": "18.3.1", unocss: "0.58.0" } }),
     );
-    // M83 #6: detectUnsupportedStyleEngines now keys on the measured
-    // component's own scanned import graph, not manifest declaration alone —
-    // the component must actually import unocss for the warning to fire.
+    // M83 #6: detectUnsupportedStyleEngines keys on the scanned import graph, not the manifest.
     fs.writeFileSync(
       path.join(tmpDir, "Button.tsx"),
       'import "unocss";\nexport default function Button() { return null; }\n',
@@ -121,10 +108,7 @@ describe("M79 1a: buildWarnings survive buildAndServe's throw path", () => {
   });
 });
 
-// M83 #7: bootServer's catch performed no rmSync, and cleanup() is only
-// reachable on the success path — every crash in this describe block used to
-// leave its .120fps-harness-* directory behind (nuxt-ui F1/F2, mantine F1,
-// dub F1, chakra-ui F3/F4's shape).
+// M83 #7 (nuxt-ui F1/F2, mantine F1, dub F1, chakra-ui F3/F4): bootServer's catch must rmSync too.
 describe("M83 #7: a crashed buildAndServe leaves no harness directory behind", () => {
   let tmpDir: string;
 
@@ -159,8 +143,7 @@ describe("M83 #7: a crashed buildAndServe leaves no harness directory behind", (
     } catch (err) {
       thrown = err as Error;
     }
-    // Confirms the throw site actually created a directory (not a no-op),
-    // so the assertion below is proving removal, not absence-by-accident.
+    // Confirms the throw site created a directory, so this proves removal, not absence by accident.
     expect(thrown!.message).toMatch(/\.120fps-harness-/);
     expect(harnessLeftovers(tmpDir)).toEqual([]);
   });
@@ -172,13 +155,9 @@ describe("M83 #7: a crashed buildAndServe leaves no harness directory behind", (
       });
       expect.unreachable();
     } catch {
-      // expected
+      // Rejection here is expected; only the harness-dir cleanup is under test.
     }
-    // Not covered by the explicit bootServer-catch rmSync (only the
-    // process-exit sweep does): still gone once the process actually exits,
-    // which sweepActiveHarnessDirs (M83 #7, see harness-dir-writability.test.ts)
-    // pins directly. Here: the directory is still tracked, not orphaned from
-    // tracking, which the exit-sweep test file proves is sufficient.
+    // Not the bootServer-catch rmSync; the process-exit sweep covers this (see writability test).
     sweepActiveHarnessDirs();
     expect(harnessLeftovers(tmpDir)).toEqual([]);
   });
@@ -314,17 +293,13 @@ describe("M79 1b + M78 loose end: a preflight hard rejection is not compounded",
       path.join(tmpDir, "package.json"),
       JSON.stringify({ dependencies: { "solid-js": "1.8.0" } }),
     );
-    // A node_modules dir (with solid-js "installed") so detectMissingInstall
-    // is false and the unsupported-framework check — not not-installed — is
-    // the hard hit under test.
+    // solid-js "installed" so detectMissingInstall is false; unsupported-framework is the hit here.
     fs.mkdirSync(path.join(tmpDir, "node_modules", "solid-js"), { recursive: true });
     fs.writeFileSync(
       path.join(tmpDir, "node_modules", "solid-js", "package.json"),
       JSON.stringify({ name: "solid-js", version: "1.8.0", main: "index.js" }),
     );
-    // Imports a css-preprocessor-recognized specifier: transformHits/runWarnings
-    // populate (PROJECT_TRANSFORM_WARNING) before the hard-rejection throws,
-    // exactly excalidraw-F3's mechanism.
+    // theme.scss populates transformHits before the hard rejection throws (excalidraw-F3).
     fs.writeFileSync(
       path.join(tmpDir, "Button.tsx"),
       'import "./theme.scss";\nexport default function Button() { return null; }\n',
@@ -345,20 +320,14 @@ describe("M79 1b + M78 loose end: a preflight hard rejection is not compounded",
     }
     expect(thrown).toBeDefined();
     expect(thrown!.message).toContain("solid-js");
-    // Neither the old transformFailureNote framing nor the new generalized
-    // "Warnings recorded before this failure" block may appear: the hard
-    // rejection is a complete diagnosis (nothing was built), and stacking a
-    // css-preprocessor note on top of it is the compounding bug.
+    // Guard: a hard rejection is a complete diagnosis; a transform note stacked on top is the bug.
     expect(thrown!.message).not.toContain("measured graph imports files this harness cannot compile");
     expect(thrown!.message).not.toContain("Warnings recorded before this failure");
     expect(thrown!.message).not.toContain("[transform:css-preprocessor]");
   });
 });
 
-// M79 gap 3b (taxonomy-F1): readEnvDefines reads .env/.env.local at the
-// member and workspace levels; hasAnyEnvFile answers "does either exist at
-// all", independent of whether it defined a page-visible key, so a fatal
-// page error's remedy line is withheld when the fix would not apply.
+// M79 gap 3b (taxonomy-F1): hasAnyEnvFile answers "does either exist", not "did it define a key".
 describe("M79 gap 3b: hasAnyEnvFile", () => {
   let tmpDir: string;
 
@@ -396,8 +365,7 @@ describe("M79 gap 3b: hasAnyEnvFile", () => {
   });
 
   it("is true even when the file defines no NEXT_PUBLIC_/VITE_ key at all", () => {
-    // hasAnyEnvFile answers "does the file exist", not "would it change
-    // process.env on the page" — readEnvDefines already answers the latter.
+    // hasAnyEnvFile answers "does the file exist", not "would it change process.env".
     fs.writeFileSync(path.join(tmpDir, ".env"), "DATABASE_URL=postgres://x\n");
     expect(hasAnyEnvFile(tmpDir)).toBe(true);
   });
@@ -412,13 +380,7 @@ describe("M79 gap 3b: NO_ENV_FILE_REMEDY_NOTE", () => {
   });
 });
 
-// Wiring: enterHarness (browser/session.ts) and enterHarnessPage (analyze.ts)
-// both race readiness against a fatal page error instead of always waiting
-// out the full timeout, and both compute the env-remedy line lazily from
-// hasAnyEnvFile/NO_ENV_FILE_REMEDY_NOTE. Both functions require a real
-// Playwright Page to exercise end to end (e2e-only per this milestone's
-// constraints); the underlying race/message logic itself is unit-tested
-// directly against page-errors.ts's waitForReadyOrFatal.
+// Needs a real Playwright Page (e2e-only); this only pins that both wire the lazy env-remedy.
 describe("M79 gap 3b: enterHarness/enterHarnessPage wiring", () => {
   const src = (name: string): string => fs.readFileSync(path.resolve("src", name), "utf-8");
 

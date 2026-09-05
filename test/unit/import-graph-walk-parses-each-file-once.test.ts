@@ -6,12 +6,10 @@ import ts from "typescript";
 import { runPreflight } from "../../src/project/index.js";
 import { scanExternalDeps } from "../../src/harness/index.js";
 
-// Two entry components over one shared chain: the second walk must answer from
-// what the first read, and a sweep must not pay for the chain per component.
+// Two entries share one import chain; a second walk must reuse it, not re-walk per component.
 const FIXTURE = path.resolve(import.meta.dirname, "..", "..", "fixtures", "shared-import-graph");
 
-// The project's own SFC parser, reduced to the one thing the import walk reads:
-// the script block's text (same shape as data-file-import-names-its-loader-plugin).
+// Minimal SFC parser stub: only the script block text (mirrors the loader-plugin test's stub).
 const vueCompiler = {
   parse: (source: string) => {
     const match = /<script[^>]*>([\s\S]*?)<\/script>/.exec(source);
@@ -39,8 +37,7 @@ function makeProject(prefix: string, files: Record<string, string>): string {
   return root;
 }
 
-// A rewrite inside one test would race the filesystem's mtime granularity, so
-// the new mtime is stamped explicitly.
+// Explicit mtime avoids racing the filesystem's mtime granularity within one test.
 function rewrite(file: string, content: string): void {
   fs.writeFileSync(file, content);
   const later = new Date(Date.now() + 4000);
@@ -208,9 +205,7 @@ describe("the external dependency walk", () => {
     });
     const entry = path.join(root, "Card.tsx");
 
-    // The memo key carries the caller's channels only where the walk reads
-    // them, so a first walk handed a set that already names "clsx" must not
-    // shorten what a later walk with the same key is told.
+    // Memo key covers only what the walk reads; a prefilled set must not shrink for a later walk.
     const prefilled = new Set<string>(["clsx"]);
     scanExternalDeps(entry, root, [], prefilled);
 
