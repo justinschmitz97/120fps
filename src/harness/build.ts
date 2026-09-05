@@ -44,6 +44,7 @@ import {
   unionCachedDeps,
   type ServerPool,
 } from "./server.js";
+import { loadPostcssConfigPipeline } from "./postcss-config.js";
 import {
   cssImportSpecifier,
   loadTailwind3PostcssPipeline,
@@ -316,9 +317,22 @@ export async function buildAndServe(
   // Without these the page has no `process`, and a component reading process.env throws.
   const define = readEnvDefines(projectRoot, workspaceRoot);
 
+  // postcss-load-config accepts neither a string plugin name nor a [name, options] tuple, and it
+  // resolves from the member instead of the package that declares the plugin, so the harness loads
+  // the config itself and hands Vite the instances.
+  const declaredPostcss =
+    tailwind3Postcss === undefined && styleTooling.postcssConfigFile !== undefined
+      ? await loadPostcssConfigPipeline(
+          styleTooling.postcssConfigFile,
+          projectRoot,
+          workspaceRoot,
+          (warning) => configWarnings.push(warning),
+        )
+      : undefined;
+
   // The rebuilt pipeline wins over the inherited config directory: same config, member's path.
   const postcssOption: string | { plugins: unknown[] } | undefined =
-    tailwind3Postcss ?? styleTooling.postcssConfigDir;
+    tailwind3Postcss ?? declaredPostcss ?? styleTooling.postcssConfigDir;
 
   const bootServer = async (): Promise<ViteDevServer> => {
     const created = await createServer({

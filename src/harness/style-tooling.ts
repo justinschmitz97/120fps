@@ -9,6 +9,13 @@ import {
   readProjectManifest,
   workspaceLevels,
 } from "../project/index.js";
+import {
+  POSTCSS_PLUGIN_UNRESOLVED_WARNING,
+  findPostcssConfigAbove,
+  findPostcssConfigFile,
+  readPostcssPluginDeclarationsAsync,
+  unresolvedPostcssPlugins,
+} from "./postcss-config.js";
 import { isFile, toPosix } from "../shared/index.js";
 
 // What the recogniser can name, not what exists: an unlisted engine reads as "none found".
@@ -127,40 +134,6 @@ export function UNSUPPORTED_STYLE_ENGINE_WARNING(packages: string[]): string {
   );
 }
 
-// postcss-load-config's own search places, minus package.json.
-const POSTCSS_CONFIG_FILES = [
-  "postcss.config.ts",
-  "postcss.config.cts",
-  "postcss.config.mts",
-  "postcss.config.js",
-  "postcss.config.cjs",
-  "postcss.config.mjs",
-  ".postcssrc",
-  ".postcssrc.json",
-  ".postcssrc.yaml",
-  ".postcssrc.yml",
-  ".postcssrc.ts",
-  ".postcssrc.cts",
-  ".postcssrc.mts",
-  ".postcssrc.js",
-  ".postcssrc.cjs",
-  ".postcssrc.mjs",
-];
-
-// Vite's own walk stops at the member when the repository root carries only a lockfile.
-export function findPostcssConfigAbove(
-  memberRoot: string,
-  workspaceRoot: string = findWorkspaceRoot(memberRoot),
-): string | undefined {
-  const hasConfig = (dir: string): boolean =>
-    POSTCSS_CONFIG_FILES.some((name) => isFile(path.join(dir, name)));
-  if (hasConfig(memberRoot)) return undefined;
-  for (const level of workspaceLevels(memberRoot, workspaceRoot).slice(1)) {
-    if (hasConfig(level)) return level;
-  }
-  return undefined;
-}
-
 // Tailwind 3 resolves its config against `process.cwd()`; the member decides, not the shell.
 export const TAILWIND_CONFIG_FILES = [
   "tailwind.config.js",
@@ -168,17 +141,6 @@ export const TAILWIND_CONFIG_FILES = [
   "tailwind.config.mjs",
   "tailwind.config.ts",
 ];
-
-// Vite's own PostCSS search order, so this finds what a run started in the member would.
-function findPostcssConfigFile(memberRoot: string, workspaceRoot: string): string | undefined {
-  for (const level of workspaceLevels(memberRoot, workspaceRoot)) {
-    for (const name of POSTCSS_CONFIG_FILES) {
-      const candidate = path.join(level, name);
-      if (isFile(candidate)) return candidate;
-    }
-  }
-  return undefined;
-}
 
 // Bare `tailwindcss` is the version-3 plugin name; the `@tailwindcss/*` entries are version 4.
 function postcssTextDeclaresBareTailwind(text: string): boolean {
@@ -255,46 +217,6 @@ export function TAILWIND3_CONFIG_MISSING_WARNING(searched: string[], startDir: s
   );
 }
 
-interface PostcssPluginDeclaration {
-  name?: string;
-  options?: unknown;
-  instance?: unknown;
-}
-
-// Loaded, not parsed: a plugin the member instantiated itself passes through untouched.
-async function readPostcssPluginDeclarations(
-  file: string,
-): Promise<PostcssPluginDeclaration[] | undefined> {
-  if (![".js", ".cjs", ".mjs"].includes(path.extname(file))) return undefined;
-  let config: unknown;
-  try {
-    config = createRequire(file)(file);
-  } catch {
-    const mod = (await import(pathToFileURL(file).href)) as { default?: unknown };
-    config = mod.default ?? mod;
-  }
-  const plugins = (config as { plugins?: unknown } | undefined)?.plugins;
-  if (Array.isArray(plugins)) {
-    return plugins.map((entry) => {
-      if (typeof entry === "string") return { name: entry };
-      if (Array.isArray(entry) && typeof entry[0] === "string") {
-        return { name: entry[0], options: entry[1] };
-      }
-      return { instance: entry };
-    });
-  }
-  if (plugins && typeof plugins === "object") {
-    return Object.entries(plugins as Record<string, unknown>)
-      // PostCSS's object form disables a plugin with `false`, so a disabled entry produces none.
-      .filter(([, options]) => options !== false)
-      .map(([name, options]) => ({
-      name,
-      ...(options === true || options === null || options === undefined ? {} : { options }),
-    }));
-  }
-  return undefined;
-}
-
 // A path, not an object: Tailwind's context cache is keyed by the config file path.
 export function writeAnchoredTailwind3Config(
   memberRoot: string,
@@ -341,7 +263,7 @@ export async function loadTailwind3PostcssPipeline(
   onWarning?: (warning: string) => void,
 ): Promise<{ plugins: unknown[] } | undefined> {
   try {
-    const declared = await readPostcssPluginDeclarations(postcssConfigFile);
+    const declared = await readPostcssPluginDeclarationsAsync(postcssConfigFile);
     // A `.ts` config or a non-array/object `plugins` leaves the run on the directory search.
     if (declared === undefined) {
       onWarning?.(
@@ -403,6 +325,8 @@ export interface StyleTooling {
   tailwind: boolean;
   unsupportedEngines: string[];
   postcssConfigDir?: string;
+  // The config the harness loads itself, so postcss-load-config never sees the plugin list.
+  postcssConfigFile?: string;
   tailwind3ConfigPath?: string;
   tailwind3PostcssConfigFile?: string;
   warnings: string[];
@@ -417,17 +341,25 @@ export function resolveStyleTooling(
 ): StyleTooling {
   const unsupportedEngines = detectUnsupportedStyleEngines(projectRoot, workspaceRoot, importedPackages);
   const postcssConfigDir = findPostcssConfigAbove(projectRoot, workspaceRoot);
+  const postcssConfigFile = findPostcssConfigFile(projectRoot, workspaceRoot);
   const tailwind3 = resolveTailwind3Config(projectRoot, workspaceRoot);
   const warnings =
     unsupportedEngines.length > 0 ? [UNSUPPORTED_STYLE_ENGINE_WARNING(unsupportedEngines)] : [];
   if (tailwind3 && tailwind3.configPath === undefined) {
     warnings.push(TAILWIND3_CONFIG_MISSING_WARNING(tailwind3.searched, startDir));
   }
+  // Named before anything compiles, so the dry run and the real run print the same line.
+  if (postcssConfigFile !== undefined) {
+    for (const plugin of unresolvedPostcssPlugins(postcssConfigFile, projectRoot, workspaceRoot)) {
+      warnings.push(POSTCSS_PLUGIN_UNRESOLVED_WARNING(postcssConfigFile, plugin.name, plugin.bases));
+    }
+  }
   return {
     tailwind: detectTailwindVite(projectRoot),
     unsupportedEngines,
     warnings,
     ...(postcssConfigDir ? { postcssConfigDir } : {}),
+    ...(postcssConfigFile ? { postcssConfigFile } : {}),
     ...(tailwind3?.configPath
       ? {
           tailwind3ConfigPath: tailwind3.configPath,

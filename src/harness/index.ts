@@ -6,6 +6,7 @@ export * from "./dirs.js";
 export * from "./entry.js";
 export * from "./env.js";
 export * from "./exports.js";
+export * from "./postcss-config.js";
 export * from "./prebuild.js";
 export * from "./renderer.js";
 export * from "./server.js";
