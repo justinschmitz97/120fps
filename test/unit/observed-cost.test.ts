@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { observedInteractionMs, type ObservedWindow, type ObservedEvent } from "../../src/observers.js";
+import { observedInteractionMs, type ObservedWindow, type ObservedEvent } from "../../src/browser/index.js";
 
 function evt(partial: Partial<ObservedEvent>): ObservedEvent {
   return {
@@ -25,8 +25,7 @@ function win(partial: Partial<ObservedWindow>): ObservedWindow {
 
 describe("observed interaction cost", () => {
   it("counts one user interaction once, at its slowest entry", () => {
-    // Chromium reports pointerdown/pointerup/click for a single click, sharing
-    // an interactionId and ending at the same presentation.
+    // Chromium fires pointerdown/pointerup/click once; same interactionId, same presentation.
     const window = win({
       events: [
         evt({ name: "pointerdown", interactionId: 7, durationMs: 24 }),
@@ -38,9 +37,7 @@ describe("observed interaction cost", () => {
   });
 
   it("does not accumulate the per-ancestor entries of one dispatch", () => {
-    // pointerenter fires on every ancestor and each dispatch target produces its
-    // own entry for the same frame. Measured: 62 entries for 11 clicks, which
-    // summed to 2720ms against 1.8s of wall clock.
+    // pointerenter fires per ancestor; 11 clicks measured 62 entries, 2720ms vs 1.8s wall clock.
     const window = win({
       events: [
         evt({ name: "pointerover", durationMs: 80 }),
@@ -53,9 +50,7 @@ describe("observed interaction cost", () => {
   });
 
   it("reports the slowest interaction of a multi-step window, not their total", () => {
-    // A window covers a whole stress pattern, but Event Timing cannot separate
-    // per-step cost from overlapping entries, so the number is a maximum and
-    // callers must not divide it by the step count.
+    // Event Timing cannot separate per-step cost; report the max, don't divide by step count.
     const window = win({
       events: [
         evt({ interactionId: 1, durationMs: 32 }),
@@ -67,8 +62,7 @@ describe("observed interaction cost", () => {
   });
 
   it("falls back to long-frame blocking time when no event was observable", () => {
-    // Every event sat under the 16ms floor; the frame that blocked is then the
-    // only thing left to report.
+    // Every event sat under the 16ms floor; the blocking frame is the only signal left.
     const window = win({
       events: [],
       longFrames: [

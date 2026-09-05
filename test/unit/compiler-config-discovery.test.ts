@@ -2,8 +2,8 @@ import { describe, it, expect, afterAll } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { findCompilerConfig } from "../../src/project-model.js";
-import { loadTsconfigAliases } from "../../src/harness.js";
+import { findCompilerConfig } from "../../src/project/index.js";
+import { loadTsconfigAliases } from "../../src/project/index.js";
 
 const cleanupDirs: string[] = [];
 
@@ -90,14 +90,7 @@ describe("aliases inherited from an ancestor config", () => {
     expect(aliases[0].replacement).toBe(`${fwd(dir)}/repo/packages/ui/src/`);
   });
 
-  // M76 (was "the member's own config wins over the workspace root config",
-  // and asserted the root's differently-named pattern was absent entirely).
-  // M69's nearest-wins contract for a NAME the member itself declares is
-  // unchanged and still covered below; but a member having its own tsconfig
-  // no longer blocks a workspace-root pattern the member's config never
-  // mentions at all — that pattern is now an additive fallback layer, not
-  // climbed past. See specs/milestones/m76-layered-alias-resolution.md
-  // ("Changed contracts").
+  // M76 (02-milestones.md): an unmentioned root pattern is now an additive fallback layer.
   it("the member's own config wins for a pattern it declares; the workspace root's differently-named pattern is layered in as a fallback", () => {
     const dir = mkWorkspace({
       "repo/tsconfig.json": JSON.stringify({

@@ -3,8 +3,8 @@ import path from "node:path";
 import fs from "node:fs";
 import os from "node:os";
 import { chromium, type Browser } from "playwright";
-import { buildAndServe, type HarnessResult } from "../../src/harness.js";
-import { detectAnimations } from "../../src/measure.js";
+import { buildAndServe, type HarnessResult } from "../../src/harness/index.js";
+import { detectAnimations } from "../../src/browser/index.js";
 import { sharedAnalyze as analyze } from "./shared-analyze.js";
 
 let browser: Browser;
@@ -13,8 +13,7 @@ afterAll(async () => {
   if (browser) await browser.close();
 });
 
-// A plain vsync browser: the measurement args put Chromium on driven frames,
-// where rAF only advances when a CDP beginFrame is issued.
+// Chromium runs on driven frames here: rAF only advances when a CDP beginFrame is issued.
 async function opened(fixture: string): Promise<{ page: import("playwright").Page; harness: HarnessResult }> {
   browser ??= await chromium.launch({ headless: true });
   const harness = await buildAndServe(fixture);

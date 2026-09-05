@@ -4,9 +4,9 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { chromium, type Browser, type Page } from "playwright";
-import { buildAndServe, type HarnessResult } from "../../src/harness.js";
-import { FONT_SETTLE_WARNING } from "../../src/measure.js";
-import { attachPageErrorCapture, type PageErrorCapture } from "../../src/page-errors.js";
+import { buildAndServe, type HarnessResult } from "../../src/harness/index.js";
+import { FONT_SETTLE_WARNING } from "../../src/browser/index.js";
+import { attachPageErrorCapture, type PageErrorCapture } from "../../src/browser/index.js";
 import { sharedAnalyze as analyze } from "./shared-analyze.js";
 
 let browser: Browser | undefined;
@@ -55,7 +55,6 @@ function tmpJson(): string {
   );
 }
 
-// H8: injection combined with a wrapper that imports its own stylesheet
 describe("H8: --css alongside a wrapper stylesheet", () => {
   it("applies both, with the wrapper import last in the cascade", async () => {
     const harness = await buildAndServe("./fixtures/theme-probe.tsx", {
@@ -125,11 +124,9 @@ describe("H10: font settle timeout", () => {
   }, 300000);
 });
 
-// H12: @tailwindcss/vite present in the project's own node_modules,
-// alongside a postcss.config.* in the same project (open question 3)
+// Combined with the project's own postcss.config.*: two build-tool integrations at once.
 describe("H12: @tailwindcss/vite plugin path", () => {
-  // M73: buildAndServe refuses a React project whose react-dom has no client
-  // entry, so a fabricated project booting a real server owns a resolvable one.
+  // M73: buildAndServe requires a resolvable react-dom client entry; this fabricates one.
   function installReactDom(projectRoot: string): void {
     const pkgDir = path.join(projectRoot, "node_modules", "react-dom");
     fs.mkdirSync(pkgDir, { recursive: true });
@@ -185,10 +182,7 @@ describe("H12: @tailwindcss/vite plugin path", () => {
     }
   }, 120000);
 
-  // Half-installed rather than absent: vitest exports NODE_PATH into pnpm's
-  // hoisted store, so a package another fixture depends on resolves from any
-  // directory in-process. A broken main fails the load deterministically, which
-  // is the case the contract is about.
+  // Broken main, not absence: vitest's inherited NODE_PATH would resolve the package elsewhere.
   it("continues without the plugin when it is listed but cannot be loaded", async () => {
     const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "120fps-twvite-miss-"));
     fs.writeFileSync(
@@ -229,7 +223,6 @@ describe("H12: @tailwindcss/vite plugin path", () => {
   }, 120000);
 });
 
-// H14: syntax error inside a PostCSS-configured project
 describe("H14: stylesheet syntax error", () => {
   it("reaches the user as a page error, not a bare timeout", async () => {
     const harness = await buildAndServe("./fixtures/css-tailwind/app/Card.tsx", {
@@ -250,7 +243,6 @@ describe("H14: stylesheet syntax error", () => {
   }, 120000);
 });
 
-// H15: a stylesheet referencing a font that 404s
 describe("H15: unreachable font file", () => {
   it("still mounts and applies the rest of the stylesheet", async () => {
     const harness = await buildAndServe("./fixtures/css-font/app/Probe.tsx", {
@@ -271,7 +263,6 @@ describe("H15: unreachable font file", () => {
   }, 120000);
 });
 
-// H16: paths containing spaces
 describe("H16: stylesheet path with spaces", () => {
   it("injects and applies it", async () => {
     const harness = await buildAndServe("./fixtures/spaced dir/spaced-comp.tsx", {
@@ -292,7 +283,6 @@ describe("H16: stylesheet path with spaces", () => {
   }, 120000);
 });
 
-// H17: the injected file is also imported by the component's own module graph
 describe("H17: stylesheet already in the component graph", () => {
   it("applies once and does not error", async () => {
     const harness = await buildAndServe("./fixtures/with-css.tsx", {
@@ -319,7 +309,6 @@ describe("H17: stylesheet already in the component graph", () => {
   }, 120000);
 });
 
-// H20: Report.css survives the JSON round trip
 describe("H20: report serialization", () => {
   it("writes the stylesheet block to the JSON report", async () => {
     const jsonPath = tmpJson();

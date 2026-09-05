@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { sameMachineIdentity, buildEnvFingerprint, METRICS_REVISION } from "../../src/budget.js";
-import type { EnvFingerprint, MachineInfo } from "../../src/report.js";
+import { sameMachineIdentity, buildEnvFingerprint, METRICS_REVISION } from "../../src/report/index.js";
+import type { EnvFingerprint, MachineInfo } from "../../src/report/index.js";
 
 const machine: MachineInfo = {
   cpu: "Test CPU",
@@ -26,8 +26,7 @@ function env(overrides: Partial<EnvFingerprint> = {}): EnvFingerprint {
 
 describe("sameMachineIdentity", () => {
   it("holds for the same machine even when calibration drifted wildly", () => {
-    // The whole point: a single calibration sample swings 20-40% on a real
-    // machine; drift changes measured values, not the verdict of unchanged code.
+    // A single calibration sample swings 20-40%; that drift must not flip the identity verdict.
     expect(sameMachineIdentity(env(), env({ calibrationTotalDuration: 90 }))).toBe(true);
   });
 

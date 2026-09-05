@@ -1,6 +1,6 @@
 import { describe, it, expect, afterAll } from "vitest";
 import { chromium, type Browser, type Page } from "playwright";
-import { buildAndServe } from "../../src/harness.js";
+import { buildAndServe } from "../../src/harness/index.js";
 
 let browser: Browser;
 
@@ -14,7 +14,6 @@ async function gotoAndMount(page: Page, url: string, props: any = {}) {
   await page.evaluate((p: any) => (window as any).__120fps.mount(p), props);
 }
 
-// H11: Class component renders in harness
 describe("H11: class component harness", () => {
   it("renders class component", async () => {
     browser = await chromium.launch({ headless: true });
@@ -33,7 +32,6 @@ describe("H11: class component harness", () => {
   });
 });
 
-// H12: React.FC renders in harness
 describe("H12: React.FC harness", () => {
   it("renders FC component", async () => {
     if (!browser) browser = await chromium.launch({ headless: true });
@@ -52,7 +50,6 @@ describe("H12: React.FC harness", () => {
   });
 });
 
-// H18: HTMLAttributes component renders
 describe("H18: HTMLAttributes harness", () => {
   it("renders component extending HTMLAttributes", async () => {
     if (!browser) browser = await chromium.launch({ headless: true });
@@ -71,7 +68,7 @@ describe("H18: HTMLAttributes harness", () => {
   });
 });
 
-// H24: Component that throws: no auto-mount, so mount with valid props directly
+// Throwing component gets no auto-mount; mount directly with valid props once the API is ready.
 describe("H24: throw-on-render harness", () => {
   it("harness loads and Control API works with valid props", async () => {
     if (!browser) browser = await chromium.launch({ headless: true });
@@ -100,7 +97,6 @@ describe("H24: throw-on-render harness", () => {
   });
 });
 
-// H26: file with spaces in path
 describe("H26: spaces in path harness", () => {
   it("renders component from directory with spaces", async () => {
     if (!browser) browser = await chromium.launch({ headless: true });
@@ -119,7 +115,6 @@ describe("H26: spaces in path harness", () => {
   });
 });
 
-// H27: two named exports: harness picks first one
 describe("H27: two named exports harness", () => {
   it("renders the first exported component", async () => {
     if (!browser) browser = await chromium.launch({ headless: true });
@@ -138,7 +133,6 @@ describe("H27: two named exports harness", () => {
   });
 });
 
-// H28: double-wrapped component renders
 describe("H28: memo(forwardRef) harness", () => {
   it("renders double-wrapped component", async () => {
     if (!browser) browser = await chromium.launch({ headless: true });
@@ -157,7 +151,6 @@ describe("H28: memo(forwardRef) harness", () => {
   });
 });
 
-// H30: useEffect component renders and ticks
 describe("H30: useEffect harness", () => {
   it("renders component with useEffect and triggers lifecycle", async () => {
     if (!browser) browser = await chromium.launch({ headless: true });

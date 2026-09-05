@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
-import { computeSourceFingerprint } from "../../src/budget.js";
-import { projectSourceFiles } from "../../src/prop-gen.js";
+import { computeSourceFingerprint } from "../../src/report/index.js";
+import { projectSourceFiles } from "../../src/props/index.js";
 
 const ROOT = path.resolve(".");
 

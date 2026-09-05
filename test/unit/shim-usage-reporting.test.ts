@@ -2,16 +2,9 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { scanExternalDeps } from "../../src/harness.js";
+import { scanExternalDeps } from "../../src/harness/index.js";
 
-// M62: activeShims/report.nextJsShims was always undefined because a shim
-// alias's replacement resolves to a real local file, so the import got
-// queued as "local" and never reached the branch that records the specifier
-// for shim-usage reporting. These tests reproduce that at the
-// scanExternalDeps level with a synthetic alias whose target is a real file
-// on disk (mirroring dist/shims/*.js in production): independent of
-// whether the shim source is compiled, so it fails deterministically on the
-// pre-fix code regardless of build state.
+// M62: a shim alias resolving to a local file got queued as local, skipping usage reporting.
 
 let tmpDir: string;
 

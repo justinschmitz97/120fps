@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { buildAndServe } from "../../src/harness.js";
-import { runReactAnalysis } from "../../src/react-profiler.js";
+import { buildAndServe } from "../../src/harness/index.js";
+import { runReactAnalysis } from "../../src/analysis/index.js";
 
 async function deltasFor(fixture: string, fnPropNames: string[]) {
   const harness = await buildAndServe(fixture);
@@ -13,8 +13,7 @@ async function deltasFor(fixture: string, fnPropNames: string[]) {
 }
 
 describe("callback identity edge cases", () => {
-  // H10: the shape that produced the dogfood false positives: expensive tree,
-  // no memoization, callback never forwarded. Both arms do identical work.
+  // H10: expensive tree, no memoization, callback never forwarded; both arms do identical work.
   it("never reports a callback the component ignores", async () => {
     expect(await deltasFor("./fixtures/m66-no-memo.tsx", ["onAction"])).toHaveLength(0);
   }, 240_000);
@@ -24,8 +23,7 @@ describe("callback identity edge cases", () => {
     expect(await deltasFor("./fixtures/m66-useref-callback.tsx", ["onAction"])).toHaveLength(0);
   }, 240_000);
 
-  // H8: the component rebinds the callback itself, so the caller's identity
-  // cannot change what renders.
+  // H8: the component rebinds the callback itself; caller identity cannot change what renders.
   it("never reports a callback the component rebinds on every render", async () => {
     expect(await deltasFor("./fixtures/m66-rebound-callback.tsx", ["onAction"])).toHaveLength(0);
   }, 240_000);
@@ -37,8 +35,7 @@ describe("callback identity edge cases", () => {
     expect(deltas[0].freshMs!).toBeGreaterThan(deltas[0].stableMs! * 3);
   }, 240_000);
 
-  // H7: a dispatch reaching the component through context is not a prop, so
-  // there is nothing to probe and nothing to report.
+  // H7: a dispatch reaching the component via context is not a prop; there is nothing to probe.
   it("reports nothing when the component has no function props", async () => {
     expect(await deltasFor("./fixtures/m66-usereducer-dispatch.tsx", [])).toHaveLength(0);
   }, 240_000);

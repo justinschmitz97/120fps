@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
 import path from "node:path";
-import { extractProps } from "../../src/prop-gen.js";
-import { resolveAnchorValue } from "../../src/prop-gen-values.js";
-import type { PropSchema } from "../../src/prop-gen.js";
+import { extractProps } from "../../src/props/index.js";
+import { resolveAnchorValue } from "../../src/props/index.js";
+import type { PropSchema } from "../../src/props/index.js";
 
 const M81 = path.resolve("./fixtures/m81");
 const fixture = (name: string): string => path.join(M81, name);
@@ -13,8 +13,7 @@ const get = (schemas: PropSchema[], name: string): PropSchema => {
   return found;
 };
 
-// M81 3a: structural iterables get a real, exercised array value instead of
-// falling to opaqueReason's generic branch and synthesizing `{}`.
+// M81 3a: a structural iterable must get a real array, not opaqueReason's generic {} fallback.
 describe("M81 3a: Iterable<T> synthesizes a real array", () => {
   it("items is a real array, not an opaque object", async () => {
     const schemas = await extractProps(fixture("iterable-prop.tsx"));
@@ -37,8 +36,7 @@ describe("M81 3a: Iterable<T> synthesizes a real array", () => {
   });
 });
 
-// M81 3b: a ReactElement | render-function union is not classified as
-// reactnode; it falls to objectSchema's opaque path and is marked degenerate.
+// M81 3b: ReactElement | render-function must not classify as reactnode; it's degenerate.
 describe("M81 3b: ReactElement | Function is not ReactNode", () => {
   it("render classifies as an opaque object, not reactnode", async () => {
     const schemas = await extractProps(fixture("render-prop.tsx"));
@@ -54,8 +52,7 @@ describe("M81 3b: ReactElement | Function is not ReactNode", () => {
   });
 });
 
-// M81 3c: a degenerate object/reactnode schema resolves to `undefined`, not a
-// fabricated stand-in, when nothing overrides it.
+// M81 3c: a degenerate schema resolves to undefined, never a fabricated stand-in.
 describe("M81 3c: degenerate schemas never fabricate a stand-in value", () => {
   it("resolveAnchorValue returns undefined for a degenerate object schema", () => {
     const schema: PropSchema = {
@@ -95,9 +92,7 @@ describe("M81 3c: degenerate schemas never fabricate a stand-in value", () => {
   });
 });
 
-// M81 3d: commerce-F1. A narrow, named allowlist of prop-name conventions
-// replaces the generic "test" placeholder for the one repeatedly-observed
-// false-FAIL class (Intl construction).
+// M81 3d (commerce-F1): a named allowlist replaces the placeholder for Intl-validated strings.
 describe("M81 3d: named runtime-validated string conventions", () => {
   it("currencyCode synthesizes a real ISO 4217 code, not the generic placeholder", async () => {
     const schemas = await extractProps(fixture("currency-prop.tsx"));

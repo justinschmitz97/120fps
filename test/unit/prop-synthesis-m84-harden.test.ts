@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import path from "node:path";
-import { extractProps, resetExtractionCache } from "../../src/prop-gen.js";
+import { extractProps, resetExtractionCache } from "../../src/props/index.js";
 
 const M84 = path.resolve("./fixtures/m84");
 const fixture = (name: string): string => path.join(M84, name);
@@ -47,8 +47,7 @@ describe("M84 harden", () => {
     resetExtractionCache();
     const schemas = await extractProps(fixture("harden.tsx"), { target: "ArrayOfCurrency" });
     const currencyCodes = schemas.find((s) => s.name === "currencyCodes")!;
-    // Documents current behavior: the heuristic is name-based per FIELD, and
-    // an array element has no field name of its own to test.
+    // The heuristic is name-based per field; an array element has no field name of its own.
     expect(currencyCodes.elementTemplate).toBe("text");
   });
 
@@ -112,8 +111,7 @@ describe("M84 harden", () => {
     await extractProps(fixture("harden.tsx"), { target: "DeepNest" });
     const firstCount = stderr.lines().length;
     await extractProps(fixture("harden.tsx"), { target: "DeepNest" });
-    // warnOnce dedupes by file+kind; a dry-run sink is not used here so the
-    // process-wide warnOnce guard applies (no unbounded growth on re-extraction).
+    // warnOnce dedupes by file+kind; the process-wide guard caps growth across re-extraction.
     expect(stderr.lines().length).toBeLessThanOrEqual(firstCount + 1);
   });
 

@@ -6,13 +6,9 @@ import {
   type ComboReport,
   type MatrixAxis,
   type Report,
-} from "../../src/report.js";
+} from "../../src/report/index.js";
 
-// M91 (primevue-F2): combo mode already carries the `[props excluded]`/
-// `[uncomposed]` mark and `disclosureReason` in both its console row and its
-// JSON. Matrix mode measures the identical underlying combos and dropped
-// both — the cell table showed a bare verdict, and matrixReport.cells had no
-// disclosureReason key at all, even though the projected combo did.
+// M91: matrix mode dropped the [props excluded]/[uncomposed] mark combo mode already carries.
 
 function makeCombo(
   comboIndex: number,

@@ -3,7 +3,7 @@ import {
   createFramePump,
   MEASUREMENT_BROWSER_ARGS,
   FRAME_PUMP_WARNING,
-} from "../../src/measure.js";
+} from "../../src/browser/index.js";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -44,8 +44,7 @@ describe("createFramePump", () => {
   it("sends beginFrame continuously until stopped, then stops sending", async () => {
     const { session, calls } = okSession();
     const pump = createFramePump({ cdp: session });
-    // Windows timer granularity is ~15ms, so the mock's 1ms sleep really
-    // takes ~15ms per frame: windows are sized for that.
+    // Windows timer granularity is ~15ms, so the mock's 1ms sleep really takes ~15ms per frame.
     await sleep(150);
     await pump.stop();
     const countAtStop = calls.length;

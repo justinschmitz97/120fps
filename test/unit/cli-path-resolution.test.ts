@@ -8,7 +8,7 @@ import {
   hasComponentShape,
   NO_COMPONENT_EXPORT_ERROR,
   type PathReader,
-} from "../../src/cli.js";
+} from "../../src/cli/index.js";
 
 // Injected filesystem so the contract is testable without touching disk.
 function reader(tree: Record<string, "file" | "dir">): PathReader {
@@ -67,11 +67,7 @@ describe("component file recognition", () => {
   });
 });
 
-// M77: `.ts`/`.js` are now legal extensions, gated by hasComponentShape
-// rather than accepted on extension alone. `.tsx`/`.jsx`/`.vue` short-circuit
-// true with no content read (asserted implicitly above: those tests use
-// fake, non-existent paths and still pass), so only the new `.ts`/`.js`
-// branch needs real files on disk.
+// M77: `.ts`/`.js` are legal, gated by hasComponentShape; this branch needs real files on disk.
 describe("the .js/.ts entry gate (M77)", () => {
   let tmpDir: string;
 
@@ -236,17 +232,13 @@ describe("path expansion", () => {
   });
 
   it("does not reach the extension check for a missing plain file", () => {
-    // Existence is checked first: a missing file still gets the specific
-    // "File not found" message, not the extension message.
+    // Existence is checked first: a missing file gets "File not found", not the extension message.
     const result = expandComponentPaths(["src/ghost.md"], reader(TREE));
     expect(result.error).toContain("File not found");
   });
 });
 
-// nodePathReader().walk resolves its root with path.resolve before recursing
-// (src/cli.ts:1171), so every path it returns is absolute — unlike the
-// relative-path fixture above. A fake reader built the same way reproduces
-// the production shape and is the only way to exercise M67's fix.
+// nodePathReader().walk resolves its root before recursing, so every path it returns is absolute.
 describe("path expansion against an absolute-path filesystem", () => {
   function absoluteReader(relativeFiles: string[]): PathReader {
     const absFiles = relativeFiles.map((f) => path.resolve(f));
@@ -297,12 +289,7 @@ describe("path expansion against an absolute-path filesystem", () => {
   });
 });
 
-// A pattern typed as an absolute path (`C:/repo/src/**/*.tsx`,
-// `/repo/src/**/*.tsx`) is already anchored to the same frame
-// nodePathReader().walk returns, so relativizing the walked path to cwd (the
-// M67 fix above) makes it never match. This reader returns exactly the
-// absolute paths it is given, filtered on a posix-normalized prefix, so the
-// test is independent of how the host platform's own path.resolve behaves.
+// M67: an absolute-path pattern never matches a cwd-relativized walk; this reader stays absolute.
 function fixedFilesReader(files: string[]): PathReader {
   return {
     exists: () => false,
@@ -355,7 +342,7 @@ describe("path expansion for an absolute glob pattern", () => {
   });
 });
 
-import { resolveReportPaths } from "../../src/cli.js";
+import { resolveReportPaths } from "../../src/cli/index.js";
 
 describe("--json survives expansion into many components", () => {
   it("keeps the exact path for a single component", () => {
@@ -379,8 +366,7 @@ describe("--json survives expansion into many components", () => {
   });
 
   it("disambiguates report names that collide only in case", () => {
-    // 120fps-report.Card.json and 120fps-report.card.json are the same file
-    // on NTFS/APFS; the second write must not silently clobber the first.
+    // Card.json and card.json collide on NTFS/APFS; the second write must not clobber the first.
     const out = resolveReportPaths(["src/Card.tsx", "src/legacy/card.tsx"]);
     expect(new Set(out.map((p) => p.toLowerCase())).size).toBe(2);
   });

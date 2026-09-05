@@ -10,7 +10,7 @@ import {
   type MatrixReport,
   type Report,
   type ScalingCurveReport,
-} from "../../src/report.js";
+} from "../../src/report/index.js";
 import {
   NOISY_RUN_WARNING,
   HOSTILE_RUN_WARNING,
@@ -18,13 +18,11 @@ import {
   HOSTILE_BASELINE_NOTE,
   formatNoiseWarning,
   type NoiseReport,
-} from "../../src/noise.js";
-import { OBSERVED_ANIMATION_EXPRESSION } from "../../src/measure.js";
-import { FIBER_TYPE_NAME_SOURCE, PROFILER_HOOK_SCRIPT } from "../../src/react-profiler.js";
-import { helpText, formatJsonSplitNotice } from "../../src/cli.js";
-import { formatMarkdown } from "../../src/ci-report.js";
-
-// --- shared fixtures ---
+} from "../../src/browser/index.js";
+import { OBSERVED_ANIMATION_EXPRESSION } from "../../src/browser/index.js";
+import { FIBER_TYPE_NAME_SOURCE, PROFILER_HOOK_SCRIPT } from "../../src/analysis/index.js";
+import { helpText, formatJsonSplitNotice } from "../../src/cli/index.js";
+import { formatMarkdown } from "../../src/report/index.js";
 
 const baseMachine = {
   cpu: "Test", cores: 4, ramMb: 16384,
@@ -117,10 +115,6 @@ function makeCurve(): ScalingCurveReport {
   };
 }
 
-// ====================================================================
-// 1: compound-effect sign
-// ====================================================================
-
 describe("compound-effect sign", () => {
   it("reads 'below additive expectation' for a negative delta", () => {
     const report = makeReport({
@@ -173,10 +167,6 @@ describe("compound-effect sign", () => {
   });
 });
 
-// ====================================================================
-// 2: WARN rollup note
-// ====================================================================
-
 describe("WARN rollup note", () => {
   it("explains WARN rows sitting under Result: PASS", () => {
     const report = makeReport({
@@ -220,10 +210,6 @@ describe("WARN rollup note", () => {
     expect(table).toContain("1 of 2 cells warned; warnings do not fail the run.");
   });
 });
-
-// ====================================================================
-// 3: noise warning wording
-// ====================================================================
 
 function noise(level: NoiseReport["level"], overrides: Partial<NoiseReport["signals"]> = {}): NoiseReport {
   return {
@@ -285,9 +271,10 @@ describe("noise warning wording", () => {
     expect(table).not.toContain(HOSTILE_BASELINE_NOTE);
   });
 
-  it("adds the baseline clause in the terminal when a baseline was compared", () => {
+  // specs/milestones/m117-output-that-respects-the-reader.md C5/C6: terminal omits baseline clause.
+  it("keeps the baseline clause in the JSON text and out of the terminal", () => {
     const report = makeReport({
-      warnings: [HOSTILE_RUN_WARNING],
+      warnings: [formatNoiseWarning(noise("hostile"), true)],
       noise: noise("hostile"),
       baseline: {
         hasBaseline: true,
@@ -296,7 +283,10 @@ describe("noise warning wording", () => {
         skippedNoisy: true,
       },
     });
-    expect(formatTable(report)).toContain(HOSTILE_BASELINE_NOTE);
+    expect(report.warnings![0]).toContain(HOSTILE_BASELINE_NOTE);
+    const table = formatTable(report);
+    expect(table).not.toContain(HOSTILE_BASELINE_NOTE);
+    expect(table).toContain("raise --samples to measure through it.");
   });
 
   it("leaves unrelated warnings untouched", () => {
@@ -304,10 +294,6 @@ describe("noise warning wording", () => {
     expect(formatTable(report)).toContain("⚠ something else entirely");
   });
 });
-
-// ====================================================================
-// 4: report.mode discriminator
-// ====================================================================
 
 describe("report.mode discriminator", () => {
   it("derives combo mode", () => {
@@ -347,10 +333,6 @@ describe("report.mode discriminator", () => {
     expect(formatMarkdown([report])).toContain("linear");
   });
 });
-
-// ====================================================================
-// 5: empty React Optimizations sections
-// ====================================================================
 
 describe("empty React Optimizations sections", () => {
   it("omits the header when every combo detected nothing", () => {
@@ -414,10 +396,6 @@ describe("empty React Optimizations sections", () => {
     expect(formatTable(report)).toContain("React Optimizations");
   });
 });
-
-// ====================================================================
-// 6: observed animation + tier floor
-// ====================================================================
 
 interface FakeAnimation {
   playState: string;
@@ -503,10 +481,6 @@ describe("portal/animation tier floor", () => {
   });
 });
 
-// ====================================================================
-// 7: render attribution unwrapping
-// ====================================================================
-
 type TypeNameFn = (type: unknown, depth: number) => string | null;
 
 function typeNameResolver(): TypeNameFn {
@@ -574,10 +548,6 @@ describe("memo/forwardRef name unwrapping", () => {
   });
 });
 
-// ====================================================================
-// 8: CLI docs + --json announcement
-// ====================================================================
-
 describe("CLI documentation", () => {
   it("documents the exit codes", () => {
     const help = helpText();
@@ -593,8 +563,7 @@ describe("CLI documentation", () => {
     expect(help).toContain(".<stem>.json");
   });
 
-  // M64 documented the old carve-out ("not bounded by it"); M61 closed it:
-  // --max-combos now bounds matrix cells too, and the help text says so.
+  // M64's carve-out ('not bounded by it') is closed by M61: --max-combos now bounds cells too.
   it("documents that --max-combos bounds matrix mode", () => {
     const help = helpText();
     expect(help).toMatch(/--max-combos[\s\S]*matrix/i);

@@ -1,0 +1,584 @@
+import ts from "typescript";
+import path from "node:path";
+import type { ExportInfo, PropSchema } from "./schema.js";
+import type { PropCombination } from "./values.js";
+
+// `text` is the payload of `__text__` nodes; inside props so the serialized shape is unchanged.
+export type CompositionNodeProps = PropCombination & { text?: string };
+
+export interface CompositionNode {
+  component: string;
+  props: CompositionNodeProps;
+  children: CompositionNode[];
+}
+
+export interface CompositionTree {
+  root: string;
+  structure: CompositionNode[];
+  repeatNode?: string;
+  repeatCount: number;
+}
+
+export type CompositionTemplate = "item-based" | "list-based" | "portal-based" | "flat";
+
+export type SuffixRole =
+  | "item"
+  | "trigger"
+  | "content"
+  | "title"
+  | "description"
+  | "list"
+  | "overlay"
+  | "portal"
+  | "close"
+  | "footer"
+  | "unknown";
+
+const SUFFIX_MAP: [RegExp, SuffixRole][] = [
+  [/Item$/i, "item"],
+  [/Trigger$/i, "trigger"],
+  [/Header$/i, "trigger"],
+  [/Label$/i, "trigger"],
+  [/Title$/i, "title"],
+  [/Content$/i, "content"],
+  [/Body$/i, "content"],
+  [/Panel$/i, "content"],
+  [/Description$/i, "description"],
+  [/List$/i, "list"],
+  [/Group$/i, "list"],
+  [/Overlay$/i, "overlay"],
+  [/Backdrop$/i, "overlay"],
+  [/Portal$/i, "portal"],
+  [/Close$/i, "close"],
+  [/Footer$/i, "footer"],
+  [/Actions$/i, "footer"],
+];
+
+function classifySuffix(name: string, rootName: string): SuffixRole {
+  const suffix = name.slice(rootName.length);
+  if (!suffix) return "unknown";
+  for (const [pattern, role] of SUFFIX_MAP) {
+    if (pattern.test(suffix)) return role;
+  }
+  return "unknown";
+}
+
+// Longest common prefix, so a bare alias (`List` under root `Tabs`) still classifies.
+function classifyByStem(name: string, rootName: string): SuffixRole {
+  const lowerName = name.toLowerCase();
+  const lowerRoot = rootName.toLowerCase();
+  const max = Math.min(lowerName.length, lowerRoot.length);
+  let stemLength = 0;
+  while (stemLength < max && lowerName[stemLength] === lowerRoot[stemLength]) stemLength++;
+  const suffix = name.slice(stemLength);
+  if (!suffix) return "unknown";
+  for (const [pattern, role] of SUFFIX_MAP) {
+    if (pattern.test(suffix)) return role;
+  }
+  return "unknown";
+}
+
+function findRoot(exports: ExportInfo[]): string | null {
+  if (exports.length < 2) return null;
+
+  const names = exports.map((e) => e.name);
+  const candidates: string[] = [];
+
+  for (const name of names) {
+    const lower = name.toLowerCase();
+    const others = names.filter((n) => n !== name);
+    if (others.length > 0 && others.every((n) => n.toLowerCase().startsWith(lower))) {
+      candidates.push(name);
+    }
+  }
+
+  if (candidates.length === 0) return null;
+
+  candidates.sort((a, b) => a.length - b.length);
+  return candidates[0];
+}
+
+function selectTemplate(roles: Map<string, SuffixRole>): CompositionTemplate {
+  const hasListOrGroup = [...roles.values()].some((r) => r === "list");
+  const hasItem = [...roles.values()].some((r) => r === "item");
+  const hasPortalOrOverlay = [...roles.values()].some((r) => r === "portal" || r === "overlay");
+
+  if (hasListOrGroup) return "list-based";
+  if (hasItem) return "item-based";
+  if (hasPortalOrOverlay) return "portal-based";
+  return "flat";
+}
+
+function hasChildrenProp(schemas: Map<string, PropSchema[]>, component: string): boolean {
+  const props = schemas.get(component);
+  if (!props) return true;
+  return props.some((p) => p.name === "children");
+}
+
+export function inferComposition(
+  exports: ExportInfo[],
+  schemas: Map<string, PropSchema[]>,
+): CompositionTree | null {
+  if (exports.length < 2) return null;
+
+  const rootName = findRoot(exports);
+  if (!rootName) return null;
+
+  const nonRoot = exports.filter((e) => e.name !== rootName);
+  const roles = new Map<string, SuffixRole>();
+  for (const exp of nonRoot) {
+    roles.set(exp.name, classifySuffix(exp.name, rootName));
+  }
+
+  const template = selectTemplate(roles);
+  const repeatCount = 3;
+
+  let tree: CompositionTree;
+
+  switch (template) {
+    case "item-based":
+      tree = buildItemBased(rootName, nonRoot, roles, schemas, repeatCount);
+      break;
+    case "list-based":
+      tree = buildListBased(rootName, nonRoot, roles, schemas, repeatCount);
+      break;
+    case "portal-based":
+      tree = buildPortalBased(rootName, nonRoot, roles, schemas);
+      break;
+    case "flat":
+      tree = buildFlat(rootName, nonRoot, roles, schemas, repeatCount);
+      break;
+  }
+
+  return tree;
+}
+
+function makeNode(component: string, props: CompositionNodeProps = {}, children: CompositionNode[] = []): CompositionNode {
+  return { component, props, children };
+}
+
+function buildItemBased(
+  rootName: string,
+  nonRoot: ExportInfo[],
+  roles: Map<string, SuffixRole>,
+  schemas: Map<string, PropSchema[]>,
+  repeatCount: number,
+): CompositionTree {
+  const itemName = nonRoot.find((e) => roles.get(e.name) === "item")!.name;
+  const triggers = nonRoot.filter((e) => roles.get(e.name) === "trigger");
+  const contents = nonRoot.filter((e) => roles.get(e.name) === "content");
+  const titles = nonRoot.filter((e) => roles.get(e.name) === "title");
+  const descriptions = nonRoot.filter((e) => roles.get(e.name) === "description");
+  const closes = nonRoot.filter((e) => roles.get(e.name) === "close");
+  const footers = nonRoot.filter((e) => roles.get(e.name) === "footer");
+  const overlays = nonRoot.filter((e) => roles.get(e.name) === "overlay" || roles.get(e.name) === "portal");
+  const unknowns = nonRoot.filter((e) => roles.get(e.name) === "unknown");
+
+  const items: CompositionNode[] = [];
+  for (let i = 0; i < repeatCount; i++) {
+    const itemChildren: CompositionNode[] = [];
+    for (const t of triggers) {
+      itemChildren.push(makeNode(t.name, {}, [makeNode("__text__", { text: `Label ${i}` })]));
+    }
+    for (const c of contents) {
+      const contentChildren: CompositionNode[] = [];
+      for (const t of titles) contentChildren.push(makeNode(t.name));
+      for (const d of descriptions) contentChildren.push(makeNode(d.name));
+      for (const cl of closes) contentChildren.push(makeNode(cl.name));
+      for (const f of footers) contentChildren.push(makeNode(f.name));
+      itemChildren.push(makeNode(c.name, {}, contentChildren));
+    }
+    items.push(makeNode(itemName, {}, itemChildren));
+  }
+
+  const rootChildren: CompositionNode[] = [];
+  for (const o of overlays) rootChildren.push(makeNode(o.name));
+  rootChildren.push(...items);
+  for (const u of unknowns) rootChildren.push(makeNode(u.name));
+
+  return {
+    root: rootName,
+    structure: [makeNode(rootName, {}, rootChildren)],
+    repeatNode: itemName,
+    repeatCount,
+  };
+}
+
+function buildListBased(
+  rootName: string,
+  nonRoot: ExportInfo[],
+  roles: Map<string, SuffixRole>,
+  schemas: Map<string, PropSchema[]>,
+  repeatCount: number,
+): CompositionTree {
+  const listName = nonRoot.find((e) => roles.get(e.name) === "list")!.name;
+  const triggers = nonRoot.filter((e) => roles.get(e.name) === "trigger");
+  const items = nonRoot.filter((e) => roles.get(e.name) === "item");
+  const contents = nonRoot.filter((e) => roles.get(e.name) === "content");
+  const overlays = nonRoot.filter((e) => roles.get(e.name) === "overlay" || roles.get(e.name) === "portal");
+  const unknowns = nonRoot.filter((e) => roles.get(e.name) === "unknown");
+
+  const triggerOrItem = triggers.length > 0 ? triggers : items;
+
+  const listChildren: CompositionNode[] = [];
+  for (let i = 0; i < repeatCount; i++) {
+    for (const t of triggerOrItem) {
+      const hasValue = schemas.get(t.name)?.some((p) => p.name === "value");
+      const props: CompositionNodeProps = hasValue ? { value: String(i) } : {};
+      listChildren.push(makeNode(t.name, props));
+    }
+  }
+
+  const rootChildren: CompositionNode[] = [];
+  for (const o of overlays) rootChildren.push(makeNode(o.name));
+  rootChildren.push(makeNode(listName, {}, listChildren));
+
+  for (let i = 0; i < repeatCount; i++) {
+    for (const c of contents) {
+      const hasValue = schemas.get(c.name)?.some((p) => p.name === "value");
+      const props: CompositionNodeProps = hasValue ? { value: String(i) } : {};
+      rootChildren.push(makeNode(c.name, props));
+    }
+  }
+
+  for (const u of unknowns) rootChildren.push(makeNode(u.name));
+
+  return {
+    root: rootName,
+    structure: [makeNode(rootName, { defaultValue: "0" }, rootChildren)],
+    repeatCount,
+  };
+}
+
+function buildPortalBased(
+  rootName: string,
+  nonRoot: ExportInfo[],
+  roles: Map<string, SuffixRole>,
+  schemas: Map<string, PropSchema[]>,
+): CompositionTree {
+  const triggers = nonRoot.filter((e) => roles.get(e.name) === "trigger");
+  const portals = nonRoot.filter((e) => roles.get(e.name) === "portal");
+  const overlays = nonRoot.filter((e) => roles.get(e.name) === "overlay");
+  const contents = nonRoot.filter((e) => roles.get(e.name) === "content");
+  const titles = nonRoot.filter((e) => roles.get(e.name) === "title");
+  const descriptions = nonRoot.filter((e) => roles.get(e.name) === "description");
+  const closes = nonRoot.filter((e) => roles.get(e.name) === "close");
+  const footers = nonRoot.filter((e) => roles.get(e.name) === "footer");
+  const unknowns = nonRoot.filter((e) => roles.get(e.name) === "unknown");
+
+  const contentChildren: CompositionNode[] = [];
+  for (const t of titles) contentChildren.push(makeNode(t.name, {}, [makeNode("__text__", { text: "Title" })]));
+  for (const d of descriptions) contentChildren.push(makeNode(d.name, {}, [makeNode("__text__", { text: "Description" })]));
+  for (const cl of closes) contentChildren.push(makeNode(cl.name, {}, [makeNode("__text__", { text: "Close" })]));
+  for (const f of footers) contentChildren.push(makeNode(f.name));
+
+  const rootChildren: CompositionNode[] = [];
+
+  for (const t of triggers) {
+    rootChildren.push(makeNode(t.name, {}, [makeNode("__text__", { text: "Open" })]));
+  }
+
+  if (portals.length > 0) {
+    const portalChildren: CompositionNode[] = [];
+    for (const o of overlays) portalChildren.push(makeNode(o.name));
+    for (const c of contents) portalChildren.push(makeNode(c.name, {}, contentChildren));
+    rootChildren.push(makeNode(portals[0].name, {}, portalChildren));
+  } else {
+    for (const o of overlays) rootChildren.push(makeNode(o.name));
+    for (const c of contents) rootChildren.push(makeNode(c.name, {}, contentChildren));
+  }
+
+  for (const u of unknowns) rootChildren.push(makeNode(u.name));
+
+  return {
+    root: rootName,
+    structure: [makeNode(rootName, { open: true }, rootChildren)],
+    repeatCount: 1,
+  };
+}
+
+function buildFlat(
+  rootName: string,
+  nonRoot: ExportInfo[],
+  roles: Map<string, SuffixRole>,
+  schemas: Map<string, PropSchema[]>,
+  repeatCount: number,
+): CompositionTree {
+  const triggers = nonRoot.filter((e) => roles.get(e.name) === "trigger");
+  const contents = nonRoot.filter((e) => roles.get(e.name) === "content");
+  const items = nonRoot.filter((e) => roles.get(e.name) === "item");
+  const overlays = nonRoot.filter((e) => roles.get(e.name) === "overlay" || roles.get(e.name) === "portal");
+  const titles = nonRoot.filter((e) => roles.get(e.name) === "title");
+  const descriptions = nonRoot.filter((e) => roles.get(e.name) === "description");
+  const closes = nonRoot.filter((e) => roles.get(e.name) === "close");
+  const footers = nonRoot.filter((e) => roles.get(e.name) === "footer");
+  const unknowns = nonRoot.filter((e) => roles.get(e.name) === "unknown");
+
+  const rootChildren: CompositionNode[] = [];
+
+  for (const o of overlays) rootChildren.push(makeNode(o.name));
+  for (const t of triggers) rootChildren.push(makeNode(t.name));
+
+  if (contents.length > 0) {
+    const contentChildren: CompositionNode[] = [];
+    for (const t of titles) contentChildren.push(makeNode(t.name));
+    for (const d of descriptions) contentChildren.push(makeNode(d.name));
+    for (let i = 0; i < repeatCount; i++) {
+      for (const item of items) {
+        const hasValue = schemas.get(item.name)?.some((p) => p.name === "value");
+        const props: CompositionNodeProps = hasValue ? { value: String(i) } : {};
+        contentChildren.push(makeNode(item.name, props));
+      }
+    }
+    for (const cl of closes) contentChildren.push(makeNode(cl.name));
+    for (const f of footers) contentChildren.push(makeNode(f.name));
+    rootChildren.push(makeNode(contents[0].name, {}, contentChildren));
+  } else {
+    for (const t of titles) rootChildren.push(makeNode(t.name));
+    for (const d of descriptions) rootChildren.push(makeNode(d.name));
+    for (let i = 0; i < repeatCount; i++) {
+      for (const item of items) {
+        const hasValue = schemas.get(item.name)?.some((p) => p.name === "value");
+        const props: CompositionNodeProps = hasValue ? { value: String(i) } : {};
+        rootChildren.push(makeNode(item.name, props));
+      }
+    }
+    for (const cl of closes) rootChildren.push(makeNode(cl.name));
+    for (const f of footers) rootChildren.push(makeNode(f.name));
+  }
+
+  for (const u of unknowns) rootChildren.push(makeNode(u.name));
+
+  const repeatNode = items.length > 0 ? items[0].name : undefined;
+
+  return {
+    root: rootName,
+    structure: [makeNode(rootName, {}, rootChildren)],
+    repeatNode,
+    repeatCount,
+  };
+}
+
+export interface CompositionTrial {
+  rootElements: number;
+  error?: unknown;
+}
+
+// An empty root is a wrong guess rather than a cheap component; measuring it invents a scene.
+export function shouldRollbackComposition(trial: CompositionTrial): boolean {
+  if (trial.error !== undefined && trial.error !== null) return true;
+  return !(trial.rootElements > 0);
+}
+
+export const COMPOSITION_EMPTY_WARNING = (rootName: string): string =>
+  `auto-composed scene for ${rootName} rendered no elements; measured the bare export instead. ` +
+  `Write a fixture that renders the real composition and pass --fixture <path>.`;
+
+// A part the measured file declares (export or type-only relative import) that never composed in.
+export interface DeclaredSibling {
+  name: string;
+  role: SuffixRole;
+}
+
+// Deduplicated by role, so an alias pair (TabsList, List) counts once: the first name wins.
+export function declaredCompositionSiblings(
+  rootName: string,
+  siblingExports: ExportInfo[], // same-file exports, resolved root excluded
+  typeImportNames: string[], // same-file relative type-only imports
+): DeclaredSibling[] {
+  const seenRoles = new Set<SuffixRole>();
+  const siblings: DeclaredSibling[] = [];
+  const candidateNames = [
+    ...siblingExports.map((e) => e.name),
+    ...typeImportNames,
+  ];
+  for (const name of candidateNames) {
+    if (name === rootName) continue;
+    const role = classifyByStem(name, rootName);
+    if (role === "unknown" || seenRoles.has(role)) continue;
+    seenRoles.add(role);
+    siblings.push({ name, role });
+  }
+  return siblings;
+}
+
+export const UNCOMPOSED_SIBLINGS_WARNING = (root: string, siblings: string[]): string =>
+  `${root} declares sibling parts (${siblings.join(", ")}) recognized by auto-composition, but ` +
+  `none were composed in: every combo measured the bare ${root} export alone. Try --init-fixture ` +
+  `to scaffold a fixture, or compose them yourself and pass --fixture.`;
+
+// A compound Root may declare its parts only as type-only relative imports of adjacent files.
+export function scanRelativeTypeImports(sourceText: string, fileName: string): string[] {
+  const sourceFile = ts.createSourceFile(fileName, sourceText, ts.ScriptTarget.Latest, false);
+  const names: string[] = [];
+
+  ts.forEachChild(sourceFile, (node) => {
+    if (!ts.isImportDeclaration(node)) return;
+    if (!ts.isStringLiteral(node.moduleSpecifier)) return;
+    if (!node.moduleSpecifier.text.startsWith(".")) return;
+
+    const clause = node.importClause;
+    if (!clause || !clause.namedBindings || !ts.isNamedImports(clause.namedBindings)) return;
+
+    for (const element of clause.namedBindings.elements) {
+      if (clause.isTypeOnly || element.isTypeOnly) {
+        names.push(element.name.text);
+      }
+    }
+  });
+
+  return names;
+}
+
+export async function extractRelativeTypeImports(filePath: string): Promise<string[]> {
+  const absolutePath = path.resolve(filePath);
+  const sourceText = ts.sys.readFile(absolutePath);
+  if (sourceText === undefined) return [];
+  return scanRelativeTypeImports(sourceText, absolutePath);
+}
+
+// Bare specifiers count (baseUrl-relative children); resolveRelativeJsxChild drops node_modules.
+export function scanJsxComposedLocalImports(
+  sourceText: string,
+  fileName: string,
+): Array<{ name: string; specifier: string }> {
+  const sourceFile = ts.createSourceFile(fileName, sourceText, ts.ScriptTarget.Latest, true);
+  const localImports = new Map<string, string>();
+
+  ts.forEachChild(sourceFile, (node) => {
+    if (!ts.isImportDeclaration(node)) return;
+    if (!ts.isStringLiteral(node.moduleSpecifier)) return;
+    const clause = node.importClause;
+    if (!clause || clause.isTypeOnly) return;
+    if (clause.name) localImports.set(clause.name.text, node.moduleSpecifier.text);
+    if (clause.namedBindings && ts.isNamedImports(clause.namedBindings)) {
+      for (const element of clause.namedBindings.elements) {
+        if (element.isTypeOnly) continue;
+        localImports.set(element.name.text, node.moduleSpecifier.text);
+      }
+    }
+  });
+
+  const used = new Map<string, string>();
+  const visit = (node: ts.Node): void => {
+    if (ts.isJsxOpeningLikeElement(node) && ts.isIdentifier(node.tagName)) {
+      const specifier = localImports.get(node.tagName.text);
+      if (specifier) used.set(node.tagName.text, specifier);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+
+  return [...used.entries()].map(([name, specifier]) => ({ name, specifier }));
+}
+
+
+export function fixtureScaffoldPath(componentPath: string): string {
+  const dot = componentPath.lastIndexOf(".");
+  return componentPath.slice(0, dot) + ".fixture" + componentPath.slice(dot);
+}
+
+function collectPlaced(nodes: CompositionNode[], seen: Set<string>): void {
+  for (const node of nodes) {
+    if (node.component !== "__text__") seen.add(node.component);
+    collectPlaced(node.children, seen);
+  }
+}
+
+function renderNode(node: CompositionNode, depth: number): string {
+  const pad = "      " + "  ".repeat(depth);
+  if (node.component === "__text__") {
+    return pad + String((node.props as { text?: unknown }).text ?? "");
+  }
+  const props = Object.entries(node.props)
+    .map(([k, v]) => (typeof v === "string" ? ` ${k}="${v}"` : ` ${k}={${JSON.stringify(v)}}`))
+    .join("");
+  if (node.children.length === 0) return `${pad}<${node.component}${props} />`;
+  const inner = node.children.map((c) => renderNode(c, depth + 1)).join("\n");
+  return `${pad}<${node.component}${props}>\n${inner}\n${pad}</${node.component}>`;
+}
+
+// Writes out the attempted tree so the user edits a wrong guess instead of an empty file.
+export function buildFixtureScaffold(
+  stem: string,
+  exports: ExportInfo[],
+  tree: CompositionTree,
+): string {
+  const placed = new Set<string>();
+  collectPlaced(tree.structure, placed);
+  const unplaced = exports.map((e) => e.name).filter((n) => !placed.has(n));
+
+  const names = exports.map((e) => e.name).join(", ");
+  const body = tree.structure.map((n) => renderNode(n, 0)).join("\n");
+
+  const todo = unplaced.length > 0
+    ? `\n      {/* TODO: place ${unplaced.join(", ")}: auto-composition could not infer where they belong */}`
+    : "";
+
+  // Two siblings under `return (...)` is a syntax error, and the TODO comment counts as one.
+  const needsFragment = tree.structure.length > 1 || todo !== "";
+  const inner = needsFragment ? `    <>\n${body}${todo}\n    </>` : `${body}${todo}`;
+
+  // Extensionless: `./x.js` misses `x.tsx` under some moduleResolution; Vite resolves the stem.
+  return `// Generated by 120fps --init-fixture.
+// Auto-composition inferred a tree for ${tree.root} that rendered nothing, so
+// the run measured the bare export instead. Edit this file to render the real
+// composition, then re-run: the fixture is picked up automatically.
+import { ${names} } from "./${stem}";
+
+export default function ${tree.root}Fixture() {
+  return (
+${inner}
+  );
+}
+`;
+}
+
+// findRoot found no tree, so the scaffold is the bound root plus one placeholder per sibling.
+export function buildUncomposedFixtureScaffold(
+  stem: string,
+  root: string,
+  siblings: string[],
+  // A sibling missing here is a foreign type-only import; left unimported so the file compiles.
+  exports: ExportInfo[] = [],
+): string {
+  // An empty export list means the caller knows nothing, so every sibling keeps its named import.
+  const known = exports.length > 0;
+  const isValueExport = (name: string): boolean =>
+    !known || exports.some((e) => e.name === name && !e.isDefault);
+  const rootIsDefault = known && exports.some((e) => e.name === root && e.isDefault);
+  const importable = siblings.filter(isValueExport);
+  const foreign = siblings.filter((name) => !isValueExport(name));
+  const named = [...(rootIsDefault ? [] : [root]), ...importable];
+  const clause = [
+    ...(rootIsDefault ? [root] : []),
+    ...(named.length > 0 ? [`{ ${named.join(", ")} }`] : []),
+  ].join(", ");
+  const todo = [
+    ...importable.map(
+      (name) =>
+        `      {/* TODO: place ${name}: it is declared here, and no root was inferred to nest it under */}`,
+    ),
+    ...foreign.map(
+      (name) =>
+        `      {/* TODO: place ${name}: declared as a type-only import from another file, import it yourself */}`,
+    ),
+  ].join("\n");
+
+  // Same fragment rule as buildFixtureScaffold: two siblings under `return (...)` will not parse.
+  const inner = todo === "" ? `      <${root} />` : `    <>\n      <${root} />\n${todo}\n    </>`;
+
+  return `// Generated by 120fps --init-fixture.
+// ${root} declares parts (${siblings.length > 0 ? siblings.join(", ") : "none found"}) that
+// auto-composition could not place, so the run measured the bare export alone.
+// Edit this file to render the real composition, then re-run: the fixture is
+// picked up automatically.
+import ${clause} from "./${stem}";
+
+export default function ${root}Fixture() {
+  return (
+${inner}
+  );
+}
+`;
+}

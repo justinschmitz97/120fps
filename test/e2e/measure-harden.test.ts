@@ -1,8 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { buildAndServe } from "../../src/harness.js";
-import { measureMount } from "../../src/measure.js";
+import { buildAndServe } from "../../src/harness/index.js";
+import { measureMount } from "../../src/browser/index.js";
 
-// H33: component that renders null
 describe("H33: renders-null component", () => {
   it("measures component that returns null", async () => {
     const harness = await buildAndServe("./fixtures/renders-null.tsx");
@@ -14,9 +13,7 @@ describe("H33: renders-null component", () => {
       expect(results).toHaveLength(1);
       expect(results[0].mount.samples).toHaveLength(2);
       expect(results[0].mount.median).toBeGreaterThanOrEqual(0);
-      // M31 C1: the count is component DOM only, so a component rendering
-      // null contributes nothing. Previously this read 8 because it counted
-      // html/head/body/#root and Vite's injected scripts.
+      // M31 C1: count is component DOM only; html/head/body/#root and Vite's scripts are excluded.
       expect(results[0].domNodeCount).toBe(0);
     } finally {
       await harness.cleanup();
@@ -24,7 +21,6 @@ describe("H33: renders-null component", () => {
   });
 });
 
-// H34: component with async useEffect
 describe("H34: useEffect settle time", () => {
   it("measures useEffect component without errors", async () => {
     const harness = await buildAndServe("./fixtures/use-effect.tsx");
@@ -38,7 +34,6 @@ describe("H34: useEffect settle time", () => {
   });
 });
 
-// H36: ReactNode prop serialized as placeholder string
 describe("H36: ReactNode prop serialization", () => {
   it("measures button with children prop (ReactNode)", async () => {
     const harness = await buildAndServe("./fixtures/button.tsx");
@@ -55,7 +50,6 @@ describe("H36: ReactNode prop serialization", () => {
   });
 });
 
-// H37: rapid mount/unmount cycle
 describe("H37: rapid mount/unmount", () => {
   it("handles rapid cycles without errors", async () => {
     const harness = await buildAndServe("./fixtures/no-props.tsx");
@@ -73,12 +67,10 @@ describe("H37: rapid mount/unmount", () => {
   });
 });
 
-// H38: component that throws on mount
 describe("H38: throwing component", () => {
   it("measureMount with crash-prone props still returns result", async () => {
     const harness = await buildAndServe("./fixtures/throws-on-render.tsx");
     try {
-      // Mount with valid props: should work fine
       const results = await measureMount(harness, {
         samples: 2,
         combos: [{ data: { id: "1", name: "Test" } }],
@@ -91,7 +83,6 @@ describe("H38: throwing component", () => {
   });
 });
 
-// H39: large DOM component
 describe("H39: large DOM count", () => {
   it("accurately counts 500+ DOM nodes", async () => {
     const harness = await buildAndServe("./fixtures/large-dom.tsx");
@@ -109,7 +100,6 @@ describe("H39: large DOM count", () => {
   });
 });
 
-// H40: sequential measureMount calls on same harness
 describe("H40: sequential measures", () => {
   it("two measureMount calls on same harness produce independent results", async () => {
     const harness = await buildAndServe("./fixtures/no-props.tsx");
@@ -118,7 +108,6 @@ describe("H40: sequential measures", () => {
       const r2 = await measureMount(harness, { samples: 2, combos: [{}] });
       expect(r1).toHaveLength(1);
       expect(r2).toHaveLength(1);
-      // Both should have valid timing data
       expect(r1[0].mount.median).toBeGreaterThanOrEqual(0);
       expect(r2[0].mount.median).toBeGreaterThanOrEqual(0);
     } finally {
@@ -127,7 +116,6 @@ describe("H40: sequential measures", () => {
   });
 });
 
-// H43: index signature prop (object)
 describe("H43: index-sig component", () => {
   it("measures component with Record/index-sig prop", async () => {
     const harness = await buildAndServe("./fixtures/index-sig.tsx");

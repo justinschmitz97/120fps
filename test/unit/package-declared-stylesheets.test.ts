@@ -7,7 +7,7 @@ import {
   packageStylesheetCandidates,
   resolveStylesheetImportTarget,
   stylesheetImportSpecifiers,
-} from "../../src/harness.js";
+} from "../../src/harness/index.js";
 
 let root: string;
 
@@ -107,10 +107,7 @@ describe("resolving one stylesheet import the way a bundler would", () => {
   });
 });
 
-// ant-design (`@import "../variables"`) and primevue (`@import './_mixins'`)
-// write the canonical Sass/Less partial form: no extension, an underscore the
-// importer never spells, sometimes a directory with an `_index`. None of that
-// is a missing file, and none of it may be reported as one.
+// ant-design, primevue: partial imports (no extension, underscore, _index) are not missing files.
 describe("a preprocessor partial imported without its extension", () => {
   it("resolves an underscore-prefixed sibling", () => {
     const real = write("src/_variables.scss", "$a: 1;");
@@ -180,14 +177,14 @@ describe("stylesheets the measured package declares about itself", () => {
       }),
     );
     expect(packageStylesheetCandidates(root)).toEqual([
-      styleField,
-      stylesExport,
-      styleCssExport,
-      subpathStyle,
+      { file: styleField },
+      { file: stylesExport },
+      { file: styleCssExport },
+      { file: subpathStyle },
     ]);
   });
 
-  it("ignores declarations that name no file on disk and non-stylesheet targets", () => {
+  it("names a declaration whose file is not on disk as a declared target, ignoring non-stylesheets", () => {
     write(
       "package.json",
       JSON.stringify({
@@ -196,7 +193,9 @@ describe("stylesheets the measured package declares about itself", () => {
         exports: { "./styles": "./src/styles.js" },
       }),
     );
-    expect(packageStylesheetCandidates(root)).toEqual([]);
+    expect(packageStylesheetCandidates(root)).toEqual([
+      { declared: path.join(root, "dist", "missing.css"), field: "style" },
+    ]);
   });
 
   it("is empty for a package with no manifest at all", () => {
@@ -204,8 +203,7 @@ describe("stylesheets the measured package declares about itself", () => {
   });
 });
 
-// heroui: `exports["./styles"] -> src/styles.css`, one line long, importing the
-// real ~600-line stylesheet from an installed sibling package.
+// heroui: exports["./styles"] is a one-line passthrough importing the real ~600-line stylesheet.
 describe("a package whose declared stylesheet is a passthrough", () => {
   function heroui(): string {
     const real = write("node_modules/@heroui/styles/index.css", ".button--primary{color:red}");
@@ -226,8 +224,7 @@ describe("a package whose declared stylesheet is a passthrough", () => {
     const warnings: string[] = [];
     const result = discoverGlobalCss(root, warnings);
     expect(result.files).toEqual([real]);
-    // Evidence the package published about itself, not a filename convention:
-    // the report layer and its label key on this value.
+    // Evidence the package published, not a filename convention; the report keys on this value.
     expect(result.source).toBe("package-declared");
   });
 
@@ -261,9 +258,7 @@ describe("a package whose declared stylesheet is a passthrough", () => {
   });
 });
 
-// shadcn-ui: apps/v4/app/globals.css is real and injectable, but its own
-// `@import "shadcn/tailwind.css"` resolves to a dist/ the repo has not built,
-// which used to fail inside the bundler — fatally for two of four components.
+// shadcn-ui: tailwind.css import resolves to an unbuilt dist/, fatal for two of four components.
 describe("a stylesheet whose own import names a file that was never built", () => {
   function shadcn(): void {
     write("package.json", JSON.stringify({ name: "v4" }));
@@ -289,8 +284,7 @@ describe("a stylesheet whose own import names a file that was never built", () =
     const disclosure = warnings.find((w) => w.includes("tailwind.css"));
     expect(disclosure).toBeDefined();
     expect(disclosure).toContain("node_modules/shadcn/dist/tailwind.css");
-    // The old message pasted the specifier onto the repository root and named
-    // a path that exists nowhere.
+    // Guards against pasting the specifier onto the repo root, a path that exists nowhere.
     expect(disclosure).not.toContain(`resolves to ${rel(path.join(root, "shadcn"))}/tailwind.css`);
   });
 

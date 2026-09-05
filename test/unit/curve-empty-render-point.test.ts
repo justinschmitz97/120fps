@@ -1,14 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { buildCurveReport, formatTable, type CalibrationResult, type Report, type Thresholds } from "../../src/report.js";
-import { hintsForReport } from "../../src/hints.js";
-import type { MountResult, RerenderResult } from "../../src/measure.js";
-import type { ExploreResult, StateGraph } from "../../src/explorer.js";
+import { buildCurveReport, formatTable, type CalibrationResult, type Report, type Thresholds } from "../../src/report/index.js";
+import { hintsForReport } from "../../src/report/index.js";
+import type { MountResult, RerenderResult } from "../../src/browser/index.js";
+import type { ExploreResult, StateGraph } from "../../src/analysis/index.js";
 
-// commerce-F2: VariantSelector's N=1 point measured the component's own
-// `return null` short-circuit and was fitted as an ordinary point under
-// "Growth: mount linear", with only a raw DOM 0 cell to give it away.
-// dub-F6 (M106 C3): six scale points, every one of them 0 DOM nodes because a
-// provider was missing, printed Result: PASS.
+// commerce-F2: N=1 short-circuit fitted as ordinary; dub-F6: all-zero DOM points passed (M106 C3).
 
 const baseCalibration: CalibrationResult = { totalDuration: 10, scriptDuration: 5 };
 const baseThresholds: Thresholds = {
@@ -37,8 +33,7 @@ function explore(comboIndex: number): ExploreResult {
   return { graph, comboIndex, props: {} };
 }
 
-// N=1 renders nothing (the component's own short-circuit); the rest grow
-// linearly with a clean 5-nodes-per-item DOM.
+// N=1 renders nothing (the component's own short-circuit); the rest grow linearly, 5 nodes/item.
 const SCALE_POINTS = [1, 3, 5, 10];
 function commerceShaped() {
   const doms = [0, 15, 25, 50];
@@ -175,9 +170,7 @@ describe("a curve point that renders nothing is not an ordinary point on the cur
   });
 });
 
-// dub-F6: six scale points, every one 0 DOM nodes. The run must not pass, and
-// the flat-DOM hint must not send the reader after the scaling prop when what
-// actually happened is that the component never rendered at all.
+// dub-F6: all points at 0 DOM nodes must not pass, and the hint must not blame the scaling prop.
 describe("a curve whose every point rendered nothing", () => {
   function emptyCurve() {
     const curve = buildCurveReport({

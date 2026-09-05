@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseArgs } from "../../src/cli.js";
+import { parseArgs } from "../../src/cli/index.js";
 import {
   computeVerdict,
   buildTimingWithCV,
@@ -8,12 +8,10 @@ import {
   type ComboReport,
   type Report,
   type Thresholds,
-} from "../../src/report.js";
-import { buildReport, hasScaleExport, type BuildReportInput } from "../../src/analyze.js";
-import type { MountResult } from "../../src/measure.js";
-import type { ExploreResult, StateGraph } from "../../src/explorer.js";
-
-// --- Helpers ---
+} from "../../src/report/index.js";
+import { buildReport, hasScaleExport, type BuildReportInput } from "../../src/pipeline/index.js";
+import type { MountResult } from "../../src/browser/index.js";
+import type { ExploreResult, StateGraph } from "../../src/analysis/index.js";
 
 function makeEmptyGraph(): StateGraph {
   const nodes = new Map();
@@ -42,8 +40,6 @@ function makeCombo(overrides: Partial<ComboReport> = {}): ComboReport {
     ...overrides,
   };
 }
-
-// --- CLI: --scale ---
 
 describe("parseArgs --scale", () => {
   it("parses --scale with comma-separated integers", () => {
@@ -85,8 +81,6 @@ describe("parseArgs --scale", () => {
   });
 });
 
-// --- CLI: --threshold-rerender ---
-
 describe("parseArgs --threshold-rerender", () => {
   it("parses --threshold-rerender with number", () => {
     const result = parseArgs(["./comp.tsx", "--threshold-rerender", "4"]);
@@ -109,15 +103,11 @@ describe("parseArgs --threshold-rerender", () => {
   });
 });
 
-// --- Thresholds ---
-
 describe("DEFAULT_THRESHOLDS includes rerenderMs", () => {
   it("has rerenderMs of 16", () => {
     expect(DEFAULT_THRESHOLDS.rerenderMs).toBe(16);
   });
 });
-
-// --- Verdict with rerender ---
 
 describe("computeVerdict with rerender", () => {
   const thresholds: Thresholds = {
@@ -155,8 +145,6 @@ describe("computeVerdict with rerender", () => {
     expect(computeVerdict(combo, thresholds)).toBe("pass");
   });
 });
-
-// --- Report types ---
 
 describe("buildReport with rerender", () => {
   const baseThresholds: Thresholds = {
@@ -234,8 +222,7 @@ describe("buildReport with rerender", () => {
   });
 
   it("computes rerender scaling curve across scale combos", () => {
-    // M61: only combos actually marked as the sibling-copies probe
-    // (`__120fps_scaleN`, surfaced as `scaleProbe`) receive a fitted curve.
+    // M61: only combos marked via __120fps_scaleN (scaleProbe) receive a fitted curve.
     const report = buildReport({
       componentPath: "./accordion.fixture.tsx",
       componentName: "AccordionScene",
@@ -264,8 +251,6 @@ describe("buildReport with rerender", () => {
   });
 });
 
-// --- formatTable with rerender ---
-
 describe("formatTable with rerender", () => {
   it("includes Rerender column in table header", () => {
     const report: Report = {
@@ -283,8 +268,6 @@ describe("formatTable with rerender", () => {
     expect(table).toContain("Rerender");
   });
 });
-
-// --- hasScaleExport ---
 
 describe("hasScaleExport", () => {
   it("detects export function scale", () => {

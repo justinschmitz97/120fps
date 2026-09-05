@@ -7,21 +7,9 @@ import {
   HARNESS_STALL_HINT,
   DELTA_PHASE_STALL_HINT,
   RERENDER_PHASE_STALL_HINT,
-} from "../../src/page-errors.js";
+} from "../../src/browser/index.js";
 
-// M89 gap (taxonomy control failure): a stall inside the delta pass's own
-// extra mount/rerender calls used to surface --no-attribution, a flag that
-// does not touch the delta pass at all (only --no-deltas does — confirmed
-// live: --no-attribution stalled identically, --no-deltas produced a clean
-// PASS in 4m 8s). This pins the fix: a delta-phase stall names --no-deltas,
-// and every other phase keeps naming --no-attribution.
-//
-// M89 defect 2 (live taxonomy proof, second run): the same problem reaches
-// the rerender phase directly -- `rerender phase failed on combo 1 of
-// button.tsx: ... Target page, context or browser has been closed` still
-// carried `retry with --no-attribution, ...`. A rerender-phase stall now
-// names --samples/--max-combos instead, and must not lead with
-// --no-attribution.
+// M89 gap: only --no-deltas touches the delta pass; a delta stall must name it, not attribution.
 
 describe("M89 gap: delta-phase stall hint", () => {
   it("enrichPhaseError names --no-deltas for phase: delta on a stall signature", () => {
@@ -35,8 +23,7 @@ describe("M89 gap: delta-phase stall hint", () => {
     expect(err.message).not.toContain("--no-attribution");
   });
 
-  // M106 A1 moved "explore" to its own hint: --no-attribution was measured
-  // against calcom's stalling component and changed nothing.
+  // M106 A1 moved "explore" to its own hint: --no-attribution did nothing against calcom's stall.
   it.each(["mount", "attribution"] as const)(
     "enrichPhaseError still names --no-attribution for phase: %s on a stall signature",
     (phase) => {
@@ -47,9 +34,7 @@ describe("M89 gap: delta-phase stall hint", () => {
     },
   );
 
-  // M89 defect 2: taxonomy's live proof was a "rerender" phase failure, not
-  // "delta" (the delta pass retags to "delta" before this ever surfaces) --
-  // so the rerender phase needs its own correct hint, not just delta's.
+  // M89 defect 2: live failure was "rerender", not "delta" (delta pass retags); own hint needed.
   it.each([
     "Tracing.tracingComplete timed out",
     "frame starvation: rAF fence exceeded 10000ms",
@@ -67,11 +52,7 @@ describe("M89 gap: delta-phase stall hint", () => {
     },
   );
 
-  // The exact shape analyze.ts's measureStandardPropDeltas hits: measure.ts
-  // tags its own throw "mount" (or "rerender") before the delta pass's
-  // catch ever sees it, so a second direct enrichPhaseError call would be a
-  // no-op (its idempotency guard). retagPhaseError re-enriches the
-  // preserved `.cause` instead.
+  // enrichPhaseError no-ops on an already-tagged error; this re-enriches the preserved .cause.
   it("retagPhaseError re-enriches an already mount-tagged error under delta", () => {
     const tagged = enrichPhaseError(new Error("Target crashed"), { phase: "mount", component: "App.tsx" });
     expect(tagged.message).toContain("--no-attribution");
@@ -100,7 +81,6 @@ describe("M89 gap: delta-phase stall hint", () => {
     expect(retagged.message).toContain("--no-deltas");
   });
 
-  // M89 defect 2 harden.
   it("h1: a rerender-phase failure that is not a stall signature gets no hint at all", () => {
     const err = enrichPhaseError(new Error("Calibration produced zero duration"), {
       phase: "rerender",
@@ -143,15 +123,14 @@ describe("M89 gap: delta-phase stall hint", () => {
 
 describe("M89 gap: analyze.ts wiring (source-level check)", () => {
   it("measureStandardPropDeltas's extra-measurement calls are wrapped and retagged as delta", () => {
-    const src = fs.readFileSync(path.resolve("src", "analyze.ts"), "utf-8");
+    const src = fs.readFileSync(path.resolve("src", "pipeline/modes/matrix.ts"), "utf-8");
     const fn = src.slice(
       src.indexOf("async function measureStandardPropDeltas("),
       src.indexOf("const propDeltas = pairs.map"),
     );
     expect(fn).toContain('retagPhaseError(err, deltaPhaseContext)');
     expect(fn).toContain('phase: "delta"');
-    // Both calls (measureMount and measureRerender) must be guarded, not
-    // just the first — a stall in either one hits the same fence.
+    // Both measureMount and measureRerender must be guarded; a stall in either hits the same fence.
     expect(fn.match(/retagPhaseError\(err, deltaPhaseContext\)/g)?.length).toBe(2);
   });
 });

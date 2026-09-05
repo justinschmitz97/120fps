@@ -7,9 +7,9 @@ import {
   buildShimAliases,
   unshimmedNextModules,
   UNSUPPORTED_NEXT_MODULE_WARNING,
-} from "../../src/harness.js";
+} from "../../src/harness/index.js";
 
-const SHIM_DIR = path.resolve(__dirname, "../../dist/shims");
+const SHIM_DIR = path.resolve(__dirname, "../../dist/harness/shims");
 const ADDED = ["next/script", "next/head", "next/router", "next/font/local"];
 
 function loadShim(file: string): Promise<Record<string, unknown>> {

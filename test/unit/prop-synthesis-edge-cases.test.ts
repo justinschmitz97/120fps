@@ -6,7 +6,7 @@ import {
   detectScalingProps,
   resetExtractionCache,
   type PropSchema,
-} from "../../src/prop-gen.js";
+} from "../../src/props/index.js";
 import {
   comboKey,
   countCombinationSpace,
@@ -14,8 +14,8 @@ import {
   generateCombinations,
   generateDeltaPairs,
   selectRepresentativeCombos,
-} from "../../src/prop-gen-values.js";
-import { applyPropPresets } from "../../src/prop-presets.js";
+} from "../../src/props/index.js";
+import { applyPropPresets } from "../../src/props/index.js";
 
 const M60 = path.resolve("./fixtures/m60");
 const fixture = (name: string): string => path.join(M60, name);
@@ -50,12 +50,10 @@ describe("prop synthesis: object/array shapes", () => {
     expect(tree.child).toBeUndefined();
   });
 
-  // H2 a union of object types.
   it("H2: a union of object shapes takes the first member, discriminant included", async () => {
     expect(get(await shapeProps(), "either").values[0]).toEqual({ layout: "grid", cols: 1 });
   });
 
-  // H3 optional chains all the way down.
   it("H3: optional nested members are still filled", async () => {
     expect(get(await shapeProps(), "deep").values[0]).toEqual({ a: { b: { c: "text" } } });
   });
@@ -74,7 +72,6 @@ describe("prop synthesis: object/array shapes", () => {
     expect(get(props, "pattern").values[0]).toBeInstanceOf(RegExp);
   });
 
-  // H6 nested collections and instants inside a domain object.
   it("H6: a nested Map becomes entries and a nested Date stays a Date", async () => {
     const wrapped = get(await shapeProps(), "wrapped").values[0] as Record<string, unknown>;
     expect(wrapped.size).toBe("sm");
@@ -97,7 +94,6 @@ describe("prop synthesis: object/array shapes", () => {
     expect(lookup.degenerate).toBeDefined();
   });
 
-  // H9/H10 degenerate tuple arities must not throw.
   it("H9: an empty tuple and a rest tuple do not crash extraction", async () => {
     const props = await shapeProps();
     expect(get(props, "none").values[0]).toEqual([]);
@@ -115,7 +111,6 @@ describe("prop synthesis: object/array shapes", () => {
     expect(matches).not.toContain("wrapped");
   });
 
-  // H12 every shape in the fixture stays generatable end to end.
   it("H12: combos generate, de-duplicate and never exceed the space", async () => {
     const props = await shapeProps();
     const combos = generateCombinations(props);
@@ -127,7 +122,6 @@ describe("prop synthesis: object/array shapes", () => {
 });
 
 describe("prop synthesis: cva variants", () => {
-  // H13 compound variants must not disturb the variant axes.
   it("H13: compoundVariants leaves the variant keys enumerable", async () => {
     const props = await extractProps(fixture("cva-compound.tsx"));
     expect(get(props, "tone").values).toEqual(["neutral", "danger"]);
@@ -149,10 +143,7 @@ describe("prop synthesis: degeneracy warnings", () => {
     expect(stderr.lines().find((l) => l.includes("store"))).toBeDefined();
   });
 
-  // M98 (element-plus-F3): `string | number` is a union of two primitive
-  // shapes, so it now carries one synthesized member per branch and the same
-  // disclosure every other union gets, where it used to be an opaque
-  // `unknown` with an empty pool.
+  // M98 (element-plus-F3): a string | number union synthesizes one member per branch, disclosed.
   it("a required string | number prop is enumerable and disclosed", async () => {
     const stderr = captureStderr();
     const props = await extractProps(fixture("required-unknown.tsx"));
@@ -171,7 +162,6 @@ describe("prop synthesis: degeneracy warnings", () => {
     expect(stderr.lines().find((l) => l.includes("span"))).toBeUndefined();
   });
 
-  // H17 a props type wide enough to be a DOM surface is capped, out loud.
   it("H17: an over-wide props type is capped and disclosed", async () => {
     const stderr = captureStderr();
     const props = await extractProps(fixture("wide-props.tsx"));
@@ -207,17 +197,14 @@ const edgeProps = async (): Promise<PropSchema[]> => {
 };
 
 describe("prop synthesis: edge-case types", () => {
-  // H25 an intersection over a mapped type.
   it("H25: Omit<Base, k> & { … } synthesizes the surviving members", async () => {
     expect(get(await edgeProps(), "picked").values[0]).toEqual({ alpha: "text", beta: true });
   });
 
-  // H26 a generic with a defaulted type parameter.
   it("H26: a generic default resolves to its element shape", async () => {
     expect(get(await edgeProps(), "listing").values[0]).toEqual({ rows: [{ id: 1 }] });
   });
 
-  // H27 numeric enum.
   it("H27: a numeric enum is a union of its members", async () => {
     expect(get(await edgeProps(), "level")).toMatchObject({ kind: "union", values: [1, 2] });
   });
@@ -231,7 +218,6 @@ describe("prop synthesis: edge-case types", () => {
     expect(filled[0]).not.toBe(filled[1]);
   });
 
-  // H29 an array of collections.
   it("H29: an array of Maps carries entry arrays as elements", async () => {
     expect(get(await edgeProps(), "buckets").elementTemplate).toEqual([
       ["text-1", 1],
@@ -239,34 +225,25 @@ describe("prop synthesis: edge-case types", () => {
     ]);
   });
 
-  // H30 a readonly tuple is still a tuple.
   it("H30: a readonly tuple is filled per position", async () => {
     expect(get(await edgeProps(), "frozenPair").values[0]).toEqual(["text", "text"]);
   });
 
-  // H31 a nullable object type.
   it("H31: `Base | null` is shaped, not unknown", async () => {
     expect(get(await edgeProps(), "nullable").values[0]).toEqual({ alpha: "text", omit: 1 });
   });
 
-  // H32 an `unknown` member has nothing to offer.
   it("H32: an unknown-typed prop is degenerate, not a crash", async () => {
     expect(get(await edgeProps(), "loose")).toMatchObject({ kind: "unknown", values: [] });
   });
 
-  // H33 local members come before inherited third-party ones.
   it("H33: locally declared props are ordered ahead of inherited ones", async () => {
     const names = (await edgeProps()).map((s) => s.name);
     expect(names.indexOf("picked")).toBeLessThan(names.indexOf("port"));
     expect(names).toContain("address");
   });
 
-  // H34 a props type that is nothing but React's DOM surface. M81 section 2:
-  // this surface is genuinely enumerable (it was never an unenumerable
-  // computed type, just fully noise-filtered before the cap), so it is now
-  // measured like any other inherited surface: ranked, capped at 32, and
-  // disclosed by `warnPropCap` naming the true (uncapped) total — not
-  // silently reported as `[]` with a misleading "could not be enumerated".
+  // A pure-DOM-surface props type is enumerable: ranked, capped at 32, true total disclosed.
   it("H34: ComponentProps<'button'> is measured with its real DOM surface, capped honestly", async () => {
     const stderr = captureStderr();
     const schemas = await extractProps(fixture("native-button.tsx"));
@@ -279,7 +256,6 @@ describe("prop synthesis: edge-case types", () => {
     expect(warning).toContain("237 props were extracted");
   });
 
-  // H35 every edge shape stays generatable.
   it("H35: edge-case combos generate without duplicates", async () => {
     const combos = generateCombinations(await edgeProps());
     expect(combos.length).toBeGreaterThan(0);
@@ -316,10 +292,7 @@ describe("prop synthesis: unaffected code paths", () => {
     expect(pair.values[0]).toEqual([1, 1]);
   });
 
-  // H24 the DOM surface of an HTMLAttributes-extending props type is now
-  // ranked and capped rather than silently erased (M81 section 2): the
-  // component's own `padding`/`elevation` (Tier 1/2) still survive, and so
-  // does the inherited surface up to the 32-prop cap.
+  // Own Tier 1/2 props (padding, elevation) survive alongside the inherited surface up to the cap.
   it("H24: inherited DOM attributes are ranked and capped, not erased", async () => {
     const stderr = captureStderr();
     const props = await extractProps("./fixtures/html-attrs.tsx");

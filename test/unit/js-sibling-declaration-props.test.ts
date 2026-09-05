@@ -6,7 +6,7 @@ import {
   extractProps,
   extractPropsDetailed,
   isUntypedJsComponentWarning,
-} from "../../src/prop-gen.js";
+} from "../../src/props/index.js";
 
 const FIXTURES = path.resolve(__dirname, "../../fixtures/js-with-dts");
 
@@ -22,9 +22,7 @@ function mkProject(files: Record<string, string>): string {
   return dir;
 }
 
-// material-ui-F1: Badge.js reported exactly two props, `ref` and `key`, while
-// Badge.d.ts next to it declares sixteen. Both are React's own ambient
-// attributes, so every measured combo was an empty-props mount.
+// material-ui-F1: ref/key are React's ambient attributes; Badge.d.ts declares sixteen real props.
 
 describe("a .js component whose types live in a sibling .d.ts", () => {
   it("takes its props from the declaration", async () => {
@@ -159,10 +157,7 @@ describe("declaration lookup stays out of TypeScript entries", () => {
   });
 });
 
-// Review B-2/B-3: the warning stated two things that could be false of the run
-// that printed them — "has no declaration file beside it" with a `.d.ts` that
-// resolved but declared no props type, and "measuring with no props" with a
-// preset file whose props the run then measured.
+// B-2/B-3: warning wording must not claim "no declaration" or "no props" when either resolved.
 
 describe("what the untyped-JS warning claims", () => {
   it("says the declaration was read when one resolved and declared nothing", async () => {

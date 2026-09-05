@@ -5,8 +5,8 @@ import {
   type Report,
   type Thresholds,
   type BaselineComparison,
-} from "../../src/report.js";
-import { ZERO_PROPS_WARNING } from "../../src/analyze.js";
+} from "../../src/report/index.js";
+import { ZERO_PROPS_WARNING } from "../../src/pipeline/index.js";
 
 const THRESHOLDS: Thresholds = { mountMs: 50, interactionMs: 400, relativeMount: 2, rerenderMs: 16 };
 

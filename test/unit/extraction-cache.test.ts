@@ -6,7 +6,7 @@ import {
   extractAllProps,
   resetExtractionCache,
   extractionCacheStats,
-} from "../../src/prop-gen.js";
+} from "../../src/props/index.js";
 
 beforeEach(() => {
   resetExtractionCache();
@@ -25,8 +25,7 @@ describe("extraction program cache", () => {
     const afterFirst = extractionCacheStats().sourceFilesParsed;
     await extractProps("./fixtures/enum-prop.tsx");
     const afterSecond = extractionCacheStats().sourceFilesParsed;
-    // The second component adds its own file and at most a handful of new
-    // imports: not the lib + node_modules graph again.
+    // Second component adds its own file plus a few imports, not the whole graph again.
     expect(afterFirst).toBeGreaterThan(20);
     expect(afterSecond - afterFirst).toBeLessThan(afterFirst / 10);
   });

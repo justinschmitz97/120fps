@@ -1,12 +1,11 @@
 import { describe, it, expect } from "vitest";
 import path from "node:path";
-import { extractProps, resetExtractionCache } from "../../src/prop-gen.js";
+import { extractProps, resetExtractionCache } from "../../src/props/index.js";
 
 const M84 = path.resolve("./fixtures/m84");
 const fixture = (name: string): string => path.join(M84, name);
 
-// M84 cross-lane deliverable: every synthesized value carries provenance,
-// one of "declared" | "preset" | "heuristic" | "placeholder" | "contract".
+// M84: provenance is one of declared|preset|heuristic|placeholder|contract.
 describe("M84: every schema carries provenance", () => {
   it("a plain literal union member is declared", async () => {
     resetExtractionCache();
@@ -39,8 +38,6 @@ describe("M84: every schema carries provenance", () => {
   });
 });
 
-// M84 invariant: provenance is one of the five documented values, never a
-// stray string.
 describe("M84: provenance is always one of the five documented values", () => {
   it("every schema's provenance (when present) is a valid PropProvenance", async () => {
     resetExtractionCache();

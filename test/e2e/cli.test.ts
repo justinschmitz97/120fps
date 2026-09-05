@@ -3,11 +3,11 @@ import { execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
 import path from "node:path";
 import fs from "node:fs";
-import { resolveReportPaths } from "../../src/cli.js";
+import { resolveReportPaths } from "../../src/cli/index.js";
 import os from "node:os";
 
 const execFileAsync = promisify(execFile);
-const CLI_PATH = path.resolve("dist/cli.js");
+const CLI_PATH = path.resolve("dist/cli/main.js");
 
 beforeAll(() => {
   execFileSync("npx", ["tsc"], { cwd: path.resolve("."), shell: true });
@@ -91,8 +91,7 @@ describe("CLI e2e", () => {
     const reportA = path.resolve("120fps-report.static-buttons.json");
     const reportB = path.resolve("120fps-report.static-buttons-2.json");
     try {
-      // Two different files with the same stem: passing one file twice now
-      // dedupes (M32 D1), so the collision case needs distinct paths.
+      // Same-stem files dedupe (M32 D1); this collision case needs genuinely distinct paths.
       const { code } = await runCli([
         "./fixtures/static-buttons.tsx",
         "./fixtures/dup/static-buttons.tsx",
@@ -111,9 +110,7 @@ describe("CLI e2e", () => {
     }
   }, 300000);
 
-  // M32 D5: --json names the destination instead of being rejected. Asserted
-  // through resolveReportPaths rather than a full run, which would measure two
-  // components to check a filename.
+  // M32 D5: asserted via resolveReportPaths, not a full run, to avoid measuring two components.
   it("multi-path with explicit --json derives per-component names", () => {
     expect(
       resolveReportPaths(["./fixtures/static-buttons.tsx", "./fixtures/button.tsx"], "out.json"),

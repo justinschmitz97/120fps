@@ -1,15 +1,11 @@
-// M24 wave-2 hardening: D1 (tsconfig aliases), D2 (export detection),
-// D6 (prop-gen tsconfig warnings), D8 (stale harness sweep).
+// M24 wave-2: D1 tsconfig aliases, D2 export detection, D6 prop-gen warnings, D8 stale sweep.
 import { describe, it, expect, vi, afterEach, afterAll } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import {
-  loadTsconfigAliases,
-  detectComponentExport,
-  sweepStaleHarnessDirs,
-} from "../../src/harness.js";
-import { extractProps, extractExports } from "../../src/prop-gen.js";
+import { detectComponentExport, sweepStaleHarnessDirs } from "../../src/harness/index.js";
+import { loadTsconfigAliases } from "../../src/project/index.js";
+import { extractProps, extractExports } from "../../src/props/index.js";
 
 const cleanupDirs: string[] = [];
 
@@ -155,17 +151,15 @@ export const Badge: React.FC<{ label: string }> = () => null;`,
 });
 
 describe("H11: export default memo(X) call expression", () => {
-  it("falls back to filename with a working default import", () => {
+  it("names the component the wrapper wraps", () => {
     const dir = mkProject({
       "fancy.tsx": `import { memo } from "react";
 const Widget = () => null;
 export default memo(Widget);`,
     });
-    // Call expressions are not identifier assignments; the module still has
-    // a default export, so the filename fallback with isDefaultOnly: true
-    // generates a valid default import.
+    // specs/milestones/m114-disclosures-are-true-for-runtime-styling-props-and-page-errors.md
     expect(detectComponentExport(path.join(dir, "fancy.tsx"))).toEqual({
-      name: "Fancy",
+      name: "Widget",
       isDefaultOnly: true,
     });
   });

@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { buildAndServe } from "../../src/harness.js";
-import { measureMount } from "../../src/measure.js";
-import { attributeCost } from "../../src/metrics.js";
+import { buildAndServe } from "../../src/harness/index.js";
+import { measureMount } from "../../src/browser/index.js";
+import { attributeCost } from "../../src/report/index.js";
 
 describe("attribution window", () => {
   it("reports one mount's scripting, bounded by the mount it describes", async () => {
@@ -18,14 +18,12 @@ describe("attribution window", () => {
       expect(total).toBeGreaterThan(0);
       expect(total).toBeCloseTo(attribution.totalScriptingMs / traces.length, 6);
 
-      // Every window's script time nests inside that window's top-level events,
-      // so the per-mount breakdown cannot exceed the average mount.
+      // Each window's script time nests inside its top-level events, bounding the breakdown.
       const meanMount =
         mount.mount.samples.reduce((a, b) => a + b, 0) / mount.mount.samples.length;
       expect(total).toBeLessThanOrEqual(meanMount);
 
-      // The Mount column is a median of the same samples: same order of
-      // magnitude, not a multiple of the sample count.
+      // Mount's median comes from the same samples: totals stay the same order of magnitude.
       expect(total).toBeLessThan(mount.mount.median * 2);
     } finally {
       await harness.cleanup();

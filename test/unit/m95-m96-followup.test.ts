@@ -2,7 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { buildAndServe, loadTsconfigAliases, type ServerPool } from "../../src/harness.js";
+import { buildAndServe, type ServerPool } from "../../src/harness/index.js";
+import { loadTsconfigAliases } from "../../src/project/index.js";
 
 function poolThatThrows(err: unknown): ServerPool {
   return {
@@ -44,11 +45,19 @@ afterEach(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
-// M95 gap 1 (nuxt-ui): a Nuxt build-time virtual module ("#build/...") cannot
-// resolve before `nuxi prepare` generates .nuxt/. Joined with the
-// tsconfig-extends warning already in buildWarnings when both point at the
-// same generated directory.
+// M95 gap 1: a Nuxt build-time virtual module ("#build/...") can't resolve before `nuxi prepare`.
 describe("Nuxt build-time virtual module (#build/...) failure", () => {
+  // M108 A2: the diagnosis fires only for repos that declare nuxt.
+  beforeEach(() => {
+    fs.writeFileSync(
+      path.join(tmpDir, "package.json"),
+      JSON.stringify({
+        dependencies: { react: "18.3.1", "react-dom": "18.3.1" },
+        devDependencies: { nuxt: "3.13.0" },
+      }),
+    );
+  });
+
   it("names nuxi prepare as the remedy, with no raw package-resolution message", async () => {
     const err = new Error('Missing "#build" specifier in "@nuxt/ui" package');
     let thrown: Error | undefined;
@@ -80,18 +89,12 @@ describe("Nuxt build-time virtual module (#build/...) failure", () => {
     } catch (e) {
       thrown = e as Error & { warnings?: string[] };
     }
-    // The join happens because the same buildWarnings that carried the
-    // tsconfig warning are inspected when composing the nuxi-prepare message.
+    // The nuxi-prepare message is composed from the same buildWarnings that carried this warning.
     expect(thrown!.message).toMatch(/tsconfig/i);
     expect(thrown!.warnings!.some((w) => w.includes(".nuxt"))).toBe(true);
   });
 
-  // M92 (nuxt-ui, verified post-fix): running the advised `nuxi prepare`
-  // creates .nuxt/ without producing this module's own generated templates
-  // (nuxt-ui's root has no nuxt.config.ts of its own, so a root-level
-  // prepare never runs @nuxt/ui's module hooks). The remedy must stop
-  // advising a command the run's own evidence (.nuxt/ already exists) shows
-  // was already run, and must not name an unverified script.
+  // M92: nuxi prepare creates .nuxt/ without nuxt-ui's own templates; don't repeat the remedy.
   it("does not repeat the nuxi-prepare remedy when .nuxt/ already exists", async () => {
     fs.mkdirSync(path.join(tmpDir, ".nuxt"), { recursive: true });
     const err = new Error('Missing "#build" specifier in "@nuxt/ui" package');
@@ -103,8 +106,7 @@ describe("Nuxt build-time virtual module (#build/...) failure", () => {
       thrown = e as Error;
     }
     expect(thrown!.message).toContain(".nuxt/ already exists");
-    // The bare "not yet prepared" remedy sentence must not appear verbatim --
-    // that is the exact byte-identical repeat the verifier caught.
+    // Byte-identical repeat of the generic "not yet prepared" remedy is what the verifier caught.
     expect(thrown!.message).not.toContain(
       "a Nuxt build-time virtual module that does not exist until `nuxi prepare` generates",
     );
@@ -120,6 +122,7 @@ describe("Nuxt build-time virtual module (#build/...) failure", () => {
       path.join(tmpDir, "package.json"),
       JSON.stringify({
         dependencies: { react: "18.3.1", "react-dom": "18.3.1" },
+        devDependencies: { nuxt: "3.13.0" },
         scripts: { prepare: "nuxt-module-build prepare" },
       }),
     );
@@ -135,8 +138,7 @@ describe("Nuxt build-time virtual module (#build/...) failure", () => {
   });
 });
 
-// M95 gap 2 (ant-design): a relative import resolving to nothing, where the
-// target is gitignored, is a generated-file-not-yet-produced shape.
+// M95 gap 2: a gitignored relative import resolving to nothing means a not-yet-generated file.
 describe("gitignored generated file resolving to nothing (esbuild 'Could not resolve')", () => {
   it("names the missing generated file and a likely command instead of the raw esbuild error", async () => {
     fs.mkdirSync(path.join(tmpDir, ".git"), { recursive: true });
@@ -196,9 +198,7 @@ describe("gitignored generated file resolving to nothing (esbuild 'Could not res
   });
 });
 
-// M96 (calcom-F2, Lane C's second MUST deferred here): esbuild's own static
-// "No matching export" error, when the file it names is one of 120fps's own
-// shims, must not leak that absolute dist/shims path.
+// M96 (calcom-F2): esbuild's "No matching export" error must not leak our shim's absolute path.
 describe("missing shim export (esbuild 'No matching export', M96)", () => {
   it("names the shim module and the missing export, with no path inside 120fps's own installation", async () => {
     fs.writeFileSync(
@@ -210,6 +210,7 @@ describe("missing shim export (esbuild 'No matching export', M96)", () => {
       "..",
       "..",
       "src",
+      "harness",
       "shims",
       "next-navigation.js",
     );

@@ -2,14 +2,14 @@ import { describe, it, expect, afterAll, beforeAll } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import { chromium, type Browser, type Page } from "playwright";
-import { buildAndServe, type HarnessResult } from "../../src/harness.js";
+import { buildAndServe, type HarnessResult } from "../../src/harness/index.js";
 import {
   installMeasuredStateProbe,
   readNetworkProbe,
   probeLateMutation,
   MEASURED_STATE_HOLD_MS,
-} from "../../src/measure.js";
-import { analyze, MEASURED_STATE_WARNING, type AnalyzeOptions } from "../../src/analyze.js";
+} from "../../src/browser/index.js";
+import { analyze, MEASURED_STATE_WARNING, type AnalyzeOptions } from "../../src/pipeline/index.js";
 
 let browser: Browser;
 
@@ -17,8 +17,7 @@ afterAll(async () => {
   if (browser) await browser.close();
 });
 
-// Mirrors the measurement preamble: probe installed once the harness is ready,
-// before anything mounts.
+// Mirrors the measurement preamble: probe installed once the harness is ready, before mount.
 async function opened(
   componentPath: string,
   setup?: (page: Page) => Promise<void>,
@@ -148,12 +147,7 @@ describe("pipeline integration", () => {
     fs.rmSync(PROJECT_DIR, { recursive: true, force: true });
   });
 
-  // The classification itself is best-effort by design: the observation window
-  // opens once trace collection has finished, at an offset that varies with
-  // machine load, so a mutation outside it is missed. False negatives are
-  // acceptable, false positives are not: the probe's own reliability is
-  // covered deterministically by C1/C2. What the pipeline must guarantee is
-  // that whatever it classified reaches the report and the warnings together.
+  // Best-effort by design (false negatives ok, not positives; see C1/C2): checks propagation only.
   it("carries every combo's classification into the report, with one disclosure each", async () => {
     const report = await run();
     for (const combo of report.combos) {
@@ -165,7 +159,6 @@ describe("pipeline integration", () => {
     );
     const disclosures = (report.warnings ?? []).filter((w) => w.includes("measured in a"));
 
-    // One warning per non-settled combo, naming that combo and its signal.
     expect(disclosures).toHaveLength(nonSettled.length);
     for (const combo of nonSettled) {
       expect(
@@ -178,14 +171,12 @@ describe("pipeline integration", () => {
 
   it("repeats whatever disclosure the saved entry carries", async () => {
     const saved = await run({ saveBaseline: true });
-    // The baseline records the primary combo, so that is the scene a cached
-    // verdict can repeat.
+    // The baseline records only the primary combo; a cached verdict repeats that scene.
     const state = saved.combos[0].measuredState;
 
     const cached = await run({ check: true });
     expect(cached.cached).toBe(true);
-    // A reused verdict repeats the saved scene's disclosure, and stays silent
-    // when the saved scene was settled.
+    // A reused verdict repeats the saved scene's disclosure, staying silent if it was settled.
     if (state && state !== "settled") {
       expect(cached.warnings).toContain(MEASURED_STATE_WARNING(state));
     } else {

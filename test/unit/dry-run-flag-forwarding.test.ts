@@ -1,10 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { parseArgs, explainPropsOptions } from "../../src/cli.js";
+import { parseArgs, explainPropsOptions } from "../../src/cli/index.js";
 
-// element-plus: `--framework vue --explain-props` was byte-identical to
-// `--explain-props`, while the same flag on a real run printed the
-// "does not change how this file mounts" disclosure. The dry run's silence
-// started at the call site, which never read the parsed flag.
+// element-plus: --framework was silently dropped; the dry run's call site never read the flag.
 describe("options a dry run receives from the command line", () => {
   it("carries --framework through to the dry run", () => {
     const args = parseArgs(["tabs.tsx", "--explain-props", "--framework", "vue"]);
@@ -27,9 +24,7 @@ describe("options a dry run receives from the command line", () => {
   });
 });
 
-// C-5: the dry run predicts the mode the real run would take, so every flag
-// that decides a mode has to reach it. These four used to stop at the call
-// site, exactly as --framework did.
+// C-5: the dry run predicts the real run's mode; these four flags reach it same as --framework.
 describe("mode flags a dry run needs to predict the same mode", () => {
   it("carries --curve and --no-curve", () => {
     expect(explainPropsOptions(parseArgs(["a.tsx", "--curve"]), "a.tsx").curveMode).toBe(true);
@@ -51,11 +46,54 @@ describe("mode flags a dry run needs to predict the same mode", () => {
     expect(fixture.fixturePath).toBe("a.fixture.tsx");
   });
 
+  // M110 C1,C4,I2: each of these three, dropped at the call site, mispredicts the real run's mode.
+  it("carries --no-auto-compose, --no-transforms and --no-shims", () => {
+    const options = explainPropsOptions(
+      parseArgs(["a.tsx", "--explain-props", "--no-auto-compose", "--no-transforms", "--no-shims"]),
+      "a.tsx",
+    );
+    expect(options.skipAutoCompose).toBe(true);
+    expect(options.noTransforms).toBe(true);
+    expect(options.noShims).toBe(true);
+  });
+
   it("omits every mode flag that was not passed", () => {
     const options = explainPropsOptions(parseArgs(["a.tsx", "--explain-props"]), "a.tsx");
     expect(options).not.toHaveProperty("curveMode");
     expect(options).not.toHaveProperty("matrixMode");
     expect(options).not.toHaveProperty("isolation");
     expect(options).not.toHaveProperty("fixturePath");
+    expect(options).not.toHaveProperty("skipAutoCompose");
+    expect(options).not.toHaveProperty("noTransforms");
+    expect(options).not.toHaveProperty("noShims");
+  });
+});
+
+// M115 A2/I12: --samples and --max-combos must reach the dry run or it prices the default run.
+describe("cost flags a dry run needs to price the real run", () => {
+  it("carries --samples and --max-combos", () => {
+    const options = explainPropsOptions(
+      parseArgs(["a.tsx", "--explain-props", "--samples", "5", "--max-combos", "4"]),
+      "a.tsx",
+    );
+    expect(options.samples).toBe(5);
+    expect(options.maxCombos).toBe(4);
+  });
+
+  it("omits both when neither flag was passed", () => {
+    const options = explainPropsOptions(parseArgs(["a.tsx", "--explain-props"]), "a.tsx");
+    expect(options).not.toHaveProperty("samples");
+    expect(options).not.toHaveProperty("maxCombos");
+  });
+
+  it("carries each of the two flags on its own", () => {
+    expect(
+      explainPropsOptions(parseArgs(["a.tsx", "--samples", "3"]), "a.tsx"),
+    ).not.toHaveProperty("maxCombos");
+    expect(explainPropsOptions(parseArgs(["a.tsx", "--samples", "3"]), "a.tsx").samples).toBe(3);
+    expect(
+      explainPropsOptions(parseArgs(["a.tsx", "--max-combos", "2"]), "a.tsx"),
+    ).not.toHaveProperty("samples");
+    expect(explainPropsOptions(parseArgs(["a.tsx", "--max-combos", "2"]), "a.tsx").maxCombos).toBe(2);
   });
 });

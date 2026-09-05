@@ -3,12 +3,9 @@ import { afterEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { predictMode, explainProps, DRY_RUN_RUNTIME_ONLY_NOTE, formatExplainProps, type PropsExplanation } from "../../src/analyze.js";
+import { predictMode, explainProps, DRY_RUN_RUNTIME_ONLY_NOTE, formatExplainProps, type PropsExplanation } from "../../src/pipeline/index.js";
 
-// element-plus-F4: the dry run printed "Curve mode: would activate on max" and
-// "Matrix mode: would auto-activate" as two independent booleans, while the
-// real dispatcher returns at curve before the matrix branch is reached. One
-// function now answers for both, in the dispatcher's own order.
+// element-plus-F4: dispatcher returns at curve before matrix is checked; predictMode mirrors that.
 
 const BASE = {
   isolation: false,
@@ -110,18 +107,14 @@ describe("the dry run's footer states what it could not decide", () => {
   });
 });
 
-// Review C-5: the dry run predicted from its own detection alone, so five
-// flags made it promise a mode the real run would not take. Lane A forwards
-// `curveMode` / `matrixMode` / `isolation` / `fixturePath` under the same names
-// the real run uses; these drive `predictMode` from them, one case per flag.
+// Review C-5: the dry run predicted from its own detection; these flags must reach predictMode too.
 describe("the flags the real dispatcher reads reach the prediction", () => {
   const tmpDirs: string[] = [];
   afterEach(() => {
     for (const dir of tmpDirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
   });
 
-  // A component with two boolean props (matrix auto-activates) and an array
-  // prop (curve auto-activates), so every flag has something to suppress.
+  // Two boolean props make every matrix-suppressing flag have something to suppress.
   function project(extra: Record<string, string> = {}): { root: string; entry: string } {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "120fps-predict-"));
     tmpDirs.push(root);
@@ -172,8 +165,7 @@ describe("the flags the real dispatcher reads reach the prediction", () => {
     expect(formatExplainProps(explained)).toContain("a fixture supplies the props");
   });
 
-  // Curve auto-activates on an array prop and beats matrix, so the two curve
-  // cases need a component that has one; the matrix baseline above must not.
+  // Curve auto-activates on an array prop and beats matrix; the baseline above must not have one.
   function scalingEntry(): string {
     const { root } = project({
       "Grid.tsx": "export function Grid(props: { open?: boolean; dense?: boolean; items?: string[] }) { return null; }",

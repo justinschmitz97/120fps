@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 
 const run = promisify(execFile);
-const CLI = path.resolve("dist/cli.js");
+const CLI = path.resolve("dist/cli/main.js");
 
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "120fps-m65-"));
 afterAll(() => {

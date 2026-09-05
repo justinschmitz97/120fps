@@ -2,34 +2,9 @@ import { describe, it, expect, afterEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import {
-  detectFramework,
-  detectDurationsUnavailable,
-  diffSnapshots,
-  detectMemoBailouts,
-  detectContextFanOut,
-  computeRenderAttribution,
-  computePortalOrphans,
-  hasReactWarning,
-  PROFILER_HOOK_SCRIPT,
-  generateProbeEntry,
-  generateProbeHtml,
-  resolveReactDomIdentity,
-  isSupportedReactDomVersion,
-  REACT_DOM_NOT_REACT_WARNING,
-  REACT_DOM_VERSION_RANGE_WARNING,
-  SOLID_AND_REACT_DECLARED,
-  PREACT_UNSUPPORTED_WARNING,
-  type ProfilerSnapshot,
-  type ProfilerDiff,
-  type ReactOptimizations,
-  type FiberInfo,
-  type RenderAttribution,
-  type CallbackIdentityDelta,
-} from "../../src/react-profiler.js";
-import { parseArgs } from "../../src/cli.js";
-
-// --- helpers ---
+import { detectDurationsUnavailable, diffSnapshots, detectMemoBailouts, detectContextFanOut, computeRenderAttribution, computePortalOrphans, hasReactWarning, PROFILER_HOOK_SCRIPT, generateProbeEntry, generateProbeHtml, resolveReactDomIdentity, isSupportedReactDomVersion, REACT_DOM_NOT_REACT_WARNING, REACT_DOM_VERSION_RANGE_WARNING, type ProfilerSnapshot, type ProfilerDiff, type ReactOptimizations, type FiberInfo, type RenderAttribution, type CallbackIdentityDelta } from "../../src/analysis/index.js";
+import { detectFramework, SOLID_AND_REACT_DECLARED, PREACT_UNSUPPORTED_WARNING } from "../../src/project/index.js";
+import { parseArgs } from "../../src/cli/index.js";
 
 function makeFiber(overrides: Partial<FiberInfo> = {}): FiberInfo {
   return {
@@ -51,10 +26,6 @@ function makeSnapshot(
     commitCount,
   };
 }
-
-// ====================================================================
-// detectFramework
-// ====================================================================
 
 describe("detectFramework", () => {
   const tmpDirs: string[] = [];
@@ -99,8 +70,7 @@ describe("detectFramework", () => {
     expect(detectFramework(dir)).toBe("vanilla");
   });
 
-  // M68: an unreadable manifest says nothing, and guessing react mounted
-  // non-React code as React.
+  // M68: an unreadable manifest says nothing; guessing react risks mounting non-React code.
   it("returns 'vanilla' when package.json is missing", () => {
     const dir = makeProject(null);
     expect(detectFramework(dir)).toBe("vanilla");
@@ -111,8 +81,7 @@ describe("detectFramework", () => {
     expect(detectFramework(dir)).toBe("vanilla");
   });
 
-  // M72: solid-js alongside react is a mixed repo, not a rejection (that
-  // half lives in runPreflight; see preflight.test.ts "solid-js rejection").
+  // M72: mixed solid-js+react warns; rejection lives in preflight.test.ts "solid-js rejection".
   it("warns but still returns 'react' when solid-js is declared alongside react", () => {
     const dir = makeProject(
       JSON.stringify({ dependencies: { react: "^19.0.0", "solid-js": "^1.8.0" } }),
@@ -130,11 +99,7 @@ describe("detectFramework", () => {
     expect(warnings).toEqual([]);
   });
 
-  // M72 post-review fix: after M75 widened isPackageAvailable to walk
-  // ancestor node_modules, keying this warning on it let a transitive,
-  // hoisted-but-undeclared solid-js trigger a "declares" claim that was not
-  // true. Same declared-vs-available principle as the runPreflight fix
-  // (8e8342c): a mere advisory still must not assert a false fact.
+  // M72/M75: transitive, undeclared solid-js must not trigger a false "declares" claim.
   it("does not warn about a transitively available but undeclared solid-js", () => {
     const dir = makeProject(JSON.stringify({ dependencies: { react: "^19.0.0" } }));
     const solidDir = path.join(dir, "node_modules", "solid-js");
@@ -148,8 +113,7 @@ describe("detectFramework", () => {
     expect(warnings).toEqual([]);
   });
 
-  // M74 (D6): a plain-Preact project used to resolve "vanilla" in total
-  // silence, skipping every React-family analysis pass with no signal.
+  // M74 (D6): a plain-Preact project must not resolve silently to "vanilla" with no signal.
   it("warns with PREACT_UNSUPPORTED_WARNING when preact is declared and nothing else resolves", () => {
     const dir = makeProject(JSON.stringify({ dependencies: { preact: "^10.19.0" } }));
     const warnings: string[] = [];
@@ -189,10 +153,6 @@ describe("detectFramework", () => {
     expect(warnings.some((w) => w.includes("preact"))).toBe(false);
   });
 });
-
-// ====================================================================
-// resolveReactDomIdentity / isSupportedReactDomVersion
-// ====================================================================
 
 describe("resolveReactDomIdentity", () => {
   const tmpDirs: string[] = [];
@@ -282,10 +242,6 @@ describe("React DOM identity warnings", () => {
   });
 });
 
-// ====================================================================
-// detectDurationsUnavailable
-// ====================================================================
-
 describe("detectDurationsUnavailable", () => {
   it("returns true when all fibers have duration 0", () => {
     const snap = makeSnapshot([
@@ -317,10 +273,6 @@ describe("detectDurationsUnavailable", () => {
     expect(detectDurationsUnavailable(makeSnapshot())).toBe(false);
   });
 });
-
-// ====================================================================
-// diffSnapshots
-// ====================================================================
 
 describe("diffSnapshots", () => {
   it("returns empty diff for identical snapshots", () => {
@@ -392,10 +344,6 @@ describe("diffSnapshots", () => {
     expect(diff.rerenderFibers[1].name).toBe("Small");
   });
 });
-
-// ====================================================================
-// detectMemoBailouts
-// ====================================================================
 
 describe("detectMemoBailouts", () => {
   it("returns memoized components that re-rendered", () => {
@@ -476,10 +424,6 @@ describe("detectMemoBailouts", () => {
   });
 });
 
-// ====================================================================
-// detectContextFanOut
-// ====================================================================
-
 describe("detectContextFanOut", () => {
   it("returns component names that re-rendered from context change", () => {
     const diff: ProfilerDiff = {
@@ -524,10 +468,6 @@ describe("detectContextFanOut", () => {
     expect(detectContextFanOut(diff)).toEqual([]);
   });
 });
-
-// ====================================================================
-// computeRenderAttribution
-// ====================================================================
 
 describe("computeRenderAttribution", () => {
   it("returns top 5 fibers sorted by selfDuration descending", () => {
@@ -607,10 +547,6 @@ describe("computeRenderAttribution", () => {
   });
 });
 
-// ====================================================================
-// computePortalOrphans
-// ====================================================================
-
 describe("computePortalOrphans", () => {
   it("returns positive delta when post > pre", () => {
     expect(computePortalOrphans(5, 8)).toBe(3);
@@ -624,10 +560,6 @@ describe("computePortalOrphans", () => {
     expect(computePortalOrphans(8, 3)).toBe(0);
   });
 });
-
-// ====================================================================
-// hasReactWarning
-// ====================================================================
 
 describe("hasReactWarning", () => {
   it("returns true when memoBailout is true", () => {
@@ -693,10 +625,6 @@ describe("hasReactWarning", () => {
   });
 });
 
-// ====================================================================
-// CLI flags
-// ====================================================================
-
 describe("CLI --no-react-analysis flag", () => {
   it("parseArgs recognizes --no-react-analysis", () => {
     const result = parseArgs(["./Button.tsx", "--no-react-analysis"]);
@@ -759,10 +687,6 @@ describe("CLI --framework flag", () => {
   });
 });
 
-// ====================================================================
-// PROFILER_HOOK_SCRIPT
-// ====================================================================
-
 describe("PROFILER_HOOK_SCRIPT", () => {
   it("assigns __REACT_DEVTOOLS_GLOBAL_HOOK__", () => {
     expect(PROFILER_HOOK_SCRIPT).toContain("__REACT_DEVTOOLS_GLOBAL_HOOK__");
@@ -788,10 +712,6 @@ describe("PROFILER_HOOK_SCRIPT", () => {
     expect(PROFILER_HOOK_SCRIPT).toContain("reset:");
   });
 });
-
-// ====================================================================
-// generateProbeEntry
-// ====================================================================
 
 describe("generateProbeEntry", () => {
   it("includes synthetic context provider", () => {
@@ -871,10 +791,6 @@ describe("generateProbeEntry", () => {
     expect(entry).toContain("createElement(");
   });
 });
-
-// ====================================================================
-// generateProbeHtml
-// ====================================================================
 
 describe("generateProbeHtml", () => {
   it("includes root div", () => {

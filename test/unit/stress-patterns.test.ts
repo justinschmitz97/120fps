@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { resolveStressPattern, type StressPattern } from "../../src/stress-patterns.js";
-import type { InteractionDescriptor } from "../../src/discovery.js";
+import { resolveStressPattern, type StressPattern } from "../../src/analysis/index.js";
+import type { InteractionDescriptor } from "../../src/browser/index.js";
 
 function makeDescriptor(
   overrides: Partial<InteractionDescriptor> = {},
@@ -13,8 +13,6 @@ function makeDescriptor(
     ...overrides,
   };
 }
-
-// --- Pattern dispatch ---
 
 describe("resolveStressPattern dispatch", () => {
   it.each([
@@ -78,8 +76,6 @@ describe("resolveStressPattern dispatch", () => {
   });
 });
 
-// --- Dispatch priority ---
-
 describe("resolveStressPattern priority", () => {
   it("tab role without siblings falls through to rapid-toggle-11 (click type)", () => {
     const desc = makeDescriptor({ type: "click", role: "tab" });
@@ -105,8 +101,6 @@ describe("resolveStressPattern priority", () => {
     expect(pattern.name).toBe("open-close-10");
   });
 });
-
-// --- Step structure ---
 
 describe("keyboard-sweep steps", () => {
   it("includes focus, ArrowDown × siblingCount, Home, End", () => {
@@ -188,8 +182,6 @@ describe("single-shot steps", () => {
     expect(pattern.steps[0].selector).toBe("#el");
   });
 });
-
-// --- Purity ---
 
 describe("resolveStressPattern purity", () => {
   it("same input produces same output", () => {

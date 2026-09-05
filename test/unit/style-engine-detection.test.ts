@@ -8,7 +8,7 @@ import {
   detectUnsupportedStyleEngines,
   findPostcssConfigAbove,
   resolveStyleTooling,
-} from "../../src/harness.js";
+} from "../../src/harness/index.js";
 
 let tmpDir: string;
 
@@ -49,13 +49,7 @@ describe("loading the Tailwind plugin", () => {
   });
 });
 
-// M83 #6 (twenty-F5): manifest/resolution-chain availability alone used to
-// be sufficient to fire this warning, so a workspace member that merely
-// declared an unsupported style engine got the warning on every component in
-// it, including one whose own import graph never reaches it. `pkg` and
-// `workspaceRoot` no longer decide anything here; the measured component's
-// (and wrapper's) scanned import graph — the same `externalDeps` list the
-// harness already builds — does.
+// M83 #6 (twenty-F5): the import graph reaching an engine fires the warning, not the manifest.
 describe("recognizing styling engines the harness cannot replicate", () => {
   it("lists the engines it knows about", () => {
     expect(UNSUPPORTED_STYLE_ENGINES).toEqual([
@@ -93,8 +87,6 @@ describe("recognizing styling engines the harness cannot replicate", () => {
   });
 
   it("fires for a package the import graph reaches even when package.json never declares it", () => {
-    // e.g. resolved only via a hoisted transitive install, or a bare import
-    // the manifest omits entirely — declaration is no longer the gate.
     expect(detectUnsupportedStyleEngines(tmpDir, tmpDir, ["@linaria/vite"])).toEqual(["@linaria/vite"]);
   });
 

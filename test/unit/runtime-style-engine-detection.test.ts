@@ -6,7 +6,7 @@ import {
   RUNTIME_STYLE_ENGINES,
   detectRuntimeStyleEngines,
   discoverGlobalCss,
-} from "../../src/harness.js";
+} from "../../src/harness/index.js";
 
 let tmpDir: string;
 
@@ -31,11 +31,16 @@ function write(relative: string, body: string): string {
 
 describe("RUNTIME_STYLE_ENGINES", () => {
   it("lists the engines it recognizes", () => {
+    // specs/milestones/m114-disclosures-are-true-for-runtime-styling-props-and-page-errors.md
     expect(RUNTIME_STYLE_ENGINES).toEqual([
       "@ant-design/cssinjs",
+      "antd-style",
       "@emotion/react",
       "@emotion/styled",
       "@emotion/css",
+      "@griffel/react",
+      "@griffel/core",
+      "css-render",
       "styled-components",
       "primevue",
     ]);
@@ -59,9 +64,7 @@ describe("detectRuntimeStyleEngines", () => {
   });
 });
 
-// The ant-design and chakra-ui shapes from the field test: no static
-// stylesheet is ever going to exist because styling is generated live in the
-// browser. This is a first-class, disclosed outcome, not silence.
+// The ant-design/chakra-ui shapes from the field test: no stylesheet is ever a disclosed outcome.
 describe("runtime CSS-in-JS as a discovery outcome", () => {
   it("resolves to runtime when the fallback layer has no survivor and an engine is declared (ant-design shape)", () => {
     manifest({ "@ant-design/cssinjs": "^1.0.0" });
@@ -72,9 +75,9 @@ describe("runtime CSS-in-JS as a discovery outcome", () => {
       files: [],
       source: "runtime",
       runtimeEngines: ["@ant-design/cssinjs"],
+      runtimeEnginesRecognised: true,
     });
-    // The disqualified reset.css is still named, even though the outcome
-    // resolved to runtime rather than none.
+    // The disqualified reset.css is still named though the outcome resolved to runtime, not none.
     expect(warnings.some((w) => w.includes("reset.css"))).toBe(true);
   });
 
@@ -94,6 +97,7 @@ describe("runtime CSS-in-JS as a discovery outcome", () => {
       files: [],
       source: "runtime",
       runtimeEngines: ["@emotion/react", "@emotion/styled"],
+      runtimeEnginesRecognised: true,
     });
   });
 

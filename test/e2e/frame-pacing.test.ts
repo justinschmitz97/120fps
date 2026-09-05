@@ -1,12 +1,12 @@
 import { describe, it, expect } from "vitest";
 import { chromium } from "playwright";
-import { buildAndServe } from "../../src/harness.js";
+import { buildAndServe } from "../../src/harness/index.js";
 import {
   measureMount,
   measureRerender,
   createFramePump,
   MEASUREMENT_BROWSER_ARGS,
-} from "../../src/measure.js";
+} from "../../src/browser/index.js";
 
 async function doubleRafMedian(args: string[], pumped: boolean): Promise<number> {
   const browser = await chromium.launch({ headless: true, args });
@@ -58,8 +58,7 @@ describe("measureMount pacing", () => {
       const names = new Set(
         (results[0].mountTraces ?? []).flat().map((e) => e.name),
       );
-      // Frames are driven, not scheduled: paint work must still land in
-      // every combo's traces.
+      // Frames are driven, not scheduled: paint work must still land in every combo's traces.
       expect(
         names.has("Paint") || names.has("PrePaint") || names.has("Layerize"),
       ).toBe(true);

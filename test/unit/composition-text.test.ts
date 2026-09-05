@@ -3,9 +3,9 @@ import {
   inferComposition,
   type CompositionNode,
   type ExportInfo,
-} from "../../src/composition.js";
-import { compositionToJsx } from "../../src/harness.js";
-import type { PropSchema } from "../../src/prop-gen.js";
+} from "../../src/props/index.js";
+import { compositionToJsx } from "../../src/harness/index.js";
+import type { PropSchema } from "../../src/props/index.js";
 
 function makeExports(...names: string[]): ExportInfo[] {
   return names.map((name, i) => ({ name, isDefault: i === 0 }));

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isContextLostError, refreshCdpSession, type CdpHolder } from "../../src/measure.js";
+import { isContextLostError, refreshCdpSession, type CdpHolder } from "../../src/browser/index.js";
 
 describe("CDP session recovery: a wedged tracing session is recoverable", () => {
   it("classifies a tracing timeout as retryable again", () => {

@@ -4,10 +4,8 @@ import {
   DEFAULT_THRESHOLDS,
   type ComboReport,
   type Report,
-} from "../../src/report.js";
-import type { ReactOptimizations } from "../../src/react-profiler.js";
-
-// --- helpers ---
+} from "../../src/report/index.js";
+import type { ReactOptimizations } from "../../src/analysis/index.js";
 
 function makeCombo(overrides: Partial<ComboReport> = {}): ComboReport {
   return {
@@ -53,10 +51,6 @@ function makeReactOptimizations(overrides: Partial<ReactOptimizations> = {}): Re
     ...overrides,
   };
 }
-
-// ====================================================================
-// formatTable: React Optimizations section
-// ====================================================================
 
 describe("formatTable React Optimizations section", () => {
   it("shows 'React Optimizations' header when reactOptimizations present", () => {

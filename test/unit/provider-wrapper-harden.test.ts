@@ -2,9 +2,9 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { buildAndServe, detectWrapper, generateEntry } from "../../src/harness.js";
-import { resolveWrapPath } from "../../src/analyze.js";
-import { parseArgs } from "../../src/cli.js";
+import { buildAndServe, detectWrapper, generateEntry } from "../../src/harness/index.js";
+import { resolveWrapPath } from "../../src/pipeline/index.js";
+import { parseArgs } from "../../src/cli/index.js";
 
 let tmpDir: string;
 
@@ -16,7 +16,6 @@ afterEach(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
-// H1: wrapper path containing spaces
 describe("H1: wrapper path with spaces", () => {
   it("emits a usable import specifier", async () => {
     const harness = await buildAndServe("./fixtures/button.tsx", {
@@ -32,7 +31,6 @@ describe("H1: wrapper path with spaces", () => {
   });
 });
 
-// H2: wrapper outside the project root
 describe("H2: wrapper outside the project root", () => {
   it("throws a clear error instead of emitting a ../ import", async () => {
     const outside = path.join(tmpDir, "outside-wrap.tsx");
@@ -43,7 +41,6 @@ describe("H2: wrapper outside the project root", () => {
   });
 });
 
-// H3: .jsx wrapper
 describe("H3: .jsx wrapper", () => {
   it("is accepted by buildAndServe", async () => {
     const harness = await buildAndServe("./fixtures/button.tsx", {
@@ -57,7 +54,6 @@ describe("H3: .jsx wrapper", () => {
   });
 });
 
-// H4/H5: arrow function and class default exports
 describe("H4/H5: default export shapes", () => {
   it("accepts an arrow function assigned to a const and default-exported", async () => {
     const harness = await buildAndServe("./fixtures/button.tsx", {
@@ -81,7 +77,6 @@ describe("H4/H5: default export shapes", () => {
   });
 });
 
-// H6: object literal default export
 describe("H6: non-callable default export", () => {
   it("rejects an object literal", async () => {
     await expect(
@@ -104,7 +99,6 @@ describe("H6: non-callable default export", () => {
   });
 });
 
-// H7: a rejected wrapper must not leak a harness directory
 describe("H7: harness dir cleanup on wrapper rejection", () => {
   function harnessDirs(root: string): string[] {
     return fs.readdirSync(root).filter((n) => n.startsWith(".120fps-harness-"));
@@ -133,7 +127,6 @@ describe("H7: harness dir cleanup on wrapper rejection", () => {
   });
 });
 
-// H9: probe order with every candidate present
 describe("H9: auto-detection with all candidates present", () => {
   it("picks the .tsx candidate", () => {
     for (const name of ["120fps.setup.js", "120fps.setup.ts", "120fps.setup.jsx", "120fps.setup.tsx"]) {
@@ -147,7 +140,6 @@ describe("H9: auto-detection with all candidates present", () => {
   });
 });
 
-// H10: posix normalization of nested wrapper paths
 describe("H10: nested wrapper path normalization", () => {
   it("uses forward slashes regardless of platform separators", async () => {
     const harness = await buildAndServe("./fixtures/button.tsx", {
@@ -162,7 +154,6 @@ describe("H10: nested wrapper path normalization", () => {
   });
 });
 
-// H11: --wrap as the trailing argument
 describe("H11: --wrap argument edge cases", () => {
   it("errors when --wrap is the last argument", () => {
     expect(parseArgs(["./a.tsx", "--wrap"]).error).toBe("--wrap requires a path argument");
@@ -174,7 +165,6 @@ describe("H11: --wrap argument edge cases", () => {
   });
 });
 
-// H12: --no-wrap overrides --wrap
 describe("H12: --no-wrap precedence", () => {
   it("suppresses an explicit wrapper", () => {
     const wrapper = path.join(tmpDir, "120fps.setup.tsx");
@@ -202,7 +192,6 @@ describe("H12: --no-wrap precedence", () => {
   });
 });
 
-// H13: wrapper combined with the composed path
 describe("H13: wrapper + composition", () => {
   it("wraps the composed scene and keeps the composition root identity", async () => {
     const harness = await buildAndServe("./fixtures/accordion-root.tsx", {
@@ -224,7 +213,6 @@ describe("H13: wrapper + composition", () => {
   });
 });
 
-// H14: wrapper + auto-scale fan-out
 describe("H14: wrapper + auto-scale", () => {
   it("emits a single wrapper around the fan-out div", () => {
     const entry = generateEntry({

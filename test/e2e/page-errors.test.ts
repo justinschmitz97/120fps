@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { chromium } from "playwright";
-import { attachPageErrorCapture, enrichTimeoutError } from "../../src/page-errors.js";
+import { attachPageErrorCapture, enrichTimeoutError } from "../../src/browser/index.js";
 
 describe("page error capture e2e", () => {
   it("captures a load-time throw and enriches the harness wait timeout", async () => {

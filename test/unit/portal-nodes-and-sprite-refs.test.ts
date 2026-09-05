@@ -4,7 +4,7 @@ import {
   UNRESOLVED_SPRITE_REFS_SOURCE,
   COMPONENT_NODE_COUNT_EXPRESSION,
   UNRESOLVED_SPRITE_REFS_EXPRESSION,
-} from "../../src/measure.js";
+} from "../../src/browser/index.js";
 
 interface FakeElement {
   tagName: string;
@@ -25,8 +25,7 @@ function el(tagName: string, extra: Partial<FakeElement> = {}): FakeElement {
 }
 
 function fakeDocument(root: FakeElement | null, bodyChildren: FakeElement[], ids: string[] = []) {
-  // One wrapper per source element: `#root` appearing in `document.body`'s
-  // children has to be the same object, the way it is in a real document.
+  // #root must be the same object whether reached via root or body.children, as in a real document.
   const wrapped = new Map<FakeElement, unknown>();
   const withQuery = (node: FakeElement): unknown => {
     const existing = wrapped.get(node);
@@ -61,9 +60,7 @@ function loadSpriteProbe(): (doc: unknown) => string[] {
   )() as (doc: unknown) => string[];
 }
 
-// dub-F6: portal content is counted, but the sum alone cannot say whether the
-// component rendered into #root or only into a portal.
-
+// dub-F6: the total count can't say whether nodes rendered into #root or only a portal.
 describe("counting what the component rendered", () => {
   it("splits nodes under the root from nodes rendered outside it", () => {
     const count = loadCounter();
@@ -109,10 +106,7 @@ describe("counting what the component rendered", () => {
   });
 });
 
-// calcom-F5: `<use href="#icon">` renders an empty <svg> because the sprite
-// lives in the application shell. No request is made, so the network probe is
-// blind and the two nodes look like a real render.
-
+// calcom-F5: sprite refs to shell defs render empty with no request, invisible to network probes.
 describe("sprite references the document cannot resolve", () => {
   it("names a same-document fragment whose target is absent", () => {
     const probe = loadSpriteProbe();
@@ -172,11 +166,7 @@ describe("sprite references the document cannot resolve", () => {
   });
 });
 
-// `page.evaluate` parses a string argument as an expression, so a source
-// string that opens with `function` is a syntax error the moment a real page
-// runs it -- and nothing but a real page runs it, which is how a build that
-// unit-tested green still failed every run at `calibration`.
-
+// A leading "function" parses under new Function but fails as a page.evaluate expression.
 describe("what is handed to page.evaluate", () => {
   const parses = (expression: string): boolean => {
     try {

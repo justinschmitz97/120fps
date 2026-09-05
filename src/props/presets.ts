@@ -1,0 +1,249 @@
+import fs from "node:fs";
+import path from "node:path";
+import ts from "typescript";
+import type { PropSchema } from "./schema.js";
+import { toPosix } from "../shared/index.js";
+
+// Functions and JSX cannot cross the CDP boundary; their position in the preset can.
+export const PRESET_REF_KEY = "__120fps_preset";
+
+export interface PresetRef {
+  [PRESET_REF_KEY]: string;
+  index: number;
+}
+
+export function isPresetRef(value: unknown): value is PresetRef {
+  return typeof value === "object" && value !== null && PRESET_REF_KEY in value;
+}
+
+export interface PropPresets {
+  // projectRoot-relative posix path, for the report and the fingerprint.
+  path: string;
+  absolutePath: string;
+  // Prop name → the values to measure it with, in declaration order.
+  entries: Map<string, unknown[]>;
+}
+
+// `<stem>.props.tsx` is real component source in some design systems, so shape decides.
+const PRESET_SUFFIXES = [".120fps.props.tsx", ".120fps.props.ts", ".props.tsx", ".props.ts"];
+
+export interface PresetSibling {
+  path: string;
+  // "preset" is what loadPropPresets reads: a default-exported object literal.
+  shape: "preset" | "no-default-export";
+}
+
+// Names a sibling that carries a preset's name without its shape, so a caller discloses it.
+export const PRESET_SHAPE_WARNING = (presetPath: string): string =>
+  `${presetPath} exists, not a preset: no default-exported object literal ` +
+  "(expected `export default { prop: [values] }`)";
+
+function parsePresetFile(absolutePath: string): ts.SourceFile | undefined {
+  const text = ts.sys.readFile(absolutePath);
+  if (text === undefined) return undefined;
+  return ts.createSourceFile(
+    absolutePath,
+    text,
+    ts.ScriptTarget.Latest,
+    true,
+    absolutePath.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+  );
+}
+
+// The first candidate with the preset shape wins; a shapeless earlier one keeps the search going.
+export function describePresetSibling(componentPath: string): PresetSibling | undefined {
+  const ext = path.extname(componentPath);
+  const stem = ext ? componentPath.slice(0, -ext.length) : componentPath;
+  let shapeless: string | undefined;
+  for (const suffix of PRESET_SUFFIXES) {
+    const candidate = `${stem}${suffix}`;
+    if (!fs.existsSync(candidate)) continue;
+    const sourceFile = parsePresetFile(candidate);
+    if (sourceFile && findDefaultExport(sourceFile)) return { path: candidate, shape: "preset" };
+    if (shapeless === undefined) shapeless = candidate;
+  }
+  return shapeless === undefined ? undefined : { path: shapeless, shape: "no-default-export" };
+}
+
+// Mirrors fixture detection: adjacent, named after the component, shaped like a preset.
+export function detectPropPresets(componentPath: string): string | undefined {
+  const sibling = describePresetSibling(componentPath);
+  return sibling?.shape === "preset" ? sibling.path : undefined;
+}
+
+// An AST literal becomes a real value without executing the module; anything else keeps a ref.
+export function literalValue(node: ts.Expression): { ok: true; value: unknown } | { ok: false } {
+  if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
+    return { ok: true, value: node.text };
+  }
+  if (ts.isNumericLiteral(node)) return { ok: true, value: Number(node.text) };
+  if (node.kind === ts.SyntaxKind.TrueKeyword) return { ok: true, value: true };
+  if (node.kind === ts.SyntaxKind.FalseKeyword) return { ok: true, value: false };
+  if (node.kind === ts.SyntaxKind.NullKeyword) return { ok: true, value: null };
+  if (ts.isIdentifier(node) && node.text === "undefined") return { ok: true, value: undefined };
+  if (ts.isPrefixUnaryExpression(node) && node.operator === ts.SyntaxKind.MinusToken) {
+    const inner = literalValue(node.operand);
+    if (inner.ok && typeof inner.value === "number") return { ok: true, value: -inner.value };
+    return { ok: false };
+  }
+  if (ts.isArrayLiteralExpression(node)) {
+    const items: unknown[] = [];
+    for (const element of node.elements) {
+      const item = literalValue(element);
+      if (!item.ok) return { ok: false };
+      items.push(item.value);
+    }
+    return { ok: true, value: items };
+  }
+  if (ts.isObjectLiteralExpression(node)) {
+    const object: Record<string, unknown> = {};
+    for (const property of node.properties) {
+      if (!ts.isPropertyAssignment(property)) return { ok: false };
+      const key = ts.isIdentifier(property.name) || ts.isStringLiteral(property.name)
+        ? property.name.text
+        : undefined;
+      if (key === undefined) return { ok: false };
+      const item = literalValue(property.initializer);
+      if (!item.ok) return { ok: false };
+      object[key] = item.value;
+    }
+    return { ok: true, value: object };
+  }
+  if (ts.isAsExpression(node) || ts.isSatisfiesExpression(node) || ts.isParenthesizedExpression(node)) {
+    return literalValue(node.expression);
+  }
+  return { ok: false };
+}
+
+function findDefaultExport(sf: ts.SourceFile): ts.ObjectLiteralExpression | undefined {
+  for (const statement of sf.statements) {
+    if (ts.isExportAssignment(statement) && !statement.isExportEquals) {
+      const expr = statement.expression;
+      if (ts.isObjectLiteralExpression(expr)) return expr;
+      if (ts.isAsExpression(expr) && ts.isObjectLiteralExpression(expr.expression)) {
+        return expr.expression;
+      }
+      // `export default presets`: follow the binding.
+      if (ts.isIdentifier(expr)) {
+        for (const candidate of sf.statements) {
+          if (!ts.isVariableStatement(candidate)) continue;
+          for (const decl of candidate.declarationList.declarations) {
+            if (!ts.isIdentifier(decl.name) || decl.name.text !== expr.text) continue;
+            const init = decl.initializer;
+            if (init && ts.isObjectLiteralExpression(init)) return init;
+            if (init && ts.isAsExpression(init) && ts.isObjectLiteralExpression(init.expression)) {
+              return init.expression;
+            }
+          }
+        }
+      }
+    }
+  }
+  return undefined;
+}
+
+// Parsed, never executed: a preset imports browser-only code and JSX.
+export function loadPropPresets(presetPath: string, projectRoot: string): PropPresets | undefined {
+  const absolutePath = path.resolve(presetPath);
+  const sf = parsePresetFile(absolutePath);
+  if (!sf) return undefined;
+
+  const object = findDefaultExport(sf);
+  if (!object) return undefined;
+
+  const entries = new Map<string, unknown[]>();
+  for (const property of object.properties) {
+    if (!ts.isPropertyAssignment(property)) continue;
+    const name = ts.isIdentifier(property.name) || ts.isStringLiteral(property.name)
+      ? property.name.text
+      : undefined;
+    if (name === undefined) continue;
+
+    // A bare value is a one-element pool; an array is the pool itself.
+    const initializer = property.initializer;
+    const expressions = ts.isArrayLiteralExpression(initializer)
+      ? [...initializer.elements]
+      : [initializer];
+
+    const values = expressions.map((expression, index) => {
+      const literal = literalValue(expression);
+      return literal.ok ? literal.value : ({ [PRESET_REF_KEY]: name, index } as PresetRef);
+    });
+    entries.set(name, values);
+  }
+
+  return {
+    path: toPosix(path.relative(projectRoot, absolutePath)),
+    absolutePath,
+    entries,
+  };
+}
+
+export const UNKNOWN_PRESET_PROPS_WARNING = (presetPath: string, names: string[]): string =>
+  `${presetPath} supplies ${names.length === 1 ? "a value" : "values"} for ` +
+  `${names.map((n) => `"${n}"`).join(", ")}, which ${names.length === 1 ? "is" : "are"} not ` +
+  "a prop of the measured component. Those values were ignored.";
+
+export interface AppliedPresets {
+  schemas: PropSchema[];
+  // Prop names actually applied, in schema order.
+  applied: string[];
+  unknown: string[];
+}
+
+// Values of differing kinds make the pool a union, the word the schema uses for multi-shape.
+function inferPresetKind(values: unknown[]): PropSchema["kind"] {
+  const kinds = new Set<PropSchema["kind"]>();
+  for (const value of values) {
+    if (isPresetRef(value)) kinds.add("unknown");
+    else if (Array.isArray(value)) kinds.add("array");
+    else if (value === null || value === undefined) kinds.add("unknown");
+    else if (typeof value === "boolean") kinds.add("boolean");
+    else if (typeof value === "number") kinds.add("number");
+    else if (typeof value === "string") kinds.add("string");
+    else if (typeof value === "object") kinds.add("object");
+    else kinds.add("unknown");
+  }
+  if (kinds.size === 0) return "unknown";
+  if (kinds.size > 1) return "union";
+  return [...kinds][0];
+}
+
+// A preset replaces a prop's value pool rather than extending it with synthesized values.
+export function applyPropPresets(
+  schemas: PropSchema[],
+  presets: PropPresets,
+): AppliedPresets {
+  // Nothing extracted means no schema to replace, so the preset's keys become the schema.
+  if (schemas.length === 0) {
+    const added: PropSchema[] = [];
+    const appliedNames: string[] = [];
+    for (const [name, values] of presets.entries) {
+      if (values.length === 0) continue;
+      appliedNames.push(name);
+      added.push({
+        name,
+        kind: inferPresetKind(values),
+        required: false,
+        values: [...values],
+        provenance: "preset",
+      });
+    }
+    return { schemas: added, applied: appliedNames, unknown: [] };
+  }
+
+  const applied: string[] = [];
+  const next = schemas.map((schema) => {
+    const values = presets.entries.get(schema.name);
+    if (values === undefined || values.length === 0) return schema;
+    applied.push(schema.name);
+    // The preset wins the provenance question as it wins the value question; `degenerate` drops.
+    const { degenerate: _replaced, ...rest } = schema;
+    return { ...rest, values: [...values], provenance: "preset" as const };
+  });
+
+  const known = new Set(schemas.map((s) => s.name));
+  const unknown = [...presets.entries.keys()].filter((name) => !known.has(name));
+
+  return { schemas: next, applied, unknown };
+}

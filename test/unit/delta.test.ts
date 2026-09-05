@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { generateDeltaPairs, type DeltaPair } from "../../src/prop-gen-values.js";
-import type { PropSchema } from "../../src/prop-gen.js";
+import { generateDeltaPairs, type DeltaPair } from "../../src/props/index.js";
+import type { PropSchema } from "../../src/props/index.js";
 
 describe("generateDeltaPairs", () => {
   it("generates pair for a single boolean prop", () => {

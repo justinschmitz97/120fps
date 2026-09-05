@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
+import { computeCvPercent } from "../../src/shared/index.js";
 import {
   classifyNoise,
-  computeCvPercent,
   buildNoiseReport,
   NOISE_CV_PERCENT,
   HOSTILE_CV_PERCENT,
@@ -13,7 +13,7 @@ import {
   NOISY_BASELINE_NOTE,
   HOSTILE_BASELINE_NOTE,
   type NoiseSignals,
-} from "../../src/noise.js";
+} from "../../src/browser/index.js";
 
 function signals(overrides: Partial<NoiseSignals> = {}): NoiseSignals {
   return {
@@ -25,7 +25,6 @@ function signals(overrides: Partial<NoiseSignals> = {}): NoiseSignals {
   };
 }
 
-// C1: a quiet machine looks quiet.
 describe("classification", () => {
   it("is quiet when every signal is clean", () => {
     expect(classifyNoise(signals())).toBe("quiet");
@@ -61,7 +60,6 @@ describe("classification", () => {
   });
 });
 
-// C2: dispersion maths.
 describe("dispersion", () => {
   it("is zero for identical samples", () => {
     expect(computeCvPercent([10, 10, 10])).toBe(0);
@@ -81,7 +79,6 @@ describe("dispersion", () => {
   });
 });
 
-// C3: assembly from signals the run already has.
 describe("report assembly", () => {
   it("derives the unstable fraction from the metric counts", () => {
     const report = buildNoiseReport({
@@ -115,8 +112,7 @@ describe("report assembly", () => {
     expect(report.signals.probeMedianMs).toBe(10);
   });
 
-  // M64: the baseline clauses moved out of the fixed sentences: a run that
-  // never asked for a baseline was being told its comparison had been skipped.
+  // A run with no baseline must not be told its comparison was skipped.
   it("says what to do about it", () => {
     expect(NOISY_RUN_WARNING).toContain("rerun");
     expect(NOISY_BASELINE_NOTE).toContain("do not fail");

@@ -1,12 +1,12 @@
 import { describe, it, expect, afterAll } from "vitest";
 import { chromium, type Browser, type Page } from "playwright";
-import { buildAndServe, type HarnessResult } from "../../src/harness.js";
+import { buildAndServe, type HarnessResult } from "../../src/harness/index.js";
 import {
   probeVolatileRegions,
   explore,
   VOLATILE_DOM_NOTICE,
   VOLATILITY_PROBE_GAP_MS,
-} from "../../src/explorer.js";
+} from "../../src/analysis/index.js";
 
 let browser: Browser;
 

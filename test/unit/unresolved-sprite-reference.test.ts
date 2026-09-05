@@ -1,16 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { buildReport, UNRESOLVED_SPRITE_REFS_WARNING, type BuildReportInput } from "../../src/analyze.js";
-import { hintsForReport, formatHints, HINTS } from "../../src/hints.js";
-import { formatTable, type CalibrationResult, type Report, type Thresholds } from "../../src/report.js";
-import type { MountResult } from "../../src/measure.js";
-import type { ExploreResult, StateGraph } from "../../src/explorer.js";
+import { buildReport, UNRESOLVED_SPRITE_REFS_WARNING, type BuildReportInput } from "../../src/pipeline/index.js";
+import { hintsForReport, formatHints, HINTS } from "../../src/report/index.js";
+import { formatTable, type CalibrationResult, type Report, type Thresholds } from "../../src/report/index.js";
+import type { MountResult } from "../../src/browser/index.js";
+import type { ExploreResult, StateGraph } from "../../src/analysis/index.js";
 
-// calcom-F5: `Icon.tsx` renders `<svg><use href="#calendar">`. The sprite that
-// defines `#calendar` lives in `apps/web/app/layout.tsx`, never in the
-// component, so the harness measured a real cost attribution for a graphic
-// that rendered nothing visible. `<svg>` + `<use>` are two real nodes, and a
-// same-document fragment reference issues no request, so neither the DOM count
-// nor the M70 network capture could see it.
+// calcom-F5: a same-doc <use href='#calendar'> issues no request; M70's network capture misses it.
 
 const machine = {
   cpu: "Test", cores: 4, ramMb: 16384,

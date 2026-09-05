@@ -2,8 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { loadBudgetConfig } from "../../src/budget.js";
-import { projectConfigFingerprintFiles } from "../../src/analyze.js";
+import { loadBudgetConfig } from "../../src/report/index.js";
+import { projectConfigFingerprintFiles } from "../../src/pipeline/index.js";
 
 let tmpDir: string;
 

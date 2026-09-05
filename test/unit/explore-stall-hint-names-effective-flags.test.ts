@@ -3,16 +3,13 @@ import {
   enrichPhaseError,
   EXPLORE_PHASE_STALL_HINT,
   HARNESS_STALL_HINT,
-} from "../../src/page-errors.js";
+} from "../../src/browser/index.js";
 
 function stalled(phase: "explore" | "mount" | "attribution" | "rerender"): string {
   return enrichPhaseError(new Error("Tracing.tracingComplete timed out"), { phase }).message;
 }
 
-// calcom: the explore phase stalled on a Radix portal trigger and advised
-// `--no-attribution`, which the M106 investigation measured against the same
-// component: identical 124 s failure. The flags that bound explore are the
-// exploration budget and the sample count.
+// calcom: --no-attribution was measured against the same stall and changed nothing (M106).
 describe("the flags an explore-phase stall names", () => {
   it("names the budget and the sample count", () => {
     expect(EXPLORE_PHASE_STALL_HINT).toContain("--explore-budget");

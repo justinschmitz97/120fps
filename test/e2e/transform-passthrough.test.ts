@@ -1,8 +1,8 @@
 import { describe, it, expect, afterAll } from "vitest";
 import path from "node:path";
 import { chromium, type Browser } from "playwright";
-import { buildAndServe } from "../../src/harness.js";
-import { attachPageErrorCapture } from "../../src/page-errors.js";
+import { buildAndServe } from "../../src/harness/index.js";
+import { attachPageErrorCapture } from "../../src/browser/index.js";
 
 let browser: Browser | undefined;
 

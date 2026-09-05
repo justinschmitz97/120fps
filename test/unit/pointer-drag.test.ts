@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { resolveStressPattern } from "../../src/stress-patterns.js";
-import type { InteractionDescriptor } from "../../src/discovery.js";
+import { resolveStressPattern } from "../../src/analysis/index.js";
+import type { InteractionDescriptor } from "../../src/browser/index.js";
 
 function makeDescriptor(
   overrides: Partial<InteractionDescriptor> = {},
@@ -13,8 +13,6 @@ function makeDescriptor(
     ...overrides,
   };
 }
-
-// --- Dispatch ---
 
 describe("pointer-drag dispatch", () => {
   it("role=slider → pointer-drag", () => {
@@ -48,8 +46,6 @@ describe("pointer-drag dispatch", () => {
   });
 });
 
-// --- Step structure ---
-
 describe("pointer-drag step structure", () => {
   it("has exactly 1 step with action pointer-drag", () => {
     const desc = makeDescriptor({ role: "slider", selector: "#slider" });
@@ -78,8 +74,6 @@ describe("pointer-drag step structure", () => {
   });
 });
 
-// --- Priority ---
-
 describe("pointer-drag priority", () => {
   it("slider role takes priority over keyboard-sweep (even with siblings)", () => {
     const desc = makeDescriptor({ role: "slider" });
@@ -105,8 +99,6 @@ describe("pointer-drag priority", () => {
     expect(pattern.name).toBe("pointer-drag");
   });
 });
-
-// --- Purity ---
 
 describe("pointer-drag purity", () => {
   it("same input produces same output", () => {

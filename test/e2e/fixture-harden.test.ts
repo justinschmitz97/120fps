@@ -18,7 +18,6 @@ describe("H13: fixture render error", () => {
   }, 60_000);
 });
 
-// H14: --fixture with non-existent fixture file
 describe("H14: non-existent fixture", () => {
   it("throws when fixture file does not exist", async () => {
     await expect(
@@ -30,7 +29,6 @@ describe("H14: non-existent fixture", () => {
   });
 });
 
-// H15: fixture mode produces exactly 1 combo with empty props
 describe("H15: single combo in fixture mode", () => {
   it("produces exactly 1 combo with props={}", async () => {
     const jsonPath = path.join(os.tmpdir(), `120fps-h15-${Date.now()}.json`);
@@ -72,7 +70,6 @@ describe("H17: direct fixture input name", () => {
   }, 120_000);
 });
 
-// H18: backward compat - regular component without fixture
 describe("H18: backward compatibility", () => {
   it("no fixture fields in report when no fixture used", async () => {
     const jsonPath = path.join(os.tmpdir(), `120fps-h18-${Date.now()}.json`);

@@ -1,16 +1,14 @@
 import { describe, it, expect } from "vitest";
-import { parseArgs } from "../../src/cli.js";
-import { isFixturePath } from "../../src/analyze.js";
-import { formatTable, type Report } from "../../src/report.js";
+import { parseArgs } from "../../src/cli/index.js";
+import { isFixturePath } from "../../src/pipeline/index.js";
+import { formatTable, type Report } from "../../src/report/index.js";
 
-// H1: .fixture.ts (not .tsx) extension detected
 describe("H1: .fixture.ts extension", () => {
   it("isFixturePath recognizes .fixture.jsx", () => {
     expect(isFixturePath("comp.fixture.jsx")).toBe(true);
   });
 });
 
-// H2: --fixture flag with spaces in path
 describe("H2: spaces in fixture path", () => {
   it("parses fixture path with spaces", () => {
     const result = parseArgs(["./comp.tsx", "--fixture", "./spaced dir/comp.fixture.tsx"]);
@@ -19,7 +17,6 @@ describe("H2: spaces in fixture path", () => {
   });
 });
 
-// H3: --fixture before component path
 describe("H3: --fixture position", () => {
   it("handles --fixture before component path", () => {
     const result = parseArgs(["--fixture", "./comp.fixture.tsx", "./comp.tsx"]);
@@ -28,14 +25,12 @@ describe("H3: --fixture position", () => {
   });
 });
 
-// H4: component path IS a .fixture.tsx (direct fixture input)
 describe("H4: direct fixture input", () => {
   it("does not detect .fixture in directory name", () => {
     expect(isFixturePath("./fixture-dir/comp.tsx")).toBe(false);
   });
 });
 
-// H6: isFixturePath with edge-case filenames
 describe("H6: edge-case filenames", () => {
   it("rejects .fixture without extension", () => {
     expect(isFixturePath("comp.fixture")).toBe(false);
@@ -50,7 +45,6 @@ describe("H6: edge-case filenames", () => {
   });
 });
 
-// H7: --fixture combined with --json
 describe("H7: --fixture with --json", () => {
   it("parses both flags correctly", () => {
     const result = parseArgs([
@@ -111,7 +105,6 @@ describe("H8: 0 interactions hint", () => {
   });
 });
 
-// H10: duplicate --fixture flags
 describe("H10: duplicate --fixture", () => {
   it("last --fixture wins", () => {
     const result = parseArgs([
@@ -123,7 +116,6 @@ describe("H10: duplicate --fixture", () => {
   });
 });
 
-// H11: isFixturePath with Windows backslashes
 describe("H11: Windows paths", () => {
   it("detects fixture with backslash path", () => {
     expect(isFixturePath("src\\comp.fixture.tsx")).toBe(true);

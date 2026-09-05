@@ -12,24 +12,24 @@ import {
   generateEntry,
   loadTailwindVitePlugin,
   scanExternalDeps,
-} from "../../src/harness.js";
+} from "../../src/harness/index.js";
 import {
   FONT_SETTLE_TIMEOUT_MS,
   FONT_SETTLE_WARNING,
   needsStyleSettle,
   settleStyles,
-} from "../../src/measure.js";
-import { resolveCssFiles } from "../../src/analyze.js";
-import { buildEnvFingerprint, classifyEnv } from "../../src/budget.js";
+} from "../../src/browser/index.js";
+import { resolveCssFiles } from "../../src/pipeline/index.js";
+import { buildEnvFingerprint, classifyEnv } from "../../src/report/index.js";
 import {
   DEFAULT_THRESHOLDS,
   formatTable,
   type CssReport,
   type Report,
-} from "../../src/report.js";
-import { KNOWN_FLAGS, helpText, parseArgs } from "../../src/cli.js";
+} from "../../src/report/index.js";
+import { KNOWN_FLAGS, helpText, parseArgs } from "../../src/cli/index.js";
 import { withProductionResolution } from "../node-resolution.js";
-import type { CompositionTree } from "../../src/composition.js";
+import type { CompositionTree } from "../../src/props/index.js";
 
 let tmpDir: string;
 
@@ -83,12 +83,9 @@ const TREE: CompositionTree = {
   repeatCount: 1,
 };
 
-// --- C1 resolution: detectGlobalCss ---
 
 describe("detectGlobalCss", () => {
-  // M71 appended the create-vite name and the Sass spellings; the entry-graph
-  // layer that now runs before this one lives in
-  // test/unit/global-stylesheet-fallbacks.test.ts.
+  // M71: the entry-graph layer that runs before this lives in global-stylesheet-fallbacks.test.ts.
   it("declares the probe order from the spec", () => {
     expect(GLOBAL_CSS_CANDIDATES).toEqual([
       "app/globals.css",
@@ -152,7 +149,6 @@ describe("detectGlobalCss", () => {
   });
 });
 
-// --- C1 resolution: resolveCssFiles ---
 
 describe("resolveCssFiles", () => {
   it("auto-detects a single file and flags it", () => {
@@ -225,7 +221,6 @@ describe("resolveCssFiles", () => {
   });
 });
 
-// --- C1 resolution: CLI ---
 
 describe("--css / --no-css parsing", () => {
   it("registers both flags", () => {
@@ -278,7 +273,6 @@ describe("--css / --no-css parsing", () => {
   });
 });
 
-// --- C2 injection: specifiers ---
 
 describe("cssImportSpecifier", () => {
   it("uses a root-absolute posix path for a file inside the project root", () => {
@@ -332,7 +326,6 @@ describe("cssImportBlock", () => {
   });
 });
 
-// --- C2 injection: entry generation ---
 
 describe("generateEntry css injection", () => {
   it("is byte-identical to the uninjected entry when no css is given", () => {
@@ -412,7 +405,6 @@ describe("generateComposedEntry css injection", () => {
   });
 });
 
-// --- C3 dependency scanning stays out of CSS ---
 
 describe("scanExternalDeps is not extended to CSS", () => {
   it("does not treat @import in a stylesheet as a package dependency", () => {
@@ -430,7 +422,6 @@ describe("scanExternalDeps is not extended to CSS", () => {
   });
 });
 
-// --- C4 toolchain: @tailwindcss/vite ---
 
 describe("detectTailwindVite", () => {
   it("is false when there is no package.json", () => {
@@ -480,8 +471,7 @@ describe("loadTailwindVitePlugin", () => {
       return true;
     };
     try {
-      // The resolve() call and its catch both run before the first await, so
-      // the sync window covers the whole failure path.
+      // resolve() and its catch run before the first await; the sync window covers the failure.
       const plugins = await withProductionResolution(() => loadTailwindVitePlugin(tmpDir));
       expect(plugins).toEqual([]);
     } finally {
@@ -492,7 +482,6 @@ describe("loadTailwindVitePlugin", () => {
   });
 });
 
-// --- C5 settle gate ---
 
 describe("needsStyleSettle", () => {
   it("is false with neither stylesheets nor a wrapper", () => {
@@ -513,9 +502,7 @@ describe("needsStyleSettle", () => {
 });
 
 describe("settleStyles", () => {
-  // M74 (B10): the page-side evaluate now resolves { settled, failedFamilies }
-  // instead of a bare boolean; the mock stands in for that whole evaluate
-  // call, so it returns the same shape the real browser-side code does.
+  // M74 (B10): the mock returns { settled, failedFamilies }, the real browser-side shape.
   function fakePage(settled: boolean, failedFamilies: string[] = []) {
     const calls: unknown[] = [];
     return {
@@ -572,26 +559,24 @@ describe("settle gate wiring", () => {
     fs.readFileSync(path.resolve("src", name), "utf-8");
 
   it("is called from every browser session", () => {
-    const measure = src("measure.ts");
+    const session = src("browser/session.ts");
     const callsIn = (text: string) => text.split("await settleStyles(").length - 1;
-    // measureMount, measureRerender and every isolation phase pass enter the
-    // harness through measure.ts's shared enterHarness preamble.
-    expect(callsIn(measure)).toBe(1);
-    expect(measure).toContain("export async function enterHarness(");
-    expect(callsIn(src("analyze.ts"))).toBe(1);
-    expect(callsIn(src("explorer.ts"))).toBe(1);
-    expect(callsIn(src("react-profiler.ts"))).toBe(1);
+    // Every mount/rerender/isolation pass enters the harness through this shared preamble.
+    expect(callsIn(session)).toBe(1);
+    expect(session).toContain("export async function enterHarness(");
+    expect(callsIn(src("pipeline/analyze.ts"))).toBe(1);
+    expect(callsIn(src("analysis/explorer.ts"))).toBe(1);
+    expect(callsIn(src("analysis/react-profiler.ts"))).toBe(1);
   });
 
   it("has exactly one implementation", () => {
-    expect(src("measure.ts")).toContain("export async function settleStyles(");
-    for (const file of ["analyze.ts", "explorer.ts", "react-profiler.ts", "harness.ts"]) {
+    expect(src("browser/settle.ts")).toContain("export async function settleStyles(");
+    for (const file of ["pipeline/analyze.ts", "analysis/explorer.ts", "analysis/react-profiler.ts", "harness/build.ts", "browser/measure.ts", "browser/session.ts"]) {
       expect(src(file)).not.toContain("function settleStyles(");
     }
   });
 });
 
-// --- C6 reporting ---
 
 describe("Report.css", () => {
   it("renders the stylesheet line in the header block", () => {

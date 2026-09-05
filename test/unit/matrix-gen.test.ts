@@ -4,8 +4,8 @@ import {
   matrixValues,
   shouldAutoActivateMatrix,
   generatePropMatrix,
-} from "../../src/prop-gen-values.js";
-import type { PropSchema } from "../../src/prop-gen.js";
+} from "../../src/props/index.js";
+import type { PropSchema } from "../../src/props/index.js";
 
 function makeSchema(overrides: Partial<PropSchema> & { name: string; kind: PropSchema["kind"] }): PropSchema {
   return { required: true, values: [], ...overrides };
@@ -198,21 +198,18 @@ describe("generatePropMatrix", () => {
       makeSchema({ name: "c", kind: "union", values: ["c0", "c1", "c2", "c3", "c4", "c5", "c6", "c7"] }),
     ];
     const cells = generatePropMatrix(schemas);
-    // Check that every pair (a=X, b=Y) appears in at least one cell
     for (const av of schemas[0].values) {
       for (const bv of schemas[1].values) {
         const found = cells.some((c) => c.a === av && c.b === bv);
         expect(found).toBe(true);
       }
     }
-    // Check (a=X, c=Y)
     for (const av of schemas[0].values) {
       for (const cv of schemas[2].values) {
         const found = cells.some((c) => c.a === av && c.c === cv);
         expect(found).toBe(true);
       }
     }
-    // Check (b=X, c=Y)
     for (const bv of schemas[1].values) {
       for (const cv of schemas[2].values) {
         const found = cells.some((c) => c.b === bv && c.c === cv);

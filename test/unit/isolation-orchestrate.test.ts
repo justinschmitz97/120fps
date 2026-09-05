@@ -1,25 +1,25 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { parseArgs } from "../../src/cli.js";
-import { generateEntry, generateComposedEntry, renderTreeHelper } from "../../src/harness.js";
-import { generateProbeEntry } from "../../src/react-profiler.js";
-import { classifyEnv, compareBaseline, type BaselineEntry, type EnvFingerprintInput } from "../../src/budget.js";
-import { buildEnvFingerprint } from "../../src/budget.js";
+import { parseArgs } from "../../src/cli/index.js";
+import { generateEntry, generateComposedEntry, renderTreeHelper } from "../../src/harness/index.js";
+import { generateProbeEntry } from "../../src/analysis/index.js";
+import { classifyEnv, compareBaseline, type BaselineEntry, type EnvFingerprintInput } from "../../src/report/index.js";
+import { buildEnvFingerprint } from "../../src/report/index.js";
 import {
   buildTimingWithCV,
   formatTable,
+  CHURN_DEGRADATION_LIMIT,
+  LEAK_BYTES_PER_CYCLE,
   type EnvFingerprint,
   type MatrixReport,
   type Report,
   type ScalingCurveReport,
   type Thresholds,
-} from "../../src/report.js";
-import type { CompositionTree } from "../../src/composition.js";
-import type { HarnessResult } from "../../src/harness.js";
-import type { MountResult, RerenderResult } from "../../src/measure.js";
+} from "../../src/report/index.js";
+import type { CompositionTree } from "../../src/props/index.js";
+import type { HarnessResult } from "../../src/harness/index.js";
+import type { MountResult, RerenderResult } from "../../src/browser/index.js";
 
-// runHarnessSession is stubbed per label so the three browser runners resolve to
-// canned samples; measureMount/measureRerender are spied to assert the options
-// the orchestrator passes them.
+// runHarnessSession mock targets browser/session.ts; measure* mocks target browser/measure.ts.
 const canned = {
   churn: [1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 4, 4],
   memory: { heapBefore: 100_000, heapAfter: 110_000, gcPressure: 2 },
@@ -30,12 +30,19 @@ const canned = {
 const measureMountSpy = vi.fn();
 const measureRerenderSpy = vi.fn();
 
-vi.mock("../../src/measure.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../src/measure.js")>();
+vi.mock("../../src/browser/measure.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../src/browser/measure.js")>();
   return {
     ...actual,
     measureMount: (...args: unknown[]) => measureMountSpy(...args),
     measureRerender: (...args: unknown[]) => measureRerenderSpy(...args),
+  };
+});
+
+vi.mock("../../src/browser/session.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../src/browser/session.js")>();
+  return {
+    ...actual,
     runHarnessSession: async (
       _harness: unknown,
       options: { label: string },
@@ -58,14 +65,12 @@ const {
   isolationBaselineMetrics,
   buildMemoryReport,
   CHURN_CYCLES,
-  CHURN_DEGRADATION_LIMIT,
   ISOLATION_WARMUP_RUNS,
   MEMORY_WARMUP_CYCLES,
-  LEAK_BYTES_PER_CYCLE,
   DEGENERATE_COMBO_WARNING,
   MEMORY_SKIPPED_WARNING,
-} = await import("../../src/isolation.js");
-type IsolationReport = import("../../src/isolation.js").IsolationReport;
+} = await import("../../src/analysis/index.js");
+type IsolationReport = import("../../src/analysis/index.js").IsolationReport;
 
 const HARNESS = {} as HarnessResult;
 
@@ -93,7 +98,7 @@ function rerenderResult(overrides: Partial<RerenderResult> = {}): RerenderResult
 
 function runOptions(overrides: Record<string, unknown> = {}) {
   return {
-    phases: ["mount"] as import("../../src/isolation.js").IsolationPhase[],
+    phases: ["mount"] as import("../../src/analysis/index.js").IsolationPhase[],
     comboA: { variant: "primary" },
     comboB: { variant: "ghost" },
     degenerate: false,
@@ -112,9 +117,7 @@ beforeEach(() => {
   canned.memoryUnavailable = false;
 });
 
-// ====================================================================
-// I7/design: parseIsolationPhases is the single validator
-// ====================================================================
+// I7/design: parseIsolationPhases is the single validator.
 
 describe("I7: parseIsolationPhases expands `all` anywhere in the list", () => {
   it("expands a lone all", () => {
@@ -164,10 +167,6 @@ describe("I7: the CLI routes --isolate through parseIsolationPhases", () => {
   });
 });
 
-// ====================================================================
-// I2: combo selection
-// ====================================================================
-
 describe("I2: combo selection", () => {
   it("uses combos[1] as the second combination when it exists", () => {
     const selection = selectIsolationCombos([{ a: 1 }, { a: 2 }, { a: 3 }]);
@@ -209,9 +208,7 @@ describe("I2: combo selection", () => {
   });
 });
 
-// ====================================================================
-// I3: the mount/unmount pass reuses measureMount
-// ====================================================================
+// I3: the mount/unmount pass reuses measureMount.
 
 describe("I3: mount/unmount pass", () => {
   it("calls measureMount with warmupRuns 3 and the single selected combo", async () => {
@@ -252,9 +249,7 @@ describe("I3: mount/unmount pass", () => {
   });
 });
 
-// ====================================================================
-// I3/I6: rerender, churn, memory, strictmode and the TimingWithCV bridge
-// ====================================================================
+// I3/I6: rerender, churn, memory, strictmode and the TimingWithCV bridge.
 
 describe("I3: rerender pass", () => {
   it("measures both selected combos and reads combo 0", async () => {
@@ -317,9 +312,7 @@ describe("I5: memory pass", () => {
     expect(run.warnings).toEqual([]);
   });
 
-  // Measured over 20 cycles at 4x throttle after 10 warmup cycles: non-leaking
-  // components grow 2.2-2.4 KB/cycle, a component that retains every mount grows
-  // ~200 KB/cycle. The threshold sits between them, not inside the floor.
+  // Non-leaking components grow 2.2-2.4 KB/cycle vs ~200 KB/cycle leaking; threshold sits between.
   it("puts the leak threshold above the post-warmup noise floor", () => {
     expect(MEMORY_WARMUP_CYCLES).toBe(10);
     expect(LEAK_BYTES_PER_CYCLE).toBe(8192);
@@ -368,10 +361,6 @@ describe("I6: every phase array crosses the TimingWithCV bridge", () => {
     }
   });
 });
-
-// ====================================================================
-// I4: entry generation
-// ====================================================================
 
 const ENTRY_BASE = {
   componentRelative: "fixtures/button.tsx",
@@ -459,10 +448,6 @@ describe("I4: the React probe entry keeps the non-strict helper", () => {
     expect(renderTreeHelper(undefined, true)).toContain("__120fpsInStrict");
   });
 });
-
-// ====================================================================
-// I8: verdict
-// ====================================================================
 
 function timing(median: number) {
   return buildTimingWithCV([median, median, median]);
@@ -560,9 +545,7 @@ describe("I8: isolation verdict", () => {
   });
 });
 
-// ====================================================================
-// I10: warnings reach the user in every output mode
-// ====================================================================
+// I10: warnings reach the user in every output mode.
 
 const THRESHOLDS: Thresholds = { mountMs: 50, interactionMs: 400, relativeMount: 2, rerenderMs: 16 };
 
@@ -653,10 +636,6 @@ describe("I10: formatTable renders warnings in all four output modes", () => {
     expect(formatTable(report)).not.toContain("⚠");
   });
 });
-
-// ====================================================================
-// I9: baselines
-// ====================================================================
 
 const ENV_INPUT: EnvFingerprintInput = {
   machine: { cpu: "test", cores: 4, ramMb: 16384, os: "test", nodeVersion: "v20.0.0", chromiumVersion: "120" },

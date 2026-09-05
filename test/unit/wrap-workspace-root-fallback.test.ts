@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { resolveWrapPath, WRAPPER_FROM_WORKSPACE_ROOT_WARNING } from "../../src/analyze.js";
+import { resolveWrapPath, WRAPPER_FROM_WORKSPACE_ROOT_WARNING } from "../../src/pipeline/index.js";
 
 let root: string;
 let member: string;
@@ -18,8 +18,6 @@ afterEach(() => {
   fs.rmSync(root, { recursive: true, force: true });
 });
 
-// M76: resolveWrapPath(options, projectRoot, framework, warningsOut?) probes
-// workspaceRoot only when the member itself has none.
 describe("resolveWrapPath: workspace-root fallback (M76)", () => {
   it("finds a wrapper at the workspace root when the member has none, and discloses it", () => {
     const wrap = path.join(root, "120fps.setup.tsx");

@@ -2,16 +2,16 @@ import { describe, it, expect } from "vitest";
 import {
   computeScalingCurve,
   growthExponent,
-  isSuperlinearGrowth,
   SUPERLINEAR_MIN_EXPONENT,
   SUPERLINEAR_RESIDUAL_SHARE,
-} from "../../src/metrics.js";
+} from "../../src/report/index.js";
 import {
   buildCurveReport,
   computeCurveVerdict,
   evaluateCurve,
   formatCurveViolation,
   formatTable,
+  isSuperlinearGrowth,
   CURVE_NOT_ACTIVATED_WARNING,
   type CalibrationResult,
   type Report,
@@ -19,9 +19,9 @@ import {
   type ScalingCurveReport,
   type ScalingPoint,
   type Thresholds,
-} from "../../src/report.js";
-import type { MountResult, RerenderResult } from "../../src/measure.js";
-import type { ExploreResult } from "../../src/explorer.js";
+} from "../../src/report/index.js";
+import type { MountResult, RerenderResult } from "../../src/browser/index.js";
+import type { ExploreResult } from "../../src/analysis/index.js";
 
 const THRESHOLDS: Thresholds = {
   mountMs: 50,
@@ -35,8 +35,7 @@ function pts(pairs: [number, number][]): { n: number; metric: number }[] {
   return pairs.map(([n, metric]) => ({ n, metric }));
 }
 
-// Deterministic LCG: the production code must never see a random source, and
-// the tests must reproduce byte-for-byte on any machine.
+// Deterministic LCG: production must never see a random source; tests reproduce byte-for-byte.
 function lcg(seed: number): () => number {
   let s = seed >>> 0 || 1;
   return () => {
@@ -54,8 +53,6 @@ function jittered(
   const rand = lcg(seed);
   return scale.map((n) => ({ n, metric: f(n) * (1 + (rand() - 0.5) * 2 * amplitude) }));
 }
-
-// --- Contract 1: superlinear promotion needs evidence ---
 
 describe("superlinear promotion requires a magnitude and a fit margin", () => {
   it("exports the two gate constants", () => {
@@ -144,8 +141,6 @@ describe("superlinear promotion requires a magnitude and a fit margin", () => {
   });
 });
 
-// --- Contract 2: stability under noise ---
-
 describe("classification is stable under noise", () => {
   const NEAR_LINEAR: [string, (n: number) => number][] = [
     ["0.2n + 4", (n) => 0.2 * n + 4],
@@ -189,8 +184,6 @@ describe("classification is stable under noise", () => {
   });
 });
 
-// --- Contract 3: --curve that does not activate says so ---
-
 describe("an unactivated --curve is announced", () => {
   it("names the reason in the warning", () => {
     const warning = CURVE_NOT_ACTIVATED_WARNING(
@@ -210,8 +203,6 @@ describe("an unactivated --curve is announced", () => {
     expect(out).toContain("did not activate");
   });
 });
-
-// --- Contract 4: a curve FAIL names what it violated ---
 
 describe("curve FAIL names the budget and the crossing point", () => {
   const linear: ScalingCurve = { slope: 0.1, intercept: 1, r2: 0.99, growthClass: "linear" };
@@ -303,8 +294,6 @@ describe("curve FAIL names the budget and the crossing point", () => {
   });
 });
 
-// --- Contract 5: one classification per screen ---
-
 describe("growth column and superlinear hint share one classification", () => {
   it("isSuperlinearGrowth is the single predicate", () => {
     expect(isSuperlinearGrowth({ slope: 1, intercept: 0, r2: 1, growthClass: "quadratic" })).toBe(true);
@@ -316,8 +305,6 @@ describe("growth column and superlinear hint share one classification", () => {
     expect(isSuperlinearGrowth(undefined)).toBe(false);
   });
 });
-
-// --- helpers ---
 
 function makeTiming(median: number) {
   return { samples: [median], median, p95: median, cv: 0, unstable: false };

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { scanExternalDeps, BROKEN_ALIAS_WARNING } from "../../src/harness.js";
+import { scanExternalDeps, BROKEN_ALIAS_WARNING } from "../../src/harness/index.js";
 
 let tmpDir: string;
 
@@ -24,9 +24,7 @@ function write(name: string, content: string): string {
 const fwd = (p: string) => p.replace(/\\/g, "/");
 const srcAlias = () => [{ find: /^@\//, replacement: `${fwd(tmpDir)}/src/` }];
 
-// A stale alias used to be indistinguishable from a bare npm import, so the
-// harness asked Vite to pre-bundle "@/gone" as if a package by that name
-// existed.
+// A stale alias must not be mistaken for a bare import; Vite would pre-bundle "@/gone" as a pkg.
 describe("an alias that matches but points nowhere", () => {
   it("warns instead of registering the specifier as a package", () => {
     const entry = write("Entry.tsx", `import { gone } from "@/gone";\nexport default gone;\n`);
@@ -81,7 +79,8 @@ describe("an alias that matches but points nowhere", () => {
     const pkgs = scanExternalDeps(entry, tmpDir, srcAlias(), undefined, warnings);
 
     expect(pkgs).toEqual(["clsx"]);
-    expect(warnings).toEqual([]);
+    // The unresolvable entry gets its own warning; no alias warning is due.
+    expect(warnings.filter((w) => !w.includes("resolves to no installed package"))).toEqual([]);
   });
 
   it("says nothing about a relative import that resolves to nothing", () => {

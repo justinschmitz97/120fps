@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { parseEnvFile, readEnvDefines } from "../../src/harness.js";
+import { parseEnvFile, readEnvDefines } from "../../src/harness/index.js";
 
 let tmpDir: string;
 
@@ -112,8 +112,7 @@ describe("building browser defines from a project's env files", () => {
 
   it("orders the catch-all before every specific key once Vite sorts them", () => {
     write(".env", "VITE_A=1\nNEXT_PUBLIC_B=2");
-    // Vite serializes defines with sorted keys and its client runtime assigns
-    // them in that order, so the catch-all must never land last.
+    // Vite serializes defines in sorted-key order; the catch-all must never land last.
     const sorted = Object.keys(readEnvDefines(tmpDir)).sort();
     expect(sorted[0]).toBe("process.env");
   });

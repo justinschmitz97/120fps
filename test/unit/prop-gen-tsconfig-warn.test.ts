@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach, afterAll } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { extractProps, extractAllProps } from "../../src/prop-gen.js";
+import { extractProps, extractAllProps } from "../../src/props/index.js";
 
 const cleanupDirs: string[] = [];
 
@@ -75,6 +75,71 @@ describe("prop-gen tsconfig warnings", () => {
 
     expect(all.has("Comp")).toBe(true);
     expect(tsconfigWarnings(write)).toHaveLength(1);
+  });
+
+  it("malformed include key warns once", async () => {
+    const write = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true);
+    const { component } = mkFixture(
+      JSON.stringify({ compilerOptions: { strict: true }, include: "src" }),
+    );
+
+    const props = await extractProps(component);
+    await extractProps(component);
+
+    expect(props.map((p) => p.name).sort()).toEqual(["count", "label"]);
+    expect(tsconfigWarnings(write)).toHaveLength(1);
+    expect(tsconfigWarnings(write)[0]).toContain("include");
+  });
+
+  it("missing extends base warns once", async () => {
+    const write = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true);
+    const { component } = mkFixture(
+      JSON.stringify({ extends: "./nope.json", compilerOptions: { strict: true } }),
+    );
+
+    const props = await extractProps(component);
+    await extractProps(component);
+
+    expect(props.map((p) => p.name).sort()).toEqual(["count", "label"]);
+    expect(tsconfigWarnings(write)).toHaveLength(1);
+    expect(tsconfigWarnings(write)[0]).toContain("nope.json");
+  });
+
+  it("stops re-reading the config once it has warned", async () => {
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const { dir, component } = mkFixture(
+      JSON.stringify({ compilerOptions: { strict: "yes" } }),
+    );
+    const configPath = path.join(dir, "tsconfig.json");
+
+    const reads: number[] = [];
+    const readFileSync = fs.readFileSync;
+    const spy = vi
+      .spyOn(fs, "readFileSync")
+      .mockImplementation(((file: Parameters<typeof fs.readFileSync>[0], ...rest: never[]) => {
+        if (path.resolve(String(file)) === path.resolve(configPath)) {
+          reads[reads.length - 1] += 1;
+        }
+        return (readFileSync as (...args: never[]) => unknown)(
+          file as never,
+          ...rest,
+        );
+      }) as typeof fs.readFileSync);
+
+    reads.push(0);
+    await extractProps(component);
+    const first = reads[0];
+    reads.push(0);
+    await extractProps(component);
+    const second = reads[1];
+    spy.mockRestore();
+
+    expect(first).toBeGreaterThan(0);
+    expect(second).toBeLessThan(first);
   });
 
   it("valid tsconfig produces no warning", async () => {

@@ -8,15 +8,15 @@ import {
   resolveCurveOption,
   resolveMatrixOption,
   type CliArgs,
-} from "../../src/cli.js";
+} from "../../src/cli/index.js";
 import {
   MATRIX_BASELINE_WARNING,
   baselineWorkflowRequested,
   optionsAllowVerdictReuse,
   type AnalyzeOptions,
-} from "../../src/analyze.js";
-import { buildEnvFingerprint, sameMachineIdentity } from "../../src/budget.js";
-import type { EnvFingerprint, MachineInfo } from "../../src/report.js";
+} from "../../src/pipeline/index.js";
+import { buildEnvFingerprint, sameMachineIdentity } from "../../src/report/index.js";
+import type { EnvFingerprint, MachineInfo } from "../../src/report/index.js";
 
 const MACHINE: MachineInfo = {
   cpu: "Test CPU",
@@ -53,8 +53,7 @@ function gateFor(argv: string[]): boolean {
   });
 }
 
-// H1: a slot saved by a curve run must never satisfy a --no-matrix check:
-// mode is a feature field, and features differing is incomparability.
+// H1: mode is a feature field; a curve-mode slot must never satisfy a --no-matrix check.
 describe("H1: a curve-mode slot never serves a combo-mode reuse", () => {
   it("mode mismatch fails machine identity", () => {
     expect(sameMachineIdentity(env({ mode: "curve" }), env({ mode: "combo" }))).toBe(false);
@@ -94,8 +93,7 @@ describe("H4: a mode disable without --check reuses nothing", () => {
   });
 });
 
-// H5: --budget sets --ci, and CI is exactly where a silent no-op does the most
-// damage. The disclosure must not depend on the terminal being watched.
+// H5: --budget sets --ci; disclosure must not depend on a watched terminal.
 describe("H5: --budget on a matrix run discloses and does not gate", () => {
   it("--budget implies the baseline request", () => {
     const args = parseArgs(["./Button.tsx", "--budget"]);
@@ -126,8 +124,7 @@ describe("H6: the --curve/--matrix conflict is order independent", () => {
   });
 });
 
-// H7: contradictory enable/disable pairs. The repo convention is that the
-// disable wins (--no-isolate, --no-react-compiler, --no-css, --no-wrap).
+// H7: repo convention is disable-wins (--no-isolate, --no-react-compiler, --no-css, --no-wrap).
 describe("H7: --matrix --no-matrix keeps disable-wins", () => {
   it("parses without error", () => {
     expect(parseArgs(["./Button.tsx", "--matrix", "--no-matrix"]).error).toBeUndefined();
@@ -143,8 +140,7 @@ describe("H7: --matrix --no-matrix keeps disable-wins", () => {
   });
 });
 
-// H8: the existing parity guard walks KNOWN_FLAGS → help, so a flag missing
-// from both sides passes it. This is the other direction.
+// H8: the existing parity guard walks KNOWN_FLAGS to help; this checks the reverse direction.
 describe("H8: every flag in the help text is a known flag", () => {
   it("reverse parity holds", () => {
     const documented = new Set(
@@ -157,8 +153,7 @@ describe("H8: every flag in the help text is a known flag", () => {
   });
 });
 
-// H9: the README options block is the flag list a user reads before
-// installing. A flag mentioned only in prose is not listed.
+// H9: the README options block is the flag list a user reads; prose mentions don't count.
 describe("H9: the README options block lists every known flag", () => {
   it("no drift against KNOWN_FLAGS", () => {
     const readme = fs.readFileSync(path.resolve(__dirname, "../../README.md"), "utf-8");
@@ -184,8 +179,7 @@ describe("H11: --curve prop:array --check measures", () => {
   });
 });
 
-// H12: no baseline flag, no warning: the matrix path must stay quiet for the
-// runs that never asked for a baseline.
+// H12: no baseline flag, no warning: the matrix path stays quiet for runs that never asked.
 describe("H12: no spurious matrix warning", () => {
   it("--no-baseline alone requests nothing", () => {
     expect(baselineWorkflowRequested({ noBaseline: true })).toBe(false);
@@ -203,9 +197,7 @@ describe("H13: the warning's workaround is a real flag", () => {
   });
 });
 
-// H14: M53 made the probe fingerprint the REQUESTED sample count, so a
-// sample-throttled entry fails reuse and the run measures. The relaxed gate
-// must not have moved that guard.
+// H14: M53's probe fingerprints the requested sample count; the relaxed gate must not move it.
 describe("H14: sample-count honesty survives the relaxation", () => {
   it("the options gate carries no samples term of its own", () => {
     const base: AnalyzeOptions = { check: true, matrixMode: false };
@@ -218,8 +210,7 @@ describe("H14: sample-count honesty survives the relaxation", () => {
   });
 });
 
-// H15: the env policies that ask for a different comparison must still measure,
-// disable flag or not.
+// H15: env policies that ask for a different comparison must still measure, disable flag or not.
 describe("H15: non-normalize env policies always measure", () => {
   it("strict and ignore are ineligible with a disable flag present", () => {
     expect(gateFor(["--no-matrix", "--check", "--baseline-env", "strict"])).toBe(false);
@@ -228,8 +219,7 @@ describe("H15: non-normalize env policies always measure", () => {
   });
 });
 
-// H16: the CLI type must keep the disable flags optional-boolean, or the
-// resolvers silently start returning undefined for a typo'd field.
+// H16: the CLI type must keep disable flags optional-boolean, or a typo'd field resolves undefined.
 describe("H16: resolvers read the flags the parser writes", () => {
   it("parseArgs output feeds the resolvers directly", () => {
     const args: CliArgs = parseArgs(["./Button.tsx", "--no-matrix", "--no-curve"]);

@@ -5,8 +5,8 @@ import {
   extractAllProps,
   extractExports,
   resetExtractionCache,
-} from "../../src/prop-gen.js";
-import { detectComponentName } from "../../src/analyze.js";
+} from "../../src/props/index.js";
+import { detectComponentName } from "../../src/pipeline/index.js";
 
 const M58 = path.resolve("./fixtures/m58");
 const fixture = (name: string): string => path.join(M58, name);
@@ -24,7 +24,6 @@ describe("target binding: additional export shapes", () => {
     expect(await names(fixture("alias-widget.tsx"))).toEqual(["rows", "title"]);
   });
 
-  // H2: HOC call around the component in the default export position.
   it("H2: follows a HOC wrapper in `export default withTheme(Chart)`", async () => {
     expect(await names(fixture("hoc-default.tsx"))).toEqual([
       "series",
@@ -33,7 +32,6 @@ describe("target binding: additional export shapes", () => {
     ]);
   });
 
-  // H3: generic component signature.
   it("H3: binds a generic component's props", async () => {
     expect(await names("./fixtures/generic.tsx")).toEqual([
       "columns",
@@ -43,7 +41,6 @@ describe("target binding: additional export shapes", () => {
     ]);
   });
 
-  // H4: two exported components, stem matching neither.
   it("H4: picks the first exported component when the stem matches none", async () => {
     expect(await names("./fixtures/two-exports.tsx")).toEqual(["label", "size"]);
   });
@@ -63,7 +60,6 @@ describe("target binding: additional export shapes", () => {
     ]);
   });
 
-  // H7: class component target behind an internal helper.
   it("H7: binds a class component's type argument over an earlier helper", async () => {
     expect(await names(fixture("class-target.tsx"))).toEqual([
       "caption",
@@ -72,7 +68,6 @@ describe("target binding: additional export shapes", () => {
     ]);
   });
 
-  // H8: nested wrapper chain around a function expression.
   it("H8: binds through memo(forwardRef(fn))", async () => {
     expect(await names("./fixtures/double-wrap.tsx")).toEqual([
       "disabled",
@@ -94,7 +89,6 @@ describe("target binding: additional export shapes", () => {
     expect(warnings).toHaveLength(1);
   });
 
-  // H10: self-consistency guard.
   it("H10: prefers the candidate whose keys match the target's destructuring", async () => {
     expect(await names(fixture("wrong-destructure.tsx"))).toEqual(["alpha", "beta"]);
   });
@@ -115,12 +109,10 @@ describe("target binding: additional export shapes", () => {
     expect(await names(fixture("no-exports.tsx"))).toEqual(["alpha", "count"]);
   });
 
-  // H13: anonymous default function declaration.
   it("H13: binds an anonymous `export default function`", async () => {
     expect(await names(fixture("anon-default.tsx"))).toEqual(["label", "ratio"]);
   });
 
-  // H14: anonymous default arrow expression.
   it("H14: binds an anonymous `export default (props) => ...`", async () => {
     expect(await names(fixture("anon-arrow.tsx"))).toEqual(["size", "text"]);
   });
@@ -130,7 +122,6 @@ describe("target binding: additional export shapes", () => {
     expect(await names(fixture("const-fc.tsx"))).toEqual(["dismissible", "headline"]);
   });
 
-  // H16: non-component top-level declarations are never candidates.
   it("H16: constants and lowercase exports are not targets", async () => {
     expect(await names("./fixtures/button.tsx")).toEqual([
       "children",
@@ -151,20 +142,16 @@ describe("target binding: additional export shapes", () => {
     expect(detectComponentName(fixture("class-target.tsx"))).toBe("Gauge");
   });
 
-  // H19: closed by M65: `detectComponentExport` normalizes the stem the same
-  // way this milestone's resolver does, so the component the harness renders
-  // and the component the schema describes are the same one.
+  // H19 (M65): detectComponentExport normalizes the stem identically; harness and schema agree.
   it("H19: harness naming uses the normalized stem rule", () => {
     expect(detectComponentName(fixture("hotspot-image.tsx"))).toBe("HotspotImage");
     expect(detectComponentName(fixture("alias-widget.tsx"))).toBe("AliasWidget");
   });
 
-  // H20: the default export wraps a component declared in another module.
   it("H20: `export default memo(Imported)` binds to the imported component", async () => {
     expect(await names(fixture("imported-inner.tsx"))).toEqual(["caption", "weight"]);
   });
 
-  // H18: the array prop that `--curve` needs comes from the target.
   it("H18: the target's array prop is the one exposed to curve mode", async () => {
     const schemas = await extractProps(fixture("hotspot-image.tsx"));
     expect(schemas.find((s) => s.name === "hotspots")?.kind).toBe("array");

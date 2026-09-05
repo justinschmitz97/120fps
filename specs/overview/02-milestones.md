@@ -3,462 +3,720 @@ kind: overview
 status: approved
 ---
 
-# Milestone summaries (M1–M66)
+# Milestone summaries (M1–M117)
 
-One entry per milestone: what it addressed, why the approach was chosen, and what it achieved.
+One entry per milestone: about, why this way, achievement. One line each.
 
 ### M1: harness + prop extraction: done
 
-- **About:** Extract component props via the TS Compiler API and build a Vite harness with a Control API for mount/unmount/rerender measurement.
-- **Why this way:** Bundler moduleResolution overrides user tsconfig; React deduplicated via symlink; recursive HOC/class unwrapping; union sampling capped at 64; no user Vite config, no auto-mount.
-- **Achievement:** Props extracted and exercised in a controlled Vite harness behind a standardized Control API.
+- **About:** TS Compiler API prop extraction; Vite harness with Control API for mount/unmount/rerender.
+- **Why this way:** bundler moduleResolution wins; React deduped via symlink; HOC/class unwrap; union cap 64; no user Vite config; no auto-mount.
+- **Achievement:** props extracted and exercised behind one Control API.
 
 ### M2: mount/unmount measurement: done
 
-- **About:** CDP trace per mount/unmount with 4x CPU throttle, 2 warmup runs, 10 samples; frame-driven rather than scheduled.
-- **Why this way:** Trace wraps only the action, not harness startup; double-rAF settle fence; throttle only during trace windows; frame pump produces fences at ~2ms instead of 60Hz vsync.
-- **Achievement:** Mount/unmount measured via CDP with precise frame-driven timing and configurable throttling.
+- **About:** CDP trace per mount/unmount; 4x CPU throttle; 2 warmups; 10 samples; frame-driven.
+- **Why this way:** trace wraps the action only; double-rAF fence; throttle only inside trace windows; frame pump fences at ~2ms, not 60Hz.
+- **Achievement:** frame-precise mount/unmount timing with configurable throttle.
 
 ### M3: interaction discovery: done
 
-- **About:** A single page.evaluate DOM walk discovers interactive elements and ARIA patterns in document order.
-- **Why this way:** Selector priority #id > data-testid > nth-of-type, validated via querySelector; opens shadow roots; filters display:none, visibility:hidden, aria-hidden; recognizes ARIA widget patterns.
-- **Achievement:** Deterministic identification of all interactive elements, ARIA patterns, and roles for exercise.
+- **About:** one page.evaluate DOM walk finds interactive elements and ARIA patterns in document order.
+- **Why this way:** selector priority #id > data-testid > nth-of-type; opens shadow roots; skips hidden and aria-hidden.
+- **Achievement:** deterministic inventory of interactive elements and roles.
 
 ### M4: exploration loop: done
 
-- **About:** BFS state graph where state id = FNV-1a hash of #root innerHTML; adaptive deepening; 200-node, 60s, depth-4 limits.
-- **Why this way:** Adaptive deepening on edge cost >1.5× median; stop after 10 zero-gain explorations; seeded LCG PRNG for determinism; comboIndex tracking prevents silent misattachment; double-rAF after exercise.
-- **Achievement:** Systematic exploration of component state space discovering interactions, transitions, and performance variations.
+- **About:** BFS state graph; state id = FNV-1a of #root innerHTML; limits 200 nodes, 60s, depth 4.
+- **Why this way:** adaptive deepening on edge cost >1.5× median; stop after 10 zero-gain steps; seeded LCG; comboIndex guards misattachment.
+- **Achievement:** systematic state-space exploration with transitions and perf variance.
 
 ### M5: CDP metric taxonomy: done
 
-- **About:** Parse trace events single-pass; nesting stack computes totalDuration; fits scaling (linear/quadratic/exponential); measures INP, LayoutShift, heap delta.
-- **Why this way:** Nesting stack fixes double-counting; ≥3 distinct n values required for a growth fit; R² > 0.5 validates the model; calibration via DOM insert + offsetHeight; GC per sample.
-- **Achievement:** CDP metrics extracted and categorized, including growth fits, INP, and heap delta, disambiguated across Chromium versions.
+- **About:** single-pass trace parse; nesting stack for totalDuration; growth fits; INP, LayoutShift, heap delta.
+- **Why this way:** nesting stack kills double-counting; fit needs ≥3 distinct n, R² > 0.5; calibration = DOM insert + offsetHeight; GC per sample.
+- **Achievement:** categorized CDP metrics stable across Chromium versions.
 
 ### M6: CLI + reporting: done
 
-- **About:** analyze() orchestrates the pipeline producing Report v1 JSON with pass/fail verdicts based on thresholds.
-- **Why this way:** relativeMount = mount.median / calibration.totalDuration with threshold 2.0; zero-duration calibration hard-fails; --ci mode is JSON-only with exit 1/2; no config files.
-- **Achievement:** CLI runs the full measurement pipeline and surfaces results as JSON with verdicts and thresholds.
+- **About:** analyze() runs the pipeline; Report v1 JSON with threshold verdicts.
+- **Why this way:** relativeMount = mount.median / calibration, threshold 2.0; zero calibration hard-fails; --ci JSON-only, exit 1/2; no config files.
+- **Achievement:** one CLI run yields JSON verdicts.
 
 ### M7: composed fixtures: done
 
-- **About:** *.fixture.tsx self-contained scenes mounted with empty props, no 120fps imports or config.
-- **Why this way:** Adjacent fixtures auto-detected silently; throwing fixtures degrade instead of crashing; measured identically to auto combos: same tracing, discovery, verdicts.
-- **Achievement:** Fixture files usable alongside extracted components with uniform measurement behavior.
+- **About:** *.fixture.tsx scenes mount with empty props; no 120fps imports.
+- **Why this way:** adjacent fixtures auto-detected; throwing fixtures degrade; measured like auto combos.
+- **Achievement:** fixtures measured uniformly beside extracted components.
 
 ### M8: rerender + parameterized scaling: done
 
-- **About:** Measure stable (same props) and rerender (prop-change) scenarios; fixture scale(n) generates combos at [1, 5, 20, 50].
-- **Why this way:** scale(n) export via __120fps_scaleN marker prop; rerenderMs default 16 calibrated for 4x throttle; a scaling curve requires ≥2 distinct DOM sizes.
-- **Achievement:** Rerender performance measured at variable scales, identifying dominant perf dimensions and scaling patterns.
+- **About:** stable and prop-change rerender scenarios; scale(n) combos at [1, 5, 20, 50].
+- **Why this way:** __120fps_scaleN marker prop; rerenderMs 16 at 4x throttle; curve needs ≥2 DOM sizes.
+- **Achievement:** rerender cost at variable scale; dominant dimension identified.
 
 ### M9: portal discovery: done
 
-- **About:** Walk body children beyond #root, with trigger-first probing for aria-haspopup triggers; MutationObserver ≤2s catches async portals.
-- **Why this way:** Probing restricted to aria-haspopup triggers (others fast-path skipped); 2 rAF for sync portals, MutationObserver for async; probe only at initial-state discovery, later states body-walk only, for perf.
-- **Achievement:** Sync and async portals beyond the main component tree discovered and measured, including multiple/nested portals.
+- **About:** body walk beyond #root; aria-haspopup trigger probing; MutationObserver ≤2s for async portals.
+- **Why this way:** probe only aria-haspopup triggers; 2 rAF for sync, observer for async; probe at initial state only.
+- **Achievement:** sync, async, nested portals discovered and measured.
 
 ### M10: stress patterns: done
 
-- **About:** Dispatch exercise by type+role: keyboard-sweep, hover-sweep, open-close-10, multi-keystroke, rapid-toggle-11; runs inside the CDP trace per sample.
-- **Why this way:** Rapid-toggle count must be odd (11, not 10) to discover state transitions; patterns run inside the trace for every sample; fallback to single-shot without ARIA.
-- **Achievement:** Components exercised with realistic patterns revealing performance cliffs that single-shot exercises miss.
+- **About:** exercise by type+role: keyboard-sweep, hover-sweep, open-close-10, multi-keystroke, rapid-toggle-11; inside the trace per sample.
+- **Why this way:** odd toggle count (11) exposes transitions; patterns traced every sample; single-shot fallback without ARIA.
+- **Achievement:** realistic patterns expose cliffs single shots miss.
 
 ### M11: pairwise prop delta: done
 
-- **About:** Hold an anchor combo, flip one prop, diff mount/rerender medians; cap 128 pairs; priority booleans > unions > objects.
-- **Why this way:** Reuses already-measured combos via JSON.stringify dedupe; no deltas for function/reactnode/unknown kinds; sorted by |mountDelta| descending; --no-deltas skips the pass.
-- **Achievement:** Individual prop performance impacts isolated and ranked by magnitude.
+- **About:** anchor combo, flip one prop, diff medians; cap 128 pairs; booleans > unions > objects.
+- **Why this way:** reuse measured combos via JSON.stringify dedupe; skip function/reactnode/unknown; sort by |mountDelta|; --no-deltas.
+- **Achievement:** per-prop cost isolated and ranked.
 
 ### M12: auto-scaling prop detection: done
 
-- **About:** Zero-config detection of a single prop to scale (items arrays prioritized, else numeric names) with a 5-point sweep.
-- **Why this way:** Manual scale() and fixture mode always win; auto-scale disabled in fixtures; normal combos are always measured: scaling is an extra pass.
-- **Achievement:** Single properties automatically detected and scaled at configurable points without manual configuration.
+- **About:** zero-config pick of one scalable prop (items arrays > numeric names); 5-point sweep.
+- **Why this way:** manual scale() and fixtures win; disabled in fixtures; scaling is an extra pass, combos always run.
+- **Achievement:** scaling without configuration.
 
 ### M13: tiered budgets: done
 
-- **About:** Classify component tier from domNodeCount, portal, and animation; apply tier-specific performance budgets instead of flat thresholds.
-- **Why this way:** Tier and flat budgets independently calibrated; an explicit threshold overrides only that metric while others keep the tier budget.
-- **Achievement:** Verdicts are context-aware per tier, enabling budgets differentiated by component complexity.
+- **About:** tier from domNodeCount, portal, animation; tier budgets replace flat thresholds.
+- **Why this way:** tier and flat budgets calibrated independently; explicit threshold overrides one metric only.
+- **Achievement:** verdicts scale with component complexity.
 
 ### M14: animation detection: done
 
-- **About:** Detect on-page animations via getAnimations(), computed animationName, and allowlisted transitions within #root.
-- **Why this way:** Detection on the first sample only (structural, not sample-dependent); no extra browser cycle; scoping to #root excludes the Vite overlay and portals.
-- **Achievement:** CSS/WAAPI animations detected automatically for tier-aware budgeting and animation-related verdicts. (Superseded in part by M64's observed-only rule.)
+- **About:** getAnimations(), computed animationName, allowlisted transitions within #root.
+- **Why this way:** first sample only (structural); no extra browser cycle; #root scope excludes Vite overlay and portals.
+- **Achievement:** automatic animation-aware tiering; M64 narrowed to observed-only.
 
 ### M15: pointer-drag stress: done
 
-- **About:** Simulate pointer drag: 60 linear pointermoves across the bounding box, vertical/horizontal per aria-orientation (~1s at 60fps).
-- **Why this way:** Target priority: role slider > input[type=range] > aria-valuenow > cursor states; rejects HTML5 draggable, touch, and scroll/wheel targets.
-- **Achievement:** Performance measured during pointer-drag interactions on sliders and range inputs.
+- **About:** 60 linear pointermoves across the bounding box; axis per aria-orientation.
+- **Why this way:** target priority slider > input[type=range] > aria-valuenow > cursor; rejects draggable, touch, scroll.
+- **Achievement:** slider and range drag cost measured.
 
 ### M16: cost attribution: done
 
-- **About:** Attribute mount scripting time to sources (npm packages, React, user, browser, unattributed) from FunctionCall stack URLs.
-- **Why this way:** Pure post-processing on existing traces: no extra capture; handles Vite URL munging and nesting-stack dedupe; no source maps required.
-- **Achievement:** Mount scripting cost broken down by source, identifying expensive dependencies and library overhead.
+- **About:** mount scripting time split by source (npm, React, user, browser, unattributed) from stack URLs.
+- **Why this way:** pure post-processing on existing traces; handles Vite URL munging; no source maps.
+- **Achievement:** expensive dependencies named.
 
 ### M17: auto-composition: done
 
-- **About:** Infer composition (flat/list/item/portal) from multi-export file names without fixtures, using a suffix taxonomy from component libraries.
-- **Why this way:** Root = the shortest export prefixing all others (case-insensitive); suffix taxonomy (Item, Trigger, Content, …) drawn from Radix/shadcn patterns.
-- **Achievement:** Prop combos generated automatically for multi-export files based on export names and composition structure.
+- **About:** infer flat/list/item/portal from multi-export names via suffix taxonomy.
+- **Why this way:** root = shortest export prefixing all others; suffixes (Item, Trigger, Content) from Radix/shadcn.
+- **Achievement:** multi-export combos without fixtures.
 
 ### M18: React optimization detection: done
 
-- **About:** Detect React render bailouts, missed memos, unnecessary re-renders, context fan-out, and callback identity changes via a fiber tree walk.
-- **Why this way:** Runs in a separate browser with its own probe entry; fiber walk counts renders (memos are cloned on bailout); context behind a __120fpsStable boundary; name filter excludes scaffolding.
-- **Achievement:** React-specific optimization findings (memoization, callbacks, context) delivered as post-pipeline analysis separate from measurements.
+- **About:** fiber walk detects bailouts, missed memos, re-renders, context fan-out, callback churn.
+- **Why this way:** separate browser and probe entry; memos cloned on bailout; __120fpsStable context boundary; scaffolding filtered by name.
+- **Achievement:** React findings delivered post-pipeline, separate from measurements.
 
 ### M19: Next.js shims: done
 
-- **About:** Replace next/image, next/dynamic, next/link, next/navigation, next/headers, and next-video with self-contained shims for profiling without the framework.
-- **Why this way:** Preserve DOM structure and prop forwarding while dropping the framework asset pipeline; tsconfig aliases checked first; gated on hasNextJs.
-- **Achievement:** Next.js components profiled via shimmed modules without Next.js build infrastructure or SSR.
+- **About:** self-contained shims for next/image, dynamic, link, navigation, headers, next-video.
+- **Why this way:** keep DOM shape and prop forwarding, drop the asset pipeline; tsconfig aliases first; gated on hasNextJs.
+- **Achievement:** Next.js components profiled without Next.js.
 
 ### M20: curve mode: done
 
-- **About:** Multi-axis scaling sweep using 6 points [1, 3, 5, 10, 20, 50] for regression fitting instead of the combo pipeline.
-- **Why this way:** Auto-activates on a detectScalingProps match; every dimension measured per point (mount/rerender/unmount/DOM/heap/interactions); FAIL on super-linear growth or budget exceed.
-- **Achievement:** Scaling behavior analyzed via curve fitting at higher resolution, catching regressions across scale ranges.
+- **About:** multi-axis sweep at [1, 3, 5, 10, 20, 50] for regression fitting.
+- **Why this way:** auto-activates on detectScalingProps; every dimension per point; FAIL on super-linear growth or budget breach.
+- **Achievement:** high-resolution scaling regressions caught.
 
 ### M21: matrix mode: done
 
-- **About:** Full cartesian variant matrix (auto ≤64, capped 256 via all-pairs covering) catches compound prop interaction effects beyond M11's single-prop deltas.
-- **Why this way:** Cells ARE combos: the matrix is a pure projection of finished combos; only the 5 hottest are explored; printed rows = hot + failing.
-- **Achievement:** Interactions of multiple variant props measured, detecting compound performance effects invisible to delta-based analysis.
+- **About:** cartesian variant matrix (auto ≤64, cap 256 via all-pairs) for compound prop effects.
+- **Why this way:** cells are combos, the matrix a projection; explore 5 hottest; print hot + failing.
+- **Achievement:** compound effects invisible to single-prop deltas measured.
 
 ### M22: budget CI: done
 
-- **About:** Per-component performance budgets in 120fps.config.json and a baseline in 120fps-baseline.json at package root for CI regression detection.
-- **Why this way:** Precedence CLI > per-component > defaults > TIER_BUDGETS; tolerances as percentages (10/15/15/20%); merge-writes preserve other components; committing to git recommended.
-- **Achievement:** Budgets and baselines persisted in version control for automated CI regression detection.
+- **About:** per-component budgets in 120fps.config.json; baseline in 120fps-baseline.json.
+- **Why this way:** precedence CLI > per-component > defaults > TIER_BUDGETS; tolerances 10/15/15/20%; merge-writes; commit to git.
+- **Achievement:** CI regression detection from versioned budgets.
 
 ### M23: isolated measurements: approved
 
-- **About:** Measure mount, rerender, unmount, memory, and strict-mode phases in isolation with calibrated leak and churn thresholds.
-- **Why this way:** StrictMode nested inside the wrapper to measure component cost only; CDP garbage collection used (page gc() unavailable); one browser per phase avoids JIT reuse between samples.
-- **Achievement:** Detects memory leaks (8KB/cycle), churn degradation (>2.0), and double-invoke overhead (<110%), with per-phase verdicts.
+- **About:** mount, rerender, unmount, memory, strict-mode phases in isolation; calibrated leak and churn thresholds.
+- **Why this way:** StrictMode inside the wrapper; CDP GC (no page gc()); one browser per phase avoids JIT reuse.
+- **Achievement:** leaks (8KB/cycle), churn (>2.0), double-invoke (<110%) detected per phase.
 
 ### M24: debt remediation (2026-07 audit): approved
 
-- **About:** Resolve dogfooding audit findings: tsconfig parsing, export selection ordering, baseline path persistence, stale dir cleanup, multi-path CLI, page-error enrichment.
-- **Why this way:** Each fix anchored to an observed failure: config cascades need parseJsonConfigFileContent; export order must be deterministic; baseline paths need a file-ancestor walk; parallel Chromium load caused e2e contention.
-- **Achievement:** Baseline paths resolve correctly, export selection deterministic, page exceptions named in timeouts, concurrent Chromium load capped, rapid-toggle handles binary state.
+- **About:** tsconfig parsing, export ordering, baseline paths, stale dirs, multi-path CLI, page-error enrichment.
+- **Why this way:** each fix anchored to an observed failure; parseJsonConfigFileContent; file-ancestor walk; Chromium concurrency cap.
+- **Achievement:** baseline paths resolve; exports deterministic; timeouts name page exceptions; rapid-toggle handles binary state.
 
 ### M25: stylesheet injection: approved
 
-- **About:** Auto-detect global CSS from 8 fixed paths; an explicit `--css` flag overrides cascade order; font readiness settled before throttle.
-- **Why this way:** CSS imports go at entry top before component imports; wrapper-imported CSS lands after the --css block to preserve app layer cascade; Vite injects during eval, so window.__120fps presence confirms styles loaded.
-- **Achievement:** Unstyled measurement prevented via auto-detected injection; cascade order matches app layering; fonts settled before CPU throttle.
+- **About:** global CSS from 8 fixed paths; --css overrides cascade; fonts settled before throttle.
+- **Why this way:** CSS imports at entry top; wrapper CSS after the --css block; window.__120fps presence confirms styles loaded.
+- **Achievement:** styled measurement in app cascade order.
 
 ### M26: provider wrapper: approved
 
-- **About:** Wrap the component with providers via `--wrap` or auto-detected `120fps.setup.*`, enabling theme/environment setup without Storybook-style args.
-- **Why this way:** ES module import order runs side effects before component render; mount includes provider cost but unmount semantics stay identical to the unwrapped path; overhead traced separately for transparency.
-- **Achievement:** Providers measured inside the mount window; viewport customizable via optional export; wrapper CSS/browser packages isolated from Node evaluation.
+- **About:** --wrap or auto-detected 120fps.setup.* wraps the component with providers.
+- **Why this way:** ESM import order runs side effects first; mount includes provider cost; overhead traced separately.
+- **Achievement:** providers measured; viewport export; wrapper CSS isolated from Node.
 
 ### M27: React Compiler awareness: approved
 
-- **About:** Detect babel-plugin-react-compiler in project deps; apply the project's own compiler version to profiling; avoid pessimistic double-invoke warnings.
-- **Why this way:** Compiler resolved from project node_modules so the version matches production; transform applied server-wide for consistent JSX; react/compiler-runtime pre-bundled to prevent cold optimization during measurement.
-- **Achievement:** Measurements recognize compiler memoization; pessimistic overhead warnings omitted; the production compiler version is what gets profiled.
+- **About:** detect babel-plugin-react-compiler; profile with the project's own version; drop pessimistic double-invoke warnings.
+- **Why this way:** compiler from project node_modules; server-wide transform; compiler-runtime pre-bundled.
+- **Achievement:** production compiler memoization recognized.
 
 ### M28: isolation execution: approved
 
-- **About:** Execute isolated measurement passes per phase (mount, rerender, unmount, memory, strictmode) with warmup 3 and one browser per pass.
-- **Why this way:** One pass serves both mount and unmount phases at mount position (cost efficiency); isolation marked in the fingerprint for baseline-comparison filtering; jsx-runtime deps pre-declared to prevent mid-sample cold optimization.
-- **Achievement:** Isolated phases execute with shared setup; mode differences detected in baseline comparison; jsx-runtime cold optimization avoided.
+- **About:** per-phase isolated passes; warmup 3; one browser per pass.
+- **Why this way:** one pass serves mount + unmount; isolation in the fingerprint; jsx-runtime pre-declared.
+- **Achievement:** isolated phases share setup; no mid-sample cold optimization.
 
 ### M29: baseline env fingerprint: approved
 
-- **About:** Fingerprint the baseline environment (css, wrapper, compiler, throttle, calibration) to validate comparison soundness; classify as unknown, incompatible, identical, or normalizable.
-- **Why this way:** The fingerprint lives on the entry, not the file (entries may come from different conditions); normalizable baselines are divided by their own calibration duration; incompatible comparisons are skipped because mode/css/wrapper/compiler change what is measured.
-- **Achievement:** Baselines are honest about measurement conditions; incompatible states skip comparison without failing; pre-M29 baselines marked unknown.
+- **About:** fingerprint css, wrapper, compiler, throttle, calibration; classify unknown/incompatible/identical/normalizable.
+- **Why this way:** fingerprint per entry; normalizable divides by own calibration; incompatible skips comparison.
+- **Achievement:** honest baselines; pre-M29 entries marked unknown.
 
 ### M30: dogfooding remediation: approved
 
-- **About:** Fixes from testing 0.2.1 across 6 repos: config isolation, template synthesis, composition validation, explore budgets, per-step interaction budgets, context-loss recovery.
-- **Why this way:** configFile:false prevents project plugins corrupting the harness Vite; a trial-mount validates the template before calibration; an explore budget cap prevents >35min runs; context loss retries once on a fresh session.
-- **Achievement:** Project Vite config isolated; invalid templates caught pre-calibration; 27-combo runs complete in ~20min; context-loss sessions recover with a fresh CDP connection.
+- **About:** 0.2.1 fixes across 6 repos: config isolation, template synthesis, composition validation, explore budgets, context-loss recovery.
+- **Why this way:** configFile:false; trial-mount before calibration; explore cap stops >35min runs; one retry on a fresh session.
+- **Achievement:** 27-combo runs in ~20min; context loss recovers.
 
 ### M31: measurement semantics: approved
 
-- **About:** Fix domNodeCount to count component nodes only (excluding harness chrome); cap measured combos at 8 with representative selection (first, last, interior).
-- **Why this way:** domNodeCount had included 8 chrome nodes, shifting every tier; the old silent truncation at 16 caused >35min runs; representative selection preserves a stratified sample rather than a prefix.
-- **Achievement:** Tier boundaries accurate (≤10 T1, ≤40 T2, >40 T4); representative combo sampling prevents runaway costs; a metrics version bump prevents false regressions.
+- **About:** domNodeCount excludes harness chrome; combo cap 8 with representative selection.
+- **Why this way:** 8 chrome nodes shifted every tier; silent cap 16 caused >35min runs; stratified sample beats prefix.
+- **Achievement:** accurate tiers (≤10 T1, ≤40 T2, >40 T4); metrics version bump avoids false regressions.
 
 ### M32: developer experience: approved
 
-- **About:** Directory/glob path expansion for multi-component runs; fixture scaffolding for rolled-back compositions; mode reporting in the table; explore-budget CLI flag; distinct JSON naming.
-- **Why this way:** PowerShell doesn't expand globs, so Windows needs explicit directory support; users need a fixture starting point; modes auto-activate but weren't labeled; explore options existed without CLI access.
-- **Achievement:** A single command runs directories and globs; rolled-back compositions offer a scaffold; the report labels mode and combo cap; four workflow frictions removed.
+- **About:** directory/glob expansion; fixture scaffolding; mode in table; explore-budget flag; distinct JSON names.
+- **Why this way:** PowerShell lacks glob expansion; users need a scaffold; modes were unlabeled; explore options lacked CLI.
+- **Achievement:** four workflow frictions removed.
 
 ### M33: frame-derived interaction budgets: approved
 
-- **About:** Frame-based per-event budgets (33/50/67/100ms for T1–T4 at 4x throttle); pointer-drag counted as 60 events, not 1 step; CDP sessions replaced on context loss.
-- **Why this way:** One 120fps frame is 8.33ms, which at 4x throttle is 33ms; other tiers derive from 60fps and headroom; pointer-drag's 60 pointermoves are 60 interactions; session replacement avoids a Tracing.start protocol error.
-- **Achievement:** Interaction budgets principled from frame time; pointer-drag compared fairly to other patterns; session wedge prevented via replacement.
+- **About:** per-event budgets 33/50/67/100ms for T1–T4 at 4x; pointer-drag = 60 events; CDP session replaced on context loss.
+- **Why this way:** 8.33ms frame × 4 = 33ms; other tiers from 60fps + headroom; replacement avoids the Tracing.start error.
+- **Achievement:** principled budgets; fair drag comparison; no session wedge.
 
 ### M34: profiler overhead reduction: done
 
-- **About:** Harness bookkeeping cost ~60% of per-component run time; GC, DOM-info reads, and trace start/flush dominate under CPU throttle and ran per-sample when per-combo suffices.
-- **Why this way:** Suspend throttle for inter-sample GC, DOM-info reads, and unmounts; read domNodeCount/hasAnimation once per combo; cache the Vite deps union; disable file watching on the project-root server.
-- **Achievement:** Costs reduced with metrics unchanged within run-to-run noise: reported values identical to pre-M34.
+- **About:** bookkeeping was ~60% of run time; GC, DOM reads, trace flush ran per sample.
+- **Why this way:** suspend throttle for GC/DOM reads/unmounts; per-combo DOM info; cache the Vite deps union; no file watching.
+- **Achievement:** faster runs; metrics unchanged within noise.
 
 ### M35: vsync-free lifecycle measurement: done
 
-- **About:** Each lifecycle sample waited ~33ms per double-rAF fence for the compositor; on badge.tsx, ~80s across mount and rerender phases was pure vsync idle against ~5–10ms of measured work.
-- **Why this way:** Launch Chromium with --enable-begin-frame-control and drive frames on demand via HeadlessExperimental.beginFrame (~1.9ms per double-rAF) instead of waiting for 60Hz scheduling.
-- **Achievement:** Vsync idle eliminated for lifecycle measurement with frame coverage invariant; animated combos fall back to real vsync pacing.
+- **About:** double-rAF fence idled ~33ms per sample; ~80s vsync idle on badge.tsx vs ~5–10ms work.
+- **Why this way:** --enable-begin-frame-control + HeadlessExperimental.beginFrame drives frames on demand (~1.9ms per fence).
+- **Achievement:** vsync idle gone; animated combos fall back to real vsync.
 
 ### M36: shared prop-extraction program: done
 
-- **About:** extractProps rebuilt the ts.Program per call, re-parsing lib.d.ts and the node_modules type graph every time (~0.5–1s per call on real Next.js repos).
-- **Why this way:** A memoizing CompilerHost caches parsed files keyed by (fileName, mtime, size); the last program per options key is retained as oldProgram for TypeScript's structure-reuse validation.
-- **Achievement:** The parsed graph is shared across extraction calls within the process lifetime, eliminating repeated library re-parsing.
+- **About:** extractProps rebuilt ts.Program per call (~0.5–1s on Next.js repos).
+- **Why this way:** memoizing CompilerHost keyed by (fileName, mtime, size); oldProgram retained per options key.
+- **Achievement:** parsed graph shared across calls.
 
 ### M37: browser pool across phases and components: done
 
-- **About:** Every measurement phase launched its own Chromium (~0.4–1s); a single run paid 5–8 launches and a multi-component sweep hundreds: but only page state needs to be fresh, not the process.
-- **Why this way:** BrowserPool holds at most two processes (driven + vsync), acquired on first use and cached; a fresh browser context gives renderer isolation equivalent to a new browser.
-- **Achievement:** Browser launches reduced via cross-component and cross-phase pooling, with a fresh page context per session.
+- **About:** each phase launched Chromium (~0.4–1s); sweeps paid hundreds.
+- **Why this way:** BrowserPool holds ≤2 processes (driven + vsync); fresh context = renderer isolation.
+- **Achievement:** launches pooled; fresh page per session.
 
 ### M38: cross-component sweep server: done
 
-- **About:** Each component booted its own Vite dev server (~3–5s each); harness dirs live inside the project root, so one server can serve all of them.
-- **Why this way:** ServerPool acquires once per config tuple (projectRoot, cssFiles, wrapPath, compiler, noShims); later components are served on demand; optimizeDeps.include is frozen at first boot and cached deps reused.
-- **Achievement:** Per-component server boots eliminated in multi-path runs; one server's cache and bundle shared across components.
+- **About:** each component booted Vite (~3–5s); one server can serve all harness dirs.
+- **Why this way:** ServerPool keyed by (projectRoot, cssFiles, wrapPath, compiler, noShims); optimizeDeps frozen at first boot.
+- **Achievement:** one server per multi-path run.
 
 ### M39: fingerprint-based baseline reuse: done
 
-- **About:** Identical code in an identical environment yields the same distribution, so unchanged components can be skipped: turning a routine CI sweep (1–5 changed components per commit) into seconds.
-- **Why this way:** computeSourceFingerprint hashes order-independently over file paths + content, wrapper, stylesheets, configs, and lockfile; reuse requires matching fingerprints and sameMachineIdentity; calibration is excluded (thermal variance too high).
-- **Achievement:** Unchanged components skip re-measurement; CI verdicts come from cache in seconds.
+- **About:** unchanged components skip measurement; CI sweeps drop to seconds.
+- **Why this way:** order-independent hash over sources, wrapper, stylesheets, configs, lockfile; requires sameMachineIdentity; calibration excluded.
+- **Achievement:** cached CI verdicts.
 
 ### M40: measured-state integrity: implemented
 
-- **About:** Components fetching on mount render a skeleton first; mount measurement captured that transient state without disclosure, presenting the skeleton's cost as the whole story.
-- **Why this way:** A network signal wraps fetch/XHR to detect pending requests; a mutation signal installs a MutationObserver after the fence with a 120ms grace window; both probes run outside traced windows.
-- **Achievement:** ComboReport.measuredState classifies settled/pending-network/late-mutation; non-settled combos trigger a disclosure warning instead of a silently wrong report.
+- **About:** fetch-on-mount components measured their skeleton silently.
+- **Why this way:** fetch/XHR wrap detects pending network; MutationObserver with 120ms grace after the fence; probes outside traced windows.
+- **Achievement:** measuredState = settled/pending-network/late-mutation, with disclosure warning.
 
 ### M41: async wrapper setup: implemented
 
-- **About:** M26 excluded async setup, but components fetching on mount need request mocking installed before render; without it M40 flags them pending-network forever.
-- **Why this way:** The wrapper module exports an optional setup(): void|Promise<void>, awaited before the control API is exposed; runs once per session outside traced windows; a 15s timeout fails with a readable error.
-- **Achievement:** Request mocking and store seeding possible before render, making M40's disclosure actionable and pending components measurable.
+- **About:** request mocking needed before render; M26 excluded async setup.
+- **Why this way:** optional setup(): void|Promise<void>, awaited once per session outside traces; 15s timeout.
+- **Achievement:** pending components mockable and measurable.
 
 ### M42: server-only import preflight: implemented
 
-- **About:** Components reaching server-only code or async server components cannot mount in a browser; the failure surfaced minutes into a run as a deep Vite error or readiness timeout.
-- **Why this way:** runPreflight walks the import graph (AST-based, no type checker) after prop extraction and before harness/server bootstrap; hard failures on server-only/use server/async export; soft warning on Node builtins.
-- **Achievement:** Unmountable components fail in seconds with the explicit import chain and fix guidance, before any harness boot.
+- **About:** server-only imports failed minutes in as deep Vite errors.
+- **Why this way:** AST import-graph walk after extraction, before boot; hard fail on server-only/use server/async export; warn on Node builtins.
+- **Achievement:** unmountable components fail in seconds with the import chain.
 
 ### M43: scroll & wheel stress pattern: implemented
 
-- **About:** Scroll jank is the most common real-world interaction complaint, and virtualized lists' entire cost model lives in the scroll handler; M15 had excluded scroll/wheel.
-- **Why this way:** Discovery finds scrollable containers (overflow auto/scroll/overlay with actual content overflow); scroll-sweep executes 10 wheel ticks out and back; tick distance adapts to container and viewport size.
-- **Achievement:** Scroll/wheel included in stress patterns; virtualized and scrollable components' handler cost and layout jank measured.
+- **About:** scroll jank is the top complaint; M15 excluded scroll/wheel.
+- **Why this way:** discover overflow containers with real overflow; 10 wheel ticks out and back; tick adapts to size.
+- **Achievement:** virtualized and scrollable handler cost measured.
 
 ### M44: representative prop data (presets): implemented
 
-- **About:** Synthesized props made scenes mount unrealistically: arrays got 3 synthetic items, unions took the first member, render props became stubs; the measurement was real but the scene unrepresentative.
-- **Why this way:** A sidecar module `<stem>.props.tsx` exports a prop-name-to-value mapping; literal values are evaluated from the AST; functions and JSX become position markers resolved at render time.
-- **Achievement:** Representative prop values supplied without authoring full fixture scenes; presets replace prop pools across all combo generation modes.
+- **About:** synthesized props made scenes unrepresentative (3 items, first union member, stub render props).
+- **Why this way:** <stem>.props.tsx sidecar maps prop to value; literals from AST; functions/JSX as position markers.
+- **Achievement:** real prop values without full fixtures, across all combo modes.
 
 ### M45: per-environment baselines & baseline workflow: implemented
 
-- **About:** Stop environment mismatches by keying baselines into per-environment slots; cross-environment comparison becomes an explicit fallback instead of an accidental default.
-- **Why this way:** Composite keys preserve existing reader shapes, enable clean text merges across branches, and group by component when sorted.
-- **Achievement:** CI and laptop baselines live in separate slots; incompatible classifications mostly disappear; M39 reuse operates per slot.
+- **About:** baselines keyed per environment slot; cross-env comparison an explicit fallback.
+- **Why this way:** composite keys keep reader shapes, merge cleanly, sort by component.
+- **Achievement:** CI and laptop slots separate; M39 reuse per slot.
 
 ### M46: noise sentinel: implemented
 
-- **About:** Let users distinguish component regressions from machine contention by measuring run-level noise with a probe CV and unstable-metric fraction.
-- **Why this way:** Thresholds derived from the existing 15% CV bar; the probe measures repeatability of a fixed arithmetic loop, not calibration.
-- **Achievement:** Runs report a noise level; noisy runs show regressions without failing; hostile runs skip baseline comparison.
+- **About:** run-level noise via probe CV and unstable-metric fraction.
+- **Why this way:** thresholds from the existing 15% CV bar; probe = fixed arithmetic loop, not calibration.
+- **Achievement:** noisy runs show regressions without failing; hostile runs skip comparison.
 
 ### M47: volatile DOM normalization: implemented
 
-- **About:** Stop components rendering timestamps/animations from inflating the state graph by measuring the DOM's noise floor before attributing change.
-- **Why this way:** Structural addresses instead of object identity so remounts map consistently; a tree-walk hash separates content changes from structure changes.
-- **Achievement:** State detection excludes volatile content while preserving structural changes; determinism guaranteed regardless of remounts.
+- **About:** timestamps and animations inflated the state graph.
+- **Why this way:** structural addresses over object identity; tree-walk hash separates content from structure.
+- **Achievement:** volatile content excluded; determinism across remounts.
 
 ### M48: load-bearing project transforms: implemented
 
-- **About:** Support project plugins (SVGR, vanilla-extract, CSS preprocessors) without loading vite.config; diagnose unsupported transforms with stable codes.
-- **Why this way:** Detect transforms from the manifest, resolve from project node_modules, strip server hooks, and pass through build-time logic only.
-- **Achievement:** Recognized transforms compile correctly; unsupported ones emit a transform code and diagnosis instead of failing silently.
+- **About:** SVGR, vanilla-extract, preprocessors supported without loading vite.config.
+- **Why this way:** detect from manifest; resolve from project node_modules; strip server hooks.
+- **Achievement:** known transforms compile; unsupported ones get a code and diagnosis.
 
 ### M49: compare mode (interleaved A/B): implemented
 
-- **About:** Answer "is my change faster" by measuring the working tree interleaved against git refs in the same thermal window, avoiding sequential bias.
-- **Why this way:** Samples interleaved per combo in a single window over the pooled browser; lockfile match enforced; working-tree node_modules linked into the worktree.
-- **Achievement:** Compares sample ranges rather than means; mount/unmount/DOM count per combo; distinguishability judged via non-overlapping spreads.
+- **About:** working tree vs git refs interleaved in one thermal window.
+- **Why this way:** per-combo interleaving on the pooled browser; lockfile match enforced; node_modules linked into the worktree.
+- **Achievement:** sample-range comparison; distinguishability via non-overlapping spreads.
 
 ### M50: CI surfacing: implemented
 
-- **About:** Emit GitHub-flavored markdown and JUnit formats so regressions surface in PR comments and CI systems without forge API calls.
-- **Why this way:** Pure serializers over Report only: no measurement state, no forge APIs, no network; composes with every mode.
-- **Achievement:** Markdown for comments/summaries and JUnit for universal CI rendering, both per-component with noise and cache labels.
+- **About:** GitHub markdown and JUnit output without forge APIs.
+- **Why this way:** pure serializers over Report; no network; composes with every mode.
+- **Achievement:** PR comments and CI rendering with noise and cache labels.
 
 ### M51: report actionability: implemented
 
-- **About:** Map 10 perf finding classes to 2–3 line hints with a concrete direction and README anchors.
-- **Why this way:** Hint bodies enforce imperative verbs; a test resolves anchors against README headings; stable ordering; prose lives in the README, ids in the Report.
-- **Achievement:** Every run ends with actionable hints per finding class, plus a mode guide in the README for first-time users.
+- **About:** 10 finding classes map to 2–3 line hints with README anchors.
+- **Why this way:** imperative verbs enforced; a test resolves anchors against headings; ids in Report, prose in README.
+- **Achievement:** every run ends with actionable hints.
 
-### M52: explore-phase observer rework: closed: premise falsified by measurement; observers ship as opt-in
+### M52: explore-phase observer rework: closed (premise falsified)
 
-- **About:** Measurement falsified the milestone's trace-overhead assumption; the actual explore bottleneck is per-step settle under vsync pacing, not CDP tracing.
-- **Why this way:** Measured before switching: trace turned out to be 4% of wall clock, not 91%; the observer path's ratio was 0.93 against a ≤0.50 target.
-- **Achievement:** Observers ship as opt-in (presentation-inclusive duration, input delay, script attribution); the default remains the trace path for coverage.
+- **About:** assumed CDP tracing was the explore bottleneck; real cost is per-step settle under vsync.
+- **Why this way:** measured first: trace = 4% of wall clock, not 91%; observer ratio 0.93 vs ≤0.50 target.
+- **Achievement:** observers ship opt-in; trace path stays default.
 
 ### M53: statistical honesty: implemented
 
-- **About:** Fix P95/CV/fingerprint/churn/curve classification so printed labels match the actual computation; add per-combo warmup.
-- **Why this way:** Type-7 quantile matches R/numpy defaults; per-combo warmup costs ≤1 render; parity-split churn; raw-y ranking for curves.
-- **Achievement:** P95 is a type-7 quantile, CV uses sample standard deviation, the fingerprint records effective samples, churn respects sample parity.
+- **About:** P95/CV/fingerprint/churn/curve labels matched no computation; per-combo warmup added.
+- **Why this way:** type-7 quantile (R/numpy); warmup ≤1 render; parity-split churn; raw-y curve ranking.
+- **Achievement:** labels match the math; fingerprint records effective samples.
 
 ### M54: baseline reachability: implemented
 
-- **About:** Fix matrix/curve mode interaction with the baseline workflow; add --no-cache; warn when baselines are unreachable instead of silently skipping.
-- **Why this way:** Mode is a fingerprinted feature, and disabling one doesn't create unfingerprinted effects; the explicit-enable rule had over-excluded mode-disable flags.
-- **Achievement:** Matrix/curve warn instead of silently skipping; --no-cache is discoverable; --curve --matrix errors; the verdict-reuse gate refined.
+- **About:** matrix/curve broke the baseline flow; --no-cache added; unreachable baselines warn.
+- **Why this way:** mode is fingerprinted; disable flags had been over-excluded.
+- **Achievement:** warn instead of silent skip; --curve --matrix errors.
 
 ### M55: ci-report mode coverage: implemented
 
-- **About:** Render meaningful mode-specific CI output for curve/isolation/cached reports instead of placeholder dashes, fulfilling the README's composition promise.
-- **Why this way:** A single dispatch point via reportMode; curve shows scale points and growth class; isolation shows phase medians; mode detail folded separately.
-- **Achievement:** Pure Report functions render meaningful markdown and JUnit per mode; the warn verdict surfaces across all modes.
+- **About:** curve/isolation/cached CI output was placeholder dashes.
+- **Why this way:** single reportMode dispatch; curve shows points and growth class; isolation shows phase medians.
+- **Achievement:** meaningful markdown/JUnit per mode; warn verdict everywhere.
 
 ### M56: diagnostics & hygiene: implemented
 
-- **About:** Four diagnostic gaps: error messages lacking context and next steps, temp directories accumulating unbounded, the test script mismatching CI, retry exhaustion undefined.
-- **Why this way:** An age-based temp sweep needs no lockfiles; npm test made to match the CI-enforced suite; existing error types and warning channels reused.
-- **Achievement:** Errors name causes and remediation, temp cleanup prevents disk leaks, npm test runs the unit suite CI enforces.
+- **About:** context-free errors; unbounded temp dirs; test script ≠ CI; retry exhaustion undefined.
+- **Why this way:** age-based temp sweep needs no locks; npm test = CI suite; existing error types reused.
+- **Achievement:** errors name remediation; disk leaks stopped.
 
 ### M57: Vue support: approved
 
-- **About:** Extend the framework-neutral measurement guarantees to Vue; nine modules were already framework-agnostic, while harness, entry generation, and prop extraction were React-specific.
-- **Why this way:** SFC parsing via the project's own compiler; a virtual script for prop resolution; the single-render-site entry and harness trigger mechanism reused; no Vue dependencies shipped.
-- **Achievement:** `npx 120fps ./Button.vue` measures a Vue SFC with the same PropSchema[], report shape, control API, tier budgets, and baseline slots as React.
+- **About:** framework-neutral guarantees extended to Vue; harness, entry, extraction were React-only.
+- **Why this way:** project's own SFC compiler; virtual script for props; entry and harness reused; no Vue deps shipped.
+- **Achievement:** npx 120fps ./Button.vue yields the same schema, report, budgets, slots as React.
 
 ### M58: prop extraction binds to the target component: implemented
 
-- **About:** Props were extracted from the first matching declaration, not the rendered component; six dogfooded components silently measured the wrong props.
-- **Why this way:** Collect all candidates first, then select the target by default export, stem-name match, or source order; unwrap call wrappers; a self-consistency guard verifies the binding.
-- **Achievement:** Props resolve to the rendered component; the report names the harness import; helpers never shadow exported components.
+- **About:** first matching declaration won; six dogfooded components measured wrong props.
+- **Why this way:** collect candidates; select by default export > stem match > source order; unwrap wrappers; self-consistency guard.
+- **Achievement:** props resolve to the rendered component; helpers never shadow exports.
 
 ### M59: render-health gate & always-on page-error surfacing: implemented
 
-- **About:** Broken components (missing context, unpopulated required prop) mounted empty trees but silently reported a pass verdict; page.goto failures had no context.
-- **Why this way:** Page errors drained per combo with independent dedupe and cap; fatal means pageerror, not console.error; renderHealth sits alongside the verdict as a reason, not an outcome.
-- **Achievement:** Render errors fail the run and name the reason; every page error reaches its producing combo; crashes carry phase/combo/component context.
+- **About:** broken components passed with empty trees; page.goto failures lacked context.
+- **Why this way:** page errors drained per combo; fatal = pageerror, not console.error; renderHealth is a reason beside the verdict.
+- **Achievement:** render errors fail with cause, phase, combo, component.
 
 ### M60: prop synthesis honesty: implemented
 
-- **About:** Six prop shapes degraded silently: cva patterns, empty pools, tuples, nested objects, Map/Set, class instances, and computed types synthesized wrong without warning.
-- **Why this way:** Strip null/void to reveal unions; order shapes most-specific first; recurse with cycle safety and a property cap; mark degenerate props clearly.
-- **Achievement:** All shapes synthesize faithfully or warn with the reason; degenerate props point to the escape hatch (stem.props.tsx); no silent degradation.
+- **About:** cva, empty pools, tuples, nested objects, Map/Set, class instances, computed types synthesized wrong silently.
+- **Why this way:** strip null/void; most-specific shape first; cycle-safe recursion with property cap; mark degenerate.
+- **Achievement:** faithful synthesis or a warning pointing to stem.props.tsx.
 
 ### M61: scale-probe transparency + matrix combo cap: implemented
 
-- **About:** The scale probe (4 synthetic combos) mixed with real prop combos in curves; matrix mode ignored --max-combos; probe cost was unbounded (46.9s observed).
-- **Why this way:** Probe N marked separately; curves fit only to probe combos or only to real-prop combos, never mixed; distance-from-anchor selection treats axes symmetrically; a cost gate reuses the cheapest point.
-- **Achievement:** Scale-probe identity disclosed; one curve per mechanism; --max-combos bounds matrix cells; probe cost gated and disclosed.
+- **About:** probe combos mixed into curves; matrix ignored --max-combos; probe cost unbounded (46.9s).
+- **Why this way:** probe N marked; curves fit probe-only or real-only; symmetric distance-from-anchor selection; cost gate.
+- **Achievement:** probes disclosed; one curve per mechanism; matrix bounded.
 
 ### M62: Next.js shim-usage reporting: implemented
 
-- **About:** activeShims and report.nextJsShims were always undefined: the shim redirect alias matched before the external-dep scan, so imports were treated as local and never recorded.
-- **Why this way:** Tag shim aliases as distinct from tsconfig paths; report bare specifiers resolved via a shim alias even though they resolve locally; preserve alias precedence.
-- **Achievement:** Shim usage reported when imports hit shim modules; the redirect keeps working; tsconfig aliases are never reported as shims.
+- **About:** activeShims always undefined; shim alias matched before the external-dep scan.
+- **Why this way:** tag shim aliases apart from tsconfig paths; report bare specifiers hitting shims; keep precedence.
+- **Achievement:** shim usage reported; tsconfig aliases never reported as shims.
 
 ### M63: curve-fit stability & curve diagnostics: implemented
 
-- **About:** Curve classification flipped between runs with no R² margin; curve failures were unnamed; --curve was silent when no array prop existed; sub-linear growth was labeled exponential.
-- **Why this way:** A magnitude gate (growth exponent ≥ 1) plus a residual-share fit gate (50%); violations returned as data; a warning when curve mode cannot activate.
-- **Achievement:** Classification stable under noise; curve failures name the violated metric, budget, and crossing N; --curve discloses when it cannot activate.
+- **About:** classification flipped between runs; failures unnamed; --curve silent without an array prop; sub-linear called exponential.
+- **Why this way:** growth exponent ≥1 magnitude gate; 50% residual-share fit gate; violations returned as data.
+- **Achievement:** stable classification; failures name metric, budget, crossing N.
 
 ### M64: verdict & report clarity: implemented
 
-- **About:** Eight output defects from the 2026-08-18 dogfood run where the report stated things untrue of the run: wrong compound-delta sign, unexplained WARN under PASS, a noise warning claiming a baseline comparison that never happened, undiscriminated report mode, empty "React Optimizations" headers, style-inferred animation overriding tiers, attribution reading names off memo/forwardRef wrappers, undocumented exit codes.
-- **Why this way:** Warning enrichment at render time from report data; mode as an optional field with derivation fallback (old reports predate it); animation only from observed getAnimations(), never computed style; tier floor (max(sizeTier, T3)) instead of override; page-side rules exported as source strings so they're unit-testable without a browser.
-- **Achievement:** Report statements match what actually happened; observed-only animation detection; T3 floor preserves T4 for large animated components; names resolved through memo/forwardRef; --help documents exit codes and --json semantics.
+- **About:** eight untrue report statements (2026-08-18 dogfood): delta sign, WARN under PASS, phantom baseline, style-inferred animation, exit codes.
+- **Why this way:** warnings enriched at render; mode optional; animation observed-only; tier floor max(sizeTier, T3); page rules unit-testable.
+- **Achievement:** report matches the run; names resolve through memo/forwardRef; --help documents exit codes.
 
 ### M65: DX features: implemented
 
-- **About:** No way to preview measured props; silent runs indistinguishable from hangs; provider throws blamed on the component; the stem rule disagreed between resolvers; some exports unreachable.
-- **Why this way:** --explain-props reuses analyze's exact resolution order; a heartbeat prints at phase boundaries without a timer; provider candidates attached to render errors; a parse-level #Export split targets specific exports.
-- **Achievement:** --explain-props dry-runs props and bindings; progress heartbeat at phases; provider hints on errors; #Export targeting; unified stem normalization.
+- **About:** no prop preview; silent runs looked hung; provider throws blamed the component; stem rule inconsistent; some exports unreachable.
+- **Why this way:** --explain-props reuses analyze's resolution; timer-free phase heartbeat; provider candidates on errors; #Export split.
+- **Achievement:** dry-run props, heartbeat, provider hints, #Export targeting, unified stem rule.
 
 ### M66: attribution honesty: implemented
 
-- **About:** The cost breakdown summed all mounts while the Mount column showed the median of one, and callback identity reported impossible drift for React's referentially-stable dispatch.
-- **Why this way:** Attribution accepts nested trace windows and reports the per-sample mean, not a median-sample sum; the stable arm uses cached callbacks instead of fresh functions; a noise floor derives free from arm spread.
-- **Achievement:** Attribution covers one mount average with sampleCount disclosed; callback identity measures actual identity, not artificial drift; a per-arm noise floor comes for free.
+- **About:** breakdown summed all mounts against a median column; callback identity showed impossible drift.
+- **Why this way:** per-sample mean over nested windows; stable arm uses cached callbacks; noise floor from arm spread.
+- **Achievement:** one-mount average with sampleCount; true identity measurement.
+
+### M67: CLI and attribution path correctness: implemented
+
+- **About:** rooted globs matched nothing; case-insensitive FS overwrote same-named reports; pnpm paths attributed to ".pnpm".
+- **Why this way:** glob tested in the pattern's own frame; case-fold the collision key only; lastIndexOf on node_modules/.
+- **Achievement:** globs match; Card.tsx and card.tsx coexist; pnpm attributes to pkg. 9 tests.
+
+### M68: workspace-aware project model: implemented
+
+- **About:** nearest package.json answered every project question; workspace members lost plugins, Tailwind, compiler, invalidation.
+- **Why this way:** memberRoot + workspaceRoot (bounded at .git); directory probe, not createRequire (NODE_PATH lies in tests); compiler declaration-only.
+- **Achievement:** root-manifest detection for members; --compare links every level; single-package unchanged. 85 tests.
+
+### M69: unified config resolution and import-scanner hardening: implemented
+
+- **About:** alias and extraction picked different tsconfigs; scanner missed import(), require(), query suffixes, .json/.cjs, directory imports.
+- **Why this way:** findCompilerConfig is the one upward walk; wildcard mismatch warns instead of an inert regex; stale target warns.
+- **Achievement:** baseUrl bare imports resolve; dynamic and directory imports followed; allowJs fallback. 59 tests.
+
+### M70: failure diagnosability plumbing: implemented
+
+- **About:** CSS 404/500 became a blank 30s timeout; settleStyles result dropped; killed --compare left stale worktrees.
+- **Why this way:** requestfailed and ≥400 listeners feed existing buckets; shared reportFontSettle; git worktree prune before add.
+- **Achievement:** timeouts name the failing URL; one font warning per phase; stale worktrees pruned. 19 tests.
+
+### M71: evidence-driven CSS discovery and vite.config data recovery: implemented
+
+- **About:** eight-path allowlist missed src/style.css, .scss, entry-imported CSS; vite.config never read; process.env threw.
+- **Why this way:** layers --css > entry graph > candidates > largest (warned); config parsed as text, never run; only NEXT_PUBLIC_/VITE_ env keys.
+- **Achievement:** create-vite and Next.js CSS resolve; publicDir and literal aliases reach createServer. 102 tests.
+
+### M72: unsupported-setup detection and clear rejections: implemented
+
+- **About:** Solid, Preact-aliased, Yarn PnP, old Node, missing providers failed with confusing errors.
+- **Why this way:** checks key on isPackageDeclared; react-dom identity from manifest name, not folder name.
+- **Achievement:** named rejections: unsupported-framework, yarn-pnp; Node <22 exits 2. 33 tests.
+
+### M73: harness boot guardrails and Next.js shim coverage: implemented
+
+- **About:** read-only root, React 17, cross-drive --wrap, four unshimmed next/* modules failed as someone else's error.
+- **Why this way:** W_OK preflight + wrapped mkdtempSync; isOutsideRoot cross-drive predicate; next/font/google never shimmed.
+- **Achievement:** named failures before Vite boots; ten shims; unshimmed next/* warns. 42 tests.
+
+### M74: environment advisories and font-load diagnostics: implemented
+
+- **About:** plain Preact silent; failed webfonts settled silently; reports written without gitignore awareness.
+- **Why this way:** PREACT_UNSUPPORTED_WARNING without rejection; settleStyles returns failedFamilies in one evaluate; literal gitignore matcher.
+- **Achievement:** Preact warns; FONT_LOAD_FAILED_WARNING; GITIGNORE_ADVISORY_HINT. 30 tests.
+
+### M75: import diagnosis and availability coverage: implemented
+
+- **About:** .wasm/.glsl imports named only the importer; availability probe stopped at workspaceRoot; three repo shapes lacked fixtures.
+- **Why this way:** wasm/shader recognizers in the transforms bucket; probe walks to the filesystem root; isPackageDeclared unchanged.
+- **Achievement:** plugin-naming warnings; packages above workspaceRoot available; solid/preact/jsconfig fixtures. 26 tests.
+
+### M76: layered alias resolution across the workspace: implemented
+
+- **About:** tsconfig paths, vite aliases, wrappers, scanner collapsing read only the member package (mantine, chakra-ui, cal.com).
+- **Why this way:** nearest-wins unchanged; workspace root as an additive, disclosed second layer; realpath containment over pnpm-workspace.yaml.
+- **Achievement:** workspace-root fallbacks with dedicated warnings; sibling subpaths resolve.
+
+### M77: type-space is not runtime-space: implemented
+
+- **About:** TypeScript-resolved paths treated as loadable; @types/react alias and csstype crashed esbuild; .js JSX and .ts components rejected.
+- **Why this way:** resolveTarget loadable-entry check gates aliases and optimizeDeps; wildcard paths exempt.
+- **Achievement:** types-only aliases warn; type imports unscanned; .js/.ts components measured via hasComponentShape.
+
+### M78: environment preflight tells the truth: implemented
+
+- **About:** assertReactDomClient blamed "React too old" for four causes; --explain-props and --no-preflight skipped gates.
+- **Why this way:** cause taxonomy: pnp, not-installed, not-declared, not-linked, outdated; real version checked first; --no-preflight cannot bypass.
+- **Achievement:** real causes named; Preact aliases detected via resolveReactDomIdentity and BUNDLER_PREACT_ALIAS_WARNING.
+
+### M79: diagnostics survive the failure path: implemented
+
+- **About:** computed warnings discarded on crash; unhandled optimizeDeps rejection printed a raw stack at exit 1.
+- **Why this way:** warnings attached to thrown errors; process-level handlers through formatCliError; unbuilt workspace vs broken dep by realpath.
+- **Achievement:** crashes carry warnings and exit 2; unbuilt packages name their build step; curve shows [render error].
+
+### M80: composition disclosure: implemented
+
+- **About:** radix Roots mounted without siblings; PrimeVue DataTable mounted with 0 of ~69 props; both printed PASS.
+- **Why this way:** declaredCompositionSiblings reads the file's own declarations; pass downgrades to WARN; findRoot fix deferred.
+- **Achievement:** disclosureReason uncomposed/propsExcluded downgrades a pass; propsExcluded unproven end to end.
+
+### M81: prop schemas are complete and safe to render: implemented
+
+- **About:** 32-prop cap dropped variant/size; noise filter erased onClick/children; degenerate props fabricated crashers; "test" as currency.
+- **Why this way:** three-tier rank; aria-/data- hard-filtered only; degenerate resolves to undefined; narrow currencyCode/locale allowlist.
+- **Achievement:** variant props survive; Iterable and render degrade safely; ant-design onClick still past the cap (M86).
+
+### M82: stylesheet selection is validated and disclosed: implemented
+
+- **About:** largest-stylesheet fallback injected opt-in resets and 67-byte placeholders silently; report.css absent when empty.
+- **Why this way:** stylesheetRuleCount and isOptInResetName on the fallback layer only; runtime engines checked last; fingerprints byte-identical.
+- **Achievement:** report.css always carries layer; Stylesheets: line always prints.
+
+### M83: modes and flags never lie about what ran: implemented
+
+- **About:** domNodeCount 0 beside nonzero probes; "test" URL noise; hostile noise ignored by isolation FAIL; silent flag no-ops; leaked harness dirs.
+- **Why this way:** inconsistency reported by combo index; harness noise filtered by URL shape; only hostile suppresses FAIL; no-ops warn.
+- **Achievement:** four new warnings; hostile FAIL not forced; Linaria needs import-graph proof; exit sweep removes dirs.
+
+### M84: synthesized prop values are semantically valid: implemented
+
+- **About:** nested currencyCode "text"; image src "test" 404s; identity-keyed arrays threw; mixed unions dropped.
+- **Why this way:** namedStringValue shared by classify and synthesize at any depth; exact names only; dedicated identity-collection pattern.
+- **Achievement:** provenance on every value; data: URIs for src; real union members with disclosure.
+
+### M85: a harness-caused failure is not the component's verdict: implemented
+
+- **About:** synthesized asChild=true failed radix Separator; nested "text" currency crashed commerce.
+- **Why this way:** generalizes isHarnessInternalNoise to renders; placeholder flagged only when its text appears in the error.
+- **Achievement:** harnessFault demotes fail to warn; report.pass ignores faulted combos; preset hint.
+
+### M86: prop selection keeps the props that matter: implemented
+
+- **About:** cap dropped required config; inherited props buried onClick; preset naming a dropped prop rejected.
+- **Why this way:** own-source-referenced props rank first; required props bypass the cap; generic-handler fallback unverified.
+- **Achievement:** required, referenced, preset props survive; cap count stays true.
+
+### M87: Vue scenes mount with their slots: implemented
+
+- **About:** $slots.default() crashed; button.vue DOM=0 in combos vs 2/6/21/51 in the probe.
+- **Why this way:** always pass a callable empty default slot; templateHasUnconditionalRoot gates the DOM wrapper.
+- **Achievement:** slot calls survive; combo DOM matches probe; v-if roots untouched.
+
+### M88: every run terminates and cleans up: implemented
+
+- **About:** process.exit(2) skipped pool teardown; multi-component tail hung ~20min; dirs leaked on PASS and nested.
+- **Why this way:** armExitWatchdog + closePoolsBounded with unref'd timers around Promise.allSettled teardown; nested case proven by test.
+- **Achievement:** fatal exits within 10s; dirs removed on every path; uncaught exits 2; M101 extends to signals.
+
+### M89: prop-delta measurement completes: implemented
+
+- **About:** delta pass died on rAF starvation with no retry; tracing timeouts and closed targets unguarded; hint named unused --no-attribution.
+- **Why this way:** bounded per-combo retry, degrade to a disclosed omission; one retry primitive around withContextRetry.
+- **Achievement:** delta pass completes or names the combo; phase-aware hints; mount/explore stalls still say --no-attribution.
+
+### M90: disclosure survives the failure path: implemented
+
+- **About:** Stylesheets: line died with the run; pre-failure warnings block missed non-Error throws and async rejections.
+- **Why this way:** stylesheet decision recorded as a warning when made; unconditional folding; module-level accumulator for resolveFatalProcessError.
+- **Achievement:** warnings block at every throw site; Stylesheets: printed once.
+
+### M91: modes and flags disclose identically: implemented
+
+- **About:** --explain-props hid warnings; matrix dropped [props excluded]; async child one hop away died as __dirname.
+- **Why this way:** explainProps runs the same probes in the same order; RSC gate reuses runPreflight per JSX-composed import.
+- **Achievement:** identical warning sets; matrix carries disclosureReason; one-hop RSC gated.
+
+### M92: every printed message is true of the run: implemented
+
+- **About:** audit found false messages: unchecked composition claims, resolvable files called unresolvable, ADR 0002 exclusion hidden, no tsconfig cause.
+- **Why this way:** predicates fixed at source, not reworded; hits scoped to the component entry; "import graph reaches X".
+- **Achievement:** messages state only what predicates proved; PresetRef leak prints [preset value].
+
+### M93: path aliases resolve every shape TypeScript accepts: implemented
+
+- **About:** only trailing /* handled; mantine's mid-path and MUI's suffixed wildcards discarded; call-expression vite aliases unparsed.
+- **Why this way:** buildWildcardCaptureAlias splits on the single * into RegExp/$1; warning text from actual counts.
+- **Achievement:** mid-path wildcards resolve; @mantine/hooks no longer type-only; resolve()/join() aliases parsed.
+
+### M94: bundler failures surface as 120fps errors: implemented
+
+- **About:** Vite/PostCSS/esbuild dumped raw frames with 120fps node_modules paths; an "excluded" import still crashed.
+- **Why this way:** stripBundlerStackFrames unconditional; diagnoseBundlerFailure names target, importer, remedy; unbuilt siblings aliased to src.
+- **Achievement:** no node_modules paths in errors; UNBUILT_WORKSPACE_SOURCE_ALIAS_WARNING.
+
+### M95: missing build output degrades, or names its command: implemented
+
+- **About:** broken tsconfig extends, Nuxt #build modules, gitignored version.ts, unreadable Tailwind v4 CSS all crashed.
+- **Why this way:** degrade where possible, fail fast with the command otherwise; TS codes 5083/6053, not 18003.
+- **Achievement:** extends names the missing path; generated imports name the script; CSS_UNREADABLE_DROPPED_WARNING retries unstyled.
+
+### M96: bundled shims match their real module surface: implemented
+
+- **About:** next-navigation shim lacked ReadonlyURLSearchParams; cal.com DatePicker failed at build.
+- **Why this way:** every shim audited against its real API, not one export patched; missing exports caught at M94's layer.
+- **Achievement:** shims gain ReadonlyURLSearchParams, permanentRedirect, draftMode, getImageProps; errors name public specifier and --no-shims.
 
 ### M97: JavaScript components resolve like TypeScript ones: implemented
 
-- **About:** A `.js`/`.jsx` component with a sibling `.d.ts` measured only React's ambient `ref`/`key` attributes as its props, because an unannotated `forwardRef` render function types as `ForwardRefExoticComponent<RefAttributes<any>>`; MUI's Badge, Chip, Tabs and Autocomplete all reported that two-prop contract instead of their real one.
-- **Why this way:** `looksLikePropsType` now rejects a type whose only properties are React's own `ref`/`key` ambients; a JS entry resolves its sibling `.d.ts` (or a `types`/`typings` entry) through `ts.resolveModuleName` before falling back to the JS binding, per new ADR 0004 (supersedes ADR 0002's "untyped JS: default props only").
-- **Achievement:** MUI's Badge.js now reports its real 16 props instead of `ref, key`; a JS component with no declaration gets an empty schema with `UNTYPED_JS_COMPONENT_WARNING` naming why, replacing a stale `warnUnboundTarget` message; TypeScript extraction results for `.ts`/`.tsx` entries are unchanged.
+- **About:** .js/.jsx with sibling .d.ts reported only ref/key; MUI Badge, Chip, Tabs, Autocomplete wrong.
+- **Why this way:** looksLikePropsType rejects ref/key-only; sibling .d.ts via ts.resolveModuleName; ADR 0004 supersedes ADR 0002.
+- **Achievement:** MUI Badge.js reports 16 props; untyped JS warns by name; TS unchanged.
 
 ### M98: Vue props extract from every SFC shape the compiler accepts: implemented
 
-- **About:** `parseSfcScript` fed only `<script setup>` into the virtual module, so a props interface declared in a companion `<script lang="ts">` block (122 of 124 nuxt-ui components) resolved to nothing with no warning; Options-API `extends`/`mixins` components (271 of 279 primevue components) fell back to an escape hatch that `applyPropPresets` then silently discarded.
-- **Why this way:** both script blocks are concatenated (companion first) into one virtual module; an unresolved `defineProps<T>()` type now emits a warning naming the type and file instead of returning silently; `applyPropPresets` appends preset-derived schemas when extraction produced none; a `string | number` union synthesizes a member and types as `union`; `setup()` with a runtime `props:` object is labeled "runtime props object" (Composition API), never Options API.
-- **Achievement:** nuxt-ui's Badge.vue now lists 14 props instead of 0; primevue's Badge.vue with a `.props.tsx` preset lists its 3 props as `provenance: preset` instead of warning they were ignored; element-plus's Vue-`.tsx` gate and `--framework` forwarding print consistently with and without the flag.
+- **About:** companion <script lang="ts"> props ignored (122/124 nuxt-ui); Options-API presets discarded (271/279 primevue).
+- **Why this way:** both script blocks concatenated; unresolved defineProps<T> warns; presets append when extraction is empty.
+- **Achievement:** nuxt-ui Badge 14 props, not 0; primevue presets as provenance: preset.
 
 ### M99: a page error belongs to the render that threw it: implemented
 
-- **About:** the rerender pass drained the page-error buffer once per combo across both the combo's own render and the prop-change rerender toward the next combo's props, so an error only the next combo's props could raise (Radix `asChild`) printed on the wrong row; `detectHarnessFault`'s contract branch fired on a truthy `asChild`/`as`/`render` alone, so a Chakra provider-missing error was reported as a harness fault instead of a real failure.
-- **Why this way:** the rerender pass now closes two windows — `pageErrors` for the combo's own render, `transitionPageErrors` for the toward-next-combo window — rendered as a `[→ #N: K page errors]` tag excluded from `renderHealth`/`harnessFault`/verdict; the contract branch now requires the error text to evidence the contract prop or its mechanism, the same bar the placeholder branch already applied.
-- **Achievement:** Radix Label combos without `asChild` no longer carry a neighbor's error; Chakra tabs combo #0 now fails on its own terms like every other combo instead of being demoted to `warn` on borrowed evidence; the explore pass was audited and confirmed to share no per-combo attribution at all.
+- **About:** rerender drain merged own render and next-combo transition; contract branch fired on truthy asChild alone.
+- **Why this way:** two windows, pageErrors and transitionPageErrors, tagged [→ #N]; contract branch requires error-text evidence.
+- **Achievement:** no borrowed errors; Chakra provider failures fail on their own terms.
 
 ### M100: the dry run and the real run share one static diagnosis: implemented
 
-- **About:** `--explain-props` returned before seven filesystem-only probes the real run computes (stylesheet discovery, external-dep scan, Next.js module check, style tooling, transform warnings), so it reported "0 props" on twenty, dub and nuxt-ui with none of the causes the real run then hit; mode prediction printed curve/matrix activation as two independent booleans instead of the dispatcher's own precedence, and a composed run skipped schema extraction entirely, so a `props: {}` measurement carried no extraction warnings and no caveat.
-- **Why this way:** both paths now call one shared static pre-build probe and print its warnings identically, including the `Stylesheets:` line and the alternative-export note; a single `predictMode()` mirrors the real dispatcher's own precedence (isolation, then curve, then matrix, then combo); composed/fixture runs now extract schemas for their warnings and add a "measured with no props" caveat; refusals that need a browser (module-evaluation throw, provider throw, a runtime-rejected synthesized value) are named as permanently runtime-only in the dry run's footer instead of counted as parity defects.
-- **Achievement:** dub Badge's dry run now names the unbuilt-workspace-alias cause instead of a bare "0 props"; element-plus's Vue-`.tsx` message and empty-warnings header print identically with and without `--framework vue`; calcom's composed Select run now states which extraction warnings apply to its `props: {}` measurement.
+- **About:** --explain-props skipped seven static probes; mode prediction ignored precedence; composed runs skipped extraction.
+- **Why this way:** one shared static pre-build probe; predictMode mirrors dispatcher order (isolation > curve > matrix > combo); runtime-only refusals listed.
+- **Achievement:** dub dry run names the unbuilt alias; identical output with and without --framework; composed runs carry caveats.
 
 ### M101: a killed run leaves nothing behind: implemented
 
-- **About:** every `.120fps-harness-*` removal site ran inside the process that created it, and Node emits no `"exit"` event for a signalled or force-terminated process, so a killed run's harness directory and Chromium/Vite children survived for at least an hour; nothing bounded a hang inside `analyze()` once `runOne` had been entered.
-- **Why this way:** `SIGINT`/`SIGTERM`/`SIGHUP` now run a teardown that synchronously sweeps this run's harness directories, closes the browser and dev-server pools, and exits with `128 + signo`; every harness directory carries a `.pid` marker refreshed at each phase heartbeat, so a dead-pid directory is removed regardless of age and a live-pid directory after 10 minutes of marker staleness instead of 1 hour of directory age; a watchdog armed before `runOne` and re-armed per phase heartbeat bounds the whole run.
-- **Achievement:** a `taskkill /F` on a live base-ui run left a directory that the very next run swept within 1.5 minutes, well inside both gates; review fixes corrected the live-pid gate to read marker mtime instead of stale directory mtime, and made the `--ci` watchdog message state a total-budget bound instead of a false "made no progress" claim.
+- **About:** no "exit" event on signals; harness dirs and Chromium/Vite children survived an hour; analyze() unbounded.
+- **Why this way:** SIGINT/SIGTERM/SIGHUP teardown exits 128+signo; .pid markers refreshed per heartbeat; watchdog re-armed per phase.
+- **Achievement:** taskkill'd dir swept within 1.5min by the next run; live-pid gate reads marker mtime.
 
 ### M102: stylesheet discovery reads the package's own declarations and discloses what applied: implemented
 
-- **About:** discovery read filenames and sizes, never a package's own manifest, so heroui's real ~600-line stylesheet (one `@import` hop behind a passthrough `exports["./styles"]`) was never found, shadcn's missing `dist/tailwind.css` reached Vite's bundler as two different crash shapes for the identical missing file (one recoverable, one a fatal exit 2 with no report), and excalidraw's scoped stylesheet was injected and measured as if it applied with nothing checking that any rule matched.
-- **Why this way:** the package's own `style`/`exports["./styles"]`/`exports["./style.css"]`/`exports[*].style` are now stylesheet candidates ranked above the size-based fallback, with a 0-rule passthrough's `@import` targets resolved one hop; a stylesheet whose nested `@import` names a missing file is dropped with a warning naming the real resolved path before the bundler ever sees it; the generated harness entry exposes per-stylesheet match stats so a stylesheet with rules but zero matches is disclosed as measuring an unstyled render.
-- **Achievement:** heroui's Badge now reports its real stylesheet as package-declared; shadcn's `select.tsx` and `button.tsx` now take the identical warn-and-measure-unstyled path instead of one aborting with no report; excalidraw's FilledButton now warns that all 158 of its rules matched nothing. mantine-F1 stays open by design: the wiring is proven correct for a wrapper that imports stylesheets directly, but a wrapper importing a provider component whose own imports are one hop further down needs a deep import-graph walk, which remains outside this milestone's and M71's scope.
+- **About:** heroui's stylesheet behind exports["./styles"] missed; shadcn's missing CSS crashed two ways; excalidraw's CSS matched nothing silently.
+- **Why this way:** manifest style/exports outrank the size fallback; @import resolved one hop; missing nested imports dropped pre-bundler; match stats per sheet.
+- **Achievement:** package-declared stylesheets; one warn-and-measure path; zero-match warning; mantine-F1 open by design.
 
 ### M103: the measured props are the component's own: implemented
 
-- **About:** chakra Badge's 32-prop cap filled entirely with inherited `<span>` attributes because the component has no render function for source-reference detection to scan; heroui's `--explain-props` bound and reported a different export than the one actually measured, so `children` printed required when it is optional; a `min`/`max`/`step`-named numeric prop on base-ui auto-activated curve mode over a value that never changed the DOM.
-- **Why this way:** an 8-rank table now ranks by declaration origin and site width before shape, so a component's own narrow declarations outrank a wide generated style surface, which outranks anything from `node_modules`; a closed list of known variant-axis names promotes props like `colorPalette`/`variant`/`size` regardless of their declaration site; extraction and measurement now select the export through one shared order; scaling-prop detection excludes names that denote a bound or step; a prop's default value and its source (destructuring, `withDefaults`, `defaultProps`) are now read and printed as a `default` column.
-- **Achievement:** chakra Badge's window now includes `colorPalette`, `variant` and `size`; heroui's binding now points at the correct export with `children` correctly optional and `color` typed as a union; base-ui's `NumberFieldRoot` now reports curve mode would not activate; a required prop typed as a class with methods (dub's `table.tsx`) now warns by name instead of crashing silently on a placeholder object.
+- **About:** chakra Badge cap filled with <span> attributes; heroui bound the wrong export; min/max/step triggered curve mode.
+- **Why this way:** 8-rank table by declaration origin and width; known variant-axis names promoted; one shared export order; bound names excluded.
+- **Achievement:** colorPalette/variant/size in the window; correct binding; default column; class-typed props warn.
 
 ### M104: modes measure what they say they measure: implemented
 
-- **About:** matrix mode's header claimed axes it never crossed (twenty's Modal matrix printed both measured cells at the same value, the exact state the run reported as rendering nothing); a combo run's warn-rollup counted scale probes as prop combos, so a footer disagreed with its own mode line; curve mode never ran the React profiler pass at all, silently dropping the render-attribution section every other mode prints; a curve point that rendered nothing was fitted as an ordinary data point.
-- **Why this way:** the matrix report now publishes which axes were actually crossed and which were held at one value; the "prop combos" count is derived once and read by every count in the run; the React Optimizations block was extracted into a shared renderer called from all three mode formatters; a zero-DOM curve point is tagged and excluded from the fit, with the excluded points published; matrix cell selection keeps the anchor under every `--max-combos`, holds non-axis props at their declared default or absent (never a synthesized truthy value), and orders deviations breadth-first across axes instead of incrementing the last axis fastest.
-- **Achievement:** twenty's Modal matrix header now names the props held at one value; dub Badge's rollup and mode-line counts agree; commerce's Gallery and VariantSelector curve runs now print Render attribution; a curve whose every point renders nothing now fails with a dedicated warning and hint, superseding this milestone's own original "fit everything" invariant per M106's later decision.
+- **About:** matrix header claimed uncrossed axes; probes counted as combos; curve skipped the React profiler; zero-DOM points fitted.
+- **Why this way:** crossed vs held axes published; one combo count; shared React Optimizations renderer; zero-DOM points excluded; breadth-first cells.
+- **Achievement:** honest headers and counts; curve prints attribution; all-empty curve fails with a hint.
 
 ### M105: every remedy names something that exists: implemented
 
-- **About:** six remedies named things the target repository does not have: a git-hook script instead of the actual codegen script (ant-design), `npm run build` in a pnpm-only repo (nuxt-ui), `--no-preflight` advice printed after `--no-preflight` was already passed (solid-ui), a `server-boundary` label on a Yarn PnP rejection (pnp-app), an alias-source disclosure with no reason it mattered (chakra-ui), and an env-validation timeout that ended with no remedy while a sibling refusal in the same repo got one (taxonomy).
-- **Why this way:** the codegen-script lookup now reads script commands, not just names, rendered through the repo's detected package manager; the `--no-preflight` remedy drops itself once the flag was already parsed; the bypass warning labels each finding by its own kind (`yarn-pnp`, `solid`, `server-boundary`); an alias warning now states when the aliased package's declared entry is missing on disk; a mount-timeout remedy line is delivered only when at least one page error was captured, never for a silent hang.
-- **Achievement:** ant-design now says `npm run version`; nuxt-ui says `pnpm run build`; solid-ui's `--no-preflight` run no longer advises itself; pnp-app's bypass line reads `yarn-pnp`, not `server-boundary`; chakra-ui's alias warning states the aliased package's `dist/` is unbuilt; taxonomy's env-validation refusal now ends with the `.env`/`.env.local` remedy. A review fix corrected package-manager detection to read `packageManager` declarations at every directory level before falling back to a stray lockfile. The Lane C half — a Vue mount-phase abort (`$primevue`, `$slots`) now reaching the same hint pipeline as a render failure instead of printing a bare stack — is specified separately in `m105-lane-c-hints.md`.
+- **About:** six remedies named wrong scripts, wrong package manager, self-advising flags, wrong labels, or nothing.
+- **Why this way:** script lookup reads commands via the detected package manager; remedies drop once applied; findings labeled by kind.
+- **Achievement:** npm run version; pnpm run build; yarn-pnp label; unbuilt dist/ disclosure; .env remedy; packageManager read at every level.
+
+### M105 (Lane C): a Vue mount-phase abort reaches the hint pipeline: implemented
+
+- **About:** $primevue and $slots.default() aborts printed bare stacks; hintsForReport needs a report that never existed.
+- **Why this way:** new hints vuePluginGlobals (keyed on at Proxy.$ + undefined read) and vueSlotContent; unknown stacks get no guess.
+- **Achievement:** hintsForMountAbort appends hints to the thrown error; names 120fps.setup.vue and <stem>.fixture.vue.
 
 ### M106: crashes and empty renders found only on the real corpus: implemented
 
-- **About:** five defects no fixture reproduced: calcom's Popover explore timed out because the 60s tracing-complete timer was armed before the traced interaction instead of before the flush; excalidraw's DropdownMenu hit a temporal-dead-zone crash from an import cycle the generated entry enters backwards; twenty's sass template-literal globals were silently dropped because the harness server passed only `postcss` to `css`; dub's Combobox curve run printed a pass verdict over six zero-node points because curve mode carried no render-health per point; calcom's same-document sprite references rendered empty with no disclosure because no network capture can see a fragment reference.
-- **Why this way:** the tracing timer now arms immediately before the flush, with the traced action bounded separately by the caller's remaining wall clock; explore's trace-sample body now runs inside the existing frame-starvation retry, degrading a second stall to "explore skipped" instead of ending the run at exit 2; preprocessor config reading now folds literal/template/array-joined globals through the existing call-expression resolver, naming only genuinely unfoldable shapes; every curve point now carries render health like a combo, and an all-empty curve fails with a dedicated hint; DOM collection now collects unresolved same-document sprite references into a warned, hinted field.
-- **Achievement:** calcom's DatePicker now reaches a report in under a minute instead of timing out; excalidraw's DropdownMenu now prints the import-cycle chain and a setup-module remedy instead of a bare TDZ stack; twenty's IconButton passes its sass transform instead of hitting an undefined-mixin error; dub's Combobox curve run now fails with the provider hint instead of printing a pass; calcom's DatePicker and Badge runs now warn by name which ids are injected by the application shell, not the component; a `page.evaluate` regression introduced mid-milestone (a string parsed as an expression, not a statement list) was found and fixed in the same change set, and a type-only re-export is now skipped by the generated entry instead of failing the ESM link.
+- **About:** tracing timer armed too early; TDZ import cycle; sass globals dropped; curve pass over zero-node points; sprite refs rendered empty.
+- **Why this way:** timer arms before the flush; explore inside the starvation retry; template globals folded; render health per curve point; sprite refs collected.
+- **Achievement:** DatePicker reports in under a minute; import-cycle chain named; sass passes; empty curve fails; shell-injected ids warned.
+
+### M107: workspace siblings resolve by their real entry: done
+
+- **About:** directus and gutenberg aborted at exit 2 because a workspace sibling's `package.json` pointed at build output nobody had produced, and react-spectrum printed a warning asserting an unbuilt `dist/` that `@react-types/shared` never declared.
+- **Why this way:** an unbuilt sibling is aliased to the source its own manifest points at, deriving candidates in the order `source`, the `exports` conditions `development`/`source`/`import`, `module`/`main` with the build-output segment dropped and a source extension applied, `types` beside a source file of the same stem, then `<pkg>/src`; every `exports` subpath key gets that same derivation; the walk continues from each aliased entry to a fixed point bounded by the workspace package count; a sibling declaring no runtime entry is disclosed as a types-only package; every message names the manifest field it followed, the path that field declared and whether the path exists on disk.
+- **Achievement:** directus aliased eight siblings including two reached only through a rescued source, gutenberg aliased 23 where 8 were aliased before and named `build-module/index.mjs` with no `dist/` substring, react-spectrum's warning now reads "declares no runtime entry ... it ships declarations only, so it was left out of the pre-bundle and needs no build"; directus now stops one layer later, on the `.yaml` transform M108 and M110 own; gutenberg stops on an import clause spread over three lines that the scanner never read, which M110 closes.
+
+### M108: a diagnosis names the layer that failed: done
+
+- **About:** four repositories failed at exit 2 and were told the wrong cause: epic-stack's `#app` subpath import and primer-react's `react/compiler-runtime` both drew a Nuxt `nuxi prepare` remedy in repositories without Nuxt, hoppscotch's `~icons/lucide/eye` was blamed on an unbuilt workspace package, and documenso's Babel-macro failure ended with an env-file remedy.
+- **Why this way:** a `#`-prefixed specifier resolves through the importer package's own `imports` field with the conditions Vite uses, and a specifier that map resolves is measured as a local import; the Nuxt diagnosis fires only for `#build`, `#imports` or `#app` in a repository that declares nuxt; the React Compiler transform emits only runtime imports that resolve for the installed React major and reports its target or its skip reason; a failure in a known virtual namespace names the plugin package the repository declares; a Babel-macro import is a `project-transform` preflight hit.
+- **Achievement:** epic-stack reached `Result: PASS` at exit 0 in 68 s, primer-react ran the compiler at its installed React 18 and now fails on its own `__DEV__` global, hoppscotch's message names `unplugin-icons` as the owner of the `~icons/` namespace ahead of nine preflight warnings, and documenso leads with the captured throw beside a `@lingui/react/macro` transform warning and no env-file remedy; the `React Compiler: active (v1.0.0, target 18)` terminal line landed in lane C's follow-up.
+
+### M109: the tsconfig is read the way TypeScript reads it: done
+
+- **About:** four config shapes TypeScript understands ended a run before its first measurement: a references-only root such as the `create-vite` react-ts template writes, `"jsx": "preserve"`, a `paths` key mapping `"/*"`, and `customConditions`.
+- **Why this way:** one reader answers which config governs a file and what that config says: a references-only nearest config delegates to the referenced config whose `include`/`files` covers the file, the first in the `references` array winning, while a cycle or a missing target ends the walk on the nearest config's options; `.ts`, `.tsx`, `.js` and `.jsx` compile with the automatic JSX runtime and the project's `jsxImportSource` whatever the config's `jsx` value is; a `paths` key with an empty non-wildcard prefix builds no alias and is registered once by key, target and declaring config; the real run and `--explain-props` call that one reader.
+- **Achievement:** ark reached a verdict with `grep -c "React is not defined"` at 0, react-spectrum resolved through its referenced config's paths, the create-vite repro prints "tsconfig.json declares no compilerOptions and lists references; tsconfig.app.json covers src/components/Button.tsx and supplies paths, baseUrl" identically in the dry run and the real run, and ark's extraction reported `combos=8` from the tsconfig-governed program.
+
+### M110: the dry run decides everything the real run decides from disk: done
+
+- **About:** `--explain-props` predicted a mode the real run did not take on epic-stack, logto, supabase and calcom, and stayed silent about warnings the real run printed a minute later from the same files on disk.
+- **Why this way:** the dry run decides auto-composition through the dispatcher's own gate and prints a `Composition:` line before the mode lines, and `matrixIneligibleReason` gained a `"composed"` case that explains why the matrix predicate lost; an explicit `--matrix` the dispatcher drops prints one warning naming what took precedence, in the real run and the dry run alike; the dry run pushes the project-transform warnings the real run pushes for the same filesystem inputs, through the one classifier lane A exports; an `optimizeDeps.include` candidate resolving to no installed directory, alias or `imports` entry is dropped from the include list and reported by specifier.
+- **Achievement:** supabase's Popover dry run prints "would auto-compose from Popover (5 exports)" with the matrix line stating that a composed scene supplies the props, logto's dry run prints the same 13 `[transform:css-preprocessor]` lines its real run prints, calcom's dropped `--matrix` now names the auto-composed root and the `--no-auto-compose` remedy, and epic-stack's alias and unresolved-external parity run reached `Result: PASS`; the shadcn-admin control gained one line, `Composition:  would measure Button alone`, and no new warning.
+
+### M111: a run works from any directory in the workspace: done (A2 matchedRules parity on midday deferred)
+
+- **About:** midday's `packages/ui/src/components/button.tsx` reached calibration when the shell sat in `packages/ui` and crashed at exit 2 from the repository root, because Tailwind 3 read its config from `process.cwd()`.
+- **Why this way:** a member whose PostCSS pipeline declares Tailwind 3 builds its CSS with the `tailwind.config.{js,cjs,mjs,ts}` nearest the member, searched from the member root through the workspace root, whatever directory the CLI started from; a member with no governing config gets a failure naming the filenames sought, the directories searched and the directory a run would have to start from, and that message never names a build script; every run prints the resolved member root and workspace root once; a script remedy prints the package manager invocation prefixed with `cd <dir> && ` when the package's directory differs from the start directory.
+- **Achievement:** midday from the repository root reached exit 0 and `Result: PASS` after 160 s with `content option` and `border-border` at zero occurrences, and the member-root run produced the same `Stylesheets:` line, the same roots line and a `warnings` array equal by `JSON.stringify` between the two reports.
+
+### M112: presets and remedies name real files: done
+
+- **About:** five findings in which a printed remedy named a file the repository lacks or ignored one it has: radix-themes was told to add `button.props.tsx` beside a real `src/components/button.props.tsx` the run dropped in silence, its `--init-fixture` finished writing nothing, logto's cap warning asked for the preset the run had already applied, radix-themes reported a size-ranked fallback stylesheet while its `package.json` declared one, and epic-stack repeated the "add a preset" clause.
+- **Why this way:** a preset is looked up under four candidate names in order and recognised by shape as a default-exported object literal, so an earlier candidate without that shape no longer stops the search; a candidate with the wrong shape is reported by its path and every remedy then names `<stem>.120fps.props.tsx`; the preset applies before any extraction warning prints, and the cap and collapsed-union warnings are re-rendered against the applied schema; `--init-fixture` on the never-composed path writes `<stem>.fixture.tsx` with one `TODO` per declared sibling or reports that the target exists; a package stylesheet declared in `package.json` whose target is missing is reported as declared-but-unbuilt with that package's build command, and the size-ranked fallback is suppressed for that run.
+- **Achievement:** radix-themes discloses "src/components/button.props.tsx exists, not a preset: no default-exported object literal", its Dialog run wrote a 956-byte fixture scaffold and printed the edit-and-re-run line, its stylesheet line reads "package.json "style" declares styles.css, which is not built yet; run `pnpm run build` in that package", logto's cap warning names the applied preset as already loaded, and epic-stack's `app/components/ui/button.props.tsx` draws the same "exists, not a preset" disclosure radix-themes draws; every verdict stayed unchanged, and the shadcn-admin control's cap sentence stayed word for word, now printed in the run's warning block instead of on stderr.
+
+### M113: every run leaves nothing behind, even on a signal: done
+
+- **About:** base-ui's SIGTERM repro left `packages/react/.120fps-harness-lagPiI/` on disk and in `git status` 15 s after the kill, on one of two attempts, while Chromium and the Vite dev server were still live.
+- **Why this way:** a run stopped by SIGINT, SIGTERM or SIGHUP exits with 130, 143 or 129 and removes its harness directories, and a second pass after the browser and dev server close catches a directory created after the pre-close pass; a busy or permission error is retried until it succeeds or 1 s per directory is spent over at least five attempts, and the post-close removal still returns inside 2 s, under the 8000 ms fatal-exit watchdog; a directory surviving the last attempt is printed once with its repository-relative path and its error code; the next run's `.pid`-marker sweep names each directory it removed and why, through the terminal, the `--json` warnings and the markdown report.
+- **Achievement:** five of five signal attempts on Windows exited 143 with no `.120fps-harness-*` under the base-ui project root or `packages/react` and an empty `git status --porcelain`, a run to completion on the same root reached its report with no removal line, and a planted dead-pid directory in shadcn-admin drew "Removed a stale harness directory from an earlier run: .120fps-harness-planted (its owner process is gone)."
+
+### M114: disclosures are true for runtime styling, props and page errors: done
+
+- **About:** nine findings in which the run measured something defensible and then said something untrue about it: fluentui's Griffel component reported "no stylesheet found", its Dialog matrix crossed `open` with `defaultOpen`, gutenberg's and react-spectrum's barrels reported zero props, logto's wrapped default export made the header name and the props table disagree, ark's and vitesse's hints named a cause the run never read, React's `%s` reached supabase's reader raw, and vuetify was told it has no application entry while its vite config declares a root.
+- **Why this way:** a package declaring a recognised runtime styling engine prints that no stylesheet was needed and names the engines, and an unrecognised `makeStyles`, `createUseStyles` or `styled` import is disclosed beside the `--css` remedy; a vite `root` or `build.rollupOptions.input` that folds statically resolves the entry, so the no-application-entry clause is claimed only when neither location holds one; console format specifiers are substituted from the console arguments before capture; a controlled prop and its `default` twin never share a matrix cell, and the axes held at one value are named; a re-export is followed to the declaring module and the measured file is disclosed beside the binding.
+- **Achievement:** fluentui's line reads "styling is generated at runtime by @griffel/react, @griffel/core" and its Dialog matrix moved from `Result: FAIL` with 13 controlled-or-uncontrolled errors to `Result: PASS`, gutenberg and react-spectrum moved from `Props (0):` to `Props (32):` with a `re-export of` line naming the measured module, logto's header names `Button` with both exports listed, supabase's report holds zero `%s` occurrences, vuetify's false no-entry clause is gone twice over, and vitesse's mount abort ends with a `What to do about it:` block naming the undefined `defineModels` global.
+
+### M115: every run prints where its minutes went: done
+
+- **About:** a run reported one number, its own wall clock, so a maintainer working against the 283 logged runs of field-test run 5 (real-run median 39 s, max 251 s) had no phase to aim at and the performance work had no baseline.
+- **Why this way:** a completed report carries `phaseTimings` with `preflight`, `build`, `calibration`, `mount`, `rerender`, `explore`, `scale`, `deltas`, `attribution`, `analysis` and `total`, every key present as an integer millisecond count and the ten phases summing to `total` exactly; each progress boundary line is classified by its label and a label matching none keeps the open phase, so the sum identity holds in combo, matrix, curve and isolation mode; the attribution window is subtracted from the phase it ran inside, so no millisecond is counted twice; each combo carries the explore wall clock the state graph already computed; the dry run prices the real run from the phases recorded for that component.
+- **Achievement:** shadcn-admin's toolbar run wrote a JSON `phaseTimings` whose ten keys summed to 26036 against a `total` of 26036, within 1000 ms of its printed `Total: 26.0s`, with the verdict, the mode and all ten warnings identical to the pre-change run; the `Total:` line then gained the breakdown itself, `Total: 21.6s  (preflight 0s, build 1s, calibration 1s, mount 6s, rerender 5s, explore 7s, attribution 0s, analysis 2s)`; shadcn-admin's button dry run gained "Estimated real run: ~1m 31s (8 combos x 10 samples; defaults: no phase timings recorded for this component yet)" with every other line unchanged, and n8n's Button dry run reads the flags it was given: ~1m 3s for `--samples 5 --max-combos 4` against ~2m 9s without them.
+
+### M116: explore replays and graph walks are paid for once: done (A/B evidence in the spec)
+
+- **About:** explore replayed an edge's path from the root once per timing sample even for a pattern that provably ends where it started, and the import graph was parsed up to three times per run by `runPreflight` and walked twice more per build by `scanExternalDeps`, about 4N parses of the shared modules across a sweep of N components.
+- **Why this way:** a state-invariant edge replays its path once before the first sample and runs samples 2..N from the state the previous sample left, with a replay forced after a frame-starvation or context retry and after a sample whose pattern skipped a planned step; a source file is read and parsed at most once per absolute path, `mtimeMs`, size and SFC-compiler flag, an edited file is re-read with no flag, and a compiler-bearing walk never reads a compiler-less parse of the same `.vue` file; `scanExternalDeps` writes the same values in the same order into every output channel it owns, cached or not; both lanes recorded an interleaved same-window A/B before approval, and a change showing no win or any difference in verdict, warnings or interaction rows would have been reverted.
+- **Achievement:** the A/B pairs put explore 8.3 % lower on the scroll fixture (median 9316 ms to 8545 ms) while the control fixture without a state-invariant edge moved +0.1 %, and preflight 8.7 % lower on a seven-component sweep (1237 ms to 1129 ms) and 3.7 % lower on a single component, with identical verdicts, identical warning counts, identical interaction rows and edge medians inside the 15 % noise band.
+
+### M117: output that respects the reader: done
+
+- **About:** a run that rebuilt its harness printed the same static vite-config warning twice, that note named the key `plugins` and never the plugins it dropped, the noise line spent four sentences on a machine fact and named no flag, the `.gitignore` tip fired for a report written outside the repository, and the markdown report dropped the warnings the README promises.
+- **Why this way:** a warning whose text repeats one already recorded for the same component report is recorded once and printed with the page-error ` (×N)` suffix, and the JSON holds one entry per distinct text in first-occurrence order; the markdown report carries one `<details>` fold per component that has warnings; the vite-config note names each declared plugin as the config writes it, in the config's own order, leaving out any plugin whose transform this run applied and disappearing when the list empties; the terminal noise line names only the signals that crossed their thresholds and the one flag that helps, while the JSON keeps the long sentences; the `.gitignore` tip prints once per process and only for paths inside the git root that the repository's `.gitignore` leaves uncovered.
+- **Achievement:** shadcn-admin's Dialog run went from two "cannot honor" lines to one reading `tanstackRouter, react, tailwindcss` and from the four-sentence machine paragraph to "machine: hostile (probe CV 60%); raise --samples to measure through it." with the long form kept in the JSON, ark's note names `dts, react` once in the real run and once under `--explain-props`, shadcn-admin's toolbar tip narrowed to the single `.120fps-harness-*` pattern that applied, and every `Result:` line kept its wording.
+
+### M118: the source tree says what each file is for: done
+
+- **About:** `src/` was 26 flat files and 33,348 lines after M107-M117; `harness.ts` alone held 7,215 lines and 25 responsibilities, `analyze()` spanned 911 lines, one helper was written two or three times in different files, comments cited 1,250 milestone numbers, and `src/index.ts` re-exported about 470 names. Lane ownership by file serialised agents and each remediation landed in the nearest file.
+- **Why this way:** ADR 0005 puts the code in nine stage directories (`cli`, `pipeline`, `analysis`, `report`, `browser`, `harness`, `props`, `project`, `shared`) with value imports pointing one way through stage `index.ts` files, one responsibility and at most 800 lines per file, one helper per fact in `shared/`, comments that state the invariant, and a curated root barrel. The refactor ran as pure `git mv` moves first (35 renames), then per-directory splits in parallel worktrees, then de-duplication, comment cleanup and surface curation, each step gated on `tsc` and the unit suite; two unit tests (`module-boundaries`, `module-ratchets`) enforce the layout with allowlists that shrank to empty. Behaviour stayed frozen: the same passing set before and after, byte-identical `--explain-props` output, and an independent adversarial review of the whole diff found no runtime-reachable change.
+- **Achievement:** 116 files, largest 783 lines, zero boundary exceptions, zero history tokens in comments, zero duplicate function names, 12 runtime exports at the package root, unit suite `4803 passed | 1 skipped | 1 pre-existing failure` at 9ee7058, e2e `cli`, `shim-detect`, `baseline-env` 24 passed. Future milestone maps assign lanes by directory.

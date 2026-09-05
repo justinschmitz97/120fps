@@ -6,9 +6,9 @@ import {
   cssImportSpecifier,
   generateEntry,
   loadTailwindVitePlugin,
-} from "../../src/harness.js";
-import { resolveCssFiles } from "../../src/analyze.js";
-import { parseArgs } from "../../src/cli.js";
+} from "../../src/harness/index.js";
+import { resolveCssFiles } from "../../src/pipeline/index.js";
+import { parseArgs } from "../../src/cli/index.js";
 import { withProductionResolution } from "../node-resolution.js";
 
 let tmpDir: string;
@@ -28,7 +28,6 @@ function writeCss(relative: string, body = ".x{color:red}"): string {
   return full;
 }
 
-// H1: malformed --css values
 describe("H1: --css value shapes", () => {
   it("accepts a leading comma", () => {
     expect(parseArgs(["./A.tsx", "--css", ",a.css"]).css).toEqual(["a.css"]);
@@ -51,7 +50,6 @@ describe("H1: --css value shapes", () => {
   });
 });
 
-// H2: duplicate paths
 describe("H2: duplicate stylesheet paths", () => {
   it("collapses two spellings of the same file", () => {
     const a = writeCss("styles/a.css");
@@ -60,7 +58,6 @@ describe("H2: duplicate stylesheet paths", () => {
   });
 });
 
-// H3: non-file paths
 describe("H3: non-file stylesheet paths", () => {
   it("rejects a directory that is named like a stylesheet", () => {
     const dir = path.join(tmpDir, "theme.css");
@@ -77,7 +74,6 @@ describe("H3: non-file stylesheet paths", () => {
   });
 });
 
-// H4: out-of-root paths on Windows
 const onWindows = path.sep === "\\";
 
 describe.skipIf(!onWindows)("H4: out-of-root specifier form", () => {
@@ -105,7 +101,6 @@ describe.skipIf(!onWindows)("H4: out-of-root specifier form", () => {
   });
 });
 
-// H5: --css together with --no-css
 describe("H5: --no-css wins", () => {
   it("drops explicit files and suppresses detection", () => {
     const explicit = writeCss("styles/a.css");
@@ -124,7 +119,6 @@ describe("H5: --no-css wins", () => {
   });
 });
 
-// H6: auto-detection with several candidates
 describe("H6: several detection candidates", () => {
   it("returns exactly one file even when all eight exist", () => {
     const created: string[] = [];
@@ -151,14 +145,12 @@ describe("H6: several detection candidates", () => {
   });
 });
 
-// H11: @tailwindcss/vite listed but missing
 describe("H11: @tailwindcss/vite not installed", () => {
   it("does not throw and returns no plugins", async () => {
     const original = process.stderr.write.bind(process.stderr);
     (process.stderr as unknown as { write: unknown }).write = () => true;
     try {
-      // The resolve() call and its catch both run before the first await, so
-      // the sync window covers the whole failure path.
+      // resolve() and its catch run before the first await; the sync window covers the failure.
       const loading = withProductionResolution(() => loadTailwindVitePlugin(tmpDir));
       await expect(loading).resolves.toEqual([]);
     } finally {
@@ -167,7 +159,6 @@ describe("H11: @tailwindcss/vite not installed", () => {
   });
 });
 
-// H19: injection composes with auto-scale rendering
 describe("H19: injection with auto-scale rendering", () => {
   it("keeps the css block ahead of the scale-aware render body", () => {
     const entry = generateEntry({
@@ -184,15 +175,17 @@ describe("H19: injection with auto-scale rendering", () => {
   });
 });
 
-// H22: navigation must not wait for the load event
 describe("H22: harness navigation wait", () => {
   const src = (name: string) => fs.readFileSync(path.resolve("src", name), "utf-8");
 
-  // M59 routes every harness navigation through gotoWithErrorContext so the
-  // captured page errors reach a navigation timeout; the wait option is still
-  // passed at the call site, so the invariant reads the same either way.
+  // M59 routes navigation through gotoWithErrorContext; the wait option reads the same either way.
   it("never navigates with the default load wait", () => {
-    for (const file of ["analyze.ts", "explorer.ts", "measure.ts", "react-profiler.ts"]) {
+    for (const file of [
+      "pipeline/analyze.ts",
+      "analysis/explorer.ts",
+      "browser/session.ts",
+      "analysis/react-profiler.ts",
+    ]) {
       const text = src(file);
       const gotos = text.match(/(?:page\.goto|gotoWithErrorContext)\([^)]*\)/g) ?? [];
       expect(gotos.length).toBeGreaterThan(0);
@@ -203,17 +196,12 @@ describe("H22: harness navigation wait", () => {
   });
 });
 
-// H21: gate placement relative to CPU throttling
 describe("H21: settle gate runs before CPU throttling", () => {
   const src = (name: string) => fs.readFileSync(path.resolve("src", name), "utf-8");
 
   it("precedes setCPUThrottlingRate in every session", () => {
-    // A throttle call may legitimately appear earlier in the file for a page
-    // with nothing to settle (M39's blank-page calibration probe); the
-    // invariant is that a session which settles styles throttles only
-    // afterwards, so the assertion anchors on the settle gate and requires a
-    // throttle call after it.
-    for (const file of ["analyze.ts", "explorer.ts", "react-profiler.ts"]) {
+    // A throttle call may appear earlier for a page with nothing to settle (M39's blank probe).
+    for (const file of ["pipeline/analyze.ts", "analysis/explorer.ts", "analysis/react-profiler.ts"]) {
       const text = src(file);
       const settleIdx = text.indexOf("settleStyles(page");
       expect(settleIdx).toBeGreaterThan(-1);
@@ -221,9 +209,8 @@ describe("H21: settle gate runs before CPU throttling", () => {
         text.indexOf("Emulation.setCPUThrottlingRate", settleIdx),
       ).toBeGreaterThan(settleIdx);
     }
-    // Scoped to the session preamble: measure.ts also mentions the throttle in
-    // suspendThrottle (M34), which is inter-sample bookkeeping, not a session.
-    const measure = src("measure.ts");
+    // Scoped to the preamble: suspendThrottle (M34) is inter-sample bookkeeping, not this gate.
+    const measure = src("browser/session.ts");
     const preamble = measure.slice(measure.indexOf("export async function enterHarness"));
     const firstGate = preamble.indexOf("await settleStyles(page");
     const firstThrottle = preamble.indexOf("Emulation.setCPUThrottlingRate");

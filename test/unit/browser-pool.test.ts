@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { createBrowserPool, MEASUREMENT_BROWSER_ARGS } from "../../src/measure.js";
+import { createBrowserPool, MEASUREMENT_BROWSER_ARGS } from "../../src/browser/index.js";
 
 interface FakeBrowser {
   closed: boolean;

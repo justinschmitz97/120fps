@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseArgs } from "../../src/cli.js";
+import { parseArgs } from "../../src/cli/index.js";
 
 describe("--no-auto-scale CLI flag", () => {
   it("parses --no-auto-scale flag", () => {

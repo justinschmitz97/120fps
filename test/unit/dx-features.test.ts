@@ -7,12 +7,12 @@ import {
   splitTargetSpec,
   formatWallClock,
   helpText,
-} from "../../src/cli.js";
+} from "../../src/cli/index.js";
 import {
   explainProps,
   formatExplainProps,
   resolveProgressReporter,
-} from "../../src/analyze.js";
+} from "../../src/pipeline/index.js";
 import {
   runPreflight,
   detectProviderImport,
@@ -21,11 +21,11 @@ import {
   providersFromEntry,
   isDirectProviderHit,
   HARD_REMEDY,
-} from "../../src/preflight.js";
-import { detectComponentExport, BUNDLER_PREACT_ALIAS_WARNING } from "../../src/harness.js";
-import { extractPropsDetailed } from "../../src/prop-gen.js";
-import { formatHints } from "../../src/hints.js";
-import type { Report } from "../../src/report.js";
+} from "../../src/project/index.js";
+import { detectComponentExport, BUNDLER_PREACT_ALIAS_WARNING } from "../../src/harness/index.js";
+import { extractPropsDetailed } from "../../src/props/index.js";
+import { formatHints } from "../../src/report/index.js";
+import type { Report } from "../../src/report/index.js";
 
 const fixture = (rel: string): string => path.resolve("fixtures", rel);
 
@@ -35,7 +35,7 @@ function lineOf(file: string, needle: string): number {
   return index + 1;
 }
 
-// --- C5: `<file>#Export` splitting, decided without the filesystem ---
+// C5: <file>#Export splitting, decided without the filesystem.
 
 describe("target spec splitting", () => {
   it("splits a component path from its export name", () => {
@@ -121,8 +121,6 @@ describe("explicit export resolution", () => {
   });
 });
 
-// --- C6: one stem rule ---
-
 describe("the harness resolver uses the normalized stem", () => {
   it("resolves hotspot-image.tsx to HotspotImage", () => {
     expect(detectComponentExport(fixture("m58/hotspot-image.tsx")).name).toBe("HotspotImage");
@@ -132,8 +130,6 @@ describe("the harness resolver uses the normalized stem", () => {
     expect(detectComponentExport(fixture("m58/alias-widget.tsx")).name).toBe("AliasWidget");
   });
 });
-
-// --- C1: --explain-props ---
 
 describe("--explain-props", () => {
   it("is a known flag and appears in --help", () => {
@@ -203,10 +199,7 @@ describe("--explain-props", () => {
   });
 });
 
-// M78: --explain-props ran no preflight gate at all, exiting 0 on a Solid or
-// PnP project the default path rejects in ~1s (solid-ui-F1, pnp-app-F2). The
-// comment at this call's cli.ts site has always promised "before every check
-// that exists to protect a measurement" — these tests are that promise, kept.
+// M78 (solid-ui-F1, pnp-app-F2): --explain-props must pass every gate that protects a measurement.
 describe("--explain-props gate parity", () => {
   const tmpDirs: string[] = [];
 
@@ -234,10 +227,7 @@ describe("--explain-props gate parity", () => {
     await expect(explainProps(entry)).rejects.toThrow(/Solid/);
   });
 
-  // async-component is a hard preflight kind with nothing to do with
-  // react-dom resolution, so a bypass here reaches extraction successfully:
-  // unlike the Solid/PnP cases below, assertReactDomClient's independent
-  // taxonomy does not also reject this project.
+  // async-component isn't react-dom-related; bypass reaches extraction, unlike Solid/PnP below.
   it("downgrades to a warning and still extracts under --no-preflight (noPreflight: true)", async () => {
     const { root, entry } = isolatedProject("120fps-explain-async-bypass-", {
       "package.json": JSON.stringify({ dependencies: { react: "^18.2.0", "react-dom": "^18.2.0" } }),
@@ -253,11 +243,7 @@ describe("--explain-props gate parity", () => {
     expect(explained.warnings.some((w) => w.includes("--no-preflight"))).toBe(true);
   });
 
-  // solid-ui-F3 / pnp-app-F3: --no-preflight downgrades the graph-walk hard
-  // hit to a warning, but assertReactDomClient is a separate, unconditional
-  // gate — for a Solid-only project it independently reaches the same
-  // conclusion runPreflight already did, so the final error still names
-  // Solid, never a fabricated react-dom-version claim.
+  // solid-ui-F3/pnp-app-F3: assertReactDomClient is a separate, unconditional gate.
   it("still fails under --no-preflight for a Solid project, naming Solid, not a fabricated react-dom version", async () => {
     const { entry } = isolatedProject("120fps-explain-solid-bypass-backstop-", {
       "package.json": JSON.stringify({ dependencies: { "solid-js": "^1.8.0" } }),
@@ -285,9 +271,7 @@ describe("--explain-props gate parity", () => {
     await expect(explainProps(entry)).rejects.toThrow(/Plug'n'Play/);
   });
 
-  // Reached only after preflight's own hard checks pass: the react-dom
-  // version gate was never called by --explain-props before this milestone,
-  // so a Solid/PnP project was not the only thing it measured silently.
+  // Reached after hard checks pass; react-dom-version gate applies beyond Solid/PnP too.
   it("rejects a project on react-dom 17 the same way the default path does (no regression on the outdated case)", async () => {
     const { root, entry } = isolatedProject("120fps-explain-react17-", {
       "package.json": JSON.stringify({ dependencies: { react: "^17.0.2", "react-dom": "^17.0.2" } }),
@@ -301,21 +285,13 @@ describe("--explain-props gate parity", () => {
   });
 
   it("does not run the react-dom gate for a .vue target", async () => {
-    // Regression lock: rendererFor gates assertReactDomClient the same way
-    // buildAndServe does, so a Vue project with no react-dom at all is not
-    // rejected for a React-only reason.
+    // Regression lock: rendererFor gates assertReactDomClient like buildAndServe for Vue too.
     const explained = await explainProps(fixture("vue-project/Button.vue"));
     expect(explained.componentName).toBe("Button");
   });
 });
 
-// M78 (excalidraw-F4, reclassified from M81): the wrong-schema finding's real
-// cause is that the repository had no node_modules at all, so forwardRef's
-// contextual typing had nothing to resolve against. The fix is not a
-// prop-extraction change (M81 found the extractor itself correct against a
-// real TS 5.9.3 + @types/react); it is that the missing-install gate must
-// fire before extraction ever runs, so a user is never handed a confidently
-// wrong schema instead of a plain "nothing is installed" message.
+// M78 (excalidraw-F4): missing node_modules broke forwardRef typing; fail fast on missing-install.
 describe("excalidraw-F4: missing ambient types caught by the not-installed gate", () => {
   const tmpDirs: string[] = [];
 
@@ -355,10 +331,7 @@ describe("excalidraw-F4: missing ambient types caught by the not-installed gate"
   });
 });
 
-// M78 (preact-app-F3, webpack/Next.js shape): a disclosure gap, not a silent
-// mismeasurement (120fps genuinely mounts real react-dom for this shape).
-// Reached via the same runPreflight-adjacent call added for gate parity, so
-// the disclosure is present on every entry path.
+// M78 (preact-app-F3): a disclosure gap, not mismeasurement; react-dom is genuinely mounted here.
 describe("--explain-props Preact bundler-alias disclosure", () => {
   const tmpDirs: string[] = [];
 
@@ -400,8 +373,6 @@ describe("--explain-props Preact bundler-alias disclosure", () => {
   });
 });
 
-// --- C2: progress heartbeat ---
-
 describe("progress heartbeat", () => {
   it("writes one line per marker outside CI mode", () => {
     const written: string[] = [];
@@ -438,8 +409,6 @@ describe("progress heartbeat", () => {
   });
 });
 
-// --- C3: total wall clock ---
-
 describe("total wall clock", () => {
   it("formats sub-minute runs in seconds", () => {
     expect(formatWallClock(42_100)).toBe("Total: 42.1s");
@@ -454,8 +423,6 @@ describe("total wall clock", () => {
   });
 });
 
-// --- C4: provider-hook detection ---
-
 describe("provider detection", () => {
   it("recognizes known provider libraries including sub-paths", () => {
     expect(detectProviderImport("next-intl")?.hook).toBe("useTranslations");
@@ -467,8 +434,7 @@ describe("provider detection", () => {
     expect(detectProviderImport("./local")).toBeUndefined();
   });
 
-  // M72: routing/meta-framework libraries whose hooks throw outside their
-  // router or route context, the same shape as the four existing entries.
+  // M72: routing/meta-framework hooks throw outside router context, same shape as the four above.
   it("recognizes routing and meta-framework provider libraries", () => {
     expect(detectProviderImport("react-router")?.hook).toBe("useNavigate");
     expect(detectProviderImport("react-router-dom")?.hook).toBe("useNavigate");
@@ -506,12 +472,7 @@ describe("provider detection", () => {
     expect(result.providers).toEqual([]);
   });
 
-  // M92 (dub button.tsx): entries can name the measured component AND a
-  // wrapper in one combined walk; a provider hit reached only through the
-  // wrapper is not something the component imports. providersFromEntry keeps
-  // only hits whose chain[0] (the seed chainTo walked back to) matches the
-  // given entry, so a component with its own no-provider graph gets none of
-  // the wrapper's hits attributed to it.
+  // M92 (dub button.tsx): providersFromEntry keeps only hits matching the given entry's chain.
   describe("providersFromEntry (M92)", () => {
     it("excludes a hit discovered only through a second (wrapper) entry", () => {
       const componentFile = fixture("m65/healthy-consumer.tsx");
@@ -550,18 +511,7 @@ describe("provider detection", () => {
       expect(providersFromEntry(result.providers, componentRelative)).toEqual(result.providers);
     });
 
-    // Item B (dub button.tsx follow-up, corrected against dub's real
-    // source): tooltip.tsx wraps @radix-ui/react-tooltip's Provider directly
-    // (no local createContext, no local throw -- detectWrapperProviderModule's
-    // shape, not detectLocalProviderModule's), and separately wrapper.tsx's
-    // own rich-text-provider.tsx hit is reachable only through the wrapper,
-    // not the component -- the shape that needs both halves (keep and
-    // correctly label the component's own real candidates -- both the local
-    // wrapper file and the external package it wraps -- while excluding the
-    // unrelated wrapper-only one) working together, run end to end through
-    // the same analyze.ts call shape (runPreflight with both entries, then
-    // providersFromEntry + providerCandidateLabels on the component's own
-    // entry) and through formatHints, the way a real report renders it.
+    // Item B (dub button.tsx): tooltip.tsx wraps Radix's Provider directly, not via local context.
     it("a component's own provider hits (local wrapper + the package it wraps) survive scoping while an unrelated wrapper-only hit is excluded", () => {
       const root = fixture("m92-item-b");
       const componentFile = path.join(root, "button.tsx");
@@ -591,14 +541,7 @@ describe("provider detection", () => {
       expect(text).not.toContain("rich-text-provider");
     });
 
-    // Item B, second half: a thrown error naming a symbol exported by a
-    // module the component does import must rank that module first, even
-    // when discovery order (menu.tsx imported before tooltip.tsx in this
-    // fixture) would otherwise put a different real candidate first.
-    // Discovery-produced labels, not hand-typed ones (hints-captured-error.
-    // test.ts already covers the ranking function in isolation on a
-    // hand-typed list; this closes the gap to what runPreflight actually
-    // produces).
+    // Item B, second half: extends hints-captured-error.test.ts to discovery-produced labels.
     it("ranks the candidates matching a named symbol in the captured error first, on discovery-produced labels", () => {
       const root = fixture("m92-item-b");
       const componentFile = path.join(root, "button-with-menu.tsx");
@@ -607,8 +550,7 @@ describe("provider detection", () => {
       const componentRelative = path.relative(root, componentFile).replace(/\\/g, "/");
       const own = providersFromEntry(result.providers, componentRelative);
       const labels = providerCandidateLabels(own);
-      // Discovery order: menu.tsx is imported first in the fixture, so it
-      // leads before any ranking is applied.
+      // Discovery order: menu.tsx imports first in the fixture, so it leads before ranking applies.
       expect(labels[0]).toBe("menu.tsx (useMenuContext)");
       expect(labels).toContain("tooltip.tsx (TooltipProvider)");
 
@@ -624,15 +566,7 @@ describe("provider detection", () => {
       expect(tooltipIdx).toBeLessThan(menuIdx);
     });
 
-    // Item B, third half (dub, corrected): tooltip.tsx:12 imports
-    // PROSE_STYLES from ./rich-text-area -- rich-text-provider.tsx really is
-    // reachable from the component's own graph, two hops out, so it must
-    // NOT be filtered away (it is real evidence). What must change is the
-    // wording: "component imports X" is false for a two-hop reach.
-    // deep-entry.tsx -> deep-middle.tsx -> deep-provider.tsx is the same
-    // shape in isolation (a plain passthrough file importing an unrelated
-    // named export, with no wrapper entry in the mix, so there is no
-    // discovery-order ambiguity about which entry "wins" the hit).
+    // Item B, third half: a two-hop reach stays as evidence; 'component imports' overclaims it.
     it("a two-hop transitive reach is kept as a candidate but worded as 'import graph reaches', not 'component imports'", () => {
       const root = fixture("m92-item-b");
       const componentFile = path.join(root, "deep-entry.tsx");
@@ -685,11 +619,7 @@ describe("provider detection", () => {
       expect(detectWrapperProviderModule(source)).toBeUndefined();
     });
 
-    // Regression: a file with its own createContext (React's own
-    // Context.Provider also ends in "Provider") is detectLocalProviderModule's
-    // exclusive territory, throw-gated or not -- must not double-flag a
-    // context with a benign default that never throws (fixtures/m65/
-    // theme-store.tsx's exact, deliberate "healthy" shape).
+    // Regression: own-createContext is detectLocalProviderModule's territory; don't double-flag it.
     it("does not match a file with its own local createContext, even one that never throws (defers entirely to detectLocalProviderModule)", () => {
       const source =
         'import { createContext, useContext } from "react";\n' +
@@ -747,8 +677,7 @@ describe("provider detection", () => {
   });
 
   it("names the candidates in the render-error hint", () => {
-    // M79 (4a): the provider hint is gated on a captured page-error message
-    // that actually looks provider/context-shaped.
+    // M79 (4a): the provider hint is gated on a captured error that looks provider/context-shaped.
     const report = {
       combos: [{ pageErrors: ["useTranslations must be used within a NextIntlClientProvider"] }],
       providerCandidates: ["next-intl (useTranslations)"],

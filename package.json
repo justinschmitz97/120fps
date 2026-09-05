@@ -6,7 +6,7 @@
   "license": "MIT",
   "repository": "https://github.com/justinschmitz97/120fps",
   "bin": {
-    "120fps": "./dist/cli.js"
+    "120fps": "./dist/cli/main.js"
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -26,7 +26,7 @@
   "scripts": {
     "build": "tsc",
     "prepublishOnly": "tsc",
-    "start": "tsc && node dist/cli.js",
+    "start": "tsc && node dist/cli/main.js",
     "test": "vitest run test/unit/",
     "test:unit": "vitest run test/unit/",
     "test:e2e": "vitest run test/e2e/",

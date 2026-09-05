@@ -1,9 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { analyze, buildReport, type BuildReportInput } from "../../src/analyze.js";
-import type { MountResult } from "../../src/measure.js";
-import type { ExploreResult, StateGraph } from "../../src/explorer.js";
-import type { CdpMetrics } from "../../src/metrics.js";
-import type { CalibrationResult, Thresholds } from "../../src/report.js";
+import { analyze, buildReport, type BuildReportInput } from "../../src/pipeline/index.js";
+import type { MountResult } from "../../src/browser/index.js";
+import type { ExploreResult, StateGraph } from "../../src/analysis/index.js";
+import type { CdpMetrics } from "../../src/report/index.js";
+import type { CalibrationResult, Thresholds } from "../../src/report/index.js";
 
 function makeMountResult(overrides: Partial<MountResult> = {}): MountResult {
   return {
@@ -167,9 +167,7 @@ describe("buildReport", () => {
     expect(report.combos[0].interactions).toHaveLength(0);
   });
 
-  // M61: only combos marked as the sibling-copies probe (`__120fps_scaleN`,
-  // surfaced as `scaleProbe`) receive a fitted curve: merely differing DOM
-  // sizes across real combos is not enough (see the sibling test below).
+  // M61: only scaleProbe combos get a fitted curve; differing DOM size across real combos does not.
   it("computes scaling curve across scale-probe combos with different DOM sizes", () => {
     const input: BuildReportInput = {
       componentPath: "./Button.tsx",
@@ -398,8 +396,7 @@ describe("buildReport: inp", () => {
       heapDeltas: [0],
       thresholds: baseThresholds,
     });
-    // Gap: (150_000 - 100_000) / 1000 = 50ms, same computeINP contract as
-    // test/unit/metrics.test.ts.
+    // Gap: (150_000-100_000)/1000 = 50ms; same computeINP contract as metrics.test.ts.
     expect(report.combos[0].inp).toBeCloseTo(50, 0);
   });
 

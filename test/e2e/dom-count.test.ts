@@ -1,7 +1,7 @@
 import { describe, it, expect, afterAll } from "vitest";
 import { chromium, type Browser } from "playwright";
-import { buildAndServe } from "../../src/harness.js";
-import { countComponentNodes } from "../../src/measure.js";
+import { buildAndServe } from "../../src/harness/index.js";
+import { countComponentNodes } from "../../src/browser/index.js";
 
 let browser: Browser;
 

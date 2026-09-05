@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { formatTable, type Report } from "../../src/report.js";
+import { formatTable, type Report } from "../../src/report/index.js";
 
 describe("Auto-scaling in Report", () => {
   function makeReport(overrides: Partial<Report> = {}): Report {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { extractProps } from "../../src/prop-gen.js";
+import { extractProps } from "../../src/props/index.js";
 
 describe("extractProps", () => {
   it("extracts variant as union with all members", async () => {

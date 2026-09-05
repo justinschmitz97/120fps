@@ -10,11 +10,9 @@ import {
   type ComboReport,
   type Report,
   type Thresholds,
-} from "../../src/report.js";
-import { buildReport, type BuildReportInput } from "../../src/analyze.js";
-import { parseArgs } from "../../src/cli.js";
-
-// --- helpers ---
+} from "../../src/report/index.js";
+import { buildReport, type BuildReportInput } from "../../src/pipeline/index.js";
+import { parseArgs } from "../../src/cli/index.js";
 
 function makeCombo(overrides: Partial<ComboReport> = {}): ComboReport {
   return {
@@ -60,8 +58,6 @@ const baseMachine = {
   os: "Linux 6.0", nodeVersion: "v20.0.0", chromiumVersion: "120.0.0.0",
 };
 
-// --- classifyTier ---
-
 describe("classifyTier", () => {
   it("returns T1 for small component with no portals, scaling, or animations", () => {
     expect(classifyTier({ domNodeCount: 8, hasPortal: false, hasScaling: false, hasAnimation: false })).toBe("T1");
@@ -87,8 +83,7 @@ describe("classifyTier", () => {
     expect(classifyTier({ domNodeCount: 5, hasPortal: true, hasScaling: false, hasAnimation: false })).toBe("T3");
   });
 
-  // M64: animation is a floor of T3, not an override: a 50-node animated
-  // component is still a 50-node component and keeps T4's headroom.
+  // M64: animation is a floor of T3, not an override; a 50-node animated component still gets T4.
   it("returns T4 when hasAnimation=true and domNodeCount > 40", () => {
     expect(classifyTier({ domNodeCount: 50, hasPortal: false, hasScaling: false, hasAnimation: true })).toBe("T4");
   });
@@ -121,8 +116,6 @@ describe("classifyTier", () => {
   });
 });
 
-// --- TIER_BUDGETS ---
-
 describe("TIER_BUDGETS", () => {
   it("T1 budget: mount 14ms, rerender 10ms, interaction 250ms aggregate / 33ms per event", () => {
     expect(TIER_BUDGETS.T1).toEqual({ mountMs: 14, rerenderMs: 10, interactionMs: 250, interactionStepMs: 33 });
@@ -140,8 +133,6 @@ describe("TIER_BUDGETS", () => {
     expect(TIER_BUDGETS.T4).toEqual({ mountMs: 80, rerenderMs: 48, interactionMs: 400, interactionStepMs: 100 });
   });
 });
-
-// --- computeVerdict with tierBudget ---
 
 describe("computeVerdict with tierBudget", () => {
   const flatThresholds: Thresholds = { mountMs: 16, interactionMs: 100, relativeMount: 2.0, rerenderMs: 8 };
@@ -209,8 +200,6 @@ describe("computeVerdict with tierBudget", () => {
   });
 });
 
-// --- formatTable with tier ---
-
 describe("formatTable with tier", () => {
   it("shows tier in verdict column when tier is set", () => {
     const combo = makeCombo({ tier: "T1" as ComponentTier, verdict: "pass" });
@@ -251,8 +240,6 @@ describe("formatTable with tier", () => {
   });
 });
 
-// --- parseArgs --flat-thresholds ---
-
 describe("parseArgs --flat-thresholds", () => {
   it("parses --flat-thresholds flag", () => {
     const result = parseArgs(["./Button.tsx", "--flat-thresholds"]);
@@ -270,8 +257,6 @@ describe("parseArgs --flat-thresholds", () => {
     expect(result.thresholdMount).toBe(20);
   });
 });
-
-// --- buildReport with tiered budgets ---
 
 describe("buildReport with tiered budgets", () => {
   function makeInput(overrides: Partial<BuildReportInput> = {}): BuildReportInput {

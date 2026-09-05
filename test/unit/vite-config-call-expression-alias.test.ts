@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { readViteConfigData, VITE_CONFIG_WORKSPACE_ROOT_ALIAS_WARNING } from "../../src/harness.js";
+import { readViteConfigData, VITE_CONFIG_WORKSPACE_ROOT_ALIAS_WARNING } from "../../src/harness/index.js";
 
 let tmpDir: string;
 
@@ -27,11 +27,7 @@ function write(relative: string, content: string): string {
   return full;
 }
 
-// M93 (chakra-ui-F1): the root vite.config.ts alias that makes @chakra-ui/react
-// resolvable is written as `resolve("packages/react/src")`, a call expression
-// -- parseViteConfigFile previously recognized only a string-literal value and
-// silently dropped this into "ignored", so the M76 workspace-root fallback
-// layer, though itself correct, never even saw the alias.
+// M93: a resolve(...) call-expression alias must not be dropped into "ignored", hiding it from M76.
 describe("readViteConfigData: resolve.alias value written as a resolve(...) call expression (M93)", () => {
   it("resolves a single-argument resolve(path) call relative to the config's own directory", () => {
     mkdir("packages/react/src");

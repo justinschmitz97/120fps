@@ -6,7 +6,7 @@ import {
   preflightFailureMessage,
   setPreflightBypassed,
   type PreflightHit,
-} from "../../src/preflight.js";
+} from "../../src/project/index.js";
 
 afterEach(() => {
   setPreflightBypassed(false);
@@ -16,8 +16,7 @@ function hit(kind: PreflightHit["kind"], chain: string[]): PreflightHit {
   return { kind, chain } as PreflightHit;
 }
 
-// pnp-app: a Yarn PnP rejection reported as a "server-boundary finding", a
-// category preflight.ts's own HARD_CAUSE table says it is not.
+// pnp-app: a yarn-pnp rejection was reported as server-boundary, a category HARD_CAUSE denies it.
 describe("naming what --no-preflight bypassed", () => {
   it("names a yarn-pnp finding as its own kind", () => {
     const warning = PREFLIGHT_BYPASSED_WARNING([hit("yarn-pnp", ["src/04-sortable/simple/Card.tsx"])]);
@@ -52,8 +51,7 @@ describe("naming what --no-preflight bypassed", () => {
   });
 });
 
-// solid-ui: the run that printed "Pass --no-preflight to attempt the run
-// anyway" had already passed it, two lines above its own bypass warning.
+// solid-ui: the run printed advice to pass --no-preflight two lines below already having passed it.
 describe("advising a flag the run already used", () => {
   it("drops the bypass advice once the run is bypassing preflight", () => {
     expect(hardRemedyFor("unsupported-framework")).toContain("--no-preflight");

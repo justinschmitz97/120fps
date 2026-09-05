@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import path from "node:path";
-import { extractProps, resetExtractionCache } from "../../src/prop-gen.js";
+import { extractProps, resetExtractionCache } from "../../src/props/index.js";
 
 const M84 = path.resolve("./fixtures/m84");
 const fixture = (name: string): string => path.join(M84, name);
@@ -15,8 +15,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-// M84 MUST: a mixed primitive-and-literal union synthesizes a member of that
-// union, not kind:"unknown" with an empty value and zero disclosure.
+// A mixed primitive+literal union must synthesize a member, not kind:unknown with zero disclosure.
 describe("M84: mixed primitive+literal unions synthesize a real member", () => {
   it("modal (boolean | 'trap-focus') is not dropped to kind:unknown", async () => {
     const stderr = captureStderr();
@@ -49,8 +48,7 @@ describe("M84: mixed primitive+literal unions synthesize a real member", () => {
   });
 });
 
-// M84 MUST NOT: silently drop a prop from synthesis (base-ui's modal/step
-// were dropped with zero warning).
+// A prop must never be silently dropped from synthesis (base-ui's modal/step, zero warning).
 describe("M84 MUST NOT: mixed-union props are never silently dropped", () => {
   it("both modal and step are present in the extracted schema", async () => {
     resetExtractionCache();
@@ -61,9 +59,7 @@ describe("M84 MUST NOT: mixed-union props are never silently dropped", () => {
   });
 });
 
-// M84 MUST: a multi-branch union (structurally different shapes, not merely
-// mixed primitive+literal) reports every branch it collapsed and which one
-// it chose.
+// A multi-branch union (structurally different shapes) must disclose every collapsed branch.
 describe("M84: multi-branch unions disclose every collapsed branch", () => {
   it("label (string | ReactElement) discloses both branches", async () => {
     const stderr = captureStderr();

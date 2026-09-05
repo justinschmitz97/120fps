@@ -9,9 +9,9 @@ import {
   selectMeasuredExport,
   extractPropsDetailed,
   isSynthesizedRequiredObjectWarning,
-} from "../../src/prop-gen.js";
+} from "../../src/props/index.js";
 // Read-only use of another lane's module: the point is that the two answers agree.
-import { detectComponentExport } from "../../src/harness.js";
+import { detectComponentExport } from "../../src/harness/index.js";
 
 const FIXTURES = path.resolve(__dirname, "../../fixtures/own-props-rank");
 const cleanupDirs: string[] = [];
@@ -20,9 +20,7 @@ afterAll(() => {
 });
 const fixture = (name: string): string => path.join(FIXTURES, name);
 
-// chakra-ui-F1: 32 of 1071 props were measured and none of them were Badge's.
-// heroui-F3/F2: `variant`/`placement`/`size` never appeared and the bound
-// declaration was a different component in the same file.
+// chakra-ui-F1, heroui-F3/F2: own props crowded out of the 32-prop cap by inherited surface.
 
 describe("the 32-prop cap on a component that inherits a DOM surface", () => {
   it("keeps the component's own props even when they resolve to unknown", async () => {
@@ -142,8 +140,7 @@ describe("the export selection order shared with the harness", () => {
   });
 });
 
-// base-ui-F3: curve mode auto-activated on NumberFieldRoot's `max`, then the run
-// reported that the DOM node count never moved across the scale points.
+// base-ui-F3: curve mode fired on NumberFieldRoot's max; DOM count never moved across scale points.
 
 describe("curve mode on numeric props", () => {
   it("does not activate on a name that denotes a bound or a step", async () => {
@@ -160,10 +157,7 @@ describe("curve mode on numeric props", () => {
   });
 });
 
-// Review B-8: M103 section 3 claimed one function over one export list. There
-// are two (`selectMeasuredExport` here, `detectComponentExport` in harness.ts,
-// each with its own Provider pattern), and nothing pinned them together. Lane B
-// cannot edit harness.ts, so equality is pinned from this side instead.
+// Review B-8/M103: two functions must agree on export choice; Lane B cannot edit harness.ts.
 
 describe("the export order this file shares with the harness", () => {
   const cases: { exports: { name: string; isDefault: boolean }[]; file: string }[] = [
@@ -206,10 +200,7 @@ describe("the export order this file shares with the harness", () => {
   });
 });
 
-// chakra-F1 (re-test): `colorPalette` is declared in the same 705-member
-// generated interface as the three hundred style props, so origin, width and
-// shape cannot separate it from them — but its NAME is one a design system
-// reserves for its own variant surface.
+// chakra-F1 (re-test): colorPalette cannot be separated from style props by shape, only by name.
 
 describe("props whose name is a design system's own variant axis", () => {
   it("keeps colorPalette inside the measured window", async () => {
@@ -239,9 +230,7 @@ describe("props whose name is a design system's own variant axis", () => {
   });
 });
 
-// dub-F2 (disclosure half): `table: TableType<T>` is required, synthesized as a
-// placeholder object, and the run then crashes on `table.getVisibleLeafColumns
-// is not a function` with nothing said in either mode.
+// dub-F2: a required TableType<T> synthesizes as a placeholder; getVisibleLeafColumns then crashes.
 
 describe("a required prop whose type nothing can be synthesized from", () => {
   it("names the prop, its type and the remedy", async () => {

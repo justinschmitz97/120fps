@@ -1,18 +1,18 @@
 import { describe, it, expect } from "vitest";
-import { parseArgs } from "../../src/cli.js";
+import { parseArgs } from "../../src/cli/index.js";
 import {
   parseIsolationPhases,
   buildMemoryReport,
   buildStrictModeReport,
   buildRerenderIsolation,
   type IsolationPhase,
-} from "../../src/isolation.js";
+} from "../../src/analysis/index.js";
 import {
   formatTable,
   buildTimingWithCV,
   type Report,
-} from "../../src/report.js";
-import type { IsolationReport } from "../../src/isolation.js";
+} from "../../src/report/index.js";
+import type { IsolationReport } from "../../src/analysis/index.js";
 
 function makeTiming(median: number) {
   return buildTimingWithCV([median, median, median]);
