@@ -95,6 +95,9 @@ Notes:
 - Matrix runs don't participate in baselines. Use `--no-matrix` to save/check a baseline for such a component.
 - `--curve`, `--matrix`, `--isolate` are exclusive whole-run modes; combining them is a usage error.
 - Exit codes: 0 pass, 1 verdict fail, 2 setup/usage error.
+- The harness readiness wait is bounded at 90s by default; raise it with the `FPS120_READY_TIMEOUT_MS` environment variable (a positive whole number of milliseconds) on a slow or busy machine.
+- A Nuxt project whose `.nuxt/` directory is missing a file its own tsconfig names is refused before the browser starts, naming the missing file and the `nuxi prepare` remedy, in the dry run and the real run alike.
+- A component whose import graph reaches a Babel macro (`*/macro`, `*.macro`, `babel-plugin-macros`) is refused before the browser, naming the importer, the macro and the compiler the project declares for it; `--no-preflight` bypasses the refusal and runs the rest of the pipeline unchanged.
 
 ### Which component gets measured
 
@@ -251,11 +254,12 @@ app/globals.css   app/global.css   src/app/globals.css   src/app/global.css
 src/styles/globals.css   styles/globals.css   src/index.css   src/global.css
 ```
 
-- Your `postcss.config.*` runs as-is; Tailwind 4 works with no extra config. Tailwind 3 reads `tailwind.config.{js,cjs,mjs,ts}` from the member's own root first, then each ancestor up to the workspace root, whatever directory the CLI was started from, so the `Stylesheets:` line and warnings read the same from any shell directory.
+- Your `postcss.config.*` is read and normalized by 120fps itself, not handed to Vite's own config loader: a string plugin name, a `[name, options]` tuple, and an object-map entry all resolve, each plugin's package resolved from the directory that actually declares it, so a config re-exported from a shared tooling package still finds its plugins. Tailwind 4 works with no extra config. Tailwind 3 reads `tailwind.config.{js,cjs,mjs,ts}` from the member's own root first, then each ancestor up to the workspace root, whatever directory the CLI was started from, so the `Stylesheets:` line and warnings read the same from any shell directory.
 - Split or unusual paths: `--css ./reset.css,./tokens.css` (cascade order). `--no-css` disables.
 - Fonts settle before the first sample (`document.fonts.ready`, 5s bound); injected files are named in `css.files` and the baseline fingerprint.
 - A package that generates its styling at runtime (Griffel, Emotion, `styled-components`, `@ant-design/cssinjs`, `antd-style`, `css-render`, PrimeVue) prints `Stylesheets: none — styling is generated at runtime by <engine>; no stylesheet was needed` instead of a fallback warning. A `makeStyles`/`createUseStyles`/`styled` import from an unrecognised package gets its own line naming the package and points at `--css`.
 - A package whose `package.json` declares a stylesheet (`style`, `exports["./styles"]`, `exports["./style.css"]`) that isn't built yet is reported as declared but unbuilt: the field, the missing path and the package's build command, instead of falling back to size-ranked guessing. The report's `css.declaredMissing` carries the missing paths.
+- A conventional-filename candidate whose Tailwind syntax contradicts the installed Tailwind major (a v4 `@import "tailwindcss"` sheet in a v3 project, or the reverse) is skipped before injection, naming the file, its dialect and the installed version, unless the project's own entry or manifest is what points at it. An injected stylesheet that throws while compiling, or does not finish within a 20s bound, is dropped and reported (`… did not compile within 20 s`) instead of ending the run, and the component may render unstyled.
 
 ## React Compiler
 
@@ -268,6 +272,8 @@ npx 120fps ./Button.tsx --react-compiler      # force on
 ```
 
 The terminal names the resolved target: `React Compiler: active (v1.0.0, target 18)`. When the installed React major's runtime module isn't resolvable, the transform is skipped instead of failing the run: `React Compiler: skipped (target 18: react-compiler-runtime not installed)`. The JSON `reactCompiler` object carries `target` and, on a skip, the reason.
+
+A component whose import graph reaches `react-native` (React Native Web apps such as Expo/RN-for-web projects) is measured through `react-native-web` when it's installed, the same substitution the app's own bundler makes; without it, the run stops naming React Native as the layer it cannot render and the file that imports it.
 
 ## Vue
 
@@ -374,6 +380,7 @@ export default function Wrapper({ children }: { children: React.ReactNode }) {
 - Node >= 22
 - React `>=18` in the profiled project (React mode); `vue` + `@vitejs/plugin-vue` (Vue mode); vanilla needs neither
 - `tsconfig.json` optional: nearest one wins, sane fallback otherwise. When the nearest config declares no `compilerOptions` and only `references`, the referenced config that covers the file supplies `paths`/`baseUrl`/`jsxImportSource`/`customConditions` instead, disclosed once naming both config paths. `.ts`/`.tsx`/`.js`/`.jsx` always compile with the automatic JSX runtime, whatever the config's own `jsx` setting is. A `paths` key with no non-wildcard prefix (`"/*"`, `"*"`) builds no alias and is reported once instead of applied.
+- `.scss`/`.sass` compiles with the project's own Sass when it resolves, otherwise with the copy 120fps ships, disclosed once naming the version; `.less` and `.styl`/`.stylus` need the project's own package, since 120fps bundles no implementation for either.
 - Chromium via Playwright: run `npx playwright install chromium` once after installing (the Playwright package downloads no browser on `npm install`); a run without the browser stops with that command as its hint
 
 ## License
