@@ -6,7 +6,7 @@ import type { HarnessResult } from "../harness/index.js";
 import { generateProbeEntry, generateProbeHtml } from "./react-probe-entry.js";
 import type { PropCombination } from "../props/index.js";
 import { FUNCTION_MARKER, serializeProps } from "../props/index.js";
-import { applyWrapperViewport, collectTrace, createPhaseTracker, parseTraceDuration, settleStyles, reportFontSettle, tryCollectGarbage, HARNESS_NAV_WAIT } from "../browser/index.js";
+import { applyWrapperViewport, collectTrace, createPhaseTracker, harnessReadyTimeoutMs, parseTraceDuration, settleStyles, reportFontSettle, tryCollectGarbage, HARNESS_NAV_WAIT } from "../browser/index.js";
 import { computeMedian, readJsonFile } from "../shared/index.js";
 import {
   attachPageErrorCapture,
@@ -544,14 +544,14 @@ export async function runReactAnalysis(
     const errorCapture = attachPageErrorCapture(page, path.basename(harness.harnessDir));
 
     await gotoWithErrorContext(page, probeUrl, errorCapture, "react analysis harness", {
-      timeout: 30000,
+      timeout: harnessReadyTimeoutMs(),
       waitUntil: HARNESS_NAV_WAIT,
     });
     try {
       await page.waitForFunction(
         () => typeof (window as any).__120fps === "object",
         undefined,
-        { timeout: 30000 },
+        { timeout: harnessReadyTimeoutMs() },
       );
     } catch (waitErr) {
       throw enrichTimeoutError(waitErr, errorCapture, "react analysis harness");

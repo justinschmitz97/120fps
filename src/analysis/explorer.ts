@@ -13,6 +13,7 @@ import {
   reportFontSettle,
   createRetryBudget,
   createPhaseTracker,
+  harnessReadyTimeoutMs,
   refreshCdpSession,
   type CdpHolder,
   HARNESS_NAV_WAIT,
@@ -392,7 +393,7 @@ export async function explore(
         await page.waitForFunction(
           () => typeof (window as any).__120fps === "object",
           undefined,
-          { timeout: 30000 },
+          { timeout: harnessReadyTimeoutMs() },
         );
       } catch (err) {
         throw enrichTimeoutError(err, errorCapture, "explorer harness");
