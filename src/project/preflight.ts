@@ -6,6 +6,7 @@ import { projectCompilerOptions } from "./compiler-options.js";
 import { setImportCycleReported, toPosix } from "../shared/index.js";
 import { isVueFile, parseSfcScript, type VueSfcCompiler } from "./vue-sfc.js";
 import { detectPnP, findWorkspaceRoot, isPackageDeclared } from "./model.js";
+import { isNuxtProject, nuxtPrepareGap, type NuxtPrepareGap } from "./nuxt.js";
 import {
   declaredTransformOwner,
   detectMissingInstall,
@@ -36,6 +37,8 @@ export interface PreflightHit {
   transformOwnerDeclared?: boolean;
   // Preprocessor refusals only: the search the walk performed, which the message reprints.
   preprocessor?: PreprocessorSearch;
+  // Nuxt refusals only: the config that names a generated file and the file it names.
+  nuxt?: NuxtPrepareGap;
 }
 
 export interface PreflightResult {
@@ -397,6 +400,11 @@ export function runPreflight(options: PreflightOptions): PreflightResult {
     isPackageDeclared("react-dom", projectRoot, workspaceRoot);
   if (!hasReact && isPackageDeclared("solid-js", projectRoot, workspaceRoot)) {
     hard.push({ kind: "unsupported-framework", chain: entryChain, specifier: "solid-js" });
+  }
+  // Decidable from disk, and no component in the project escapes it, so it precedes the walk.
+  if (isNuxtProject(projectRoot, workspaceRoot)) {
+    const gap = nuxtPrepareGap(projectRoot);
+    if (gap) hard.push({ kind: "nuxt-not-prepared", chain: entryChain, nuxt: gap });
   }
 
   const chainTo = (file: string): string[] => {

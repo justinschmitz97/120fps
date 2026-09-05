@@ -102,9 +102,38 @@ export function presentBundlerFailure(
     diagnoseGitignoredGeneratedFile(message, projectRoot) ??
     diagnoseNuxtBuildModule(message, buildWarnings, projectRoot) ??
     diagnosePreprocessorMissing(message, projectRoot) ??
+    diagnoseMuteReadinessTimeout(message, buildWarnings) ??
     diagnoseBundlerFailure(message, projectRoot) ??
     stripBundlerStackFrames(message)
   );
+}
+
+// An empty capture is the whole point: nothing threw, so nothing named itself.
+const READY_TIMEOUT_WITHOUT_ERRORS = /did not become ready within timeout\. No page errors were captured\./;
+// The run's own stylesheet decision line; "none" and "dropped" mean the entry imports no sheet.
+const INJECTED_STYLESHEET = /^Stylesheets: (?!none\b|dropped\b)(.+?)(?: \(|$)/m;
+
+export function READINESS_STYLESHEET_SUSPECT(files: string): string {
+  return (
+    `The first import of the generated harness entry is the stylesheet this run injected: ${files}. ` +
+    "A stylesheet that compiles slowly, or not at all, holds that entry module without raising a " +
+    "page error, which is the shape of this failure. Re-run with --no-css to take it out of the " +
+    "graph, or with --css <file> to name a smaller one: if the harness becomes ready then, that " +
+    "stylesheet is what held it."
+  );
+}
+
+function diagnoseMuteReadinessTimeout(
+  message: string,
+  buildWarnings: readonly string[],
+): string | undefined {
+  if (!READY_TIMEOUT_WITHOUT_ERRORS.test(message)) return undefined;
+  const files = buildWarnings
+    .map((warning) => INJECTED_STYLESHEET.exec(warning)?.[1])
+    .find((match): match is string => match !== undefined);
+  if (!files) return undefined;
+  // Appended, not substituted: the readiness wait's own report of what it waited for stands.
+  return `${stripBundlerStackFrames(message)}\n${READINESS_STYLESHEET_SUSPECT(files)}`;
 }
 
 const VITE_PREPROCESSOR_MISSING = /Preprocessor dependency "([^"]+)" not found/;

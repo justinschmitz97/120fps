@@ -32,7 +32,9 @@ export type PreflightKind =
   // Hard: no macro compiler is loadable here, so the macro reaches the browser unexpanded.
   | "unloadable-macro"
   // Hard: neither the project nor 120fps resolves the CSS preprocessor Vite would need.
-  | "unavailable-preprocessor";
+  | "unavailable-preprocessor"
+  // Hard: the tsconfig every transform reads names a file `nuxi prepare` never wrote.
+  | "nuxt-not-prepared";
 
 // The harness never loads the project's vite.config, so a missing transform is named here.
 export interface TransformRecognizer {
@@ -237,6 +239,7 @@ const HARD_CAUSE: Record<HardKind, string> = {
   "unloadable-file-type": "imports a file type Vite parses as JavaScript unless a plugin claims it",
   "unloadable-macro": "imports a Babel macro that no compiler here expands",
   "unavailable-preprocessor": "imports a stylesheet whose CSS preprocessor nothing here resolves",
+  "nuxt-not-prepared": "is measured in a Nuxt project that `nuxi prepare` has not finished",
 };
 
 // Only the three server-boundary kinds; Solid and PnP need their own next step.
@@ -275,6 +278,9 @@ export const HARD_REMEDY: Record<HardKind, string> = {
   "unavailable-preprocessor":
     "Install it where the measured package resolves it, then measure again. Pass --no-preflight " +
     "to attempt the run anyway.",
+  "nuxt-not-prepared":
+    "Run `nuxi prepare` in this project, then measure again. Pass --no-preflight to attempt the " +
+    "run anyway.",
 };
 
 // Process state like setCurrentRunProjectRoot: the remedy is built three layers below argv.
@@ -313,6 +319,19 @@ export function preflightFailureMessage(hits: PreflightHit[]): string {
   const hit = hits.find((candidate) => !TRANSFORM_REFUSAL_KINDS.has(candidate.kind)) ?? hits[0];
   const where = hit.chain[hit.chain.length - 1];
   const kind = hit.kind as HardKind;
+  // esbuild reads that config for every file it transforms, so no component escapes it.
+  if (kind === "nuxt-not-prepared" && hit.nuxt) {
+    return [
+      `Cannot measure this component in a browser: ${where} ${HARD_CAUSE[kind]}: ` +
+        `${hit.nuxt.config} names ${hit.nuxt.missing}, which is not on disk.`,
+      "",
+      `  ${chainText(hit)}`,
+      "",
+      "Vite's esbuild reads that config for every file it transforms, so the dev server would " +
+        "answer 500 on the harness entry before this component is measured.",
+      hardRemedyFor(kind),
+    ].join("\n");
+  }
   // The hit carries the search, because only the walk that produced it knew the two roots.
   if (kind === "unavailable-preprocessor" && hit.preprocessor) {
     const { packages, searched, installCommand, declared } = hit.preprocessor;
@@ -609,6 +628,7 @@ const BYPASS_KIND_LABEL: Record<HardKind, string> = {
   "unloadable-file-type": "unloadable-file-type",
   "unloadable-macro": "babel-macro",
   "unavailable-preprocessor": "css-preprocessor",
+  "nuxt-not-prepared": "nuxt-not-prepared",
 };
 
 export const PREFLIGHT_BYPASSED_WARNING = (hits: PreflightHit[]): string => {
