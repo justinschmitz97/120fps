@@ -1,6 +1,6 @@
 ---
 kind: milestone
-status: draft
+status: approved
 tests:
   - test/unit/sass-import-compiles-with-a-disclosed-compiler.test.ts
   - test/unit/css-preprocessor-declared-vs-installed.test.ts

@@ -1,6 +1,6 @@
 ---
 kind: milestone
-status: draft
+status: approved
 tests:
   - test/unit/readiness-timeout-names-the-wait-and-its-bound.test.ts
   - test/unit/readiness-bound-comes-from-the-environment.test.ts

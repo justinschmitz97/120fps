@@ -1,6 +1,6 @@
 ---
 kind: milestone
-status: draft
+status: approved
 tests:
   - test/unit/unbuilt-sibling-subpath-resolves-to-its-source.test.ts
 ---

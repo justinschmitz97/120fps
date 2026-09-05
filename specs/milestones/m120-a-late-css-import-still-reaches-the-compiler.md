@@ -1,6 +1,6 @@
 ---
 kind: milestone
-status: draft
+status: approved
 tests:
   - test/unit/late-css-import-still-reaches-the-compiler.test.ts
 ---

@@ -1,6 +1,6 @@
 ---
 kind: milestone
-status: draft
+status: approved
 tests:
   - test/unit/stylesheet-contradicting-the-installed-tailwind-is-skipped.test.ts
   - test/unit/uncompilable-injected-stylesheet-degrades-to-unstyled.test.ts

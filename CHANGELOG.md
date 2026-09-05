@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.7.0
 
 Field-test run 6 remediation: ten milestones closing run-6 smoke clusters 1 through 9 (cluster 9,
 twenty's unbuilt-workspace-sibling subpath, by M126) plus the callback-identity performance finding,

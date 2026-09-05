@@ -1,6 +1,6 @@
 ---
 kind: milestone
-status: draft
+status: approved
 tests:
   - test/unit/nuxt-app-is-refused-or-reaches-the-first-measurement.test.ts
 ---

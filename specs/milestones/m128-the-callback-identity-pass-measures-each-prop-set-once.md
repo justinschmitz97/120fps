@@ -1,6 +1,6 @@
 ---
 kind: milestone
-status: draft
+status: approved
 tests:
   - test/unit/callback-identity-pass-is-bounded.test.ts
   - test/e2e/callback-identity.test.ts

@@ -1,6 +1,6 @@
 ---
 kind: milestone
-status: draft
+status: approved
 tests:
   - test/unit/postcss-config-plugins-load-from-the-defining-package.test.ts
   - test/unit/style-engine-detection.test.ts
