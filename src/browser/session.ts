@@ -5,6 +5,8 @@ import {
   attachPageErrorCapture,
   enrichPhaseError,
   gotoWithErrorContext,
+  harnessReadyBoundNotice,
+  harnessReadyTimeoutMs,
   waitForReadyOrFatal,
   type MeasurementPhase,
   type PageErrorCapture,
@@ -47,8 +49,6 @@ export async function suspendThrottle<T>(
 // A stylesheet whose webfont never answers keeps `load` pending past the settle gate's bound.
 export const HARNESS_NAV_WAIT = "domcontentloaded" as const;
 
-const HARNESS_READY_TIMEOUT_MS = 30000;
-
 export interface HarnessSessionOptions {
   // Names the session in a readiness-timeout error.
   label: string;
@@ -71,6 +71,9 @@ export async function enterHarness(
   options: HarnessSessionOptions,
 ): Promise<void> {
   const url = harness.url + (options.search ?? "");
+  // Disclosed before the wait it governs, so a mistyped bound is read with the timeout it caused.
+  const boundNotice = harnessReadyBoundNotice();
+  if (boundNotice) options.onWarning?.(boundNotice);
   await gotoWithErrorContext(page, url, errorCapture, options.label, {
     waitUntil: HARNESS_NAV_WAIT,
   });
@@ -80,7 +83,7 @@ export async function enterHarness(
       page.waitForFunction(
         () => typeof (window as any).__120fps === "object",
         undefined,
-        { timeout: HARNESS_READY_TIMEOUT_MS },
+        { timeout: harnessReadyTimeoutMs() },
       ),
     errorCapture,
     options.label,

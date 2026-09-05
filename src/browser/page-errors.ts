@@ -256,6 +256,58 @@ export function tdzCycleNote(capture: PageErrorCapture): string | undefined {
   return undefined;
 }
 
+export const HARNESS_READY_TIMEOUT_ENV = "FPS120_READY_TIMEOUT_MS";
+export const DEFAULT_HARNESS_READY_TIMEOUT_MS = 90000;
+// A wait that gave up faster than this never exhausted a bound; entering it again would spin.
+const READY_RETRY_FLOOR_MS = 100;
+
+function readDeclaredBound(env: NodeJS.ProcessEnv): { raw: string; ms?: number } | undefined {
+  const raw = env[HARNESS_READY_TIMEOUT_ENV];
+  if (raw === undefined || raw.trim() === "") return undefined;
+  const declared = Number(raw.trim());
+  return Number.isInteger(declared) && declared > 0 ? { raw, ms: declared } : { raw };
+}
+
+export function harnessReadyTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
+  return readDeclaredBound(env)?.ms ?? DEFAULT_HARNESS_READY_TIMEOUT_MS;
+}
+
+// Once per process: every readiness wait reads the same variable, and one notice is the finding.
+let boundNoticeDelivered = false;
+
+export function harnessReadyBoundNotice(
+  env: NodeJS.ProcessEnv = process.env,
+): string | undefined {
+  const declared = readDeclaredBound(env);
+  if (!declared || declared.ms !== undefined || boundNoticeDelivered) return undefined;
+  boundNoticeDelivered = true;
+  return (
+    `${HARNESS_READY_TIMEOUT_ENV}="${declared.raw}" is not a positive whole number of ` +
+    `milliseconds; the harness readiness wait keeps its default of ` +
+    `${DEFAULT_HARNESS_READY_TIMEOUT_MS} ms.`
+  );
+}
+
+// Seconds is what a real bound reads as; a sub-second wait only happens under a tiny bound.
+function formatWaited(ms: number): string {
+  return ms < 1000 ? `${ms} ms` : `${Number((ms / 1000).toFixed(1))} s`;
+}
+
+// Possibilities, never a verdict: what actually held the page is what a page error would name.
+function readinessWaitNote(waitedMs: number): string {
+  return (
+    `It waited ${formatWaited(waitedMs)} for the harness page to define window.__120fps. ` +
+    "A machine busy with parallel work, or a dependency pre-bundle running for the first time, " +
+    "can push that wait past the bound. An import that never settles never ends it. " +
+    `${HARNESS_READY_TIMEOUT_ENV}=<milliseconds> raises the bound ` +
+    `(default ${DEFAULT_HARNESS_READY_TIMEOUT_MS}).`
+  );
+}
+
+function isTimeoutError(err: Error): boolean {
+  return err.name === "TimeoutError" || err.message.includes("Timeout");
+}
+
 // One summary text under two lead sentences, so a hang and an early throw read differently.
 function errorDetailBlock(capture: PageErrorCapture): string {
   return capture.errors.length > 0
@@ -285,16 +337,18 @@ export function enrichTimeoutError(
   capture: PageErrorCapture,
   context: string,
   remedyLine?: string,
+  // Set by a readiness wait, which knows the global it polled; a navigation wait leaves it out.
+  readiness?: { waitedMs: number },
 ): Error {
   const base = err instanceof Error ? err : new Error(String(err));
-  const isTimeout = base.name === "TimeoutError" || base.message.includes("Timeout");
-  if (!isTimeout) return base;
+  if (!isTimeoutError(base)) return base;
 
   const remedy = envRemedyFor(capture, remedyLine);
   // A temporal-dead-zone error has a known cause, so the env-file line would read as a guess.
   const cycle = tdzCycleNote(capture);
   return new Error(
     `${context} did not become ready within timeout.${errorDetailBlock(capture)}` +
+      (readiness ? `\n${readinessWaitNote(readiness.waitedMs)}` : "") +
       (cycle ? `\n${cycle}` : remedy),
     { cause: err },
   );
@@ -341,17 +395,29 @@ export async function waitForReadyOrFatal(
   const fatalSignal = capture.waitForFatal().then((f) => {
     fatal = f;
   });
-  try {
-    await Promise.race([waitForReady(), fatalSignal]);
-  } catch (err) {
-    // A fatal that arrived before this registered a waiter still leads over the timeout.
-    const delivered = fatal ?? capture.capturedFatal();
-    if (delivered) {
-      throw buildFatalPageErrorMessage(delivered, capture, context, buildEnvRemedyLine?.());
+  // The deadline is this function's; the wait it is given carries a per-attempt bound of its own.
+  const started = Date.now();
+  const deadline = started + harnessReadyTimeoutMs();
+  for (;;) {
+    const attemptStarted = Date.now();
+    try {
+      await Promise.race([waitForReady(), fatalSignal]);
+      break;
+    } catch (err) {
+      // A fatal that arrived before this registered a waiter still leads over the timeout.
+      const delivered = fatal ?? capture.capturedFatal();
+      if (delivered) {
+        throw buildFatalPageErrorMessage(delivered, capture, context, buildEnvRemedyLine?.());
+      }
+      const now = Date.now();
+      const attemptExhaustedItsBound = now - attemptStarted >= READY_RETRY_FLOOR_MS;
+      if (err instanceof Error && isTimeoutError(err) && attemptExhaustedItsBound && now < deadline) {
+        continue;
+      }
+      // A timeout that captured nothing has nothing to attribute a remedy to.
+      const remedyLine = capture.errors.length > 0 ? buildEnvRemedyLine?.() : undefined;
+      throw enrichTimeoutError(err, capture, context, remedyLine, { waitedMs: now - started });
     }
-    // A timeout that captured nothing has nothing to attribute a remedy to.
-    const remedyLine = capture.errors.length > 0 ? buildEnvRemedyLine?.() : undefined;
-    throw enrichTimeoutError(err, capture, context, remedyLine);
   }
   if (fatal) {
     throw buildFatalPageErrorMessage(fatal, capture, context, buildEnvRemedyLine?.());
