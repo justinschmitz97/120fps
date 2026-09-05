@@ -17,6 +17,7 @@ import {
   type ReactCompilerState,
 } from "../project/index.js";
 import { presentBundlerFailure } from "./bundler-failure.js";
+import { cssImportHoistPlugin } from "./css-import-hoist.js";
 import { createHarnessDir, forgetHarnessDirIfRemoved, sweepStaleHarnessDirs } from "./dirs.js";
 import { readEnvDefines } from "./env.js";
 import { generateComposedEntry, generateEntry } from "./entry.js";
@@ -264,6 +265,8 @@ export async function buildAndServe(
   const plugins: unknown[] = styleTooling.tailwind
     ? await loadTailwindVitePlugin(projectRoot)
     : [];
+  // Ahead of Vite's own CSS plugin, so its import inliner sees the imports it accepts.
+  plugins.push(cssImportHoistPlugin());
   // Rebuilding the member's declared pipeline takes the config decision away from the shell.
   const tailwind3Postcss =
     styleTooling.tailwind3ConfigPath && styleTooling.tailwind3PostcssConfigFile

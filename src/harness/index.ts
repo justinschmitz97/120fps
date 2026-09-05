@@ -1,6 +1,7 @@
 export * from "./build.js";
 export * from "./bundler-failure.js";
 export * from "./css.js";
+export * from "./css-import-hoist.js";
 export * from "./deps-scan.js";
 export * from "./dirs.js";
 export * from "./entry.js";
