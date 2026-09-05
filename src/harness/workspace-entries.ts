@@ -49,6 +49,8 @@ function sourceCandidatesFor(real: string, declared: string): string[] {
     const tail = segments.slice(1).join("/");
     relatives.push(withoutExtension(tail), tail);
   }
+  // A package that builds flat out of a nested src/ keeps no copy of the entry beside its output.
+  for (const relative of [...relatives]) relatives.push(`src/${relative}`);
   const seen = new Set<string>();
   const candidates: string[] = [];
   for (const relative of relatives) {
