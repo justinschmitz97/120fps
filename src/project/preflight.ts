@@ -9,8 +9,8 @@ import { detectPnP, findWorkspaceRoot, isPackageDeclared } from "./model.js";
 import {
   declaredTransformOwner,
   detectMissingInstall,
+  hardKindForTransformCode,
   recognizeTransform,
-  UNLOADABLE_FILE_TYPE_CODES,
   type PreflightKind,
 } from "./preflight-gates.js";
 
@@ -522,9 +522,8 @@ export function runPreflight(options: PreflightOptions): PreflightResult {
 
   // Last, so an earlier refusal stays the one the message names; the hit stays in transforms.
   for (const hit of transforms) {
-    if (!hit.transformCode) continue;
-    if (!UNLOADABLE_FILE_TYPE_CODES.has(hit.transformCode)) continue;
-    hard.push({ ...hit, kind: "unloadable-file-type" });
+    const kind = hit.transformCode ? hardKindForTransformCode(hit.transformCode) : undefined;
+    if (kind) hard.push({ ...hit, kind });
   }
 
   return { hard, soft, transforms, providers };

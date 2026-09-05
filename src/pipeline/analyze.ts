@@ -21,6 +21,7 @@ import {
   applyWrapperViewport,
   createBrowserPool,
   gotoWithErrorContext,
+  harnessReadyTimeoutMs,
   measureWrapperOverhead,
   openMeasurementSession,
   probeMachineNoise,
@@ -480,7 +481,8 @@ export async function analyze(
           page.waitForFunction(
             () => typeof (window as any).__120fps === "object",
             undefined,
-            { timeout: 30000 },
+            // The same bound waitForReadyOrFatal enforces, so neither wait ends before the other.
+            { timeout: harnessReadyTimeoutMs() },
           ),
         pageErrors,
         "component harness",
