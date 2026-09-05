@@ -6,12 +6,15 @@ import { projectCompilerOptions } from "./compiler-options.js";
 import { setImportCycleReported, toPosix } from "../shared/index.js";
 import { isVueFile, parseSfcScript, type VueSfcCompiler } from "./vue-sfc.js";
 import { detectPnP, findWorkspaceRoot, isPackageDeclared } from "./model.js";
+import { isNuxtProject, nuxtPrepareGap, type NuxtPrepareGap } from "./nuxt.js";
 import {
   declaredTransformOwner,
   detectMissingInstall,
   hardKindForTransformCode,
+  preprocessorSearchFor,
   recognizeTransform,
   type PreflightKind,
+  type PreprocessorSearch,
 } from "./preflight-gates.js";
 
 // Not "next/server-only": Next.js re-exports this package unchanged.
@@ -32,6 +35,10 @@ export interface PreflightHit {
   transformOwner?: string;
   // The refusal may only claim "this project compiles that with X" when this is true.
   transformOwnerDeclared?: boolean;
+  // Preprocessor refusals only: the search the walk performed, which the message reprints.
+  preprocessor?: PreprocessorSearch;
+  // Nuxt refusals only: the config that names a generated file and the file it names.
+  nuxt?: NuxtPrepareGap;
 }
 
 export interface PreflightResult {
@@ -394,6 +401,11 @@ export function runPreflight(options: PreflightOptions): PreflightResult {
   if (!hasReact && isPackageDeclared("solid-js", projectRoot, workspaceRoot)) {
     hard.push({ kind: "unsupported-framework", chain: entryChain, specifier: "solid-js" });
   }
+  // Decidable from disk, and no component in the project escapes it, so it precedes the walk.
+  if (isNuxtProject(projectRoot, workspaceRoot)) {
+    const gap = nuxtPrepareGap(projectRoot);
+    if (gap) hard.push({ kind: "nuxt-not-prepared", chain: entryChain, nuxt: gap });
+  }
 
   const chainTo = (file: string): string[] => {
     const chain: string[] = [];
@@ -523,7 +535,14 @@ export function runPreflight(options: PreflightOptions): PreflightResult {
   // Last, so an earlier refusal stays the one the message names; the hit stays in transforms.
   for (const hit of transforms) {
     const kind = hit.transformCode ? hardKindForTransformCode(hit.transformCode) : undefined;
-    if (kind) hard.push({ ...hit, kind });
+    if (kind) {
+      hard.push({ ...hit, kind });
+      continue;
+    }
+    if (hit.transformCode !== "css-preprocessor") continue;
+    // Vite's own two search bases decide this, so it is settled without starting the server.
+    const preprocessor = preprocessorSearchFor(hit, projectRoot, workspaceRoot);
+    if (preprocessor) hard.push({ ...hit, kind: "unavailable-preprocessor", preprocessor });
   }
 
   return { hard, soft, transforms, providers };

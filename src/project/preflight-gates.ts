@@ -1,12 +1,15 @@
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   findWorkspaceRoot,
   installedPackageDir,
   isPackageDeclared,
   workspaceLevels,
 } from "./model.js";
+import { packageManagerAddCommand, packageManagerInstallCommand } from "./package-manager.js";
 import { detectProjectTransforms, SUPPORTED_TRANSFORM_PLUGINS } from "./transforms.js";
+import { toPosix } from "../shared/index.js";
 import type { PreflightHit } from "./preflight.js";
 
 export type PreflightKind =
@@ -27,7 +30,11 @@ export type PreflightKind =
   // Hard: the dev server answers 500 and the run dies inside Vite's import analysis.
   | "unloadable-file-type"
   // Hard: no macro compiler is loadable here, so the macro reaches the browser unexpanded.
-  | "unloadable-macro";
+  | "unloadable-macro"
+  // Hard: neither the project nor 120fps resolves the CSS preprocessor Vite would need.
+  | "unavailable-preprocessor"
+  // Hard: the tsconfig every transform reads names a file `nuxi prepare` never wrote.
+  | "nuxt-not-prepared";
 
 // The harness never loads the project's vite.config, so a missing transform is named here.
 export interface TransformRecognizer {
@@ -231,6 +238,8 @@ const HARD_CAUSE: Record<HardKind, string> = {
     "workspace root)",
   "unloadable-file-type": "imports a file type Vite parses as JavaScript unless a plugin claims it",
   "unloadable-macro": "imports a Babel macro that no compiler here expands",
+  "unavailable-preprocessor": "imports a stylesheet whose CSS preprocessor nothing here resolves",
+  "nuxt-not-prepared": "is measured in a Nuxt project that `nuxi prepare` has not finished",
 };
 
 // Only the three server-boundary kinds; Solid and PnP need their own next step.
@@ -265,6 +274,13 @@ export const HARD_REMEDY: Record<HardKind, string> = {
     "In a copy of this component, write the macro call out by hand as the code the compiler " +
     "would have generated, or measure a component below this one whose graph does not reach the " +
     "macro. Pass --no-preflight to attempt the run anyway.",
+  // The command itself is per-project, so the hit carries it and the message prints it above this.
+  "unavailable-preprocessor":
+    "Install it where the measured package resolves it, then measure again. Pass --no-preflight " +
+    "to attempt the run anyway.",
+  "nuxt-not-prepared":
+    "Run `nuxi prepare` in this project, then measure again. Pass --no-preflight to attempt the " +
+    "run anyway.",
 };
 
 // Process state like setCurrentRunProjectRoot: the remedy is built three layers below argv.
@@ -290,8 +306,12 @@ export class PreflightHardRejectionError extends Error {
   }
 }
 
-// Both transform refusals name an import edge; every other refusal fails before Vite gets there.
-const TRANSFORM_REFUSAL_KINDS = new Set<PreflightKind>(["unloadable-file-type", "unloadable-macro"]);
+// Every transform refusal names an import edge; the others fail before Vite gets there.
+const TRANSFORM_REFUSAL_KINDS = new Set<PreflightKind>([
+  "unloadable-file-type",
+  "unloadable-macro",
+  "unavailable-preprocessor",
+]);
 
 // The first hit is the one to fix: everything below it is unreachable until that edge moves.
 export function preflightFailureMessage(hits: PreflightHit[]): string {
@@ -299,6 +319,39 @@ export function preflightFailureMessage(hits: PreflightHit[]): string {
   const hit = hits.find((candidate) => !TRANSFORM_REFUSAL_KINDS.has(candidate.kind)) ?? hits[0];
   const where = hit.chain[hit.chain.length - 1];
   const kind = hit.kind as HardKind;
+  // esbuild reads that config for every file it transforms, so no component escapes it.
+  if (kind === "nuxt-not-prepared" && hit.nuxt) {
+    return [
+      `Cannot measure this component in a browser: ${where} ${HARD_CAUSE[kind]}: ` +
+        `${hit.nuxt.config} names ${hit.nuxt.missing}, which is not on disk.`,
+      "",
+      `  ${chainText(hit)}`,
+      "",
+      "Vite's esbuild reads that config for every file it transforms, so the dev server would " +
+        "answer 500 on the harness entry before this component is measured.",
+      hardRemedyFor(kind),
+    ].join("\n");
+  }
+  // The hit carries the search, because only the walk that produced it knew the two roots.
+  if (kind === "unavailable-preprocessor" && hit.preprocessor) {
+    const { packages, searched, installCommand, declared } = hit.preprocessor;
+    return [
+      `Cannot measure this component in a browser: ${where} imports ${hit.specifier}, and the ` +
+        `CSS preprocessor Vite compiles it with (${packages.join(" or ")}) resolves nowhere the ` +
+        "dev server would look.",
+      "",
+      `  ${chainText(hit)}`,
+      "",
+      (declared
+        ? "This project declares it, so its node_modules is out of date. "
+        : "This project declares it nowhere, and 120fps ships no copy of it. ") +
+        `Looked in ${searched.join(", ")} and in 120fps's own installed copy.`,
+      "",
+      `  ${installCommand}`,
+      "",
+      hardRemedyFor(kind),
+    ].join("\n");
+  }
   // Nothing on disk changes this: no macro compiler is among the transforms 120fps loads.
   if (kind === "unloadable-macro") {
     const supported = SUPPORTED_TRANSFORM_PLUGINS.map((plugin) => plugin.code).join(", ");
@@ -378,7 +431,62 @@ export const CSS_PREPROCESSOR_PACKAGES: Record<string, string[]> = {
   ".stylus": ["stylus"],
 };
 
+// 120fps declares sass so Vite's second search base answers for a project that has none.
+const BUNDLED_PREPROCESSOR_PACKAGES = ["sass"];
+
+// Vite's own fallback base is its install directory, so the probe starts where Vite's does.
+function bundledSearchBases(): string[] {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const viteDir = installedPackageDir("vite", here);
+  if (!viteDir) return [here];
+  try {
+    // Vite reads import.meta.url, which node resolves through the symlink a store install uses.
+    return [here, fs.realpathSync(viteDir)];
+  } catch {
+    return [here, viteDir];
+  }
+}
+
+const bundledVersions = new Map<string, string | undefined>();
+
+function bundledVersion(pkg: string): string | undefined {
+  if (bundledVersions.has(pkg)) return bundledVersions.get(pkg);
+  let version: string | undefined;
+  for (const base of bundledSearchBases()) {
+    const dir = installedPackageDir(pkg, base);
+    if (!dir) continue;
+    try {
+      const manifest = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf-8"));
+      if (typeof manifest.version === "string") {
+        version = manifest.version;
+        break;
+      }
+    } catch {
+      // An unreadable manifest is the same as no copy: the refusal path stays truthful.
+    }
+  }
+  bundledVersions.set(pkg, version);
+  return version;
+}
+
+// The implementation this run would fall through to for that extension, when there is one.
+export function bundledPreprocessor(
+  extension: string,
+): { package: string; version: string } | undefined {
+  const packages = CSS_PREPROCESSOR_PACKAGES[extension.toLowerCase()];
+  if (!packages) return undefined;
+  for (const pkg of packages) {
+    if (!BUNDLED_PREPROCESSOR_PACKAGES.includes(pkg)) continue;
+    const version = bundledVersion(pkg);
+    if (version) return { package: pkg, version };
+  }
+  return undefined;
+}
+
 export type PreprocessorAvailability = "installed" | "declared-not-installed" | "neither";
+
+// What the run will do about the hit: the project's own copy, 120fps's, or refuse.
+export type PreprocessorDisposition = PreprocessorAvailability | "bundled";
 
 // undefined for anything but a css-preprocessor hit: those callers keep unconditional wording.
 export function classifyPreprocessorAvailability(
@@ -401,25 +509,89 @@ export function classifyProjectTransformHits(
   projectRoot: string,
   transforms: PreflightHit[],
   opts: { noTransforms?: boolean; workspaceRoot?: string } = {},
-): Array<{ hit: PreflightHit; availability: PreprocessorAvailability | undefined }> {
+): Array<{ hit: PreflightHit; availability: PreprocessorDisposition | undefined }> {
   if (opts.noTransforms) return [];
   const loadable = new Set(detectProjectTransforms(projectRoot).map((t) => t.code));
   const workspaceRoot = opts.workspaceRoot ?? findWorkspaceRoot(projectRoot);
+  let disclosedBundled = false;
   return transforms
     .filter((hit) => !hit.transformCode || !loadable.has(hit.transformCode))
     .map((hit) => ({
       hit,
-      availability: classifyPreprocessorAvailability(hit, projectRoot, workspaceRoot),
+      availability: dispositionFor(hit, projectRoot, workspaceRoot),
     }))
     // A preprocessor is never in loadable: Vite resolves it itself, so availability decides here.
-    .filter(({ availability }) => availability !== "installed");
+    .filter(({ availability }) => availability !== "installed")
+    // One disclosure per run: every .scss edge in the graph compiles with the same copy.
+    .filter(({ availability }) => {
+      if (availability !== "bundled") return true;
+      if (disclosedBundled) return false;
+      disclosedBundled = true;
+      return true;
+    });
+}
+
+// The project's own answer first; the bundled copy only decides what happens without one.
+function dispositionFor(
+  hit: PreflightHit,
+  memberRoot: string,
+  workspaceRoot: string,
+): PreprocessorDisposition | undefined {
+  const availability = classifyPreprocessorAvailability(hit, memberRoot, workspaceRoot);
+  if (availability === undefined || availability === "installed") return availability;
+  return bundledPreprocessor(path.extname(hit.specifier ?? "")) ? "bundled" : availability;
+}
+
+// What the refusal has to print, gathered where both roots are still in hand.
+export interface PreprocessorSearch {
+  packages: string[];
+  searched: string[];
+  installCommand: string;
+  declared: boolean;
+}
+
+// Defined only for a hit nothing resolves: an available or bundled preprocessor is no refusal.
+export function preprocessorSearchFor(
+  hit: PreflightHit,
+  memberRoot: string,
+  workspaceRoot: string,
+): PreprocessorSearch | undefined {
+  const disposition = dispositionFor(hit, memberRoot, workspaceRoot);
+  if (disposition !== "neither" && disposition !== "declared-not-installed") return undefined;
+  const packages = CSS_PREPROCESSOR_PACKAGES[path.extname(hit.specifier ?? "").toLowerCase()] ?? [];
+  const searched = workspaceLevels(memberRoot, workspaceRoot).map((level) => {
+    const relative = toPosix(path.relative(workspaceRoot, level));
+    return relative === "" ? "node_modules" : `${relative}/node_modules`;
+  });
+  const declared = disposition === "declared-not-installed";
+  return {
+    packages,
+    searched,
+    declared,
+    installCommand: declared
+      ? packageManagerInstallCommand(memberRoot, process.cwd())
+      : packageManagerAddCommand(memberRoot, packages[0], process.cwd()),
+  };
 }
 
 // Names the transform, not the symptom Vite reports without the plugin the project relies on.
 export const PROJECT_TRANSFORM_WARNING = (
   hit: PreflightHit,
-  availability?: PreprocessorAvailability,
+  availability?: PreprocessorDisposition,
 ): string => {
+  // Tense-neutral on purpose: the dry run predicts the same sentence the real run prints.
+  if (hit.transformCode === "css-preprocessor" && availability === "bundled") {
+    const extension = path.extname(hit.specifier ?? "").toLowerCase();
+    const packages = CSS_PREPROCESSOR_PACKAGES[extension] ?? [];
+    const bundled = bundledPreprocessor(extension);
+    return (
+      `[transform:${hit.transformCode}] ${chainText(hit)}: no ${packages.join(" or ")} resolves ` +
+      "from the measured package or its workspace root, so Vite falls through to the copy 120fps " +
+      `ships (${bundled?.package} ${bundled?.version}) and this stylesheet compiles with that ` +
+      `version rather than one this project pins. Add ${packages[0]} to the measured package to ` +
+      "compile with the project's own."
+    );
+  }
   if (hit.transformCode === "css-preprocessor" && availability === "declared-not-installed") {
     return (
       `[transform:${hit.transformCode}] ${chainText(hit)}: the CSS preprocessor it needs is ` +
@@ -455,6 +627,8 @@ const BYPASS_KIND_LABEL: Record<HardKind, string> = {
   "not-installed": "not-installed",
   "unloadable-file-type": "unloadable-file-type",
   "unloadable-macro": "babel-macro",
+  "unavailable-preprocessor": "css-preprocessor",
+  "nuxt-not-prepared": "nuxt-not-prepared",
 };
 
 export const PREFLIGHT_BYPASSED_WARNING = (hits: PreflightHit[]): string => {
