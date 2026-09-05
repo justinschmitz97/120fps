@@ -6,7 +6,7 @@ import type { HarnessResult } from "../harness/index.js";
 import { generateProbeEntry, generateProbeHtml } from "./react-probe-entry.js";
 import type { PropCombination } from "../props/index.js";
 import { FUNCTION_MARKER, serializeProps } from "../props/index.js";
-import { applyWrapperViewport, collectTrace, createPhaseTracker, parseTraceDuration, settleStyles, reportFontSettle, tryCollectGarbage, HARNESS_NAV_WAIT } from "../browser/index.js";
+import { applyWrapperViewport, collectTrace, createPhaseTracker, harnessReadyTimeoutMs, parseTraceDuration, settleStyles, reportFontSettle, tryCollectGarbage, HARNESS_NAV_WAIT } from "../browser/index.js";
 import { computeMedian, readJsonFile } from "../shared/index.js";
 import {
   attachPageErrorCapture,
@@ -59,6 +59,71 @@ export function computeCallbackIdentityDelta(
   if (deltaMs <= spread(stableSamples) + spread(freshSamples)) return null;
 
   return { deltaMs, stableMs, freshMs };
+}
+
+// A capture-phase prop is the same function on the same element as its bubble twin, so probing
+// both measures one thing twice. One without a twin in the list is the only handler there is.
+export function probedFunctionProps(fnPropNames: string[]): string[] {
+  const declared = new Set(fnPropNames);
+  return fnPropNames.filter(
+    (name) => !(name.endsWith("Capture") && declared.has(name.slice(0, -"Capture".length))),
+  );
+}
+
+// Key order is what the generator happened to emit, so equal props sort to one key.
+// __120fps_scaleN is a harness trigger key the probe entry has no branch for, so combos that
+// differ only in it mount the same single instance with the same props.
+export function propCombinationKey(props: PropCombination): string {
+  const serialized = serializeProps(props) as Record<string, unknown>;
+  return JSON.stringify(
+    Object.keys(serialized)
+      .filter((name) => name !== "__120fps_scaleN")
+      .sort()
+      .map((name) => [name, serialized[name]]),
+  );
+}
+
+// What one arm of the callback-identity probe needs from the page; a fake bounds the pass's work.
+export interface CallbackProbePort {
+  collectGarbage(): Promise<void>;
+  // Every arm mounts fresh, so only the measured prop's identity differs between the two arms.
+  mountWithStableCallbacks(fnProp: string): Promise<void>;
+  measureRerender(fnProp: string, fresh: boolean): Promise<number>;
+}
+
+export async function measureCallbackIdentityDeltas(
+  port: CallbackProbePort,
+  fnPropNames: string[],
+  samples: number,
+): Promise<CallbackIdentityDelta[]> {
+  const deltas: CallbackIdentityDelta[] = [];
+  for (const fnProp of probedFunctionProps(fnPropNames)) {
+    const stableSamples: number[] = [];
+    const freshSamples: number[] = [];
+
+    // Once per probed prop: the alternation below is what holds the two arms against drift.
+    await port.collectGarbage();
+
+    const measureArm = async (fresh: boolean, sink: number[]) => {
+      await port.mountWithStableCallbacks(fnProp);
+      sink.push(await port.measureRerender(fnProp, fresh));
+    };
+
+    // Arms alternate, so a baseline drifting over the pass does not land on one arm.
+    for (let s = 0; s < samples; s++) {
+      if (s % 2 === 0) {
+        await measureArm(false, stableSamples);
+        await measureArm(true, freshSamples);
+      } else {
+        await measureArm(true, freshSamples);
+        await measureArm(false, stableSamples);
+      }
+    }
+
+    const delta = computeCallbackIdentityDelta(stableSamples, freshSamples);
+    if (delta) deltas.push({ propName: fnProp, ...delta });
+  }
+  return deltas;
 }
 
 export interface RenderAttribution {
@@ -544,14 +609,14 @@ export async function runReactAnalysis(
     const errorCapture = attachPageErrorCapture(page, path.basename(harness.harnessDir));
 
     await gotoWithErrorContext(page, probeUrl, errorCapture, "react analysis harness", {
-      timeout: 30000,
+      timeout: harnessReadyTimeoutMs(),
       waitUntil: HARNESS_NAV_WAIT,
     });
     try {
       await page.waitForFunction(
         () => typeof (window as any).__120fps === "object",
         undefined,
-        { timeout: 30000 },
+        { timeout: harnessReadyTimeoutMs() },
       );
     } catch (waitErr) {
       throw enrichTimeoutError(waitErr, errorCapture, "react analysis harness");
@@ -570,6 +635,8 @@ export async function runReactAnalysis(
 
     // Read before any measurement: a later baseline would hide the orphans this pass creates.
     const portalBaseline = await countBodyOrphans(page);
+
+    const deltasByPropSet = new Map<string, CallbackIdentityDelta[]>();
 
     for (let ci = 0; ci < combos.length; ci++) {
       inFlight.combo = ci;
@@ -598,48 +665,47 @@ export async function runReactAnalysis(
       const ctxDiff = diffSnapshots(ctxSnapA, ctxSnapB);
       const contextFanOutComponents = detectContextFanOut(ctxDiff);
 
-      const callbackIdentityDeltas: CallbackIdentityDelta[] = [];
-      if (fnPropNames.length > 0) {
-        for (const fnProp of fnPropNames) {
-          const stableSamples: number[] = [];
-          const freshSamples: number[] = [];
-
-          const measureArm = async (fresh: boolean, sink: number[]) => {
-            await tryCollectGarbage(cdp);
-            await mountWithStableCallbacksProbe(page, props, fnProp);
-            const events = await collectTrace(cdp, async () => {
-              await page.evaluate(
-                ([p, name, isFresh]: [any, string, boolean]) =>
-                  (window as any).__120fps[
-                    isFresh ? "rerenderWithFreshCallbacks" : "rerenderWithStableCallbacks"
-                  ](p, name),
-                [serializeProps(props), fnProp, fresh] as [Record<string, unknown>, string, boolean],
-              );
-              await page.evaluate(
-                () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))),
-              );
-            });
-            sink.push(parseTraceDuration(events).totalDuration);
-          };
-
-          // Arms alternate, so a baseline drifting over the pass does not land on one arm.
-          for (let s = 0; s < samples; s++) {
-            if (s % 2 === 0) {
-              await measureArm(false, stableSamples);
-              await measureArm(true, freshSamples);
-            } else {
-              await measureArm(true, freshSamples);
-              await measureArm(false, stableSamples);
-            }
-          }
-
-          const delta = computeCallbackIdentityDelta(stableSamples, freshSamples);
-          if (delta) {
-            callbackIdentityDeltas.push({ propName: fnProp, ...delta });
-          }
-        }
+      // The probe renders the component alone, so combos passing equal props do identical work.
+      const propsKey = propCombinationKey(props);
+      let callbackIdentityDeltas = deltasByPropSet.get(propsKey);
+      if (!callbackIdentityDeltas) {
+        callbackIdentityDeltas = await measureCallbackIdentityDeltas(
+          {
+            collectGarbage: async () => {
+              await tryCollectGarbage(cdp);
+            },
+            mountWithStableCallbacks: (fnProp) =>
+              mountWithStableCallbacksProbe(page, props, fnProp),
+            measureRerender: async (fnProp, fresh) => {
+              const events = await collectTrace(cdp, async () => {
+                await page.evaluate(
+                  ([p, name, isFresh]: [any, string, boolean]) =>
+                    (window as any).__120fps[
+                      isFresh ? "rerenderWithFreshCallbacks" : "rerenderWithStableCallbacks"
+                    ](p, name),
+                  [serializeProps(props), fnProp, fresh] as [
+                    Record<string, unknown>,
+                    string,
+                    boolean,
+                  ],
+                );
+                await page.evaluate(
+                  () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))),
+                );
+              });
+              return parseTraceDuration(events).totalDuration;
+            },
+          },
+          fnPropNames,
+          samples,
+        );
+        deltasByPropSet.set(propsKey, callbackIdentityDeltas);
       }
 
+      // Its own window: counts that carried the callback arms described the pass, not the component.
+      await resetProfilerData(page);
+      await mountAndWaitProbe(page, props);
+      await rerenderProbe(page, props);
       const fullSnap = await collectProfilerData(page);
       const renderAttribution = computeRenderAttribution(fullSnap);
 

@@ -130,6 +130,8 @@ C:/Projekte/120fps-fieldtest/scratch/lane-c/dist/cli/main.js -- src/components/u
 - `src/analysis/explorer.ts:395` and `src/analysis/react-profiler.ts:547,554` call
   `page.waitForFunction` directly and keep their 30 s literal and today's message until lane D adopts
   the exported bound; the interface request is with lane D.
+  Adopted: the three analysis waits now call `harnessReadyTimeoutMs()`; their message is still each
+  site's own `enrichTimeoutError` text, so only the bound is shared.
 - Lowering the bound below a call site's own per-attempt bound: the deadline governs whether a wait
   is entered again, never how long one attempt runs, so `src/pipeline/analyze.ts:483` keeps its 30 s
   first attempt until lane B adopts `harnessReadyTimeoutMs()`. Raising the bound, which is what the
