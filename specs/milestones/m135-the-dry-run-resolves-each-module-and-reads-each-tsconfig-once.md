@@ -74,9 +74,17 @@ CPU profile of posthog `--explain-props` (3 candidates, 118 s sampled; 266 s col
   changes an answer; it only removes a repetition (M100/M110 parity is preserved by construction).
 - **C6** The measured effect is recorded: posthog `--explain-props` over the same three candidates is
   at least twice as fast as the pre-change build, measured in the same window on the same machine.
+- **C7** A specifier that resolves nowhere is disclosed once per run, not once per candidate. The
+  candidate that met it first prints it; later candidates of the same invocation do not repeat it,
+  and the same candidate asked twice (the dry run and the real run of one component) prints it both
+  times, so dry/real parity is unchanged. The same rule applies to the governing-alias conflict
+  disclosure M130 C10 introduced.
 
 ## MUST NOT
 
+- Serve a module resolution from the cache for a relative or root-absolute specifier. Those targets
+  can appear while the process lives — the harness writes its own entry into the measured project —
+  so only bare specifiers, which resolve through `node_modules` and `paths`, are cached.
 - Cache across processes, or key a cache on a content hash instead of a path plus `mtimeMs`. M116's
   MUST NOT already forbids both (`m116-…:546-547`), for staleness risk with no measured benefit.
 - Re-root the TypeScript program, change which files the program contains, or change the component
@@ -102,7 +110,11 @@ CPU profile of posthog `--explain-props` (3 candidates, 118 s sampled; 266 s col
   the others; the parsed `paths` and `compilerOptions` equal the uncached values.
 - **C4, C5** — extend `test/unit/explain-props-parity.test.ts` and `test/unit/preflight.test.ts`: the
   dry run and the real run produce identical decisions and warnings for the M130 fixtures; the
-  recorded corpus stdout diff below is empty.
+  recorded corpus stdout diff below contains only the repeat lines C7 removes.
+- **C7** — `test/unit/a-run-discloses-an-unresolved-package-once.test.ts`: three candidates of one
+  project report the unresolvable package once; a second project in the same process reports it
+  again; `test/unit/dry-run-names-the-unresolved-prebundle-entry.test.ts` still shows the dry run and
+  the real run of one component printing the same line.
 - **C6** — recorded below.
 - Types: `node node_modules/typescript/bin/tsc --noEmit -p tsconfig.json` clean.
 - Suite: the tests above plus `test/unit/tsconfig-*.test.ts`,
@@ -115,9 +127,33 @@ CPU profile of posthog `--explain-props` (3 candidates, 118 s sampled; 266 s col
 Recorded run of this milestone's verification:
 
 ```
-<filled by lane B: tsc result, the vitest invocations and their verbatim totals,
- and the before/after seconds for posthog --explain-props in one window>
+node node_modules/typescript/bin/tsc -p tsconfig.json          # exit 0
+
+npx vitest run test/unit/module-resolution-is-cached-across-candidates.test.ts   test/unit/a-tsconfig-is-parsed-once-per-path.test.ts   test/unit/a-run-discloses-an-unresolved-package-once.test.ts   test/unit/dry-run-names-the-unresolved-prebundle-entry.test.ts   test/unit/prebundle-entry-that-resolves-to-nothing-warns.test.ts   test/unit/import-graph-walk-parses-each-file-once.test.ts --maxWorkers=2
+#   Test Files  6 passed (6)      Tests  27 passed (27)
+
+npx vitest run test/unit --maxWorkers=2
+#   Test Files  2 failed | 348 passed (350)
+#   Tests  2 failed | 4958 passed | 1 skipped (4961)
+#   the two failures are the recorded baseline pair (prop-cap-ranking.test.ts,
+#   vue-setup-inject-evidence.test.ts).
 ```
+
+Each MUST was confirmed red before its fix: the two new test files failed on the missing
+`resetModuleResolutionCache` / `resetPreBuildDisclosures` exports, then on the counts themselves.
+
+Recorded corpus runs, `dist` built in `C:/Projekte/120fps-run7-lane-b`, logs under
+`C:/Projekte/120fps-fieldtest/logs/run7-lane-b/`. "Before" is the dist at the M130 commit
+(`7001cae`), "after" is the same worktree with this milestone applied, in the same window.
+
+| Repo | Candidates | Before | After | Output |
+|---|---|---|---|---|
+| posthog | 3 (`m135-posthog-before`, `m135-posthog-after`) | 316 s | 116 s (2.7x) | diff is 36 removed lines, every one a `resolves to no installed package` repeat from candidates 2 and 3; no line added, no line changed |
+| librechat | 5 (`m135-librechat-before`, `m135-librechat-after`) | 75 s, 60 unresolved-package lines, 25 alias-conflict lines | 44 s, 12 and 5 | diff adds nothing |
+| twenty | 1 (`m135-twenty-dry`) | 12 s at the M130 commit | 8 s | byte-identical to the M130 log |
+| plane | 3 (`m135-plane-dry`) | 26 s in `run7-smoke1` | 12 s | — |
+| trigger.dev | 3 (`m135-triggerdev-dry`) | 14 s in `run7-smoke1` | 5 s | — |
+| taxonomy (control) | 3 (`m135-taxonomy-3`) | 3 s in `run7-smoke1` | 3 s | unchanged |
 
 Corpus repros, through a `dist` built in `C:/Projekte/120fps-run7-lane-b`:
 
@@ -153,5 +189,7 @@ node C:/Projekte/120fps-fieldtest/tools/run120.mjs \
 - **Re-rooting or narrowing the TypeScript program.** Explicitly refuted: the program is already
   rooted at the component.
 - **Stylesheet and PostCSS work.** 0.2 s and 2.1 s of the profile; not a lever.
+- **Caching a relative module resolution.** The one class of target that can appear inside a live
+  process; the bare-specifier cache carries the measured win without it.
 - **Persisting any cache between invocations.** Forbidden by M116's cross-process clause; a warm dry
   run is a different contract with its own staleness surface.

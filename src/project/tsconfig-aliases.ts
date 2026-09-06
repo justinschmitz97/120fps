@@ -8,9 +8,10 @@ import {
   resolveGoverningTsconfig,
   TSCONFIG_EXTENDS_BROKEN_WARNING,
   TSCONFIG_REFERENCES_MARKER,
+  tsconfigSignature,
 } from "./model.js";
 import { resolveTarget, SOURCE_EXTENSIONS } from "./resolve.js";
-import { escapeRegex, toPosix } from "../shared/index.js";
+import { escapeRegex, pathKey, toPosix } from "../shared/index.js";
 
 function countStars(s: string): number {
   return (s.match(/\*/g) ?? []).length;
@@ -55,14 +56,14 @@ function baseUrlAliases(
   baseUrl: string,
   memberRoot: string,
   workspaceRoot: string,
-): Array<{ find: RegExp; replacement: string }> {
+): TsconfigAlias[] {
   let entries: fs.Dirent[];
   try {
     entries = fs.readdirSync(baseUrl, { withFileTypes: true });
   } catch {
     return [];
   }
-  const aliases: Array<{ find: RegExp; replacement: string }> = [];
+  const aliases: TsconfigAlias[] = [];
   const claimed = new Set<string>();
   // A file wins over a directory of the same name, as in node resolution.
   const ordered = [...entries.filter((e) => e.isFile()), ...entries.filter((e) => e.isDirectory())];
@@ -79,9 +80,20 @@ function baseUrlAliases(
       // A directory answers for everything under it; a file for its own name alone.
       find: new RegExp(`^${escapeRegex(name)}${isDirectory ? "(?=/|$)" : "$"}`),
       replacement: toPosix(path.resolve(baseUrl, entry.name)),
+      pattern: name,
+      target: entry.name,
     });
   }
   return aliases;
+}
+
+// A stale-alias report names the key and the target the project declared, not the built regex.
+export interface TsconfigAlias {
+  find: RegExp;
+  replacement: string;
+  pattern?: string;
+  target?: string;
+  fromWorkspaceRoot?: WorkspaceRootAliasSource;
 }
 
 // Tags an alias built from the workspace root, which WORKSPACE_ROOT_ALIAS_WARNING discloses.
@@ -113,7 +125,7 @@ export function TYPES_ONLY_ALIAS_WARNING(pattern: string, target: string): strin
 }
 
 // Slashes are stripped: a leading one makes a root-absolute URL, not a constraint on the path.
-function capturesEveryRootAbsoluteUrl(pattern: string): boolean {
+export function capturesEveryRootAbsoluteUrl(pattern: string): boolean {
   const first = pattern.indexOf("*");
   if (first === -1) return false;
   const bare = (part: string): string =>
@@ -128,7 +140,7 @@ function buildPathAliasEntry(
   base: string,
   configFile: string,
   warningsOut?: string[],
-): { find: RegExp; replacement: string } | undefined {
+): TsconfigAlias | undefined {
   if (!targets.length) return undefined;
   // First target only: Vite aliases support a single replacement.
   const target = targets[0];
@@ -139,7 +151,12 @@ function buildPathAliasEntry(
   if (pattern.endsWith("/*") && target.endsWith("/*")) {
     const prefix = pattern.slice(0, -2);
     const dir = toPosix(path.resolve(base, target.slice(0, -2)));
-    return { find: new RegExp(`^${escapeRegex(prefix)}/`), replacement: dir + "/" };
+    return {
+      find: new RegExp(`^${escapeRegex(prefix)}/`),
+      replacement: dir + "/",
+      pattern,
+      target,
+    };
   }
   const patternStars = countStars(pattern);
   const targetStars = countStars(target);
@@ -149,7 +166,7 @@ function buildPathAliasEntry(
       warningsOut?.push(ALIAS_SHAPE_WARNING(pattern, target));
       return undefined;
     }
-    return buildWildcardCaptureAlias(pattern, target, base);
+    return { ...buildWildcardCaptureAlias(pattern, target, base), pattern, target };
   }
   const resolved = toPosix(path.resolve(base, target));
   // No @types/ substring check: resolveTarget already answers undefined for a .d.ts package.
@@ -157,7 +174,7 @@ function buildPathAliasEntry(
     warningsOut?.push(TYPES_ONLY_ALIAS_WARNING(pattern, target));
     return undefined;
   }
-  return { find: new RegExp(`^${escapeRegex(pattern)}$`), replacement: resolved };
+  return { find: new RegExp(`^${escapeRegex(pattern)}$`), replacement: resolved, pattern, target };
 }
 
 interface ParsedTsconfigPaths {
@@ -184,8 +201,27 @@ export function ROOT_ABSOLUTE_ALIAS_WARNING(
   );
 }
 
+// The include globs are expanded over the whole project, and nothing here reads the file list.
+const NO_DIRECTORY_SCAN: ts.ParseConfigHost = { ...ts.sys, readDirectory: () => [] };
+
+// Keyed by mtime and size, so an edit invalidates the entry and a missing file is never cached.
+const parsedPathsConfigs = new Map<
+  string,
+  { signature: string | undefined; value: ParsedTsconfigPaths | undefined }
+>();
+
 // Independent of which layer asks; undefined on a read failure, after warning to stderr.
 function parseTsconfigPathsConfig(tsconfigPath: string): ParsedTsconfigPaths | undefined {
+  const key = pathKey(tsconfigPath);
+  const signature = tsconfigSignature(tsconfigPath);
+  const cached = parsedPathsConfigs.get(key);
+  if (cached && cached.signature === signature) return cached.value;
+  const value = readTsconfigPathsConfig(tsconfigPath);
+  parsedPathsConfigs.set(key, { signature, value });
+  return value;
+}
+
+function readTsconfigPathsConfig(tsconfigPath: string): ParsedTsconfigPaths | undefined {
   const configDir = path.dirname(tsconfigPath);
   try {
     const configFile = ts.readConfigFile(tsconfigPath, ts.sys.readFile);
@@ -198,7 +234,7 @@ function parseTsconfigPathsConfig(tsconfigPath: string): ParsedTsconfigPaths | u
     // The full result is kept, not just .options, so a broken extends diagnostic survives.
     const parsedResult = ts.parseJsonConfigFileContent(
       configFile.config,
-      ts.sys,
+      NO_DIRECTORY_SCAN,
       configDir,
       undefined,
       tsconfigPath,
@@ -238,13 +274,13 @@ export function loadTsconfigAliases(
   projectRoot: string,
   warningsOut?: string[],
   forFile?: string,
-): Array<{ find: RegExp; replacement: string; fromWorkspaceRoot?: WorkspaceRootAliasSource }> {
+): TsconfigAlias[] {
   // Bounded by the install root: a member inheriting the workspace tsconfig needs its aliases.
   const workspaceRoot = findWorkspaceRoot(projectRoot);
   const governing = resolveGoverningTsconfig(forFile ?? projectRoot, workspaceRoot);
   const tsconfigPath = governing.configPath;
 
-  let memberAliases: Array<{ find: RegExp; replacement: string }> = [];
+  let memberAliases: TsconfigAlias[] = [];
   let memberPatterns = new Set<string>();
   // An empty memberPatterns set cannot tell "no config" from "baseUrl and deliberately none".
   let memberDeclaredBaseUrlOnly = false;
@@ -286,11 +322,7 @@ export function loadTsconfigAliases(
 
   // A single-directory probe: findCompilerConfig(root, root) stops after one iteration.
   const rootConfigPath = findCompilerConfig(workspaceRoot, workspaceRoot);
-  const workspaceRootAliases: Array<{
-    find: RegExp;
-    replacement: string;
-    fromWorkspaceRoot: WorkspaceRootAliasSource;
-  }> = [];
+  const workspaceRootAliases: TsconfigAlias[] = [];
   if (
     !memberDeclaredBaseUrlOnly &&
     rootConfigPath &&
@@ -321,4 +353,54 @@ export function loadTsconfigAliases(
   }
 
   return [...memberAliases, ...workspaceRootAliases];
+}
+
+
+// One table per governing tsconfig, so a walk that crosses packages pays for each config once.
+const aliasTablesByConfig = new Map<string, TsconfigAlias[]>();
+// Keyed by config path: whether that config delegates its options to a `references` entry.
+const referencesOnlyConfigs = new Map<string, boolean>();
+
+export function resetTsconfigAliasTables(): void {
+  aliasTablesByConfig.clear();
+  referencesOnlyConfigs.clear();
+  parsedPathsConfigs.clear();
+}
+
+// Raw JSON only: no glob expansion, and the same rule resolveGoverningTsconfig applies.
+export function delegatesToReferences(configPath: string): boolean {
+  const cached = referencesOnlyConfigs.get(configPath);
+  if (cached !== undefined) return cached;
+  let answer = false;
+  const configFile = ts.readConfigFile(configPath, ts.sys.readFile);
+  const raw = configFile.config as { compilerOptions?: unknown; references?: unknown } | undefined;
+  if (!configFile.error && raw) {
+    const declared = raw.compilerOptions;
+    const declaresOwnOptions =
+      declared !== null &&
+      typeof declared === "object" &&
+      Object.keys(declared as Record<string, unknown>).length > 0;
+    answer = !declaresOwnOptions && Array.isArray(raw.references) && raw.references.length > 0;
+  }
+  referencesOnlyConfigs.set(configPath, answer);
+  return answer;
+}
+
+// The table that governs one file. Files under a references-only root are keyed one by one,
+// because which referenced config covers them is a property of the file, not of the directory.
+export function tsconfigAliasesForFile(projectRoot: string, file: string): TsconfigAlias[] {
+  const workspaceRoot = findWorkspaceRoot(projectRoot);
+  const nearest = findCompilerConfig(path.dirname(path.resolve(file)), workspaceRoot);
+  const scope =
+    nearest === undefined
+      ? ""
+      : delegatesToReferences(nearest)
+        ? pathKey(file)
+        : pathKey(nearest);
+  const key = `${pathKey(projectRoot)} ${scope}`;
+  const cached = aliasTablesByConfig.get(key);
+  if (cached) return cached;
+  const aliases = loadTsconfigAliases(projectRoot, undefined, file);
+  aliasTablesByConfig.set(key, aliases);
+  return aliases;
 }

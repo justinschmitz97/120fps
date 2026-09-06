@@ -1,8 +1,10 @@
 import path from "node:path";
+import { pathKey } from "../shared/index.js";
 import {
   findWorkspaceRoot,
   loadTsconfigAliases,
   resolveServerConditions,
+  tsconfigAliasesForFile,
   type WorkspaceRootAliasSource,
 } from "../project/index.js";
 import { scanExternalDeps } from "./deps-scan.js";
@@ -40,6 +42,16 @@ export interface StaticPreBuild {
   // Both modes report the same set without walking the graph again.
   unresolvedExternals: Array<{ specifier: string; importer: string }>;
   workspaceRoot: string;
+}
+
+
+// One --explain-props invocation walks several candidates over one graph; a specifier that
+// resolves nowhere is one fact about the project, not one per candidate. The candidate that met
+// it first keeps it, so the dry run and the real run of one component still report identically.
+const disclosedUnresolvedByProject = new Map<string, Map<string, string>>();
+
+export function resetPreBuildDisclosures(): void {
+  disclosedUnresolvedByProject.clear();
 }
 
 
@@ -83,11 +95,40 @@ export function collectStaticPreBuildWarnings(
     ...viteConfig.aliases,
     ...shimAliases,
   ];
+  // Only the tsconfig layer is per-package; vite aliases, shims and rescues are project-wide.
+  // The swap keeps that layer where it sits, so a rescue the walk put ahead of it stays ahead.
+  const measuredTsconfigAliases = new Set(tsconfigAliases);
+  const aliasesForFile = (file: string): StaticPreBuild["aliases"] => {
+    const governing = tsconfigAliasesForFile(projectRoot, file);
+    if (governing === tsconfigAliases) return aliases;
+    const swapped: StaticPreBuild["aliases"] = [];
+    let placed = false;
+    for (const alias of aliases) {
+      if (measuredTsconfigAliases.has(alias)) {
+        if (!placed) {
+          swapped.push(...governing);
+          placed = true;
+        }
+        continue;
+      }
+      swapped.push(alias);
+    }
+    if (!placed) swapped.push(...governing);
+    return swapped;
+  };
 
   const importedSpecifiers = new Set<string>();
   // Filled by the same walk, so the dry run reports what the real optimizer would choke on.
   const unresolvedExternals: Array<{ specifier: string; importer: string }> = [];
+  const projectDisclosureKey = pathKey(projectRoot);
+  const disclosureOwners =
+    disclosedUnresolvedByProject.get(projectDisclosureKey) ?? new Map<string, string>();
+  disclosedUnresolvedByProject.set(projectDisclosureKey, disclosureOwners);
+  const componentDisclosureKey = pathKey(opts.componentPath);
   const reportedUnresolvedSpecifiers = new Set<string>();
+  for (const [specifier, owner] of disclosureOwners) {
+    if (owner !== componentDisclosureKey) reportedUnresolvedSpecifiers.add(specifier);
+  }
   const externalDeps = [
     ...new Set([
       ...scanExternalDeps(
@@ -100,6 +141,7 @@ export function collectStaticPreBuildWarnings(
         aliases,
         unresolvedExternals,
         reportedUnresolvedSpecifiers,
+        aliasesForFile,
       ),
       // Wrapper packages must be pre-bundled too, or the first mount pays the optimize cost.
       ...(opts.wrapPath
@@ -113,6 +155,7 @@ export function collectStaticPreBuildWarnings(
             aliases,
             unresolvedExternals,
             reportedUnresolvedSpecifiers,
+            aliasesForFile,
           )
         : []),
     ]),
@@ -128,6 +171,10 @@ export function collectStaticPreBuildWarnings(
     activeShims = shimmed.length > 0 ? shimmed : undefined;
     unsupported = unshimmedNextModules(importedSpecifiers);
     if (unsupported.length > 0) warnings.push(UNSUPPORTED_NEXT_MODULE_WARNING(unsupported));
+  }
+
+  for (const specifier of reportedUnresolvedSpecifiers) {
+    if (!disclosureOwners.has(specifier)) disclosureOwners.set(specifier, componentDisclosureKey);
   }
 
   // Decided by the dependency alone: utility classes need it with no global stylesheet.
