@@ -10,3 +10,4 @@ export * from "./resolve.js";
 export * from "./transforms.js";
 export * from "./tsconfig-aliases.js";
 export * from "./vue-sfc.js";
+export * from "./workspace-source.js";

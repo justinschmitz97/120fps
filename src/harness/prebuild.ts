@@ -3,6 +3,7 @@ import {
   findWorkspaceRoot,
   loadTsconfigAliases,
   resolveServerConditions,
+  tsconfigAliasesForFile,
   type WorkspaceRootAliasSource,
 } from "../project/index.js";
 import { scanExternalDeps } from "./deps-scan.js";
@@ -83,6 +84,27 @@ export function collectStaticPreBuildWarnings(
     ...viteConfig.aliases,
     ...shimAliases,
   ];
+  // Only the tsconfig layer is per-package; vite aliases, shims and rescues are project-wide.
+  // The swap keeps that layer where it sits, so a rescue the walk put ahead of it stays ahead.
+  const measuredTsconfigAliases = new Set(tsconfigAliases);
+  const aliasesForFile = (file: string): StaticPreBuild["aliases"] => {
+    const governing = tsconfigAliasesForFile(projectRoot, file);
+    if (governing === tsconfigAliases) return aliases;
+    const swapped: StaticPreBuild["aliases"] = [];
+    let placed = false;
+    for (const alias of aliases) {
+      if (measuredTsconfigAliases.has(alias)) {
+        if (!placed) {
+          swapped.push(...governing);
+          placed = true;
+        }
+        continue;
+      }
+      swapped.push(alias);
+    }
+    if (!placed) swapped.push(...governing);
+    return swapped;
+  };
 
   const importedSpecifiers = new Set<string>();
   // Filled by the same walk, so the dry run reports what the real optimizer would choke on.
@@ -100,6 +122,7 @@ export function collectStaticPreBuildWarnings(
         aliases,
         unresolvedExternals,
         reportedUnresolvedSpecifiers,
+        aliasesForFile,
       ),
       // Wrapper packages must be pre-bundled too, or the first mount pays the optimize cost.
       ...(opts.wrapPath
@@ -113,6 +136,7 @@ export function collectStaticPreBuildWarnings(
             aliases,
             unresolvedExternals,
             reportedUnresolvedSpecifiers,
+            aliasesForFile,
           )
         : []),
     ]),

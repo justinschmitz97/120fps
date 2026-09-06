@@ -10,6 +10,7 @@ import {
   RE_EXPORT_HOPS,
   scanExports,
 } from "./exports.js";
+import { emit } from "./extract.js";
 import { literalValue } from "./presets.js";
 import type { ExportInfo, PropSchema } from "./schema.js";
 import { REACT_TYPE_PACKAGE } from "./synthesize.js";
@@ -547,6 +548,68 @@ function computedAnnotationText(node: ts.TypeNode | undefined): string | undefin
 }
 
 
+// Names the import the annotation reads: an empty schema is otherwise indistinguishable from
+// a component with no props at all.
+export function UNRESOLVED_ANNOTATION_MODULE_WARNING(
+  fileName: string,
+  targetName: string,
+  annotation: string,
+  modules: string[],
+): string {
+  const named = modules.map((module) => `"${module}"`).join(", ");
+  return (
+    `Warning: the props type ${annotation} for ${targetName} in ${fileName} reads ${named}, ` +
+    "which resolves to no module on disk: the props declared there are missing from this run."
+  );
+}
+
+
+// The import declaration a local alias came from, and the specifier it named.
+function importedModuleSpecifier(symbol: ts.Symbol): ts.StringLiteralLike | undefined {
+  for (const declaration of symbol.getDeclarations() ?? []) {
+    let node: ts.Node | undefined = declaration;
+    while (node) {
+      if (ts.isImportDeclaration(node) && ts.isStringLiteralLike(node.moduleSpecifier)) {
+        return node.moduleSpecifier;
+      }
+      node = node.parent;
+    }
+  }
+  return undefined;
+}
+
+
+// A module that resolved has a symbol on its specifier; a missing named export is another story.
+function unresolvedAnnotationModules(
+  node: ts.TypeNode | undefined,
+  checker: ts.TypeChecker,
+): string[] {
+  if (!node) return [];
+  const modules: string[] = [];
+  const seen = new Set<string>();
+  const consider = (name: ts.EntityName | ts.Node): void => {
+    let head: ts.Node = name;
+    while (ts.isQualifiedName(head)) head = head.left;
+    if (ts.isPropertyAccessExpression(head)) head = head.expression;
+    if (!ts.isIdentifier(head)) return;
+    const symbol = checker.getSymbolAtLocation(head);
+    if (!symbol || (symbol.flags & ts.SymbolFlags.Alias) === 0) return;
+    const specifier = importedModuleSpecifier(symbol);
+    if (!specifier || checker.getSymbolAtLocation(specifier) !== undefined) return;
+    if (seen.has(specifier.text)) return;
+    seen.add(specifier.text);
+    modules.push(specifier.text);
+  };
+  const visit = (child: ts.Node): void => {
+    if (ts.isTypeReferenceNode(child)) consider(child.typeName);
+    else if (ts.isTypeQueryNode(child)) consider(child.exprName);
+    ts.forEachChild(child, visit);
+  };
+  visit(node);
+  return modules;
+}
+
+
 // The `export`-inclusive start, 1-based, so a dry run points at the line a reader opens.
 function declarationLine(sourceFile: ts.SourceFile, node: ts.Node): number | undefined {
   const statement =
@@ -627,7 +690,21 @@ export function findComponentPropsType(
     }
   }
 
-  const computedAnnotation = computedAnnotationText(firstParameterTypeNode(target));
+  const annotationNode = firstParameterTypeNode(target);
+  const unresolvedModules = unresolvedAnnotationModules(annotationNode, checker);
+  if (unresolvedModules.length > 0 && annotationNode) {
+    emit(
+      `${path.resolve(sourceFile.fileName)}::unresolved-annotation::${target.name}`,
+      UNRESOLVED_ANNOTATION_MODULE_WARNING(
+        path.normalize(sourceFile.fileName),
+        target.name,
+        annotationNode.getText(),
+        unresolvedModules,
+      ) + "\n",
+      sink,
+    );
+  }
+  const computedAnnotation = computedAnnotationText(annotationNode);
   const context = {
     targetName: target.name,
     targetLine: declarationLine(sourceFile, target.declaration),

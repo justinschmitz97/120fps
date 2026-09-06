@@ -68,6 +68,17 @@ The verifier for every item below: run-7 investigation (2026-09-06), refuted by 
    (`src/harness/deps-scan.ts:56-61`, pushed at `:384-386`). The walk memo key serializes the alias
    array (`src/harness/deps-scan.ts:207-231`), so a per-file table changes the key.
 
+4. **A stale alias inside the measured graph is only a warning** — `walkExternalDeps` reports
+   `BROKEN_ALIAS_WARNING` and the run continues, so the failure lands minutes later inside Vite's
+   import analysis. The verifier: librechat (`E:/repositories-run7/librechat`, appDir `client`,
+   measured `src/components/Input/Generations/Button.tsx`). Its dry run prints
+   `import "librechat-data-provider/react-query" ... its target
+   E:/repositories-run7/librechat/packages/data-provider/react-query does not exist` and exits 0
+   (`smoke/run7-new1/librechat.json`); the real run exits 2 after 121 s with
+   `src/hooks/useNewConvo.ts imports "librechat-data-provider/react-query", which the dev server
+   could not resolve to a loadable file` (`smoke/run7-new1/logs/librechat/real.log:6`). The two
+   modes disagree, which M110 forbids.
+
 ## MUST
 
 - **C1** An import that resolves through `node_modules` to a workspace sibling whose declared entry
@@ -98,6 +109,21 @@ The verifier for every item below: run-7 investigation (2026-09-06), refuted by 
   exists on disk.
 - **C7** Dry/real parity (M100, M110): `--explain-props` and the real run make the same walk
   decisions, apply the same alias tables, and print the same alias and unresolved-module warnings.
+- **C8** An import that matches a configured path alias, resolves to nothing on disk through that
+  alias and through node resolution, and lies in the measured component's own import graph — the
+  graph `runPreflight` walks, type-only edges excluded — is a hard preflight hit. The run is refused
+  before the browser starts, in the real run and in `--explain-props` identically, and the refusal
+  names the importing file, the specifier and the missing target. `--no-preflight` bypasses it like
+  every other hard hit. A stale alias the preflight walk never reaches keeps C6's collapsed warning.
+- **C10** An aliased import written inside a workspace sibling resolves through that sibling's own
+  tsconfig at runtime too: when the measured package's alias list cannot resolve the same specifier,
+  the harness aliases it to the file the sibling's config names, ahead of the measured entries. When
+  the measured package resolves it to a different file, the run discloses the conflict by name and
+  keeps the measured package's target.
+- **C9** A project alias that matches an unbuilt sibling's specifier before the sibling's own
+  rescue does not hide it. When the alias target is absent and the sibling's source answers for that
+  specifier, the walk aliases the specifier to the source, ranks that alias ahead of the one that
+  matched, walks the source, and prints no stale-alias line for it.
 
 ## MUST NOT
 
@@ -109,6 +135,11 @@ The verifier for every item below: run-7 investigation (2026-09-06), refuted by 
   This milestone makes preflight and the compiler agree with the harness, not the other way round.
 - Drop a stale-alias warning whose target genuinely does not exist. C6 collapses duplicates; it does
   not raise the bar for reporting.
+- Refuse on a `paths` pattern with no prefix and no suffix of its own (`*`, `/*`). Such a key matches
+  every bare specifier, so C8 would refuse every project that declares one; the harness already
+  skips those patterns (`ROOT_ABSOLUTE_ALIAS_WARNING`).
+- Refuse on an alias whose specifier resolves anywhere: through the alias, through node resolution,
+  or through an unbuilt sibling's source. C8 fires only where nothing resolves at all.
 - Re-root the TypeScript program. The program is already rooted at the component
   (`src/props/program.ts:116-117`); C3 adds `paths`, nothing else.
 - Suppress the empty-prop-table warning path that already exists. C4 adds a cause; it removes none.
@@ -136,6 +167,19 @@ The verifier for every item below: run-7 investigation (2026-09-06), refuted by 
   memo returns different entries for the same file name under two governing configs.
 - **C7** — extend `test/unit/explain-props-parity.test.ts`: the dry run and the real run produce the
   same warning list for a fixture with an unbuilt sibling and a stale alias.
+- **C10** — `test/unit/a-siblings-own-alias-is-served-to-the-browser.test.ts`: a sibling importing
+  `~/icons` under its own tsconfig gets an exact alias to its own file when the measured package
+  resolves that name nowhere; when the measured package resolves it to another file, one warning
+  names both targets and no alias is added.
+- **C9** — `test/unit/a-stale-alias-does-not-hide-a-sibling-source.test.ts`: an app whose tsconfig
+  maps `@fix/sib/*` at an unbuilt target still reaches the sibling's `src/sub.ts`, its transitive
+  packages appear in `externalDeps`, no stale-alias line is printed, and the rescue alias precedes
+  the project alias in the list the harness hands Vite.
+- **C8** — `test/unit/a-stale-alias-in-the-graph-is-refused.test.ts`: an aliased import whose target
+  is absent, written in a file the preflight walk reaches, is a hard hit naming importer, specifier
+  and target; the same alias imported by no file in the graph produces no hit; a prefix-less `*`
+  pattern produces no hit; a type-only import of the same specifier produces no hit; the message the
+  dry run prints equals the one the real path prints.
 - Types: `node node_modules/typescript/bin/tsc --noEmit -p tsconfig.json` clean.
 - Suite: the tests above plus `test/unit/preflight.test.ts`,
   `test/unit/unbuilt-sibling-subpath-resolves-to-its-source.test.ts`,
@@ -145,8 +189,21 @@ The verifier for every item below: run-7 investigation (2026-09-06), refuted by 
 Recorded run of this milestone's verification:
 
 ```
-<filled by lane B: tsc result, the vitest invocations and their verbatim totals>
+node node_modules/typescript/bin/tsc -p tsconfig.json          # exit 0; dist/cli/main.js --version = 0.7.0
+
+npx vitest run test/unit/the-preflight-walk-crosses-into-an-unbuilt-sibling.test.ts   test/unit/an-unbuilt-sibling-contributes-its-types.test.ts   test/unit/an-alias-is-resolved-against-its-own-tsconfig.test.ts   test/unit/unresolved-alias-reporting.test.ts   test/unit/a-stale-alias-in-the-graph-is-refused.test.ts   test/unit/a-stale-alias-does-not-hide-a-sibling-source.test.ts   test/unit/a-siblings-own-alias-is-served-to-the-browser.test.ts   test/unit/explain-props-parity.test.ts test/unit/preflight.test.ts --maxWorkers=2
+#   Test Files  9 passed (9)      Tests  74 passed (74)
+
+npx vitest run test/unit --maxWorkers=2
+#   Test Files  2 failed | 345 passed (347)
+#   Tests  2 failed | 4948 passed | 1 skipped (4951)
+#   the two failures are the recorded baseline pair (prop-cap-ranking.test.ts,
+#   vue-setup-inject-evidence.test.ts); both reproduce in isolation at f54be55.
 ```
+
+Each MUST was confirmed red before its fix: disabling the C8 push in `runPreflight` fails
+`a-stale-alias-in-the-graph-is-refused.test.ts` (2 of 6); disabling the C9 rescue in
+`walkExternalDeps` fails `a-stale-alias-does-not-hide-a-sibling-source.test.ts` (2 of 2).
 
 Corpus repros, through a `dist` built in `C:/Projekte/120fps-run7-lane-b`:
 
@@ -179,7 +236,29 @@ node C:/Projekte/120fps-fieldtest/tools/run120.mjs \
   --label m130-control --cli C:/Projekte/120fps-run7-lane-b/dist/cli/main.js \
   -- src/components/ui/card.tsx --samples 3 --max-combos 2 --explore-budget 30 --no-deltas
 # expected: unchanged pass-warn, exit 0
+
+node C:/Projekte/120fps-fieldtest/tools/run120.mjs   --cwd E:/repositories-run7/librechat/client   --out C:/Projekte/120fps-fieldtest/logs/run7-lane-b/librechat   --label m130-librechat-dry --cli C:/Projekte/120fps-run7-lane-b/dist/cli/main.js   -- src/components/Input/Generations/Button.tsx --explain-props
+# expected: exit 2, refused before the browser, naming src/hooks/useNewConvo.ts,
+#           "librechat-data-provider/react-query" and the missing target
+#           (baseline: exit 0 with a warning, while the real run exits 2 after 121 s)
 ```
+
+Recorded corpus runs, `dist` built in `C:/Projekte/120fps-run7-lane-b`, logs under
+`C:/Projekte/120fps-fieldtest/logs/run7-lane-b/`:
+
+| Repo | Label | Baseline | Recorded |
+|---|---|---|---|
+| directus | `m130-directus-dry`, `m130-directus-real` | setup-error, exit 2, 94 s, raw Vite parse error | exit 2 in 6 s (dry) and 3 s (real), refusal byte-identical, before the browser: `../packages/system-data/src/collections/index.ts imports ./collections.yaml`, chain `empty-state.vue → v-list-item.vue → ../packages/composables/src/index.ts → …/use-items.ts → ../packages/utils/shared/index.ts → …` |
+| dub | `m130-dub-dry` | verdict-fail, exit 1, 31 s, prop table without `icon` | exit 0 in 13 s, `Props (6)` with `icon function required` first |
+| twenty | `m130-twenty-dry` | 149 stale-alias lines | exit 0 in 12 s, 0 stale-alias lines |
+| umbrel (control) | `m130-control` | pass-warn, exit 0, 46 s | pass-warn, exit 0, 33 s, same warning set |
+| librechat | `m130-librechat-dry`, `m130-librechat-real` | dry exit 0 with 4 stale-alias lines; real exit 2 at 121 s on `librechat-data-provider/react-query` | dry exit 0 in 16 s with 0 stale-alias lines; real exit 2 at 112 s, past both former blockers, on `The requested module '/src/hooks/index.ts' does not provide an export named 'useMediaQuery'`, with 5 `GOVERNING_ALIAS_CONFLICT_WARNING` lines naming the cause |
+
+librechat's `librechat-data-provider/react-query` is **not** a C8 refusal: C3's injected `paths`
+resolve it to `packages/data-provider/src/react-query/index.ts`, so the module is not missing and a
+refusal would block a run that can now proceed. C9 makes the harness serve the same target. What
+still stops librechat is one alias namespace claimed by two packages (`~/*` in both `client/` and
+`packages/client/`), which one Vite alias list cannot express; see Deferred.
 
 ## Deferred
 
@@ -189,5 +268,10 @@ node C:/Projekte/120fps-fieldtest/tools/run120.mjs \
   resolution; the findings assign them the `120fps.setup.vue` remedy (M136 records the same).
 - **The exit-code the refusal uses.** C2 refuses before the browser; whether that is exit 2 or a new
   code is the exit-code redesign the findings leave out.
+- **Per-importer alias resolution.** Two workspace packages declaring the same alias pattern
+  (librechat's `~/*` in `client/` and in `packages/client/`) cannot both be served by one Vite alias
+  list. C10 discloses each such import by name (`GOVERNING_ALIAS_CONFLICT_WARNING`) and serves the
+  measured package's target. Serving both needs a resolver plugin keyed on the importer, which lives
+  in `src/harness/build.ts` and `src/harness/vite-config.ts` — neither is lane B's file.
 - **Extending the walk into built siblings' sources.** A built sibling's `dist/` is what the browser
   would load, so walking its source would gate on code the run never executes.

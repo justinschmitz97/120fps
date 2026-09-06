@@ -34,7 +34,9 @@ export type PreflightKind =
   // Hard: neither the project nor 120fps resolves the CSS preprocessor Vite would need.
   | "unavailable-preprocessor"
   // Hard: the tsconfig every transform reads names a file `nuxi prepare` never wrote.
-  | "nuxt-not-prepared";
+  | "nuxt-not-prepared"
+  // Hard: an import in the measured graph matches a path alias and resolves to nothing on disk.
+  | "unresolved-alias";
 
 // The harness never loads the project's vite.config, so a missing transform is named here.
 export interface TransformRecognizer {
@@ -240,6 +242,7 @@ const HARD_CAUSE: Record<HardKind, string> = {
   "unloadable-macro": "imports a Babel macro that no compiler here expands",
   "unavailable-preprocessor": "imports a stylesheet whose CSS preprocessor nothing here resolves",
   "nuxt-not-prepared": "is measured in a Nuxt project that `nuxi prepare` has not finished",
+  "unresolved-alias": "imports a module through a path alias whose target is not on disk",
 };
 
 // Only the three server-boundary kinds; Solid and PnP need their own next step.
@@ -281,6 +284,11 @@ export const HARD_REMEDY: Record<HardKind, string> = {
   "nuxt-not-prepared":
     "Run `nuxi prepare` in this project, then measure again. Pass --no-preflight to attempt the " +
     "run anyway.",
+  // The alias is the project's own declaration, so the edit is in the project, not in the run.
+  "unresolved-alias":
+    "Fix the alias in the tsconfig that declares it, or restore the file it names; if the target " +
+    "lives in an unbuilt workspace package, run that package's own build first. Pass " +
+    "--no-preflight to attempt the run anyway.",
 };
 
 // Process state like setCurrentRunProjectRoot: the remedy is built three layers below argv.
@@ -367,6 +375,20 @@ export function preflightFailureMessage(hits: PreflightHit[]): string {
         ` 120fps loads only its supported transforms (${supported}) and never reads your ` +
         "vite.config, so nothing here expands it: the macro's own module would reach the browser " +
         "instead of the code it would have generated.",
+      hardRemedyFor(kind),
+    ].join("\n");
+  }
+  // Decided from disk: the alias, its target and the importer are all known before Vite starts.
+  if (kind === "unresolved-alias") {
+    return [
+      `Cannot measure this component in a browser: ${where} imports ${hit.specifier}, which ` +
+        `matches a configured path alias whose target ${hit.aliasTarget} is not on disk.`,
+      "",
+      `  ${chainText(hit)}`,
+      "",
+      "Nothing resolves that import: not the alias, not node resolution, and not an unbuilt " +
+        "workspace sibling's own source. The dev server would answer it with a 500 and the run " +
+        "would end inside Vite's import analysis, minutes after this point.",
       hardRemedyFor(kind),
     ].join("\n");
   }
@@ -629,6 +651,7 @@ const BYPASS_KIND_LABEL: Record<HardKind, string> = {
   "unloadable-macro": "babel-macro",
   "unavailable-preprocessor": "css-preprocessor",
   "nuxt-not-prepared": "nuxt-not-prepared",
+  "unresolved-alias": "unresolved-alias",
 };
 
 export const PREFLIGHT_BYPASSED_WARNING = (hits: PreflightHit[]): string => {

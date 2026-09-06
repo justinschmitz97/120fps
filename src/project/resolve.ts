@@ -107,12 +107,17 @@ type LocalResolution =
       // The caller records a shim-aliased specifier as imported, though it resolves local.
       viaShimAlias: boolean;
       viaWorkspaceRootAlias?: WorkspaceRootAliasSource;
+      // Set when an alias produced the target, so the caller can ask whose alias it was.
+      aliasPattern?: string;
     }
   | {
       kind: "alias-miss";
       target: string;
       viaShimAlias: boolean;
       viaWorkspaceRootAlias?: WorkspaceRootAliasSource;
+      // The alias that matched, so many stale specifiers collapse onto one report.
+      aliasPattern: string;
+      aliasTargetRoot: string;
     }
   | { kind: "unaliased" };
 
@@ -143,6 +148,8 @@ export function resolveLocalImport(
     find: RegExp;
     replacement: string;
     isShim?: boolean;
+    pattern?: string;
+    target?: string;
     fromWorkspaceRoot?: WorkspaceRootAliasSource;
   }>,
 ): LocalResolution {
@@ -150,15 +157,21 @@ export function resolveLocalImport(
   let viaShimAlias = false;
   let viaWorkspaceRootAlias: WorkspaceRootAliasSource | undefined;
   let aliased = false;
+  let aliasPattern = "";
+  let aliasTargetRoot = "";
   if (spec.startsWith(".") || spec.startsWith("/")) {
     target = path.resolve(path.dirname(fromFile), spec);
   } else {
     let aliasedPath: string | undefined;
-    for (const { find, replacement, isShim, fromWorkspaceRoot } of aliases) {
+    for (const alias of aliases) {
+      const { find, replacement, isShim, fromWorkspaceRoot } = alias;
       if (find.test(spec)) {
         aliasedPath = spec.replace(find, replacement);
         viaShimAlias = isShim === true;
         viaWorkspaceRootAlias = fromWorkspaceRoot;
+        aliasPattern = alias.pattern ?? find.source;
+        // The capture placeholder reads as the wildcard the project wrote.
+        aliasTargetRoot = replacement.replace("$1", "*");
         break;
       }
     }
@@ -168,13 +181,23 @@ export function resolveLocalImport(
   }
 
   const resolved = resolveTarget(target) ?? resolveTypeScriptCounterpart(target);
-  if (resolved) return { kind: "resolved", path: resolved, viaShimAlias, viaWorkspaceRootAlias };
+  if (resolved) {
+    return {
+      kind: "resolved",
+      path: resolved,
+      viaShimAlias,
+      viaWorkspaceRootAlias,
+      ...(aliased ? { aliasPattern } : {}),
+    };
+  }
   if (!aliased) return { kind: "unaliased" };
   return {
     kind: "alias-miss",
     target: toPosix(target),
     viaShimAlias,
     viaWorkspaceRootAlias,
+    aliasPattern,
+    aliasTargetRoot,
   };
 }
 
