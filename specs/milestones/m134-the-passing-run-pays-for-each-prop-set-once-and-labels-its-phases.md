@@ -7,6 +7,7 @@ tests:
   - test/unit/the-memo-pass-runs-only-with-a-memo-fiber.test.ts
   - test/unit/every-phase-label-names-what-it-measured.test.ts
   - test/unit/the-explore-budget-bounds-the-phase.test.ts
+  - test/unit/a-single-combo-run-is-bounded-too.test.ts
 ---
 
 # M134: the passing run pays for each distinct prop set once and labels its phases truthfully
@@ -66,15 +67,32 @@ profiles under `C:/Projekte/120fps-fieldtest/logs/run7-investigate/` and
    *callback* pass only, on the ground that both its corpus targets had `reactCompiler.active: true`;
    the memo pass is a different pass with a different filter.
 5. **`--explore-budget` does not bound the explore phase** — `exploreWallClockPerCombo`
-   (`src/pipeline/modes/combo.ts:173`, formula `Math.max(10000, Math.floor(60000 /
-   exploreCombos.length))` on `:174`) is hardcoded and ignores the flag; the total check
-   (`src/analysis/explorer.ts:418`, `if (results.length > 0 && Date.now() - runStart >=
-   totalWallClockMs) break;`) runs only *between* combos, so the first combo is unbounded; and curve
-   mode passes a hardcoded `maxWallClockMs: 30000` (`src/pipeline/modes/curve.ts:97`) that no flag
-   reaches. The verifier: novu's combo 2 ran 31.6 s against `--explore-budget 30`; calcom's curve mode
-   ran 37.7 s. M116's MUST NOT (`m116-…:548-549`) left explore's own bounds unchanged on the ground
-   that changing them changes coverage rather than repeated cost; that clause is superseded by C5
-   below, which makes the user's own flag the bound.
+   (`src/pipeline/modes/combo.ts:173-175`,
+   `exploreCombos.length > 1 ? Math.max(10000, Math.floor(60000 / exploreCombos.length)) : 60000`) is
+   hardcoded and ignores the flag; the total check (`src/analysis/explorer.ts:418`,
+   `if (results.length > 0 && Date.now() - runStart >= totalWallClockMs) break;`) runs only *between*
+   combos, so the first combo is unbounded; and curve mode passes a hardcoded
+   `maxWallClockMs: 30000` (`src/pipeline/modes/curve.ts:97`) that no flag reaches. The verifier:
+   novu's combo 2 ran 31.6 s against `--explore-budget 30`; calcom's curve mode ran 37.7 s. M116's
+   MUST NOT (`m116-…:548-549`) left explore's own bounds unchanged on the ground that changing them
+   changes coverage rather than repeated cost; that clause is superseded by C5 below, which makes the
+   user's own flag the bound.
+6. **The single-combo case makes the budget inert** — the `: 60000` branch of `:173-175` means a
+   one-combo run is given 60 s per combo whatever the flag says, and `:418`'s
+   `results.length > 0` guard means the check cannot fire before that combo ends. The verifier: every
+   scaffold logs `explore: 1 combos, budget 60s each` under `--explore-budget 30` and records
+   `exploreWallClockMs` between 60 496 and 73 844 ms on a one-prop `Greeting`
+   (`smoke/run7-new1/scaffold-*.json`, flag `slow-explore` on five of them).
+7. **The cheap sampling path exists and is unreachable** — `observerTiming` is declared at
+   `src/analysis/exploration-loop.ts:80` and `src/analysis/explorer.ts:79`, read at
+   `src/analysis/exploration-loop.ts:203` under the comment at `:202`
+   (`// The observer path skips the per-sample trace lifecycle, which dominates the wall clock.`), and
+   forwarded at `src/analysis/explorer.ts:433`. No caller anywhere in `src` ever sets it, so the path
+   the code names as the answer to the dominant cost is dead.
+8. **Curve mode's bound is per scale point, not per phase** — `src/pipeline/modes/curve.ts:97`'s
+   `maxWallClockMs: 30000` applies to each of the six scale points. The verifier: rallly spent 185 s
+   in curve mode, identically in all five mode runs (`smoke/run7-new1/rallly.json`, flags `slow-real`
+   and `slow-explore`, real 207 s).
 
 ## MUST
 
@@ -97,7 +115,14 @@ profiles under `C:/Projekte/120fps-fieldtest/logs/run7-investigate/` and
     `Math.max(10000, 60000 / n)`.
   - The total budget is checked *before* the first combo runs and between every pair of combos, so a
     single combo cannot exceed the phase budget.
-  - Curve mode reads the same budget instead of its hardcoded `maxWallClockMs: 30000`.
+  - A one-combo run is bounded too: the `: 60000` single-combo branch derives from the flag like every
+    other, and the total check is evaluated before the first combo runs, not only after it.
+  - Curve mode derives its bound from `--explore-budget` for the *phase*, and divides it across its
+    scale points, instead of applying a hardcoded `maxWallClockMs: 30000` per point.
+  - `observerTiming` is reachable: the option is threaded from the caller through
+    `src/analysis/explorer.ts:433` to `src/analysis/exploration-loop.ts:203`, so the path the comment
+    at `:202` names can be selected. Whether it becomes a default is C6's measurement, not this
+    clause.
   - When the budget stops the phase, the run says so and names the flag; a stopped phase is not a
     failure.
 - **C6** The measured effect is recorded, not assumed. This milestone's Verification carries an
@@ -122,6 +147,8 @@ profiles under `C:/Projekte/120fps-fieldtest/logs/run7-investigate/` and
   session per phase (M37) and the begin-frame control path all stay as they are.
 - Change `--explore-budget`'s default or its meaning as a *phase* budget. C5 makes the phase obey it;
   it does not reinterpret the number.
+- Make `observerTiming` the default. M52 chose the trace path after measurement; C5 makes the option
+  reachable and nothing more (M116's MUST NOT on that default stands).
 - Reduce coverage to hit a number: C5 stops a phase at the user's own bound and says so; it never
   silently drops combos inside a budget that was not reached.
 
@@ -141,10 +168,14 @@ profiles under `C:/Projekte/120fps-fieldtest/logs/run7-investigate/` and
 - **C4** — `test/unit/the-memo-pass-runs-only-with-a-memo-fiber.test.ts`: a snapshot with no `isMemo`
   fiber runs no mount and no rerender and returns the empty result; a snapshot with one runs the pass
   and returns the same result as today; `fixtures/m66-no-memo.tsx` is the negative case.
-- **C5** — `test/unit/the-explore-budget-bounds-the-phase.test.ts`: the per-combo budget derives from
+- **C5** — `test/unit/the-explore-budget-bounds-the-phase.test.ts` and
+  `test/unit/a-single-combo-run-is-bounded-too.test.ts`: the per-combo budget derives from
   `--explore-budget`; a single combo that would run past the total budget is stopped before it starts
-  and the run says which flag stopped it; the check runs before the first combo; curve mode receives
-  the same number; the default budget produces today's behaviour on a fixture that fits inside it.
+  and the run says which flag stopped it; the check runs before the first combo; a one-combo run under
+  `--explore-budget 30` reports a budget of 30 s, not 60 s; curve mode's per-point bound is the phase
+  budget divided across its points; `observerTiming` set by the caller reaches
+  `src/analysis/exploration-loop.ts:203`; the default budget produces today's behaviour on a fixture
+  that fits inside it.
 - **C6** — recorded below: five interleaved A/B pairs per repo, `phaseTimings` medians, and the
   decision.
 - Types: `node node_modules/typescript/bin/tsc --noEmit -p tsconfig.json` clean.
@@ -195,6 +226,22 @@ node C:/Projekte/120fps-fieldtest/tools/run120.mjs \
   --label m134-calcom-curve --cli C:/Projekte/120fps-run7-lane-f/dist/cli/main.js \
   -- modules/apps/components/Slider.tsx --curve --samples 3 --explore-budget 30 --no-deltas
 # expected: curve mode reads the budget and stays inside it (baseline 37.7 s)
+
+node C:/Projekte/120fps-fieldtest/tools/run120.mjs \
+  --cwd E:/repositories-run7/scaffold-vite-react-ts \
+  --out C:/Projekte/120fps-fieldtest/logs/run7-lane-f/scaffold-vite-react-ts \
+  --label m134-single-combo --cli C:/Projekte/120fps-run7-lane-f/dist/cli/main.js \
+  -- src/App.tsx --samples 3 --max-combos 2 --explore-budget 30 --no-deltas
+# expected: the log reads "explore: 1 combos, budget 30s" and exploreWallClockMs <= 30 000
+#           (baseline: "budget 60s each", 60 496-73 844 ms, flag slow-explore)
+
+node C:/Projekte/120fps-fieldtest/tools/run120.mjs \
+  --cwd E:/repositories-run7/rallly/apps/web \
+  --out C:/Projekte/120fps-fieldtest/logs/run7-lane-f/rallly \
+  --label m134-rallly-curve --cli C:/Projekte/120fps-run7-lane-f/dist/cli/main.js \
+  -- src/components/pagination.tsx --curve --samples 3 --explore-budget 30 --no-deltas
+# expected: the curve phase stays inside the budget across its scale points
+#           (baseline: 30 s per point x 6 points = 185 s, identical in all five mode runs)
 
 node C:/Projekte/120fps-fieldtest/tools/run120.mjs \
   --cwd E:/repositories-run6/linkwarden/apps/web \

@@ -8,6 +8,7 @@ tests:
   - test/unit/the-preflight-walk-crosses-into-an-unbuilt-sibling.test.ts
   - test/unit/an-unbuilt-sibling-contributes-its-types.test.ts
   - test/unit/an-alias-is-resolved-against-its-own-tsconfig.test.ts
+  - test/unit/an-absent-alias-target-in-the-graph-is-refused.test.ts
 ---
 
 # M130: an unbuilt workspace sibling is walked, typed and aliased as its own package
@@ -67,6 +68,15 @@ The verifier for every item below: run-7 investigation (2026-09-06), refuted by 
    `./src/modules/*`; all 149 targets exist on disk. Each produces a `BROKEN_ALIAS_WARNING`
    (`src/harness/deps-scan.ts:56-61`, pushed at `:384-386`). The walk memo key serializes the alias
    array (`src/harness/deps-scan.ts:207-231`), so a per-file table changes the key.
+4. **A stale alias inside the measured component's own graph is a warning in the dry run and a
+   failure after the bound in the real run** — the same `BROKEN_ALIAS_WARNING`
+   (`src/harness/deps-scan.ts:56-61`) that C6 collapses is, for one class of target, a refusal the
+   dry run should be making. The verifier: librechat's dry run warns that
+   `librechat-data-provider/react-query` resolves to an absent target and exits 0; the real run fails
+   after the 90 s bound with `BUNDLER_IMPORT_UNRESOLVED_ERROR`
+   (`smoke/run7-new1/librechat.json`: class `setup-error`, exit 2, real 121 s, flags `slow-dry` and
+   `dry-real-disagree`). M110's parity rule says the dry run decides what the real run decides from
+   disk.
 
 ## MUST
 
@@ -96,6 +106,10 @@ The verifier for every item below: run-7 investigation (2026-09-06), refuted by 
   its target root, at most three example specifiers, and `and N more` when more matched. On twenty's
   measured target the dry run prints at most three such lines, and none of them names a target that
   exists on disk.
+- **C8** An alias whose target is absent from disk **and** whose importer lies in the measured
+  component's own import graph is a hard preflight hit, refused before the browser starts, identically
+  in the dry run and the real run. The refusal names the alias, its configured target, the importing
+  file and the chain from the measured component.
 - **C7** Dry/real parity (M100, M110): `--explain-props` and the real run make the same walk
   decisions, apply the same alias tables, and print the same alias and unresolved-module warnings.
 
@@ -109,6 +123,9 @@ The verifier for every item below: run-7 investigation (2026-09-06), refuted by 
   This milestone makes preflight and the compiler agree with the harness, not the other way round.
 - Drop a stale-alias warning whose target genuinely does not exist. C6 collapses duplicates; it does
   not raise the bar for reporting.
+- Refuse on a stale alias outside the measured component's import graph. C8's second condition is
+  what separates a refusal from C6's collapsed warning: an alias the run will never follow does not
+  stop the run.
 - Re-root the TypeScript program. The program is already rooted at the component
   (`src/props/program.ts:116-117`); C3 adds `paths`, nothing else.
 - Suppress the empty-prop-table warning path that already exists. C4 adds a cause; it removes none.
@@ -134,6 +151,10 @@ The verifier for every item below: run-7 investigation (2026-09-06), refuted by 
   under package B never produces a warning derived from package A's table; twenty-shaped input with
   40 stale specifiers under one pattern produces one line with three examples and `and 37 more`; the
   memo returns different entries for the same file name under two governing configs.
+- **C8** — `test/unit/an-absent-alias-target-in-the-graph-is-refused.test.ts`: an alias with an absent
+  target imported by a file in the component's graph is a hard preflight hit in both modes with
+  identical text; the same alias imported only by a file outside the graph produces C6's warning and
+  no refusal; an alias whose target exists produces neither.
 - **C7** — extend `test/unit/explain-props-parity.test.ts`: the dry run and the real run produce the
   same warning list for a fixture with an unbuilt sibling and a stale alias.
 - Types: `node node_modules/typescript/bin/tsc --noEmit -p tsconfig.json` clean.
@@ -172,6 +193,15 @@ node C:/Projekte/120fps-fieldtest/tools/run120.mjs \
   --label m130-twenty-dry --cli C:/Projekte/120fps-run7-lane-b/dist/cli/main.js \
   -- src/modules/ui/input/components/TextArea.tsx --explain-props
 # expected: <= 3 stale-alias lines, none naming an existing target (baseline 149 lines)
+
+node C:/Projekte/120fps-fieldtest/tools/run120.mjs \
+  --cwd E:/repositories-run7/librechat/client \
+  --out C:/Projekte/120fps-fieldtest/logs/run7-lane-b/librechat \
+  --label m130-librechat --cli C:/Projekte/120fps-run7-lane-b/dist/cli/main.js \
+  -- src/components/Input/Generations/Button.tsx --samples 3 --max-combos 2 \
+     --explore-budget 30 --no-deltas
+# expected: the absent librechat-data-provider/react-query alias target is a hard preflight
+#           refusal in both modes (baseline: dry exit 0 + warning, real exit 2 after 90 s, 121 s)
 
 node C:/Projekte/120fps-fieldtest/tools/run120.mjs \
   --cwd E:/repositories-run6/umbrel/packages/ui \

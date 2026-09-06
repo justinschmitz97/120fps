@@ -9,6 +9,8 @@ tests:
   - test/unit/a-bundler-diagnosis-appends-to-the-timeout-report.test.ts
   - test/unit/every-navigation-carries-the-readiness-bound.test.ts
   - test/unit/a-virtual-namespace-import-is-refused-before-the-browser.test.ts
+  - test/unit/a-stale-preprocessor-is-named-not-timed-out.test.ts
+  - test/unit/an-unshimmable-next-module-is-refused-in-both-modes.test.ts
 ---
 
 # M129: a fatal before readiness ends the run at once, with the bound it advertises
@@ -82,8 +84,23 @@ The verifier for every item below: run-7 investigation (2026-09-06), refuted by 
    `unloadable-macro`). `virtual-module` (`~icons/`, `virtual:`, `unplugin-`) gets `undefined`, so it
    stays soft, so the dry run exits 0 with a warning while the real run refuses after the full bound.
    The verifier: n8n's `dry.log:51` carries the text of `UNRESOLVED_PREBUNDLE_ENTRY_WARNING`
-   (`src/harness/deps-scan.ts:47-53`) and exits 0, while the real run exits 2 at 100 s. M110's parity rule says the dry run decides everything the real run decides
-   from disk.
+   (`src/harness/deps-scan.ts:47-53`) and exits 0, while the real run exits 2 at 100 s. M110's parity
+   rule says the dry run decides everything the real run decides from disk.
+7. **A stale preprocessor produces no diagnosis at all** — the preprocessor recognizer at
+   `src/harness/bundler-failure.ts:139` matches only
+   `/Preprocessor dependency "([^"]+)" not found/`, so a preprocessor that *is* installed but too old
+   to answer the API Vite calls falls through every recognizer and the run waits out the bound. The
+   verifier: uptime-kuma installs sass 1.42.1, Vite 7 calls `compileStringAsync`, the dev server
+   answers `[vite] Internal Server Error … sass.compileStringAsync is not a function`, and the run
+   ends at 93 s with no diagnosis (`smoke/run7-new1/uptime-kuma.json`: class `setup-error`, exit 2,
+   real 93 s, flags `stack-trace` and `dry-real-disagree`).
+8. **An unshimmable Next runtime module is predicted and then not acted on** —
+   `src/harness/shims.ts:36` carries the "imported but not shimmed" predictor, and M73 records that
+   `next/font/google` is *deliberately* never shimmed (unbounded named exports). The dry run prints
+   the predictor and exits 0; the real run fails in 5 s. The verifier:
+   `smoke/run7-new1/scaffold-next-pages.json`, class `setup-error`, exit 2, real 5 s, flag
+   `dry-real-disagree`. M110's parity rule is violated by a prediction the dry run makes and then
+   does not act on.
 
 ## MUST
 
@@ -116,6 +133,15 @@ The verifier for every item below: run-7 investigation (2026-09-06), refuted by 
   refusal before the browser starts, in the real run and in `--explain-props` identically (M110
   parity). The refusal names the importing file, the specifier, the chain from the measured
   component, and the plugin the project declares for that namespace when it declares one.
+- **C8** A dev-server error whose text names a CSS preprocessor API that the installed preprocessor
+  does not provide is diagnosed, not waited out. The diagnosis names the preprocessor, the version
+  installed, the minimum version that provides the API, and `--no-css` as the way to run without it.
+  Like C4, it is appended to the readiness report, never substituted for it.
+- **C9** An import of a Next.js runtime module that 120fps does not shim and has decided never to
+  shim (`next/font/google`, M73) is refused in the dry run with the same words and the same exit code
+  as the real run. The predictor at `src/harness/shims.ts:36` becomes a decision instead of a
+  forecast; an unshimmed `next/*` module that is merely *not yet* shimmed keeps today's non-blocking
+  `UNSUPPORTED_NEXT_MODULE_WARNING` (M73).
 
 ## MUST NOT
 
@@ -130,6 +156,10 @@ The verifier for every item below: run-7 investigation (2026-09-06), refuted by 
 - Change the healthy path: a harness that becomes ready costs no extra call, no added delay and no
   extra output line.
 - Refuse a virtual-namespace import that a transform 120fps loads does in fact claim.
+- Refuse an unshimmed `next/*` module that M73 left non-blocking on purpose. C9 covers only the
+  modules M73 decided never to shim.
+- Guess a preprocessor version. C8 reads the installed version from the package it resolved; when
+  it cannot read one, it names the API and not a version.
 
 ## Verification
 
@@ -157,6 +187,14 @@ The verifier for every item below: run-7 investigation (2026-09-06), refuted by 
   importing `~icons/mdi/close` with no matching transform is a hard preflight hit; the dry run and
   the real-run gate return the same decision and the same text; a project that declares
   `unplugin-icons` and whose transform the harness loads is not refused.
+- **C8** — `test/unit/a-stale-preprocessor-is-named-not-timed-out.test.ts`: a server error text
+  naming `sass.compileStringAsync is not a function` produces a diagnosis naming sass, the installed
+  version, the minimum and `--no-css`; the existing `Preprocessor dependency … not found` match is
+  unchanged; an unrelated internal server error is not diagnosed as a preprocessor problem.
+- **C9** — `test/unit/an-unshimmable-next-module-is-refused-in-both-modes.test.ts`: a fixture
+  importing `next/font/google` is refused by the dry run and the real run with identical text and
+  identical exit codes; a fixture importing an unshimmed-but-shimmable `next/*` module keeps the
+  non-blocking warning in both modes.
 - Types: `node node_modules/typescript/bin/tsc --noEmit -p tsconfig.json` clean.
 - Suite: the tests above plus every existing test of the files this milestone edits
   (`test/unit/page-errors.test.ts`, `page-error-reaches-its-own-remedy.test.ts`,
@@ -205,6 +243,22 @@ node C:/Projekte/120fps-fieldtest/tools/run120.mjs \
 # expected: preflight refuses ~icons/ before the browser, dry and real identically, within 25 s
 
 node C:/Projekte/120fps-fieldtest/tools/run120.mjs \
+  --cwd E:/repositories-run7/uptime-kuma \
+  --out C:/Projekte/120fps-fieldtest/logs/run7-lane-a/uptime-kuma \
+  --label m129-uptime-kuma --cli C:/Projekte/120fps-run7-lane-a/dist/cli/main.js \
+  -- src/components/Tag.vue --samples 3 --max-combos 2 --explore-budget 30 --no-deltas
+# expected: a stale-preprocessor diagnosis naming sass 1.42.1, the minimum and --no-css, within
+#           seconds of the server error (baseline: setup-error, exit 2, 93 s, no diagnosis)
+
+node C:/Projekte/120fps-fieldtest/tools/run120.mjs \
+  --cwd E:/repositories-run7/scaffold-next-pages \
+  --out C:/Projekte/120fps-fieldtest/logs/run7-lane-a/scaffold-next-pages \
+  --label m129-next-pages-dry --cli C:/Projekte/120fps-run7-lane-a/dist/cli/main.js \
+  -- pages/index.tsx --explain-props
+# expected: the dry run refuses with the same words and exit code as the real run
+#           (baseline: dry exits 0 with a prediction, real fails in 5 s, flag dry-real-disagree)
+
+node C:/Projekte/120fps-fieldtest/tools/run120.mjs \
   --cwd E:/repositories-run5/epic-stack \
   --out C:/Projekte/120fps-fieldtest/logs/run7-lane-a/epic-stack \
   --label m129-control --cli C:/Projekte/120fps-run7-lane-a/dist/cli/main.js \
@@ -220,5 +274,7 @@ node C:/Projekte/120fps-fieldtest/tools/run120.mjs \
   identify what actually held plane's page. That needs its own measurement.
 - **Unifying the four navigation call sites behind one helper.** C5 gives them the same bound and the
   same note; folding them into one function crosses into lanes C and F.
+- **uptime-kuma's own fix.** C8 diagnoses the stale sass; upgrading the project's sass is the
+  developer's action, and 120fps never edits a target repository.
 - **A per-phase wall-clock bound.** The readiness bound governs one wait; a bound on the whole run is
   a separate contract with its own failure mode.

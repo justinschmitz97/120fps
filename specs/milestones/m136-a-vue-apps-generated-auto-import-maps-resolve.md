@@ -121,6 +121,13 @@ advances M123's "nuxt.com must still reach the browser".
 
 ### Across all stages
 
+- **C13** A Nuxt project whose tsconfig chain covers the measured component through a generated
+  config reports that coverage instead of refusing to find one. The verifier for the gap:
+  scaffold-nuxt's run prints
+  `no referenced config covers app/components/Greeting.vue (tried .nuxt/tsconfig.app.json…)` although
+  `.nuxt/` is present and complete. When no config covers the component, the message names the
+  generated configs it tried and the `nuxi prepare` remedy M123 already owns; it never claims a
+  refusal M123 forbids (C11).
 - **C10** Dry/real parity (M100, M110): `--explain-props` reports the same maps found, the same
   entry counts, and the same skipped entries as the real run.
 - **C11** M123's contract holds unchanged: a project whose tsconfig chain names a missing file under
@@ -216,9 +223,12 @@ node C:/Projekte/120fps-fieldtest/tools/run120.mjs \
   --cwd E:/repositories-run7/scaffold-nuxt \
   --out C:/Projekte/120fps-fieldtest/logs/run7-lane-g/scaffold-nuxt \
   --label m136-scaffold-nuxt --cli C:/Projekte/120fps-run7-lane-g/dist/cli/main.js \
-  -- <realTarget from smoke/run7-new1/scaffold-nuxt.json> --samples 3 --max-combos 2 \
+  -- app/components/Greeting.vue --samples 3 --max-combos 2 \
      --explore-budget 30 --no-deltas
-# expected: passes with no "hoisted transitive install" warning
+# expected: passes with no "hoisted transitive install" warning.
+#   Note: smoke/run7-new1/scaffold-nuxt.json records class `no-candidate` with an empty
+#   candidates array; the component above and the baseline behaviour come from the
+#   investigator's manual run, not from the smoke row.
 
 # stage 2
 node C:/Projekte/120fps-fieldtest/tools/run120.mjs \

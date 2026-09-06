@@ -11,6 +11,8 @@ tests:
   - test/unit/the-vite-note-names-only-what-was-dropped.test.ts
   - test/unit/no-node-warning-reaches-the-users-terminal.test.ts
   - test/unit/the-dry-run-honours-no-css.test.ts
+  - test/unit/third-party-build-output-is-captured.test.ts
+  - test/unit/a-warning-carries-one-prefix.test.ts
 ---
 
 # M132: every warning on a typical run is true, printed once, and names what to do
@@ -76,6 +78,17 @@ The verifier for every item below: run-7 investigation (2026-09-06), refuted by 
    (`src/project/preflight.ts:54-66`) maps a package to one representative hook, and the hint prints
    that hook regardless of what the file imported. The verifier: a file that imports only `Link` from
    `react-router` is told about `react-router (useNavigate)`.
+6. **A third party's stderr is passed through, then said again properly** — during `harness: building`
+   the Tailwind PostCSS plugin writes an `enhanced-resolve` stack to stderr and 120fps prints it
+   verbatim. The verifier: rallly's log carries 18 such lines during the build, and about 100 lines
+   later the same fact is reported by 120fps's own stylesheet-probe warning
+   (`src/harness/stylesheet-probe.ts:11`) — `smoke/run7-new1/rallly.json`, flags `slow-real`,
+   `slow-explore` and `stack-trace`. M94's rule is that a third-party failure is re-presented as a
+   120fps message, never as a raw stack.
+7. **One warning carries two prefixes** — anything-llm's line
+   `no representative value could be synthesized for onToggle` prints with a doubled `⚠ Warning:`
+   prefix. The verifier: `smoke/run7-new1/anything-llm.json` (class `verdict-fail`, exit 1, real 45 s)
+   and its log. Cosmetic, and in the same producer/printer seam C4 fixes.
 
 ## MUST
 
@@ -105,6 +118,12 @@ The verifier for every item below: run-7 investigation (2026-09-06), refuted by 
 - **C6** `--no-css` and `--css <file>` decide the dry run exactly as they decide the real run:
   `src/pipeline/explain-props.ts:148` forwards `{ noCss, cssFiles }`. With `--no-css`, the dry run
   reports no stylesheet and prints no stylesheet warning (M100/M110 parity).
+- **C8** Output a third party writes to stderr while the harness builds is captured, not streamed. It
+  is printed only when no 120fps warning reports the same fact, and when it is printed it is
+  introduced by a 120fps sentence naming the tool that produced it (M94). `DEBUG` still shows
+  everything.
+- **C9** A warning carries exactly one prefix. A text that already begins with the warning prefix is
+  not prefixed again, in the terminal, the JSON `warnings` array and the markdown report.
 - **C7** The provider hint names what the file imported. When the run observed the representative
   hook in the file, the hook is named; otherwise the hint names the package alone — "imports
   react-router" — and nothing else.
@@ -121,6 +140,10 @@ The verifier for every item below: run-7 investigation (2026-09-06), refuted by 
 - Claim extraction succeeded when it did not. C1 narrows the hedge; it does not remove it.
 - Change the noise sentinel's wording, the `(×N)` suffix shape, or the markdown fold M117 C1 and C2
   fixed.
+- Swallow a third party's build output that no 120fps warning covers. C8 defers it and re-presents
+  it; it never discards the only account of a failure.
+- Strip a prefix from a text that a consumer parses. C9 prevents the second prefix; it does not
+  rewrite the warning body.
 
 ## Verification
 
@@ -146,6 +169,12 @@ The verifier for every item below: run-7 investigation (2026-09-06), refuted by 
   `test/unit/explain-props-parity.test.ts`: `--explain-props --no-css` reports no stylesheet and no
   stylesheet warning; `--explain-props --css <file>` reports that file; both match the real run's
   decision for the same fixture.
+- **C8** — `test/unit/third-party-build-output-is-captured.test.ts`: stderr written during the build
+  is not printed when a 120fps warning reports the same file; it is printed, once and introduced, when
+  no warning covers it; `DEBUG` prints it in both cases.
+- **C9** — `test/unit/a-warning-carries-one-prefix.test.ts`: a text already carrying the prefix is
+  printed with one; a text without it gains one; the JSON array carries the unprefixed text in both
+  cases.
 - **C7** — extend `test/unit/preflight.test.ts`: a file importing only `Link` from `react-router`
   produces "imports react-router" with no hook named; a file importing `useNavigate` names the hook.
 - Types: `node node_modules/typescript/bin/tsc --noEmit -p tsconfig.json` clean.

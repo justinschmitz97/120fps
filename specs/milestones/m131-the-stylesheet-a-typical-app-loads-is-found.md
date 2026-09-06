@@ -210,6 +210,12 @@ node C:/Projekte/120fps-fieldtest/tools/run120.mjs \
 # expected: the line states the only sheet is a Tailwind @import with no bodied rules
 ```
 
+Corpus acceptance added by the run-7 new-repo diagnosis: scaffold-nuxt
+(`E:/repositories-run7/scaffold-nuxt`, `app/components/Greeting.vue`, measured by hand because the
+smoke's candidate picker returned no candidate for it) printed `Stylesheets: none found`. Its
+`nuxt.config` `css:` array is C1's Nuxt shape, so the run must name the sheet the config declares, or
+say under C3 that the config declares none.
+
 ## Deferred
 
 - **mastodon's Rails asset pipeline.** Its stylesheets are compiled by Sprockets from
