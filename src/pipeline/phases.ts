@@ -27,6 +27,7 @@ import {
   dedupeWarnings,
   formatMountAbortHints,
   formatStylesheetsLine,
+  withholdInteractionFailsUnderHostileNoise,
 } from "../report/index.js";
 import {
   NODE_BUILTIN_WARNING,
@@ -313,6 +314,12 @@ export function createHarnessContextAttacher(deps: {
         contextRetries,
       });
       report.noise = noise;
+      // The verdict's own noise suppression: the classification counts the metrics the combos
+      // carry, so it exists only here, after buildReport has written every verdict.
+      const withheldFail = withholdInteractionFailsUnderHostileNoise(report);
+      if (withheldFail) {
+        report.warnings = dedupeWarnings([...(report.warnings ?? []), withheldFail]);
+      }
       // The JSON carries the full text; report/terminal.ts shortens it to one line.
       const noiseWarning = formatNoiseWarning(noise, report.baseline !== undefined);
       if (noiseWarning) {

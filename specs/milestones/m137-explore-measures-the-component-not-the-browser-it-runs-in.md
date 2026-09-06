@@ -6,6 +6,8 @@ tests:
   - test/unit/an-external-link-is-not-exercised.test.ts
   - test/unit/the-discovery-line-counts-what-it-skipped.test.ts
   - test/unit/an-unstable-sample-on-a-hostile-machine-warns.test.ts
+  - test/unit/explore-replays-state-invariant-path-once-per-edge.test.ts
+  - test/e2e/an-external-link-is-not-exercised.test.ts
 ---
 
 # M137: explore measures the component, not the browser it runs in
@@ -105,21 +107,46 @@ one-prop component) is M134's root causes 5-8 and its C5, sharpened there.
 - Touch `src/analysis/explorer.ts`. Lanes A and F own it; the `observerTiming` threading M134 needs
   there is F's, and this lane's need for it is interface I12.
 
+## Design
+
+Three decisions a reader cannot recover from the code alone.
+
+- **The anchor decision is made in Node, not in the page.** The browser walk extracts each anchor's
+  resolved `href`, its `target` and its `rel` alongside the fields it already extracted;
+  `classifyNavigationEscape` in `src/browser/discovery.ts` decides from those and
+  `location.origin`. The rule is therefore testable without a browser, and the page-side walk keeps
+  one shape.
+- **What discovery declined travels out through `DiscoverOptions.onSkipped`, not the return type.**
+  `discoverInteractions` still returns `InteractionDescriptor[]`. `exploreCombo` accumulates the
+  reports from every discovery in the combo, keyed by reason and selector so a rediscovered anchor
+  counts once, and emits C2's line through `onWarning`. The run's warning sink already dedupes by
+  exact text, so combos that declined the same classes print one line.
+- **C4's withholding runs after the noise classification exists.** `report.noise` is derived from
+  the very metrics the combos carry, so it cannot exist while `buildReport` is writing verdicts.
+  `withholdInteractionFailsUnderHostileNoise` therefore re-reads each failing combo once
+  `report.noise` is attached, at the tightest budget either budget shape could have used: a fail
+  that survives the tighter bound was never an unstable interaction's alone, so it is left standing.
+
 ## Verification
 
 - **C1, C2** — `test/unit/an-external-link-is-not-exercised.test.ts` and
-  `test/unit/the-discovery-line-counts-what-it-skipped.test.ts`: a fixture page with a cross-origin
-  anchor, a `target="_blank"` same-origin anchor, a `mailto:` anchor, a fragment anchor and a
-  same-origin route link yields exactly the last two as targets; the skip line names three and their
-  reason classes; a page with no external anchors prints no skip line; the discovered set is
-  otherwise byte-identical to today's.
-- **C3** — extend `test/unit/explorer.test.ts`: a click that opens a popup leaves no open page after
-  the run and the target is recorded as skipped; a click that navigates the harness page away returns
-  to the harness page and stops that target.
+  `test/unit/the-discovery-line-counts-what-it-skipped.test.ts`: a cross-origin anchor, a
+  `target="_blank"` same-origin anchor and a `mailto:` anchor are declined with their reason class,
+  a fragment anchor and a same-origin route link are not; a page with no such anchors is returned
+  unchanged and prints no line; the line's counts, its singular and plural forms, and its stability
+  across two combos that declined the same classes. `test/e2e/an-external-link-is-not-exercised.test.ts`
+  runs the same decision through a real browser on `fixtures/external-links.tsx`: three targets kept
+  (`#content`, `/settings`, the button), four declined; `fixtures/interactive-basic.tsx` declines
+  none and keeps its anchor.
+- **C3** — `test/unit/explorer.test.ts`: a popup a click opened is closed and reported as
+  `opened-a-page`; a page that lost the harness global reports `left-the-page`; a page that kept it
+  (a same-origin route change) reports nothing; an unreadable page counts as gone; the watch clears
+  between targets and leaves no listener behind.
 - **C4, C5** — `test/unit/an-unstable-sample-on-a-hostile-machine-warns.test.ts`: `unstable` +
   `hostile` yields `warn` with the withheld-FAIL sentence; `unstable` + `noisy` yields `fail`;
   `stable` + `hostile` yields `fail`; the JSON carries the classification in all three; the existing
-  pass and warn paths are unchanged.
+  pass and warn paths are unchanged; a mount breach, a render failure and a second failing combo all
+  keep the run failing.
 - Types: `node node_modules/typescript/bin/tsc --noEmit -p tsconfig.json` clean.
 - Suite: the tests above plus `test/unit/explorer.test.ts`,
   `test/unit/explore-degrades-instead-of-ending-the-run.test.ts`,
@@ -128,46 +155,78 @@ one-prop component) is M134's root causes 5-8 and its C5, sharpened there.
   `test/unit/isolation*.test.ts`, `test/e2e/explorer.test.ts`, then the full unit suite once before
   the lane's final commit.
 
-Recorded run of this milestone's verification:
+Recorded run of this milestone's verification (2026-09-06, `C:/Projekte/120fps-run7-lane-h` on
+`run7/lane-h`, node 22.22.2, `pnpm install --frozen-lockfile`):
 
 ```
-<filled by lane H: tsc result, the vitest invocations and their verbatim totals>
+node node_modules/typescript/bin/tsc --noEmit -p tsconfig.json
+# exit 0, no output
+
+npx vitest run test/unit/explorer.test.ts \
+  test/unit/an-external-link-is-not-exercised.test.ts \
+  test/unit/the-discovery-line-counts-what-it-skipped.test.ts \
+  test/unit/an-unstable-sample-on-a-hostile-machine-warns.test.ts \
+  test/unit/explore-degrades-instead-of-ending-the-run.test.ts \
+  test/unit/explore-replays-state-invariant-path-once-per-edge.test.ts \
+  test/unit/explore-stall-hint-names-effective-flags.test.ts \
+  test/unit/noise-sentinel.test.ts test/unit/noise-warning-is-one-terminal-line.test.ts \
+  test/unit/isolation-calc.test.ts test/unit/isolation-cli.test.ts \
+  test/unit/isolation-harden.test.ts test/unit/isolation-orchestrate.test.ts \
+  test/unit/isolation-orchestrate-harden.test.ts test/unit/isolation-phase-warnings.test.ts \
+  test/unit/isolation-report.test.ts test/unit/interaction-step-budgets.test.ts \
+  test/unit/portal-harden.test.ts --maxWorkers=2
+#  Test Files  18 passed (18)
+#       Tests  280 passed (280)
+
+npx vitest run test/e2e/an-external-link-is-not-exercised.test.ts --maxWorkers=1
+#  Test Files  1 passed (1)
+#       Tests  2 passed (2)
+
+npx vitest run test/e2e/explorer.test.ts --maxWorkers=1
+#  Test Files  1 passed (1)
+#       Tests  9 passed (9)
+
+npx vitest run test/unit --maxWorkers=2
+#  Test Files  2 failed | 342 passed (344)
+#       Tests  2 failed | 4962 passed | 1 skipped (4965)
+#   Duration  335.49s
+# The two failures are the recorded baseline pair, unchanged by this milestone:
+# test/unit/prop-cap-ranking.test.ts ("variant and size survive the 32-prop cap") and
+# test/unit/vue-setup-inject-evidence.test.ts ("records why each specifier failed").
 ```
 
-Corpus repros, through a `dist` built in `C:/Projekte/120fps-run7-lane-h`:
+Corpus repros, through a `dist` built in `C:/Projekte/120fps-run7-lane-h` (2026-09-06, logs under
+`C:/Projekte/120fps-fieldtest/logs/run7-lane-h/<repo>/`). Every run:
 
 ```
-node C:/Projekte/120fps-fieldtest/tools/run120.mjs \
-  --cwd E:/repositories-run7/scaffold-create-vue \
-  --out C:/Projekte/120fps-fieldtest/logs/run7-lane-h/scaffold-create-vue \
-  --label m137-create-vue --cli C:/Projekte/120fps-run7-lane-h/dist/cli/main.js \
-  -- src/components/HelloWorld.vue --samples 3 --max-combos 2 --explore-budget 30 --no-deltas
-# expected: PASS or WARN, never FAIL on footer links (baseline verdict-fail, exit 1, 83 s);
-#           the discovery line names N external anchors skipped
-
-node C:/Projekte/120fps-fieldtest/tools/run120.mjs \
-  --cwd E:/repositories-run7/scaffold-vite-vue-ts \
-  --out C:/Projekte/120fps-fieldtest/logs/run7-lane-h/scaffold-vite-vue-ts \
-  --label m137-vite-vue-ts --cli C:/Projekte/120fps-run7-lane-h/dist/cli/main.js \
-  -- src/components/HelloWorld.vue --samples 3 --max-combos 2 --explore-budget 30 --no-deltas
-# expected: same (baseline verdict-fail, exit 1, 80 s)
-
-node C:/Projekte/120fps-fieldtest/tools/run120.mjs \
-  --cwd E:/repositories-run7/scaffold-vite-react-ts \
-  --out C:/Projekte/120fps-fieldtest/logs/run7-lane-h/scaffold-vite-react-ts \
-  --label m137-vite-react-ts --cli C:/Projekte/120fps-run7-lane-h/dist/cli/main.js \
-  -- src/App.tsx --samples 3 --max-combos 2 --explore-budget 30 --no-deltas
-# expected: still pass-warn, exit 0, with the same skip line and fewer measured steps
-
-node C:/Projekte/120fps-fieldtest/tools/run120.mjs \
-  --cwd E:/repositories-run6/umbrel/packages/ui \
-  --out C:/Projekte/120fps-fieldtest/logs/run7-lane-h/umbrel \
-  --label m137-control --cli C:/Projekte/120fps-run7-lane-h/dist/cli/main.js \
-  -- src/components/ui/card.tsx --samples 3 --max-combos 2 --explore-budget 30 --no-deltas
-# expected: unchanged pass-warn, exit 0, no skip line (no external anchors)
+node C:/Projekte/120fps-fieldtest/tools/run120.mjs --cwd <appDir> \
+  --out C:/Projekte/120fps-fieldtest/logs/run7-lane-h/<repo> --label <label> --timeout 600 \
+  --cli C:/Projekte/120fps-run7-lane-h/dist/cli/main.js \
+  -- <component> --samples 3 --max-combos 2 --explore-budget 30 --no-deltas
 ```
+
+| Repo, component | Label | Before | After | Skip line |
+|---|---|---|---|---|
+| scaffold-create-vue, `src/components/HelloWorld.vue` | `m137-create-vue` | verdict-fail, exit 1, 83 s; Vite 237.6 ms/step and Vue 3 34.1 ms/step against T1's 33 ms | PASS, exit 0, 19 s; 0 interactions, explore 1 s | `explore skipped 2 interaction targets that would leave the page (2 external links)` |
+| scaffold-vite-vue-ts, `src/components/HelloWorld.vue` | `m137-vite-vue-ts` | verdict-fail, exit 1, 80 s; Bluesky 255.3 ms/step against T4's 100 ms | PASS, exit 0, 36 s; 8 interactions, the component's own button at 9.7-10.9 ms/step and the document scroll at 10.0-16.0 ms/step | `... (6 external links)` |
+| scaffold-vite-react-ts, `src/App.tsx` | `m137-vite-react-ts` | pass-warn, exit 0, 91 s; Explore Vite 66.2 ms/step, Bluesky 44.2 ms/step | pass-warn, exit 0, 67 s; 8 interactions, none an anchor that leaves | `... (6 external links)` |
+| umbrel (control), `src/components/ui/card.tsx` | `m137-control` | pass-warn, exit 0, 46 s, 0 interactions | pass-warn, exit 0, 45 s, 0 interactions | none |
+| shadcn-admin, `src/components/skip-to-main.tsx` | `m137-same-page-anchor` | not measured before | pass-warn, exit 0, 88 s; the component's single `href="#content"` anchor exercised at 20.2 ms/step under `rapid-toggle-11` | none |
+
+The last row is C1's negative: a component whose only interactive element is a same-page anchor is
+still discovered, still exercised, and prints no line. `git status --porcelain` in each target
+repository is empty after its run (umbrel's `package-lock.json` was already modified on
+2026-09-05, before this lane existed).
 
 ## Deferred
+
+- **Interface request — the one call site outside this lane's files.** C4's withholding is
+  implemented in `src/report/stats.ts`, and it is invoked from the noise block of
+  `createHarnessContextAttacher` in `src/pipeline/phases.ts` (three lines, immediately after
+  `report.noise = noise`, plus one named import). That block belongs to no lane: A owns
+  `presentBundlerFailure` in the same file and C owns the injected-stylesheet disclosure, neither of
+  which this hunk touches. `buildReport` cannot host it, because `report.noise` does not exist
+  while the verdicts are being written. The coordinator relocates it if a lane claims the block.
 
 - **The explore phase's wall clock.** `explore: 1 combos, budget 60s each` under
   `--explore-budget 30`, and 60-74 s recorded on a one-prop component, is M134 S4/C5 in lane F, not a

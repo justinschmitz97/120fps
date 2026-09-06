@@ -32,6 +32,8 @@ export interface InteractionDescriptor {
 export interface DiscoverOptions {
   probePortals?: boolean;
   remount?: () => Promise<void>;
+  // Discovery decides what it declines; the caller is what reports the count.
+  onSkipped?: (skipped: SkippedTarget[]) => void;
 }
 
 export interface RawElement {
@@ -61,6 +63,10 @@ export interface RawElement {
   selector: string;
   inShadow: boolean;
   portal?: boolean;
+  // Anchors only: the resolved destination plus the two attributes that redirect a click.
+  href?: string;
+  linkTarget?: string;
+  linkRel?: string;
 }
 
 const TYPEABLE_INPUT_TYPES = new Set([
@@ -87,11 +93,103 @@ const CLICK_ROLES = new Set([
 
 const SKIP_TAGS = new Set(["SCRIPT", "STYLE", "LINK"]);
 
+// Why a target was not exercised. The first three are decided before any click; the last two
+// are what a click proved after the fact.
+export type SkipReason =
+  | "external-link"
+  | "new-tab-link"
+  | "non-http-scheme"
+  | "opened-a-page"
+  | "left-the-page";
+
+export interface SkippedTarget {
+  reason: SkipReason;
+  selector: string;
+  label: string;
+  href?: string;
+}
+
+const SKIP_REASON_LABELS: Record<SkipReason, [string, string]> = {
+  "external-link": ["external link", "external links"],
+  "new-tab-link": ["new-tab link", "new-tab links"],
+  "non-http-scheme": ["non-http link", "non-http links"],
+  "opened-a-page": ["link that opened a new page", "links that opened a new page"],
+  "left-the-page": ["link that left the harness page", "links that left the harness page"],
+};
+
+const SKIP_REASON_ORDER = Object.keys(SKIP_REASON_LABELS) as SkipReason[];
+
+function hasRelToken(rel: string | undefined, token: string): boolean {
+  return (rel ?? "").toLowerCase().split(/\s+/).includes(token);
+}
+
+// A fragment and a same-origin path an app routes itself are the component's own behaviour.
+export function classifyNavigationEscape(
+  raw: Pick<RawElement, "tagName" | "href" | "linkTarget" | "linkRel">,
+  pageOrigin: string,
+): SkipReason | undefined {
+  if (raw.tagName !== "A") return undefined;
+  const href = raw.href ?? "";
+  if (href === "") return undefined;
+  let url: URL;
+  try {
+    url = new URL(href);
+  } catch {
+    // An href the URL parser refuses does not navigate anywhere either.
+    return undefined;
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") return "non-http-scheme";
+  if (url.origin !== pageOrigin) return "external-link";
+  if (hasRelToken(raw.linkRel, "external")) return "external-link";
+  if ((raw.linkTarget ?? "").toLowerCase() === "_blank") return "new-tab-link";
+  return undefined;
+}
+
+export function partitionExercisableTargets(
+  raws: RawElement[],
+  pageOrigin: string,
+): { exercisable: RawElement[]; skipped: SkippedTarget[] } {
+  const exercisable: RawElement[] = [];
+  const skipped: SkippedTarget[] = [];
+  for (const raw of raws) {
+    const reason = classifyNavigationEscape(raw, pageOrigin);
+    if (reason === undefined) {
+      exercisable.push(raw);
+      continue;
+    }
+    skipped.push({
+      reason,
+      selector: raw.selector,
+      label: raw.textContent.slice(0, 200),
+      ...(raw.href ? { href: raw.href } : {}),
+    });
+  }
+  return { exercisable, skipped };
+}
+
+// One line, free of per-combo numbers, so a run that skipped the same classes twice prints once.
+export const SKIPPED_TARGETS_NOTICE = (skipped: SkippedTarget[]): string | undefined => {
+  if (skipped.length === 0) return undefined;
+  const classes: string[] = [];
+  for (const reason of SKIP_REASON_ORDER) {
+    const count = skipped.filter((s) => s.reason === reason).length;
+    if (count === 0) continue;
+    const [one, many] = SKIP_REASON_LABELS[reason];
+    classes.push(`${count} ${count === 1 ? one : many}`);
+  }
+  const noun = skipped.length === 1 ? "target" : "targets";
+  return (
+    `explore skipped ${skipped.length} interaction ${noun} that would leave the page ` +
+    `(${classes.join(", ")}): a click there measures the browser's navigation, ` +
+    "not the component. Same-page links and every other target were exercised as usual."
+  );
+};
+
 export async function discoverInteractions(
   page: Page,
   options?: DiscoverOptions,
 ): Promise<InteractionDescriptor[]> {
-  const rawElements: RawElement[] = await page.evaluate(() => {
+  const discovered: { elements: RawElement[]; origin: string } = await page.evaluate(() => {
     const results: any[] = [];
     const seen = new Set<Element>();
 
@@ -270,6 +368,7 @@ export async function discoverInteractions(
           : "";
 
       const scrollAxis = scrollAxisOf(el);
+      const anchor = tag === "A" ? (el as HTMLAnchorElement) : null;
 
       const isInteractive =
         ["BUTTON", "A", "INPUT", "TEXTAREA", "SELECT", "SUMMARY"].includes(
@@ -319,6 +418,13 @@ export async function discoverInteractions(
         selector: hostSelector + " >>> " + shadowSel,
         inShadow: true,
         ...(portalFlag ? { portal: true } : {}),
+        ...(anchor
+          ? {
+              href: anchor.href,
+              linkTarget: anchor.getAttribute("target") || "",
+              linkRel: anchor.getAttribute("rel") || "",
+            }
+          : {}),
       };
     }
 
@@ -351,6 +457,7 @@ export async function discoverInteractions(
       ]);
       const hasInteractiveRole = role !== "" && interactiveRoles.has(role);
       const scrollAxis = scrollAxisOf(el);
+      const anchor = tag === "A" ? (el as HTMLAnchorElement) : null;
 
       const isInteractive =
         ["BUTTON", "A", "INPUT", "TEXTAREA", "SELECT", "SUMMARY"].includes(
@@ -400,6 +507,13 @@ export async function discoverInteractions(
         selector: sel,
         inShadow: false,
         ...(portalFlag ? { portal: true } : {}),
+        ...(anchor
+          ? {
+              href: anchor.href,
+              linkTarget: anchor.getAttribute("target") || "",
+              linkRel: anchor.getAttribute("rel") || "",
+            }
+          : {}),
       };
     }
 
@@ -453,10 +567,17 @@ export async function discoverInteractions(
       });
     }
 
-    return results;
+    return { elements: results, origin: location.origin };
   });
 
-  const rootDescriptors = rawElements.map((raw) => toDescriptor(raw));
+  // An anchor that would leave the page is declined here, before any pattern runs on it.
+  const { exercisable, skipped } = partitionExercisableTargets(
+    discovered.elements,
+    discovered.origin,
+  );
+  if (skipped.length > 0) options?.onSkipped?.(skipped);
+
+  const rootDescriptors = exercisable.map((raw) => toDescriptor(raw));
 
   if (!options?.probePortals || !options.remount) {
     return rootDescriptors;
