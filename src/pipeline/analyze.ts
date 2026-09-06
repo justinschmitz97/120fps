@@ -474,6 +474,8 @@ export async function analyze(
     const enterHarnessPage = async (): Promise<void> => {
       await gotoWithErrorContext(page, harness!.url, pageErrors, "component harness", {
         waitUntil: HARNESS_NAV_WAIT,
+        // The bound the readiness wait below advertises, so neither half reports another.
+        timeout: harnessReadyTimeoutMs(),
       });
       // Races readiness against a fatal page error instead of waiting out the full timeout.
       await waitForReadyOrFatal(

@@ -388,6 +388,8 @@ export async function explore(
       await refreshCdpSession(page, session);
       await gotoWithErrorContext(page, harness.url, errorCapture, "explorer harness", {
         waitUntil: HARNESS_NAV_WAIT,
+        // The bound the readiness wait below advertises, so neither half reports another.
+        timeout: harnessReadyTimeoutMs(),
       });
       try {
         await page.waitForFunction(

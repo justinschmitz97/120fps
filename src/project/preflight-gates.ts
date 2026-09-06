@@ -31,6 +31,10 @@ export type PreflightKind =
   | "unloadable-file-type"
   // Hard: no macro compiler is loadable here, so the macro reaches the browser unexpanded.
   | "unloadable-macro"
+  // Hard: only the plugin that owns the namespace can produce the module, and none is loaded.
+  | "unloadable-virtual-module"
+  // Hard: a Next.js build-time module whose export set no shim can cover.
+  | "unshimmable-next-module"
   // Hard: neither the project nor 120fps resolves the CSS preprocessor Vite would need.
   | "unavailable-preprocessor"
   // Hard: the tsconfig every transform reads names a file `nuxi prepare` never wrote.
@@ -114,6 +118,12 @@ export const TRANSFORM_RECOGNIZERS: TransformRecognizer[] = [
     test: (s) => /\.svelte$/.test(s),
     owner: "@sveltejs/vite-plugin-svelte",
   },
+  // Its exports are one per font family, an unbounded set, so no shim of it can ever be complete.
+  {
+    code: "unshimmable-next-module",
+    test: (s) => UNSHIMMABLE_NEXT_MODULES.has(s),
+    owner: "the Next.js compiler, which rewrites these imports while the app builds",
+  },
   // Nothing is on disk behind a macro specifier, so the extension recognizers never match.
   {
     code: "babel-macro",
@@ -127,6 +137,10 @@ export const TRANSFORM_RECOGNIZERS: TransformRecognizer[] = [
     owner: "a Vite plugin the project configures in its vite.config",
   },
 ];
+
+// Deliberately never shimmed, so the dry run may decide them: an unshimmed next/* module that
+// only lacks a shim today stays a warning.
+const UNSHIMMABLE_NEXT_MODULES = new Set(["next/font/google"]);
 
 // The namespace and the packages that can own it; an unplugin- specifier names its producer.
 const VIRTUAL_NAMESPACE_PRODUCERS: Array<{ prefix: string; packages: string[] }> = [
@@ -179,6 +193,8 @@ export const UNLOADABLE_FILE_TYPE_CODES = new Set(Object.keys(DATA_LOADER_CANDID
 // A transform code no supported plugin can ever claim refuses the run; the rest only warn.
 export function hardKindForTransformCode(code: string): PreflightKind | undefined {
   if (UNLOADABLE_FILE_TYPE_CODES.has(code)) return "unloadable-file-type";
+  if (code === "virtual-module") return "unloadable-virtual-module";
+  if (code === "unshimmable-next-module") return "unshimmable-next-module";
   return code === "babel-macro" ? "unloadable-macro" : undefined;
 }
 
@@ -238,6 +254,10 @@ const HARD_CAUSE: Record<HardKind, string> = {
     "workspace root)",
   "unloadable-file-type": "imports a file type Vite parses as JavaScript unless a plugin claims it",
   "unloadable-macro": "imports a Babel macro that no compiler here expands",
+  "unloadable-virtual-module":
+    "imports a module from a virtual namespace only a Vite plugin generates",
+  "unshimmable-next-module":
+    "imports a Next.js build-time module that no shim here can stand in for",
   "unavailable-preprocessor": "imports a stylesheet whose CSS preprocessor nothing here resolves",
   "nuxt-not-prepared": "is measured in a Nuxt project that `nuxi prepare` has not finished",
 };
@@ -274,6 +294,15 @@ export const HARD_REMEDY: Record<HardKind, string> = {
     "In a copy of this component, write the macro call out by hand as the code the compiler " +
     "would have generated, or measure a component below this one whose graph does not reach the " +
     "macro. Pass --no-preflight to attempt the run anyway.",
+  // The font import is what has to move; nothing installable makes the module loadable here.
+  "unshimmable-next-module":
+    "Measure a component whose graph does not reach that import, or move the font import to a " +
+    "parent this component does not render. Pass --no-preflight to attempt the run anyway.",
+  // Nothing on disk produces it, so only a graph that avoids the namespace can be measured.
+  "unloadable-virtual-module":
+    "Measure a component whose graph does not reach that import, or give this one a fixture " +
+    "(120fps.fixture.tsx) or a wrapper (--wrap, 120fps.setup.tsx) that stubs it. Pass " +
+    "--no-preflight to attempt the run anyway.",
   // The command itself is per-project, so the hit carries it and the message prints it above this.
   "unavailable-preprocessor":
     "Install it where the measured package resolves it, then measure again. Pass --no-preflight " +
@@ -310,6 +339,8 @@ export class PreflightHardRejectionError extends Error {
 const TRANSFORM_REFUSAL_KINDS = new Set<PreflightKind>([
   "unloadable-file-type",
   "unloadable-macro",
+  "unloadable-virtual-module",
+  "unshimmable-next-module",
   "unavailable-preprocessor",
 ]);
 
@@ -367,6 +398,40 @@ export function preflightFailureMessage(hits: PreflightHit[]): string {
         ` 120fps loads only its supported transforms (${supported}) and never reads your ` +
         "vite.config, so nothing here expands it: the macro's own module would reach the browser " +
         "instead of the code it would have generated.",
+      hardRemedyFor(kind),
+    ].join("\n");
+  }
+  // Nothing the harness can load answers it, and nothing on disk changes that.
+  if (kind === "unshimmable-next-module") {
+    return [
+      `Cannot measure this component in a browser: ${where} imports ${hit.specifier}, a Next.js ` +
+        "build-time module that 120fps does not shim and has decided never to shim: its exports " +
+        "are one per font family, an unbounded set no shim can cover.",
+      "",
+      `  ${chainText(hit)}`,
+      "",
+      "Next's own compiler rewrites that import while the app builds. 120fps never runs that " +
+        "compiler, so the harness page would load the real module and the import would fail with " +
+        '"does not provide an export named \'default\'".',
+      hardRemedyFor(kind),
+    ].join("\n");
+  }
+  // No file behind it, so no build produces one: only the plugin that owns the namespace can.
+  if (kind === "unloadable-virtual-module") {
+    const supported = SUPPORTED_TRANSFORM_PLUGINS.map((plugin) => plugin.code).join(", ");
+    const namespace = recognizeVirtualNamespace(hit.specifier ?? "")?.namespace ?? hit.specifier;
+    return [
+      `Cannot measure this component in a browser: ${where} imports ${hit.specifier}, a module in ` +
+        `the \`${namespace}\` virtual namespace that a Vite plugin generates at request time.`,
+      "",
+      `  ${chainText(hit)}`,
+      "",
+      (hit.transformOwnerDeclared
+        ? `This project declares ${hit.transformOwner}, the plugin that owns that namespace.`
+        : "Nothing in this project declares a plugin that owns that namespace.") +
+        ` 120fps loads only its supported transforms (${supported}) and never reads your ` +
+        "vite.config, so nothing here answers for that import: the dev server would answer it " +
+        "with a 500 and the page would never evaluate.",
       hardRemedyFor(kind),
     ].join("\n");
   }
@@ -627,6 +692,8 @@ const BYPASS_KIND_LABEL: Record<HardKind, string> = {
   "not-installed": "not-installed",
   "unloadable-file-type": "unloadable-file-type",
   "unloadable-macro": "babel-macro",
+  "unloadable-virtual-module": "virtual-module",
+  "unshimmable-next-module": "unshimmable-next-module",
   "unavailable-preprocessor": "css-preprocessor",
   "nuxt-not-prepared": "nuxt-not-prepared",
 };

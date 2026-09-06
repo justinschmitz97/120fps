@@ -76,6 +76,8 @@ export async function enterHarness(
   if (boundNotice) options.onWarning?.(boundNotice);
   await gotoWithErrorContext(page, url, errorCapture, options.label, {
     waitUntil: HARNESS_NAV_WAIT,
+    // The bound the readiness wait below advertises: one arrival, one bound, one note.
+    timeout: harnessReadyTimeoutMs(),
   });
   // A fatal module-evaluation throw wins the race, so the page error leads over the timeout.
   await waitForReadyOrFatal(
