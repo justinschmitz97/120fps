@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { analyze, explainProps, formatExplainProps, resolveProjectPaths } from "../pipeline/index.js";
 import { compareAgainstRef, formatCompare, validateCompareOptions } from "../analysis/index.js";
-import { formatMarkdown, formatJUnit, formatTable, formatPhaseBreakdown } from "../report/index.js";
+import { formatMarkdown, formatJUnit, formatTable, formatPhaseBreakdown, resolveBaselinePath } from "../report/index.js";
 import type { PhaseTimings } from "../report/index.js";
 import { createBrowserPool } from "../browser/index.js";
 import { createServerPool, refreshHarnessDirMarkers } from "../harness/index.js";
@@ -286,6 +286,8 @@ async function main(): Promise<void> {
           formatTotalLine(Date.now() - started, report.phaseTimings) + "\n",
         );
       }
+      // Every finished Report, --ci or not: the artifact describes the run, not the terminal.
+      ciReports.push(report);
       if (!report.pass) anyFail = true;
     } catch (err: unknown) {
       // The abort already printed and owns the exit; returning avoids a second error.
@@ -321,7 +323,7 @@ async function main(): Promise<void> {
     if (gitRoot) {
       const writtenPaths = reportPaths.map((reportPath) => path.resolve(reportPath));
       for (const projectRoot of projectRoots) {
-        if (args.saveBaseline) writtenPaths.push(path.join(projectRoot, "120fps-baseline.json"));
+        if (args.saveBaseline) writtenPaths.push(resolveBaselinePath(projectRoot, args.baselineFile));
         writtenPaths.push(...harnessLeftoverDirs(projectRoot));
       }
       writtenPaths.push(...harnessLeftoverDirs(gitRoot));
@@ -331,7 +333,7 @@ async function main(): Promise<void> {
   }
 
   // Written even when components failed: a summary that appears only on success is useless.
-  if (args.reportMd) writeCiFile(args.reportMd, formatMarkdown(ciReports));
+  if (args.reportMd) writeCiFile(args.reportMd, formatMarkdown(ciReports, { failed: anyFail }));
   if (args.reportJunit) writeCiFile(args.reportJunit, formatJUnit(ciReports));
 
   process.exit(anyFail ? 1 : 0);
@@ -380,6 +382,7 @@ async function runOne(
       saveBaseline: args.saveBaseline,
       check: args.check,
       noBaseline: args.noBaseline,
+      baselineFile: args.baselineFile,
       noCache: args.noCache,
       noPreflight: args.noPreflight,
       noTransforms: args.noTransforms,

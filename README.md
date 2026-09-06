@@ -65,6 +65,7 @@ Options:
   --compare <gitref>             Measure the working tree against <gitref>, samples interleaved
   --save-baseline                Save current measurements as baseline
   --check                        Compare against baseline, fail on regression
+  --baseline-file <path>         Baseline file --save-baseline writes and --check reads (default: <project root>/120fps-baseline.json)
   --budget                       Shorthand for --ci --check
   --no-baseline                  Skip baseline comparison in CI mode
   --no-cache                     Measure even when an unchanged component could reuse its baseline verdict
