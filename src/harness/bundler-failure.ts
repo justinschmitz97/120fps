@@ -89,6 +89,14 @@ function stripBundlerStackFrames(message: string): string {
   return kept.join("\n").replace(/\n{2,}/g, "\n").trim();
 }
 
+// The harness's own two lead sentences; a bundler pattern below one is evidence, not the failure.
+const HARNESS_READINESS_LEAD =
+  /(?:did not become ready within timeout|failed before it became ready)/;
+
+function isHarnessReadinessReport(message: string): boolean {
+  return HARNESS_READINESS_LEAD.test(message.split("\n", 1)[0]);
+}
+
 // One diagnosis pipeline for every arrival surface, so a shape recognized on one is on all.
 export function presentBundlerFailure(
   message: string,
@@ -96,16 +104,22 @@ export function presentBundlerFailure(
   // Optional: the unhandled-rejection surface has no in-flight warnings array to offer.
   buildWarnings: readonly string[] = [],
 ): string {
-  return (
+  const diagnosis =
     diagnoseUnbuiltWorkspacePackage(message, projectRoot) ??
     diagnoseMissingShimExport(message) ??
     diagnoseGitignoredGeneratedFile(message, projectRoot) ??
     diagnoseNuxtBuildModule(message, buildWarnings, projectRoot) ??
     diagnosePreprocessorMissing(message, projectRoot) ??
-    diagnoseMuteReadinessTimeout(message, buildWarnings) ??
-    diagnoseBundlerFailure(message, projectRoot) ??
-    stripBundlerStackFrames(message)
-  );
+    diagnoseStalePreprocessor(message, projectRoot) ??
+    diagnoseBundlerFailure(message, projectRoot);
+  // The readiness report is the run's own account of the wait; a diagnosis explains it, never
+  // replaces it. One of the two, never both: a second explanation of one failure reads as a guess.
+  if (isHarnessReadinessReport(message)) {
+    const explanation = diagnosis ?? diagnoseMuteReadinessTimeout(message, buildWarnings);
+    const report = stripBundlerStackFrames(message);
+    return explanation ? `${report}\n${explanation}` : report;
+  }
+  return diagnosis ?? stripBundlerStackFrames(message);
 }
 
 // An empty capture is the whole point: nothing threw, so nothing named itself.
@@ -123,17 +137,34 @@ export function READINESS_STYLESHEET_SUSPECT(files: string): string {
   );
 }
 
+// Nothing to blame, and saying so keeps the next reader from re-testing a sheet already gone.
+export const READINESS_STYLESHEET_CLEARED =
+  "No stylesheet is in the generated harness entry: every sheet this run discovered failed the " +
+  "compile probe and was dropped before the page opened, so none of them held that entry module. " +
+  "What held it is elsewhere in this component's own graph.";
+
+// Both probe warnings lead with the sheet they dropped; the entry the page got is what is left.
+const PROBE_DROPPED_STYLESHEET = /^(.+?) did not compile(?: within | \()/;
+
 function diagnoseMuteReadinessTimeout(
   message: string,
   buildWarnings: readonly string[],
 ): string | undefined {
   if (!READY_TIMEOUT_WITHOUT_ERRORS.test(message)) return undefined;
-  const files = buildWarnings
+  const decided = buildWarnings
     .map((warning) => INJECTED_STYLESHEET.exec(warning)?.[1])
     .find((match): match is string => match !== undefined);
-  if (!files) return undefined;
-  // Appended, not substituted: the readiness wait's own report of what it waited for stands.
-  return `${stripBundlerStackFrames(message)}\n${READINESS_STYLESHEET_SUSPECT(files)}`;
+  if (!decided) return undefined;
+  const dropped = new Set(
+    buildWarnings
+      .map((warning) => PROBE_DROPPED_STYLESHEET.exec(warning)?.[1])
+      .filter((label): label is string => label !== undefined),
+  );
+  // The compile probe runs before the page opens; only a sheet that survived it is in the entry.
+  const survivors = decided.split(", ").filter((file) => !dropped.has(file));
+  return survivors.length > 0
+    ? READINESS_STYLESHEET_SUSPECT(survivors.join(", "))
+    : READINESS_STYLESHEET_CLEARED;
 }
 
 const VITE_PREPROCESSOR_MISSING = /Preprocessor dependency "([^"]+)" not found/;
@@ -184,6 +215,58 @@ function diagnosePreprocessorMissing(message: string, projectRoot: string): stri
     url ? requestedFile(url) : "a stylesheet in this component's graph",
     packages,
     command,
+  );
+}
+
+// Vite calls a preprocessor's async compile API; a version pinned below it has no such method.
+const PREPROCESSOR_METHOD_MISSING = /\[(sass|less|stylus)\][^\n]*?\b([A-Za-z_$][\w$]*) is not a function/;
+
+// The Dart Sass release that first provided the modern compileStringAsync API Vite calls.
+const SASS_MODERN_API_MINIMUM = "1.45.0";
+
+// Vite labels both Dart Sass packages `[sass]`, and tries the embedded one first.
+const PREPROCESSOR_PACKAGES_BY_LABEL: Record<string, string[]> = {
+  sass: ["sass-embedded", "sass"],
+  less: ["less"],
+  stylus: ["stylus"],
+};
+
+export function STALE_PREPROCESSOR_ERROR(
+  file: string,
+  pkg: string,
+  version: string | undefined,
+  method: string,
+  minimum: string | undefined,
+  upgradeCommand: string,
+): string {
+  const installed = version ? `${pkg} ${version} is installed and` : `the installed ${pkg}`;
+  const wanted = minimum ? `${pkg} ${minimum} or newer` : `a ${pkg} that provides it`;
+  return (
+    `${file} needs a CSS preprocessor this project pins below what the dev server calls: Vite asks ` +
+    `for ${method}(), and ${installed} does not define it. Install ${wanted} where the measured ` +
+    `package resolves it: ${upgradeCommand}. Or pass --no-css to measure without the stylesheet.`
+  );
+}
+
+// The version is read, never guessed: an unreadable manifest leaves the API as the whole finding.
+function diagnoseStalePreprocessor(message: string, projectRoot: string): string | undefined {
+  const match = PREPROCESSOR_METHOD_MISSING.exec(message);
+  if (!match) return undefined;
+  const [, label, method] = match;
+  const candidates = PREPROCESSOR_PACKAGES_BY_LABEL[label] ?? [label];
+  const installed = candidates
+    .map((pkg) => ({ pkg, dir: installedPackageDir(pkg, projectRoot) }))
+    .find((entry): entry is { pkg: string; dir: string } => entry.dir !== undefined);
+  const pkg = installed?.pkg ?? candidates[candidates.length - 1];
+  const version = installed ? readProjectManifest(installed.dir)?.version : undefined;
+  const url = HARNESS_REQUEST_500.exec(message)?.[1];
+  return STALE_PREPROCESSOR_ERROR(
+    url ? requestedFile(url) : "a stylesheet in this component's graph",
+    pkg,
+    typeof version === "string" ? version : undefined,
+    method,
+    installed && pkg === "sass" ? SASS_MODERN_API_MINIMUM : undefined,
+    packageManagerAddCommand(projectRoot, `${pkg}@latest`, process.cwd()),
   );
 }
 
