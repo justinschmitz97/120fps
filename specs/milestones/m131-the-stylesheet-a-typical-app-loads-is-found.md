@@ -5,6 +5,8 @@ tests:
   - test/unit/entry-stylesheet-discovery.test.ts
   - test/unit/global-stylesheet-fallbacks.test.ts
   - test/unit/stylesheet-disclosure-completeness.test.ts
+  - test/unit/stylesheet-selection-report.test.ts
+  - test/unit/css-injection.test.ts
   - test/unit/the-entry-chain-finds-the-apps-global-sheet.test.ts
   - test/unit/an-exports-pattern-resolves-a-package-stylesheet.test.ts
   - test/unit/the-stylesheet-disclosure-says-which-pick-was-wrong.test.ts
@@ -87,8 +89,10 @@ The verifier for every item below: run-7 investigation (2026-09-06), refuted by 
   `index.html` module script (unchanged); a Next.js entry stem (unchanged); `app/root.tsx` for a
   React Router 7 / Remix app; the `css:` array of a `nuxt.config.*`; an import with a binding
   (`import x from './app.css?url'`); a side-effect import with no extension that resolves to a
-  module (`import '~/styles'`); and at least one hop below the entry — the entry's own imports are
-  followed one level, in source order, and any stylesheet reached that way is an entry stylesheet.
+  stylesheet or to a module (`import '~/styles'`); and at least one hop below the entry — the
+  entry's own imports are followed one level, in source order, and any stylesheet reached that way
+  is an entry stylesheet. A `.vue` module reached that way contributes what its `<script>` block
+  imports; its `<style>` block is compiled with the component and is no injectable file.
 - **C2** The ranked walk does not stop at the first candidate it cannot preprocess. A candidate with
   no available preprocessor is skipped, the walk continues, and the reason that candidate was skipped
   is available to the disclosure.
@@ -98,16 +102,26 @@ The verifier for every item below: run-7 investigation (2026-09-06), refuted by 
 - **C4** A bare package stylesheet specifier resolves through the package's `exports` field including
   `"./*"` and `"./*.css"` patterns, and falls through to the on-disk probe when no pattern matches. A
   file that is genuinely absent is still reported as "resolved to no file", naming the specifier.
-- **C5** The injected-sheet disclosure distinguishes two cases. Entry-chain sheets that matched no
-  rules collapse into one line naming the count and up to three sheets, with no `--wrap` advice. A
-  largest-fallback pick that matched no rules gets its own line stating that the pick is not
-  corroborated by an import chain, that it matched nothing, and that `--css <file>` names the sheet
-  directly.
+- **C5** The injected-sheet disclosure distinguishes three cases, and prints at most one line for
+  the sheets that matched nothing. (a) Some injected sheet did match: the ones that did not collapse
+  into a single line naming the count and up to three of them, with no `--wrap` advice, because a
+  sheet this component never uses is not a finding. (b) No injected sheet matched anything: one line
+  keeps the two readings M114 named -- an ancestor the harness does not render, fixable with
+  `--wrap`, or `:root` custom properties that do cascade in. (c) A largest-fallback pick that
+  matched no rules gets its own line stating that no import chain corroborates the pick, that it
+  matched nothing, and that `--css <file>` names the sheet directly.
 - **C6** A sheet that did match rules produces no "none of its rules matched" line, and the
   disclosure is silent when every injected sheet matched.
 - **C7** Dry/real parity (M100, M110): `--explain-props` reports the same stylesheet decision, the
   same source (`entry` / `fallback` / `none`) and the same warnings as the real run for the same
   component and flags.
+- **C8** A `.scss` or `.sass` stylesheet any layer reaches is injected when an implementation
+  resolves for it, including the `sass` 120fps declares as its own dependency and Vite's fallback
+  base resolves (M122). Only an extension with no implementation at all -- `.less`, `.styl` -- is
+  refused, naming the package the project would have to install.
+- **C9** The size-ranked fallback never picks a Sass partial (`_name.scss`): Sass emits no stylesheet
+  of its own for one, so no app loads it as its sheet. The reason is stated on the `Stylesheets:`
+  line when the walk then finds nothing.
 
 ## MUST NOT
 
@@ -125,7 +139,7 @@ The verifier for every item below: run-7 investigation (2026-09-06), refuted by 
 
 ## Verification
 
-- **C1, C2** — `test/unit/the-entry-chain-finds-the-apps-global-sheet.test.ts` and
+- **C1, C2, C8, C9** — `test/unit/the-entry-chain-finds-the-apps-global-sheet.test.ts` and
   `test/unit/entry-stylesheet-discovery.test.ts`: one fixture per shape (index.html, Next stem,
   `app/root.tsx` with `?url`, `nuxt.config` `css:`, extensionless side-effect import, one hop below
   the entry through a plugin module) yields the expected sheet; a candidate whose preprocessor is
@@ -139,11 +153,12 @@ The verifier for every item below: run-7 investigation (2026-09-06), refuted by 
   "./dist/*.css" }` resolves; a package with an exact key still resolves; a package with no matching
   pattern falls through to the on-disk probe and finds the file; a specifier whose file does not
   exist anywhere is reported as resolved to no file, naming the specifier.
-- **C5, C6** — `test/unit/the-stylesheet-disclosure-says-which-pick-was-wrong.test.ts` and
-  `test/unit/stylesheet-disclosure-completeness.test.ts` (rewrites `:35-46`): four entry-chain sheets
-  with 0 matched rules produce one collapsed line with three names and no `--wrap`; a fallback pick
-  with 0 matched rules produces its own line naming `--css`; a run whose sheets all matched produces
-  no line; a mixed run produces exactly one collapsed line and one fallback line.
+- **C5, C6** — `test/unit/the-stylesheet-disclosure-says-which-pick-was-wrong.test.ts`: four
+  entry-chain sheets with 0 matched rules next to one that matched produce one collapsed line with
+  three names and no `--wrap`; four with nothing matching anywhere produce one collapsed line that
+  keeps the `--wrap` reading; a single sheet that matched nothing keeps M114's wording verbatim; a
+  fallback pick with 0 matched rules produces its own line naming `--css`; a run whose sheets all
+  matched, and a run the probe never reported on, produce no line at all.
 - **C7** — extend `test/unit/css-injection.test.ts`: the dry run and the real run agree on decision,
   source and warnings for each C1 fixture.
 - Types: `node node_modules/typescript/bin/tsc --noEmit -p tsconfig.json` clean.
@@ -154,61 +169,65 @@ The verifier for every item below: run-7 investigation (2026-09-06), refuted by 
   `test/unit/sass-import-compiles-with-a-disclosed-compiler.test.ts`, then the full unit suite once
   before the lane's final commit.
 
-Recorded run of this milestone's verification:
+Recorded run of this milestone's verification, 2026-09-06 in `C:/Projekte/120fps-run7-lane-c`
+(node 22.22.2, pnpm 9.7.0, two other lanes and a smoke sharing the CPU):
 
 ```
-<filled by lane C: tsc result, the vitest invocations and their verbatim totals>
+node node_modules/typescript/bin/tsc -p tsconfig.json      # exit 0
+
+npx vitest run test/unit/the-entry-chain-finds-the-apps-global-sheet.test.ts   test/unit/an-exports-pattern-resolves-a-package-stylesheet.test.ts   test/unit/the-stylesheet-disclosure-says-which-pick-was-wrong.test.ts   test/unit/global-stylesheet-fallbacks.test.ts test/unit/css-injection.test.ts   test/unit/stylesheet-disclosure-completeness.test.ts   test/unit/stylesheet-selection-report.test.ts test/unit/entry-stylesheet-discovery.test.ts   test/unit/package-declared-stylesheets.test.ts   test/unit/stylesheet-candidate-validation.test.ts test/unit/css-injection-harden.test.ts   --maxWorkers=2
+# Test Files 11 passed (11); Tests 300 passed (300)
+
+npx vitest run test/unit --maxWorkers=2
+# Test Files 2 failed | 342 passed (344); Tests 2 failed | 4985 passed | 1 skipped (4988)
+# The two failures are the recorded pre-existing ones: prop-cap-ranking.test.ts and
+# vue-setup-inject-evidence.test.ts. Baseline at f54be55: 341 files, 4918 passed, 2 failed.
 ```
 
-Corpus repros, through a `dist` built in `C:/Projekte/120fps-run7-lane-c`:
+Corpus repros, dry runs through a `dist` built in `C:/Projekte/120fps-run7-lane-c`, logs under
+`C:/Projekte/120fps-fieldtest/logs/run7-lane-c/<repo>/`:
 
 ```
-node C:/Projekte/120fps-fieldtest/tools/run120.mjs \
-  --cwd E:/repositories-run5/logto/packages/console \
-  --out C:/Projekte/120fps-fieldtest/logs/run7-lane-c/logto \
-  --label m131-logto --cli C:/Projekte/120fps-run7-lane-c/dist/cli/main.js \
-  -- src/ds-components/FormField/Skeleton.tsx --samples 3 --max-combos 2 \
-     --explore-budget 30 --no-deltas
-# expected: `Stylesheets:` names src/scss/normalized.scss (baseline "none found")
-
-node C:/Projekte/120fps-fieldtest/tools/run120.mjs \
-  --cwd E:/repositories-run6/chatwoot \
-  --out C:/Projekte/120fps-fieldtest/logs/run7-lane-c/chatwoot \
-  --label m131-chatwoot --cli C:/Projekte/120fps-run7-lane-c/dist/cli/main.js \
-  -- app/javascript/v3/components/Form/CheckBox.vue --samples 3 --max-combos 2 \
-     --explore-budget 30 --no-deltas
-# expected: the entry chain reaches app.scss; the line names it
-
-node C:/Projekte/120fps-fieldtest/tools/run120.mjs \
-  --cwd E:/repositories-run5/documenso/apps/remix \
-  --out C:/Projekte/120fps-fieldtest/logs/run7-lane-c/documenso \
-  --label m131-documenso --cli C:/Projekte/120fps-run7-lane-c/dist/cli/main.js \
-  -- app/components/general/portal.tsx --samples 3 --max-combos 2 --explore-budget 30 --no-deltas
-# expected: app/root.tsx's ./app.css?url is the entry sheet; no CSS_FALLBACK_WARNING
-
-node C:/Projekte/120fps-fieldtest/tools/run120.mjs \
-  --cwd E:/repositories-run5/supabase/apps/studio \
-  --out C:/Projekte/120fps-fieldtest/logs/run7-lane-c/supabase \
-  --label m131-supabase --cli C:/Projekte/120fps-run7-lane-c/dist/cli/main.js \
-  -- components/ui/DataTable/primitives/Kbd.tsx --samples 3 --max-combos 2 \
-     --explore-budget 30 --no-deltas
-# expected: one collapsed feature-sheet line, no --wrap advice, no line for globals.css
-
-node C:/Projekte/120fps-fieldtest/tools/run120.mjs \
-  --cwd E:/repositories-run6/infisical/frontend \
-  --out C:/Projekte/120fps-fieldtest/logs/run7-lane-c/infisical \
-  --label m131-infisical --cli C:/Projekte/120fps-run7-lane-c/dist/cli/main.js \
-  -- src/components/v3/generic/DataGrid/ui/kbd.tsx --samples 3 --max-combos 2 \
-     --explore-budget 30 --no-deltas
-# expected: @fontsource/jetbrains-mono/400.css resolves through the ./* exports pattern
-
-node C:/Projekte/120fps-fieldtest/tools/run120.mjs \
-  --cwd E:/repositories-run6/nextjs-boilerplate \
-  --out C:/Projekte/120fps-fieldtest/logs/run7-lane-c/nextjs-boilerplate \
-  --label m131-nextjs-boilerplate --cli C:/Projekte/120fps-run7-lane-c/dist/cli/main.js \
-  -- src/components/LocaleSwitcher.tsx --samples 3 --max-combos 2 --explore-budget 30 --no-deltas
-# expected: the line states the only sheet is a Tailwind @import with no bodied rules
+node C:/Projekte/120fps-fieldtest/tools/run120.mjs --cwd <appDir>   --out C:/Projekte/120fps-fieldtest/logs/run7-lane-c/<repo> --label dry --timeout 600   --cli C:/Projekte/120fps-run7-lane-c/dist/cli/main.js -- <component> --explain-props
 ```
+
+| Repo | `Stylesheets:` before | `Stylesheets:` after |
+|---|---|---|
+| logto | `none found (checked the project entry, conventional filenames, and the largest stylesheet under the project)` | `node_modules/overlayscrollbars/styles/overlayscrollbars.css, src/scss/normalized.scss, src/scss/overlayscrollbars.scss, node_modules/react-color-palette/dist/css/rcp.css, node_modules/react-day-picker/dist/style.css (found in the project entry's own imports)` |
+| chatwoot | `none found (checked the project entry, …)` | `none found (no project entry was found: …; app/javascript/dashboard/assets/scss/_next-colors.scss is a Sass partial, which no app loads on its own; …)` — see Deferred |
+| documenso | `app/app.css (largest-stylesheet fallback, low confidence — verify with --css)` | `app/app.css (found in the project entry's own imports)`, no `CSS_FALLBACK_WARNING` |
+| excalidraw | `share/ShareDialog.scss (largest-stylesheet fallback, …)` | `index.scss (found in the project entry's own imports)` |
+| supabase | 13 sheets, entry-chain; 6 "none of its N rules matched" lines, each with `--wrap` | same 13 sheets; one line: `6 injected stylesheets (styles/graphiql-base.css, styles/monaco.css, styles/reactflow.css and 3 more) matched no element inside the component's own tree, while another injected stylesheet did match. …`; no `--wrap`; no line for `styles/globals.css` |
+| nextjs-boilerplate | `none found (checked the project entry, …)` | `none found (no project entry was found: …; src/styles/global.css declares no CSS rule with a body of its own -- it only pulls in Tailwind)` |
+| infisical | entry-chain without the jetbrains-mono sheets, plus `the project entry imports @fontsource/jetbrains-mono/400.css, @fontsource/jetbrains-mono/500.css, which resolved to no file…` | entry-chain including `node_modules/@fontsource/jetbrains-mono/400.css` and `/500.css`; no "resolved to no file" warning |
+| epic-stack | `app/styles/tailwind.css (largest-stylesheet fallback, …)` | `app/styles/tailwind.css (found in the project entry's own imports)` |
+| soybean-admin | `src/styles/css/nprogress.css (largest-stylesheet fallback, …)` | `src/styles/css/global.css (found in the project entry's own imports)` |
+| vue-pure-admin | entry-chain without `element-plus/dist/index.css`, plus its "resolved to no file" warning | entry-chain including `node_modules/element-plus/dist/index.css` and `node_modules/vxe-table/lib/style.css`; no "resolved to no file" warning |
+| nuxt.com | `app/assets/css/main.css (largest-stylesheet fallback, …)` | `app/assets/css/main.css (found in the project entry's own imports)`, read from `nuxt.config.ts`'s literal `css:` array |
+| posthog | `src/lib/components/MarkdownNotebook/MarkdownNotebook.scss (largest-stylesheet fallback, …)` | unchanged — see Deferred |
+
+The supabase disclosure was recorded on a real run, log
+`C:/Projekte/120fps-fieldtest/logs/run7-lane-c/supabase/real.log:79`:
+
+```
+node C:/Projekte/120fps-fieldtest/tools/run120.mjs --cwd E:/repositories-run5/supabase/apps/studio   --out C:/Projekte/120fps-fieldtest/logs/run7-lane-c/supabase --label real --timeout 600   --cli C:/Projekte/120fps-run7-lane-c/dist/cli/main.js --   components/ui/DataTable/primitives/Kbd.tsx --samples 3 --max-combos 2 --explore-budget 30   --no-deltas
+# exit 0, 44.3 s, pass-warn, css layer=entry-chain files=13, 6 warnings
+```
+
+Scaffolds, the most typical entry shapes, all dry runs
+(`logs/run7-lane-c/<scaffold>/dry.log`):
+
+| Scaffold | Before | After |
+|---|---|---|
+| scaffold-rr7 | `app/app.css (largest-stylesheet fallback, …)` | `app/app.css (found in the project entry's own imports)` |
+| scaffold-vite-react-ts | `src/index.css (entry)` | `src/index.css, src/App.css (entry)` — the one hop adds the sheet `App.tsx` imports |
+| scaffold-vite-shadcn | `src/index.css (entry)` | `src/index.css, src/App.css (entry)` |
+| scaffold-vite-vue-ts | `src/style.css (entry)` | unchanged |
+| scaffold-create-vue | `src/assets/main.css (entry)` | unchanged |
+| scaffold-next-app | (no candidate in run7-new1; measured `src/app/page.tsx`) | `src/app/globals.css (found in the project entry's own imports)` |
+| scaffold-next-pages | `styles/globals.css (entry)` | unchanged |
+| scaffold-t3 | `src/styles/globals.css (entry)` | unchanged |
+| scaffold-nuxt | (no candidate in run7-new1; measured `app/components/Greeting.vue`) | `none found (…no stylesheet file exists under this project)` — the scaffold ships none |
 
 ## Deferred
 
@@ -221,3 +240,17 @@ node C:/Projekte/120fps-fieldtest/tools/run120.mjs \
   array only. A computed one is a MUST NOT here and stays with M136's plugin work.
 - **Ranking multiple discovered sheets by likely relevance.** C1 finds them; deciding which of five
   global sheets matters most to one component needs its own evidence.
+- **chatwoot.** Its entry is a `vite-plugin-ruby` entrypoint directory, which only `config/vite.json`
+  names, and its eight entrypoints have no single answer for one component. The reachable one,
+  `app/javascript/entrypoints/v3app.js`, imports no stylesheet at all: the styling of `v3/App.vue`
+  lives in that SFC's own `<style lang="scss">`, which the component compiles and no file can be
+  injected for. The run now reports none found and names the two Sass partials it refused, which is
+  true. Reaching it needs an entrypoint-directory shape and a rule for choosing among entrypoints.
+- **posthog.** It has no discoverable entry: `frontend/src/index.html` is a Django template with no
+  module script, the build is esbuild (`build.mjs`), and `~` is a webpack alias no tsconfig declares,
+  so `import '~/styles'` resolves to nothing. The largest-stylesheet fallback stands.
+- **A Sass disclosure for an injected sheet only the bundled compiler can compile.** C8 lets such a
+  sheet through. The M122 disclosure is keyed on a preflight transform hit in the component's own
+  graph, so a run whose only `.scss` edge is the injected stylesheet compiles with 120fps's Sass and
+  says nothing. Adding a second disclosure here would break M122's "no more than one Sass disclosure
+  per run"; the fix belongs in M122's producer.

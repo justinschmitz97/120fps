@@ -93,11 +93,17 @@ describe("resolveCssFiles names which layer decided", () => {
   });
 
   it("none: nothing is found and no runtime engine is declared", () => {
-    expect(resolveCssFiles({}, tmpDir)).toEqual({
+    expect(resolveCssFiles({}, tmpDir)).toMatchObject({
       files: [],
       autoDetected: false,
       layer: "none",
     });
+  });
+
+  it("none carries the reasons the search found nothing", () => {
+    expect(resolveCssFiles({}, tmpDir).searchNotes).toContain(
+      "no stylesheet file exists under this project",
+    );
   });
 
   it("disabled: --no-css", () => {
