@@ -1,4 +1,5 @@
 import path from "node:path";
+import { pathKey } from "../shared/index.js";
 import {
   findWorkspaceRoot,
   loadTsconfigAliases,
@@ -41,6 +42,16 @@ export interface StaticPreBuild {
   // Both modes report the same set without walking the graph again.
   unresolvedExternals: Array<{ specifier: string; importer: string }>;
   workspaceRoot: string;
+}
+
+
+// One --explain-props invocation walks several candidates over one graph; a specifier that
+// resolves nowhere is one fact about the project, not one per candidate. The candidate that met
+// it first keeps it, so the dry run and the real run of one component still report identically.
+const disclosedUnresolvedByProject = new Map<string, Map<string, string>>();
+
+export function resetPreBuildDisclosures(): void {
+  disclosedUnresolvedByProject.clear();
 }
 
 
@@ -109,7 +120,15 @@ export function collectStaticPreBuildWarnings(
   const importedSpecifiers = new Set<string>();
   // Filled by the same walk, so the dry run reports what the real optimizer would choke on.
   const unresolvedExternals: Array<{ specifier: string; importer: string }> = [];
+  const projectDisclosureKey = pathKey(projectRoot);
+  const disclosureOwners =
+    disclosedUnresolvedByProject.get(projectDisclosureKey) ?? new Map<string, string>();
+  disclosedUnresolvedByProject.set(projectDisclosureKey, disclosureOwners);
+  const componentDisclosureKey = pathKey(opts.componentPath);
   const reportedUnresolvedSpecifiers = new Set<string>();
+  for (const [specifier, owner] of disclosureOwners) {
+    if (owner !== componentDisclosureKey) reportedUnresolvedSpecifiers.add(specifier);
+  }
   const externalDeps = [
     ...new Set([
       ...scanExternalDeps(
@@ -152,6 +171,10 @@ export function collectStaticPreBuildWarnings(
     activeShims = shimmed.length > 0 ? shimmed : undefined;
     unsupported = unshimmedNextModules(importedSpecifiers);
     if (unsupported.length > 0) warnings.push(UNSUPPORTED_NEXT_MODULE_WARNING(unsupported));
+  }
+
+  for (const specifier of reportedUnresolvedSpecifiers) {
+    if (!disclosureOwners.has(specifier)) disclosureOwners.set(specifier, componentDisclosureKey);
   }
 
   // Decided by the dependency alone: utility classes need it with no global stylesheet.

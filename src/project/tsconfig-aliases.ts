@@ -8,6 +8,7 @@ import {
   resolveGoverningTsconfig,
   TSCONFIG_EXTENDS_BROKEN_WARNING,
   TSCONFIG_REFERENCES_MARKER,
+  tsconfigSignature,
 } from "./model.js";
 import { resolveTarget, SOURCE_EXTENSIONS } from "./resolve.js";
 import { escapeRegex, pathKey, toPosix } from "../shared/index.js";
@@ -200,8 +201,27 @@ export function ROOT_ABSOLUTE_ALIAS_WARNING(
   );
 }
 
+// The include globs are expanded over the whole project, and nothing here reads the file list.
+const NO_DIRECTORY_SCAN: ts.ParseConfigHost = { ...ts.sys, readDirectory: () => [] };
+
+// Keyed by mtime and size, so an edit invalidates the entry and a missing file is never cached.
+const parsedPathsConfigs = new Map<
+  string,
+  { signature: string | undefined; value: ParsedTsconfigPaths | undefined }
+>();
+
 // Independent of which layer asks; undefined on a read failure, after warning to stderr.
 function parseTsconfigPathsConfig(tsconfigPath: string): ParsedTsconfigPaths | undefined {
+  const key = pathKey(tsconfigPath);
+  const signature = tsconfigSignature(tsconfigPath);
+  const cached = parsedPathsConfigs.get(key);
+  if (cached && cached.signature === signature) return cached.value;
+  const value = readTsconfigPathsConfig(tsconfigPath);
+  parsedPathsConfigs.set(key, { signature, value });
+  return value;
+}
+
+function readTsconfigPathsConfig(tsconfigPath: string): ParsedTsconfigPaths | undefined {
   const configDir = path.dirname(tsconfigPath);
   try {
     const configFile = ts.readConfigFile(tsconfigPath, ts.sys.readFile);
@@ -214,7 +234,7 @@ function parseTsconfigPathsConfig(tsconfigPath: string): ParsedTsconfigPaths | u
     // The full result is kept, not just .options, so a broken extends diagnostic survives.
     const parsedResult = ts.parseJsonConfigFileContent(
       configFile.config,
-      ts.sys,
+      NO_DIRECTORY_SCAN,
       configDir,
       undefined,
       tsconfigPath,
@@ -344,6 +364,7 @@ const referencesOnlyConfigs = new Map<string, boolean>();
 export function resetTsconfigAliasTables(): void {
   aliasTablesByConfig.clear();
   referencesOnlyConfigs.clear();
+  parsedPathsConfigs.clear();
 }
 
 // Raw JSON only: no glob expansion, and the same rule resolveGoverningTsconfig applies.

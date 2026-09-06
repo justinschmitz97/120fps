@@ -373,10 +373,14 @@ function walkExternalDeps(
   // The dev server reads one alias list, so a governing answer it cannot reproduce is disclosed.
   const serveGoverningAlias = (spec: string, resolvedPath: string, importer: string): void => {
     if (reconciledAliases.has(spec)) return;
+    // Namespaced in the run-wide register: one disclosure per specifier, not one per candidate.
+    const disclosureKey = `alias-conflict ${spec}`;
     const measured = resolveLocalImport(importer, spec, projectRoot, aliases);
     if (measured.kind === "resolved" && pathKey(measured.path) === pathKey(resolvedPath)) return;
     reconciledAliases.add(spec);
     if (measured.kind === "resolved") {
+      if (reportedUnresolved.has(disclosureKey)) return;
+      reportedUnresolved.add(disclosureKey);
       warningsOut?.push(
         GOVERNING_ALIAS_CONFLICT_WARNING(
           spec,

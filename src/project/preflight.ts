@@ -3,7 +3,7 @@ import path from "node:path";
 import { builtinModules } from "node:module";
 import ts from "typescript";
 import { projectCompilerOptions } from "./compiler-options.js";
-import { setImportCycleReported, toPosix } from "../shared/index.js";
+import { pathKey, setImportCycleReported, toPosix } from "../shared/index.js";
 import { isVueFile, parseSfcScript, type VueSfcCompiler } from "./vue-sfc.js";
 import { detectPnP, findWorkspaceRoot, isPackageDeclared } from "./model.js";
 import { unbuiltSiblingSourceEntry } from "./workspace-source.js";
@@ -166,6 +166,36 @@ function scriptKind(fileName: string): ts.ScriptKind {
 
 // Keyed by mtime and size, so an edit invalidates the entry and a missing file is never cached.
 const parsedFiles = new Map<string, { signature: string; sourceFile: ts.SourceFile | undefined }>();
+
+// One cache per (project root, compiler options), so candidates 2 and 3 re-resolve nothing.
+const moduleResolutionCaches = new Map<string, ts.ModuleResolutionCache>();
+
+export function resetModuleResolutionCache(): void {
+  moduleResolutionCaches.clear();
+}
+
+// The options carry the answer, so two projects that would resolve differently never share one.
+function moduleResolutionCacheFor(
+  projectRoot: string,
+  compilerOptions: ts.CompilerOptions,
+): ts.ModuleResolutionCache {
+  const key = JSON.stringify([
+    pathKey(projectRoot),
+    Object.entries(compilerOptions)
+      .filter(([, value]) => typeof value !== "function")
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
+  ]);
+  let cache = moduleResolutionCaches.get(key);
+  if (cache === undefined) {
+    cache = ts.createModuleResolutionCache(
+      path.resolve(projectRoot),
+      (fileName) => (ts.sys.useCaseSensitiveFileNames ? fileName : fileName.toLowerCase()),
+      compilerOptions,
+    );
+    moduleResolutionCaches.set(key, cache);
+  }
+  return cache;
+}
 
 function fileSignature(fileName: string): string | undefined {
   try {
@@ -517,11 +547,16 @@ export function runPreflight(options: PreflightOptions): PreflightResult {
         continue;
       }
 
+      // Bare specifiers only: node_modules and `paths` targets do not appear while a run lives,
+      // while a relative edge can — the harness writes its own entry into the measured project.
       const resolved = ts.resolveModuleName(
         edge.specifier,
         file,
         fileOptions,
         ts.sys,
+        edge.specifier.startsWith(".") || edge.specifier.startsWith("/")
+          ? undefined
+          : moduleResolutionCacheFor(projectRoot, fileOptions),
       ).resolvedModule;
       const resolvedTarget =
         resolved === undefined ? undefined : path.normalize(resolved.resolvedFileName);
