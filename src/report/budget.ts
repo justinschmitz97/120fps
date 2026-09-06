@@ -51,6 +51,8 @@ export interface BaselineEntry {
   measuredState?: MeasuredState;
   // Pruning timestamp; a slot without one is kept, because absence is not age.
   savedAt?: string;
+  // Replayed verbatim when the verdict is reused, so caching loses no disclosure.
+  warnings?: string[];
   // Outside computeEnvKey and the baseline key: an entry differing only here is the same slot.
   phaseTimings?: PhaseTimings;
   phaseUnits?: { combos: number; samples: number };

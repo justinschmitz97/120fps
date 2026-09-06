@@ -1,5 +1,6 @@
 import path from "node:path";
 import { isVueFile } from "../project/index.js";
+import { toPosix } from "../shared/index.js";
 import type { ComboReport, CurveViolation, MatrixCell, MatrixReport, Report } from "./types.js";
 import { MEASUREMENT_BASIS_LINE } from "./hints.js";
 import { describeMode, perStepCost } from "./stats.js";
@@ -25,11 +26,6 @@ export function formatTable(report: Report): string {
   lines.push(describeMode(report));
   // First-run users read 14ms and think their button takes 14ms.
   lines.push(MEASUREMENT_BASIS_LINE);
-  if (report.cached) {
-    lines.push(
-      "Result reused from baseline: source unchanged, environment identical (--no-cache measures)",
-    );
-  }
   if (report.nextJsShims && report.nextJsShims.length > 0) {
     lines.push(`Next.js shims: ${report.nextJsShims.join(", ")}`);
   }
@@ -54,6 +50,12 @@ export function formatTable(report: Report): string {
     lines.push(`React Compiler: skipped (target ${target}: ${missingModule} not installed)`);
   }
   lines.push("");
+
+  // Nothing was measured, so every table, comparison and suggestion below would describe a
+  // run that did not happen.
+  if (report.cached) {
+    return formatCachedOutput(lines, report);
+  }
 
   if (report.isolation) {
     return formatIsolationOutput(lines, report);
@@ -204,7 +206,8 @@ export function formatTable(report: Report): string {
     const dir = path.dirname(report.componentPath);
     // detectFixture accepts only `.fixture.vue` for a Vue target, so the name must match.
     const suggestedExt = isVueFile(report.componentPath) ? "vue" : "tsx";
-    const hint = path.join(dir, `${stem}.fixture.${suggestedExt}`);
+    // A suggested path is meant to be pasted, and a backslash survives no shell that matters.
+    const hint = toPosix(path.join(dir, `${stem}.fixture.${suggestedExt}`));
     lines.push(`0 interactions found. Consider creating ${hint} with composed children.`);
   }
 
@@ -241,6 +244,20 @@ function renderHealthMarks(combo: ComboReport): string {
     marks.push(`→ #${transition.toComboIndex}: ${n} page error${n === 1 ? "" : "s"}`);
   }
   return marks.map((mark) => ` [${mark}]`).join("");
+}
+
+// The one sentence a reused run is allowed to say about what it did.
+export const VERDICT_REUSED_LINE =
+  "Verdict reused from baseline, nothing re-measured (--no-cache measures fresh numbers).";
+
+// No table, no comparison, no suggestion: the verdict and the disclosures that came with it.
+function formatCachedOutput(lines: string[], report: Report): string {
+  lines.push(VERDICT_REUSED_LINE);
+  lines.push("");
+  lines.push(report.pass ? "Result: PASS" : "Result: FAIL");
+  appendWarnings(lines, report);
+  appendHints(lines, report);
+  return lines.join("\n");
 }
 
 function formatIsolationOutput(lines: string[], report: Report): string {

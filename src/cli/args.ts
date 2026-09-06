@@ -34,6 +34,7 @@ export interface CliArgs {
   noMatrix?: boolean;
   saveBaseline?: boolean;
   check?: boolean;
+  baselineFile?: string;
   budget?: boolean;
   noBaseline?: boolean;
   noCache?: boolean;
@@ -85,6 +86,7 @@ export const KNOWN_FLAGS = new Set([
   "--no-matrix",
   "--save-baseline",
   "--check",
+  "--baseline-file",
   "--budget",
   "--no-baseline",
   "--no-cache",
@@ -233,6 +235,15 @@ export function parseArgs(argv: string[]): CliArgs {
     }
     if (arg === "--check") {
       result.check = true;
+      i++;
+      continue;
+    }
+    if (arg === "--baseline-file") {
+      if (i + 1 >= argv.length) {
+        result.error = "--baseline-file requires a path argument";
+        return result;
+      }
+      result.baselineFile = argv[++i];
       i++;
       continue;
     }

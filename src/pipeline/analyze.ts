@@ -122,6 +122,8 @@ export interface AnalyzeOptions {
   saveBaseline?: boolean;
   check?: boolean;
   noBaseline?: boolean;
+  // The file --save-baseline writes and --check reads; absent means the project root's own.
+  baselineFile?: string;
   baselineEnv?: BaselineEnvPolicy;
   isolation?: { phases: string[]; memoryCycles?: number };
   wrapPath?: string;

@@ -190,7 +190,12 @@ function isolationDetailLines(iso: IsolationReport, pass: boolean): string[] {
   return lines;
 }
 
-export function formatMarkdown(reports: Report[]): string {
+// What the process is about to exit with, for a run whose failure produced no Report of its own.
+export interface CiRunOutcome {
+  failed?: boolean;
+}
+
+export function formatMarkdown(reports: Report[], run: CiRunOutcome = {}): string {
   const failing = reports.filter((r) => !r.pass);
   const regressionCount = reports.reduce(
     (sum, r) => sum + (r.baseline?.regressions.length ?? 0),
@@ -200,7 +205,7 @@ export function formatMarkdown(reports: Report[]): string {
   const lines: string[] = [
     "## 120fps",
     "",
-    `${failing.length === 0 ? "**PASS**" : "**FAIL**"}: ${reports.length} ` +
+    `${failing.length === 0 && !run.failed ? "**PASS**" : "**FAIL**"}: ${reports.length} ` +
     `component${reports.length === 1 ? "" : "s"}, ${regressionCount} ` +
     `regression${regressionCount === 1 ? "" : "s"}`,
     "",

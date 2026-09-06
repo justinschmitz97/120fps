@@ -19,6 +19,7 @@ import {
   computeINP,
   loadBudgetConfig,
   loadBaseline,
+  resolveBaselinePath,
   saveBaseline as saveBaselineFile,
   resolveTolerances,
   compareBaseline,
@@ -453,7 +454,7 @@ export function applyBaselineWorkflow(
   metrics: BaselineMetrics | undefined,
   ctx: BaselineWorkflowContext,
 ): void {
-  const baselinePath = path.join(ctx.projectRoot, "120fps-baseline.json");
+  const baselinePath = resolveBaselinePath(ctx.projectRoot, ctx.options.baselineFile);
 
   if (ctx.options.check && !ctx.options.noBaseline) {
     const baseline = loadBaseline(baselinePath);
@@ -532,7 +533,10 @@ export function applyBaselineWorkflow(
 
   if (ctx.options.saveBaseline && metrics) {
     const entry = buildBaselineEntry(metrics, report.pass, ctx);
-    const { pruned } = saveBaselineFile(baselinePath, entry, ctx.relativeComponent);
+    // Stored with the entry so a run that reuses this verdict repeats this run's disclosures.
+    const warnings = report.warnings ?? [];
+    const stored = warnings.length > 0 ? { ...entry, warnings: [...warnings] } : entry;
+    const { pruned } = saveBaselineFile(baselinePath, stored, ctx.relativeComponent);
     if (pruned.length > 0) {
       report.warnings = [...(report.warnings ?? []), PRUNED_SLOTS_NOTICE(pruned)];
     }

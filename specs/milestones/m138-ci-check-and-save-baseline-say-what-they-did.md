@@ -2,10 +2,10 @@
 kind: milestone
 status: draft
 tests:
-  - test/unit/ci-report.test.ts
   - test/unit/every-report-reaches-the-ci-writers.test.ts
   - test/unit/a-reused-verdict-says-nothing-was-measured.test.ts
   - test/unit/a-baseline-is-written-where-it-is-told.test.ts
+  - test/e2e/ci-artifacts-carry-the-run.test.ts
 ---
 
 # M138: `--ci`, `--check` and `--save-baseline` say what they did and write where they are told
@@ -55,13 +55,19 @@ and artifacts under `C:/Projekte/120fps-fieldtest/smoke/run7-new1/logs/<repo>/`.
    `combos` array reaches the "0 interactions found" branch at
    `src/report/terminal-modes.ts:199-208`, which suggests `Consider creating src\App.fixture.tsx` —
    a path with a Windows separator in a message meant to be pasted.
-3. **A curve-mode baseline entry appears never to be reused** — `src/pipeline/verdict-reuse.ts:107`
-   builds the probe fingerprint with the mode hardcoded to `"combo"`, so an entry stored under
-   `"curve"` cannot match it. The verifier, and the reason this is stated as *likely* rather than
-   confirmed: the three repositories that re-measured under `--check` are exactly the three where
-   curve mode auto-activated. The correlation is complete over a sample of three; the mechanism is
-   read from the code, not from a controlled repro. Confidence: medium — this item's MUST is written
-   so that it is satisfied either by reusing the entry or by saying why it cannot be.
+3. **A baseline entry recorded in another mode is passed over in silence** — the reuse probe builds
+   its fingerprint with the mode hardcoded to `"combo"`, because no combo has been extracted when
+   the gate runs; `featuresDiffer` (`src/report/budget.ts`) compares `mode`, so an entry recorded
+   under any other mode fails `sameMachineIdentity` and the run re-measures without saying why.
+   Two verifiers, both from controlled repros rather than correlation. First: a baseline entry whose
+   `env.mode` is `curve` is passed over and the run measures again
+   (`logs/run7-lane-i/scaffold-vite-react-js/m138-curve-entry-mode.log`). Second, and the reason the
+   three curve repositories of `run7-new1` re-measured: only combo mode and isolation mode reach
+   `applyBaselineWorkflow`, so a curve-mode run writes no baseline entry at all —
+   `--save-baseline` on `rallly` produces no file at the named path
+   (`logs/run7-lane-i/rallly/m138-curve-save.log`), and the following `--check` finds nothing to
+   reuse. Whether curve mode should record a baseline is a separate contract; this milestone makes
+   the entry that does exist speak.
 4. **`--save-baseline` has no redirect** — the destination is built in
    `src/pipeline/build-report.ts:456` as `path.join(ctx.projectRoot, "120fps-baseline.json")` with no
    option consulted, and written at `:533-535` under `if (ctx.options.saveBaseline && metrics)`.
@@ -87,8 +93,9 @@ and artifacts under `C:/Projekte/120fps-fieldtest/smoke/run7-new1/logs/<repo>/`.
 - **C6** A reused verdict carries the warnings of the run it reuses. A reused report's `warnings`
   array equals the stored entry's, so a disclosure is not lost by caching.
 - **C7** A baseline entry stored under a mode other than `combo` either matches the probe fingerprint
-  of a run in that same mode, or the run states which stored mode it found and which mode it is in,
-  and re-measures. Silence is not an option here.
+  of a run in that same mode, or the run states which stored mode it found and which mode its reuse
+  check is in, and re-measures. Silence is not an option here. A run whose source fingerprint already
+  differs says nothing about modes: the changed source is its own explanation.
 - **C8** `--baseline-file <path>` names the file `--save-baseline` writes and `--check` reads, so a
   run need not write into the measured repository. The name was checked against the 46 entries of
   `KNOWN_FLAGS` (`src/cli/args.ts:62-109`): no `--*-file` flag exists, the only neighbouring name is
@@ -117,77 +124,103 @@ and artifacts under `C:/Projekte/120fps-fieldtest/smoke/run7-new1/logs/<repo>/`.
 
 ## Verification
 
-- **C1, C2** — `test/unit/every-report-reaches-the-ci-writers.test.ts` and
-  `test/unit/ci-report.test.ts`: a three-component run produces markdown with three rows whose
-  verdicts equal the terminal's and JUnit with `tests="3"`; a run with one failing component produces
-  an artifact headline that is not `PASS` and an exit code of 1; a zero-component run still produces
-  the empty artifact it produces today.
-- **C3, C4, C5, C6** — `test/unit/a-reused-verdict-says-nothing-was-measured.test.ts` and
-  `test/unit/terminal-modes.test.ts`: a reused report prints the reuse sentence and none of the three
-  forbidden lines; a measured report with zero interactions still prints the fixture hint, and its
-  suggested path contains no backslash on any platform; a reused report's `warnings` array equals the
-  stored entry's.
-- **C7** — extend `test/unit/verdict-reuse.test.ts`: an entry stored under `curve` is matched by a
-  curve-mode run; an entry stored under `combo` is not matched by a curve-mode run, and the run says
-  which mode it found and which it is in before re-measuring.
-- **C8** — `test/unit/a-baseline-is-written-where-it-is-told.test.ts`: with `--baseline-file`, the baseline is
-  written to the named path and read back from it by `--check`; without it, the path is
-  `<projectRoot>/120fps-baseline.json` exactly as today; a relative path resolves against the process
-  cwd; `--help` names the flag; an unwritable destination fails with a message naming the path.
+- **C1, C2** — `test/unit/every-report-reaches-the-ci-writers.test.ts`: a three-component run produces
+  markdown with three rows whose verdicts equal the terminal's and JUnit with `tests="3"`; a
+  zero-component run still produces the empty artifact it produces today; a run told it exits 1
+  headlines a failure whatever its rows say. `test/e2e/ci-artifacts-carry-the-run.test.ts` measures a
+  real component through the CLI: the artifacts carry one row and `tests="1"`, and a run forced over
+  budget exits 1 with a `**FAIL**` headline and `failures="1"`.
+- **C3, C4, C5, C6** — `test/unit/a-reused-verdict-says-nothing-was-measured.test.ts`: a reused report
+  prints the reuse sentence and none of the three forbidden lines; a measured report with zero
+  interactions still prints the fixture hint, and its suggested path contains no backslash on any
+  platform; a reused report's `warnings` array equals the stored entry's, and a hand-edited entry
+  whose `warnings` is not a list of strings neither crashes the run nor reaches the report.
+- **C7** — same file: an entry whose `env.mode` is `curve` or `isolation` is passed over and the run
+  names both modes on stderr before measuring again; an entry whose source fingerprint already
+  differs is passed over in silence.
+- **C8** — `test/unit/a-baseline-is-written-where-it-is-told.test.ts`: with `--baseline-file`, the
+  baseline is written to the named path, read back from it by `--check`, and the project root is
+  left alone; without it, the path is `<projectRoot>/120fps-baseline.json` exactly as today; a
+  relative path resolves against the process cwd; the directories a named path needs are created;
+  a second component merges into the named file; `--help` and the README options block name the
+  flag; a destination that cannot be written fails with a message naming the path.
 - Types: `node node_modules/typescript/bin/tsc --noEmit -p tsconfig.json` clean.
 - Suite: the tests above plus `test/unit/ci-report*.test.ts`, `test/unit/baseline*.test.ts`,
-  `test/unit/verdict-reuse*.test.ts`, `test/unit/terminal-modes*.test.ts`,
-  `test/e2e/baseline-env.test.ts`, `test/e2e/cli.test.ts`, then the full unit suite once before the
-  lane's final commit.
+  `test/unit/verdict-report-clarity*.test.ts`, `test/unit/fixture-harden.test.ts`,
+  `test/e2e/cached-check.test.ts`, then the full unit suite once before the lane's final commit.
 
-Recorded run of this milestone's verification:
-
-```
-<filled by lane I: tsc result, the vitest invocations and their verbatim totals>
-```
-
-Corpus repros, through a `dist` built in `C:/Projekte/120fps-run7-lane-i`:
+Recorded run of this milestone's verification, 2026-09-06 in `C:/Projekte/120fps-run7-lane-i`
+(node 22.22.2, `pnpm install --frozen-lockfile`), on the branch `run7/lane-i` off
+`feat/run7-remediation` at `0e75ce4`:
 
 ```
-node C:/Projekte/120fps-fieldtest/tools/run120.mjs \
-  --cwd E:/repositories-run7/scaffold-vite-react-js \
-  --out C:/Projekte/120fps-fieldtest/logs/run7-lane-i/scaffold-vite-react-js \
-  --label m138-ci --cli C:/Projekte/120fps-run7-lane-i/dist/cli/main.js \
-  -- src/App.jsx --ci --report-md C:/Projekte/120fps-fieldtest/logs/run7-lane-i/scaffold-vite-react-js/report.md \
-     --report-junit C:/Projekte/120fps-fieldtest/logs/run7-lane-i/scaffold-vite-react-js/report.xml \
-     --samples 3 --max-combos 2 --explore-budget 30 --no-deltas
-# expected: the md shows 1 component with the terminal's verdict, the xml tests="1"
-#           (baseline: **PASS**: 0 components, 0 regressions; tests="0")
+node node_modules/typescript/bin/tsc --noEmit -p tsconfig.json
+# exit 0, no output
 
-node C:/Projekte/120fps-fieldtest/tools/run120.mjs \
-  --cwd E:/repositories-run7/scaffold-vite-react-js \
-  --out C:/Projekte/120fps-fieldtest/logs/run7-lane-i/scaffold-vite-react-js \
-  --label m138-save-baseline --cli C:/Projekte/120fps-run7-lane-i/dist/cli/main.js \
-  -- src/App.jsx --save-baseline \
-     --baseline-file C:/Projekte/120fps-fieldtest/logs/run7-lane-i/scaffold-vite-react-js/baseline.json \
-     --samples 3 --max-combos 2 --explore-budget 30 --no-deltas
-# expected: the repository is clean afterwards (git status --porcelain empty); the file is at the
-#           named path (baseline: 120fps-baseline.json written into the project root)
+npx vitest run test/unit/every-report-reaches-the-ci-writers.test.ts   test/unit/a-reused-verdict-says-nothing-was-measured.test.ts   test/unit/a-baseline-is-written-where-it-is-told.test.ts   test/unit/ci-report-surfacing.test.ts test/unit/ci-report-mode-rendering.test.ts   test/unit/baseline-env.test.ts test/unit/baseline-env-hardening.test.ts   test/unit/baseline-reachability.test.ts test/unit/baseline-reachability-hardening.test.ts   test/unit/baseline-slots.test.ts test/unit/baseline-version-warning.test.ts   test/unit/budget-baseline.test.ts test/unit/verdict-report-clarity.test.ts   test/unit/verdict-report-clarity-harden.test.ts test/unit/fixture-harden.test.ts --maxWorkers=2
+# Test Files  15 passed (15)
+#      Tests  405 passed (405)
 
-node C:/Projekte/120fps-fieldtest/tools/run120.mjs \
-  --cwd E:/repositories-run7/scaffold-vite-react-js \
-  --out C:/Projekte/120fps-fieldtest/logs/run7-lane-i/scaffold-vite-react-js \
-  --label m138-check-reuse --cli C:/Projekte/120fps-run7-lane-i/dist/cli/main.js \
-  -- src/App.jsx --check \
-     --baseline-file C:/Projekte/120fps-fieldtest/logs/run7-lane-i/scaffold-vite-react-js/baseline.json \
-     --samples 3 --max-combos 2 --explore-budget 30 --no-deltas
-# expected: the reuse sentence, no baseline-comparison table, no environment line, no
-#           "0 interactions found" hint; the original run's warnings present
+npx vitest run test/e2e/ci-artifacts-carry-the-run.test.ts --maxWorkers=1
+# Test Files  1 passed (1)
+#      Tests  2 passed (2)      36.9 s
 
-node C:/Projekte/120fps-fieldtest/tools/run120.mjs \
-  --cwd E:/repositories-run7/rallly/apps/web \
-  --out C:/Projekte/120fps-fieldtest/logs/run7-lane-i/rallly \
-  --label m138-curve-reuse --cli C:/Projekte/120fps-run7-lane-i/dist/cli/main.js \
-  -- src/components/pagination.tsx --check \
-     --baseline-file C:/Projekte/120fps-fieldtest/logs/run7-lane-i/rallly/baseline.json \
-     --samples 3 --max-combos 2 --explore-budget 30 --no-deltas
-# expected: a curve-mode entry is reused, or the run names the stored mode and the current mode
-#           before re-measuring (C7)
+npx vitest run test/e2e/cached-check.test.ts --maxWorkers=1
+# Test Files  1 passed (1)
+#      Tests  7 passed (7)      69.9 s
+
+npx vitest run test/unit --maxWorkers=2
+# Test Files  2 failed | 342 passed (344)
+#      Tests  2 failed | 4960 passed | 1 skipped (4963)      311.69 s
+# The two failures are the run-7 baseline's own: prop-cap-ranking.test.ts
+# ("variant and size survive the 32-prop cap") and vue-setup-inject-evidence.test.ts
+# ("records why each specifier failed"). Against the recorded baseline of 341 files /
+# 4921 tests, the deltas are exactly this milestone's three new unit files and their 42 tests.
+```
+
+Corpus repros, through a `dist` built in `C:/Projekte/120fps-run7-lane-i`, logs under
+`C:/Projekte/120fps-fieldtest/logs/run7-lane-i/`:
+
+```
+node C:/Projekte/120fps-fieldtest/tools/run120.mjs   --cwd E:/repositories-run7/scaffold-vite-react-js   --out C:/Projekte/120fps-fieldtest/logs/run7-lane-i/scaffold-vite-react-js   --label m138-ci --cli C:/Projekte/120fps-run7-lane-i/dist/cli/main.js   -- src/App.jsx --ci      --report-md .../scaffold-vite-react-js/report.md      --report-junit .../scaffold-vite-react-js/report.xml      --samples 3 --max-combos 2 --explore-budget 30 --no-deltas
+# exit 1, 94 s. report.md: "**FAIL**: 1 component, 0 regressions" and one row
+# "| `src/App.jsx` | 32.76ms | 9.77ms | **FAIL** | - | preflight 0s, build 1s, ... |",
+# the run's three warnings behind the Warnings fold. report.xml: tests="1" failures="1",
+# one testcase name="src/App.jsx" whose failure body is
+# "combo 0: mount 32.76ms, rerender 9.77ms: over budget for tier T4".
+# Baseline at f54be55: "**PASS**: 0 components, 0 regressions" and tests="0", also at exit 1. (C1, C2)
+
+node ... --label m138-save-baseline -- src/App.jsx --save-baseline      --baseline-file .../logs/run7-lane-i/baselines/scaffold-vite-react-js.json      --samples 3 --max-combos 2 --explore-budget 30 --no-deltas
+# exit 1, 92 s. The 2139-byte baseline is at the named path;
+# `git -C E:/repositories-run7/scaffold-vite-react-js status --porcelain` prints nothing.
+# Baseline at f54be55: 120fps-baseline.json written into the project root. (C8)
+
+node ... --label m138-check-reuse -- src/App.jsx --check      --baseline-file .../logs/run7-lane-i/baselines/scaffold-vite-react-js.json      --samples 3 --max-combos 2 --explore-budget 30 --no-deltas
+# exit 1, 2 s. The whole body after the machine header:
+#   Verdict reused from baseline, nothing re-measured (--no-cache measures fresh numbers).
+#
+#   Result: FAIL
+#   [the save run's three warnings, verbatim]
+# No combo table, no "Baseline comparison", no "Environment:", no "Consider creating";
+# the repository is still clean. Baseline at f54be55: a comparison table, an environment
+# match, "Consider creating src\App.fixture.tsx", and warnings: []. (C3-C6)
+
+node ... --label m138-curve-entry-mode -- src/App.jsx --check      --baseline-file .../baselines/scaffold-vite-react-js.curve-mode.json ...
+# The same entry with env.mode rewritten to "curve". exit 1, 96 s, first line of the run:
+#   Warning: no verdict was reused: the stored baseline entry was recorded in curve mode
+#   and this run's reuse check runs in combo mode, so the component is measured again.
+# then a full measurement. (C7)
+
+node ... --cwd E:/repositories-run7/rallly/apps/web --label m138-curve-save   -- src/components/pagination.tsx --save-baseline --baseline-file .../baselines/rallly.json ...
+# exit 0, 203 s, "Mode: curve over "totalItems"". No file at the named path and none in the
+# repository: only combo mode and isolation mode reach applyBaselineWorkflow, so a curve-mode
+# run records no baseline entry at all.
+
+node ... --cwd E:/repositories-run7/rallly/apps/web --label m138-curve-check   -- src/components/pagination.tsx --check --baseline-file .../baselines/rallly.json ...
+# exit 0, 205 s, "Mode: curve over "totalItems"", "Result: PASS". With no stored entry there is
+# no stored mode to name, so the run measures; C7 is exercised by m138-curve-entry-mode above.
+# `git -C E:/repositories-run7/rallly status --porcelain` shows only the pre-existing
+# " M pnpm-lock.yaml" it carried before these runs.
 ```
 
 ## Deferred
@@ -197,8 +230,13 @@ node C:/Projekte/120fps-fieldtest/tools/run120.mjs \
 - **A baseline search path, an environment variable, or a shared cache directory.** C8 adds one
   caller-named destination; anything that finds a baseline the caller did not name is a new contract.
 - **Reuse across machines.** M45 decides what "other machine" means; nothing here changes it.
-- **The `--check` write of `120fps-baseline.json` documented at `README:141`.** The README wording
-  follows C8 as a coordinator interface request, in the same batch as M133's README rewording.
+- **The `README:141` sentence that calls the project root the only destination.** The README's fenced
+  options block lists `--baseline-file` because a test holds it to `KNOWN_FLAGS`; the prose above it
+  is the coordinator's, and follows C8 in the same batch as M133's README rewording.
+- **A baseline for curve mode and matrix mode.** Only combo mode and isolation mode reach
+  `applyBaselineWorkflow`, so `--save-baseline` under an auto-activated curve records nothing and
+  `--check` has nothing to compare. C7 makes the entry that does exist speak; whether these modes
+  should record one at all is a contract of their own.
 - **Whether curve-mode reuse is *desirable*.** C7 requires the run to reuse or to explain; if the
   evidence later shows curve entries should never be reused, the explanation branch already satisfies
   the contract.
