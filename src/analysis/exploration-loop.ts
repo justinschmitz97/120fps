@@ -14,6 +14,7 @@ import {
 } from "./explorer.js";
 import {
   discoverInteractions,
+  SKIPPED_TARGETS_NOTICE,
   withContextRetry,
   withFrameStarvationRetry,
   suspendThrottle,
@@ -27,6 +28,7 @@ import {
   parseTraceDuration,
   type CdpHolder,
   type RetryBudget,
+  type SkippedTarget,
   type TraceEvent,
 } from "../browser/index.js";
 import {
@@ -89,6 +91,45 @@ class ExploreBudgetSpent extends Error {
   }
 }
 
+export type EscapeReason = "opened-a-page" | "left-the-page";
+
+export interface EscapeWatch {
+  // Cleared between targets, so one link's popup cannot condemn the next target.
+  reset(): void;
+  stop(): void;
+  check(): Promise<EscapeReason | undefined>;
+}
+
+// Discovery decides before the click; this is the net for a click that leaves anyway. The harness
+// global is the test: a same-origin route change keeps it, a navigation away destroys it.
+export function createEscapeWatch(page: Page): EscapeWatch {
+  let popupSeen = false;
+  const onPopup = (popup: Page): void => {
+    popupSeen = true;
+    void popup.close().catch(() => {});
+  };
+  page.on("popup", onPopup);
+  return {
+    reset: (): void => {
+      popupSeen = false;
+    },
+    stop: (): void => {
+      page.off("popup", onPopup);
+    },
+    check: async (): Promise<EscapeReason | undefined> => {
+      if (popupSeen) return "opened-a-page";
+      try {
+        const onHarness = await page.evaluate(
+          () => typeof (window as any).__120fps === "object",
+        );
+        return onHarness ? undefined : "left-the-page";
+      } catch {
+        return "left-the-page";
+      }
+    },
+  };
+}
+
 export const EXPLORE_STALLED_WARNING = (comboIndex: number, edgeCount: number): string =>
   `combo ${comboIndex}: explore skipped (tracing stalled); ${edgeCount} interaction` +
   `${edgeCount === 1 ? "" : "s"} measured before the stall are kept and the report still prints`;
@@ -107,6 +148,10 @@ export async function exploreCombo(
   const nodes = new Map<string, StateNode>();
   const edges: StateEdge[] = [];
   const exploredEdges = new Set<string>();
+  const skippedTargets = new Map<string, SkippedTarget>();
+  const recordSkipped = (targets: SkippedTarget[]): void => {
+    for (const target of targets) skippedTargets.set(`${target.reason}:${target.selector}`, target);
+  };
   const convergenceWindow: boolean[] = [];
   const CONVERGENCE_SIZE = 10;
 
@@ -125,6 +170,7 @@ export async function exploreCombo(
       const interactions = await discoverInteractions(page, {
         probePortals: true,
         remount: () => mountComponent(page, props),
+        onSkipped: recordSkipped,
       });
       return { initialHash: hash, initialInteractions: interactions, volatile };
     },
@@ -137,6 +183,8 @@ export async function exploreCombo(
     interactions: initialInteractions,
     pathFromRoot: [],
   });
+
+  const escape = createEscapeWatch(page);
 
   // Work queues: priority (expensive path follow-ups) and normal (BFS)
   const priorityQueue: WorkItem[] = [];
@@ -173,6 +221,7 @@ export async function exploreCombo(
     const edgeKey = `${item.stateId}:${item.interaction.selector}:${item.interaction.type}`;
     if (exploredEdges.has(edgeKey)) continue;
     exploredEdges.add(edgeKey);
+    escape.reset();
 
     const siblings = await findAriaGroupSiblings(page, item.interaction);
     const pattern = resolveStressPattern(item.interaction, siblings);
@@ -182,6 +231,8 @@ export async function exploreCombo(
     let targetHash: string | null = null;
     // Both bodies below write it, so a truncated run reaches the edge instead of being discarded.
     let patternRun: StressPatternRun | undefined;
+    // A target that took the page with it is dropped whole: its samples timed a navigation.
+    let escapedTarget = false;
 
     // A state-invariant pattern ends where it started; replaying its path per sample buys nothing.
     let pathIsCurrent = false;
@@ -235,6 +286,18 @@ export async function exploreCombo(
           stalled = true;
           break;
         }
+        const escaped = await escape.check();
+        if (escaped !== undefined) {
+          skippedTargets.set(`${escaped}:${item.interaction.selector}`, {
+            reason: escaped,
+            selector: item.interaction.selector,
+            label: item.interaction.label,
+          });
+          // Back to the harness before the next target, whatever the click navigated to.
+          await enterAndInvalidatePath();
+          escapedTarget = true;
+          break;
+        }
         samples.push(observedInteractionMs(observed));
         if (patternRanShort(patternRun)) pathIsCurrent = false;
         traces.push([]);
@@ -280,6 +343,18 @@ export async function exploreCombo(
         break;
       }
 
+      const escaped = await escape.check();
+      if (escaped !== undefined) {
+        skippedTargets.set(`${escaped}:${item.interaction.selector}`, {
+          reason: escaped,
+          selector: item.interaction.selector,
+          label: item.interaction.label,
+        });
+        // Back to the harness before the next target, whatever the click navigated to.
+        await enterAndInvalidatePath();
+        escapedTarget = true;
+        break;
+      }
       const parsed = parseTraceDuration(traceEvents);
       samples.push(parsed.totalDuration);
       if (patternRanShort(patternRun)) pathIsCurrent = false;
@@ -291,6 +366,7 @@ export async function exploreCombo(
       }
     }
 
+    if (escapedTarget) continue;
     if (samples.length === 0 || targetHash === null) continue;
 
     const edgeId = `${item.stateId}->${targetHash}:${item.interaction.selector}`;
@@ -320,7 +396,7 @@ export async function exploreCombo(
         async () => {
           await navigateToState(page, props, sourceNode.pathFromRoot);
           await exerciseInteraction(page, item.interaction);
-          return discoverInteractions(page);
+          return discoverInteractions(page, { onSkipped: recordSkipped });
         },
         { onRetry: onWarning, budget },
       );
@@ -360,6 +436,10 @@ export async function exploreCombo(
 
     convergenceWindow.push(discoveredNew);
   }
+
+  escape.stop();
+  const skipNotice = SKIPPED_TARGETS_NOTICE([...skippedTargets.values()]);
+  if (skipNotice !== undefined) onWarning?.(skipNotice);
 
   return {
     nodes,

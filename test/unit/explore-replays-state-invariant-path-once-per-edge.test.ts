@@ -69,6 +69,8 @@ interface FakeOptions {
   traceTiming?: boolean;
 }
 
+const HARNESS_ORIGIN = "http://localhost:5173";
+
 function fakeHarnessRun(options: FakeOptions): {
   pool: BrowserPool;
   harness: HarnessResult;
@@ -83,7 +85,7 @@ function fakeHarnessRun(options: FakeOptions): {
       rec.mounts++;
       return undefined;
     }
-    if (src.includes("SCROLLABLE_OVERFLOW")) return raws;
+    if (src.includes("SCROLLABLE_OVERFLOW")) return { elements: raws, origin: HARNESS_ORIGIN };
     if (src.includes("aria-haspopup")) return [];
     if (src.includes("PerformanceObserver")) return undefined;
     if (src.includes("eventTimingUnavailable")) {
@@ -100,6 +102,8 @@ function fakeHarnessRun(options: FakeOptions): {
     if (src.includes("requestAnimationFrame")) return undefined;
     if (src.includes("setTimeout")) return undefined;
     if (src.includes("viewport")) return undefined;
+    // The escape check: this fake page never leaves the harness.
+    if (src.includes("__120fps")) return true;
     throw new Error(`unhandled page.evaluate in fake: ${src.slice(0, 120)}`);
   };
 
