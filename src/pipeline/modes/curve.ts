@@ -5,7 +5,11 @@ import {
   type ScalingPropMatch,
   generateScalingCombos,
 } from "../../props/index.js";
-import { explore } from "../../analysis/index.js";
+import {
+  EXPLORE_BUDGET_WARNING,
+  explore,
+  exploreRunOptions,
+} from "../../analysis/index.js";
 import {
   computeScalingCurve,
   isDomFlat,
@@ -23,6 +27,10 @@ import {
   collectReactOptimizations,
   detectComponentName,
 } from "../modes/context.js";
+
+// What one scale point may spend when the run names no budget of its own; the phase budget, when
+// the run does name one, is divided across the points instead.
+export const CURVE_POINT_WALL_CLOCK_MS = 30000;
 
 // Activates on an explicit --curve flag or the first detected scaling prop; never on a fixture.
 export async function resolveCurveMatch(ctx: ModeContext): Promise<ScalingPropMatch | undefined> {
@@ -87,17 +95,30 @@ export async function runCurveMode(ctx: ModeContext, match: ScalingPropMatch): P
     pool,
     onWarning,
   });
-  ctx.progress(`explore: ${scaleCombos.length} scale points`);
+  const exploreBounds = exploreRunOptions(
+    options,
+    scaleCombos.length,
+    scaleCombos.length * CURVE_POINT_WALL_CLOCK_MS,
+  );
+  ctx.progress(
+    `explore: ${scaleCombos.length} scale points, budget ` +
+      `${Math.round(exploreBounds.maxWallClockMs / 1000)}s each`,
+  );
   const curveExplores = await explore(harness, {
     samples: Math.min(samples, 5),
     cpuThrottle,
     warmupRuns,
     seed: ctx.seed,
     combos: scaleCombos,
-    maxWallClockMs: 30000,
+    ...exploreBounds,
     pool,
     onWarning,
   });
+  if (curveExplores.length < scaleCombos.length) {
+    runWarnings.push(
+      EXPLORE_BUDGET_WARNING(curveExplores.length, scaleCombos.length, "scale points"),
+    );
+  }
 
   const curveHeapDeltas = curveMounts.map((m) => m.heapDelta ?? 0);
   const componentName = detectComponentName(ctx.metadataPath, ctx.options.target);

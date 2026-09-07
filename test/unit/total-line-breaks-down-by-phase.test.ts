@@ -7,6 +7,7 @@ const timings = (over: Partial<PhaseTimings>): PhaseTimings => ({
   preflight: 0,
   build: 0,
   calibration: 0,
+  setup: 0,
   mount: 0,
   rerender: 0,
   explore: 0,

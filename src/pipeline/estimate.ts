@@ -18,7 +18,7 @@ export interface RunCostEstimate {
   source: "baseline" | "defaults";
 }
 
-// fixedMs covers preflight, build, calibration and analysis; perComboMs the non-mount combo work.
+// fixedMs covers preflight, build, calibration, setup and analysis; perComboMs the non-mount combo work.
 export const DEFAULT_PHASE_ESTIMATE = {
   fixedMs: 15_000,
   perMountSampleMs: 700,
@@ -49,7 +49,8 @@ export function estimateRunCost(input: {
   }
   const t = recorded!.timings;
   const recordedUnits = units!;
-  const fixed = t.preflight + t.build + t.calibration + t.analysis;
+  // A baseline written before `setup` was a phase of its own carries the interval inside calibration.
+  const fixed = t.preflight + t.build + t.calibration + (t.setup ?? 0) + t.analysis;
   const perMountSample = t.mount / (recordedUnits.combos * recordedUnits.samples);
   const perCombo =
     (t.rerender + t.explore + t.scale + t.deltas + t.attribution) / recordedUnits.combos;

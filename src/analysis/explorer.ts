@@ -83,14 +83,57 @@ export interface ExploreOptions {
 export const DEFAULT_TOTAL_WALL_CLOCK_MS = 300000;
 export const DEFAULT_MAX_COMBOS = 8;
 
+// The pot the combo path shares out when the run names no budget of its own.
+export const DEFAULT_EXPLORE_PHASE_WALL_CLOCK_MS = 60000;
+// Below this a walk reaches no second state, so dividing further buys coverage nothing.
+export const MIN_EXPLORE_UNIT_WALL_CLOCK_MS = 10000;
+
+// `--explore-budget` bounds the phase: it divides across the units and never extends one.
+export function exploreUnitWallClockMs(
+  phaseBudgetMs: number | undefined,
+  units: number,
+  defaultPhaseBudgetMs: number,
+): number {
+  const count = Math.max(1, units);
+  const ceiling = phaseBudgetMs === undefined ? defaultPhaseBudgetMs : phaseBudgetMs;
+  const pot = Math.min(ceiling, defaultPhaseBudgetMs);
+  return Math.min(ceiling, Math.max(MIN_EXPLORE_UNIT_WALL_CLOCK_MS, Math.floor(pot / count)));
+}
+
+// The explore options a mode derives from the run's flags, so the bound the phase prints is the
+// bound it enforces. `observerTiming` is absent unless the caller selected it: the trace path is
+// what the default measures.
+export function exploreRunOptions(
+  options: { exploreBudgetMs?: number; observerTiming?: boolean },
+  units: number,
+  defaultPhaseBudgetMs: number,
+): { maxWallClockMs: number; totalWallClockMs?: number; observerTiming?: boolean } {
+  return {
+    maxWallClockMs: exploreUnitWallClockMs(options.exploreBudgetMs, units, defaultPhaseBudgetMs),
+    ...(options.exploreBudgetMs !== undefined ? { totalWallClockMs: options.exploreBudgetMs } : {}),
+    ...(options.observerTiming === true ? { observerTiming: true } : {}),
+  };
+}
+
+// Read before the first combo as well as between combos: a bound only combos two onwards respect
+// leaves the first one unbounded.
+export function explorePhaseBudgetSpent(elapsedMs: number, totalWallClockMs: number): boolean {
+  return elapsedMs >= totalWallClockMs;
+}
+
 // One selection algorithm for exploration and measurement, so the two never disagree.
 export function selectExploreCombos(count: number, maxCombos: number): number[] {
   return selectRepresentativeCombos(count, maxCombos);
 }
 
-export const EXPLORE_BUDGET_WARNING = (explored: number, total: number): string =>
-  `explored ${explored} of ${total} prop combos; ${total - explored} were skipped to stay inside ` +
-  `the exploration budget. Skipped combos report no interactions.`;
+export const EXPLORE_BUDGET_WARNING = (
+  explored: number,
+  total: number,
+  unit = "prop combos",
+): string =>
+  `explored ${explored} of ${total} ${unit}; ${total - explored} were skipped to stay inside ` +
+  `the exploration budget. Skipped combos report no interactions. Raise it with ` +
+  `--explore-budget <seconds>.`;
 
 export interface ExploreResult {
   graph: StateGraph;
@@ -369,6 +412,8 @@ export async function explore(
     if (combos.length === 0) combos = [{}];
   }
 
+  // The phase budget bounds the phase, and the phase starts here: bring-up is part of it.
+  const runStart = Date.now();
   let browser: Browser | undefined;
   let context: import("playwright").BrowserContext | undefined;
   try {
@@ -413,13 +458,17 @@ export async function explore(
 
     const results: ExploreResult[] = [];
     const selected = selectExploreCombos(combos.length, maxCombos);
-    const runStart = Date.now();
 
     for (const ci of selected) {
       // The combo already running finishes; only new ones are refused, so no partial graph.
-      if (results.length > 0 && Date.now() - runStart >= totalWallClockMs) break;
+      if (explorePhaseBudgetSpent(Date.now() - runStart, totalWallClockMs)) break;
       const props = combos[ci];
       inFlight.combo = ci;
+      // The last combo gets what the phase has left, so the phase ends at the bound it advertised.
+      const comboWallClockMs = Math.min(
+        maxWallClockMs,
+        Math.max(0, totalWallClockMs - (Date.now() - runStart)),
+      );
       const graph = await inFlight.run(() => exploreCombo(
         page,
         session,
@@ -427,7 +476,7 @@ export async function explore(
         {
           sampleCount,
           maxNodes,
-          maxWallClockMs,
+          maxWallClockMs: comboWallClockMs,
           maxDepth,
           warmupRuns,
           seed,

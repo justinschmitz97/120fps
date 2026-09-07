@@ -3,6 +3,7 @@ export interface PhaseTimings {
   preflight: number;
   build: number;
   calibration: number;
+  setup: number;
   mount: number;
   rerender: number;
   explore: number;
@@ -23,6 +24,7 @@ export const PHASE_NAMES: readonly PhaseName[] = [
   "preflight",
   "build",
   "calibration",
+  "setup",
   "mount",
   "rerender",
   "explore",
@@ -37,6 +39,9 @@ export function classifyPhaseLabel(line: string): BoundaryPhase | "report" | und
   if (line.startsWith("preflight:")) return "preflight";
   if (line.startsWith("harness:")) return "build";
   if (line.startsWith("calibration")) return "calibration";
+  if (line.startsWith("setup")) return "setup";
+  // The mode line is the last boundary before the first measurement, so calibration ends by here.
+  if (line.startsWith("mode:")) return "setup";
   if (line.startsWith("mount:")) return "mount";
   if (line.startsWith("rerender:")) return "rerender";
   if (line.startsWith("explore:")) return "explore";
@@ -65,6 +70,7 @@ export function createPhaseClock(now: () => number = Date.now): PhaseClock {
     preflight: 0,
     build: 0,
     calibration: 0,
+    setup: 0,
     mount: 0,
     rerender: 0,
     explore: 0,
