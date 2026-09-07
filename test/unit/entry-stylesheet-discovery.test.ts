@@ -9,6 +9,10 @@ import {
   entryStylesheetImports,
   findProjectEntry,
 } from "../../src/harness/index.js";
+import {
+  BUNDLED_PREPROCESSOR_DISCLOSED,
+  bundledPreprocessorStylesheetWarning,
+} from "../../src/pipeline/index.js";
 
 let tmpDir: string;
 
@@ -193,7 +197,51 @@ describe("collecting an entry's own stylesheet imports", () => {
     const entry = write("src/main.tsx", 'import "./theme.scss";\nimport "./style.css";');
     const warnings: string[] = [];
     expect(entryStylesheetImports(entry, tmpDir, [], warnings)).toEqual([scss, css]);
-    expect(warnings).toEqual([]);
+    // Nothing is refused here; which compiler ran is disclosed once, by the run below.
+    expect(warnings.filter((w) => w.includes("does not have installed"))).toEqual([]);
+  });
+
+  // The run says which Sass compiled the sheet it injected, in the project-transform wording.
+  it("discloses the compiler when only the copy 120fps ships can compile the injected sheet", () => {
+    write("package.json", JSON.stringify({ name: "no-sass" }));
+    const sheet = write("src/theme.scss", ".a { color: red; }");
+    const disclosure = bundledPreprocessorStylesheetWarning([sheet], tmpDir);
+    expect(disclosure).toBeDefined();
+    expect(disclosure).toContain("src/theme.scss");
+    expect(disclosure).toContain("no sass or sass-embedded resolves");
+    expect(disclosure).toContain(BUNDLED_PREPROCESSOR_DISCLOSED);
+    expect(disclosure).toMatch(/sass \d+\.\d+/);
+  });
+
+  it("says nothing about a compiler when the project resolves its own", () => {
+    write("package.json", JSON.stringify({ name: "with-sass", devDependencies: { sass: "^1.83.0" } }));
+    fs.mkdirSync(path.join(tmpDir, "node_modules", "sass"), { recursive: true });
+    fs.writeFileSync(
+      path.join(tmpDir, "node_modules", "sass", "package.json"),
+      JSON.stringify({ name: "sass", version: "1.83.0", main: "sass.js" }),
+    );
+    fs.writeFileSync(path.join(tmpDir, "node_modules", "sass", "sass.js"), "");
+    const sheet = write("src/theme.scss", ".a { color: red; }");
+    expect(bundledPreprocessorStylesheetWarning([sheet], tmpDir)).toBeUndefined();
+  });
+
+  it("says nothing about a plain .css sheet, which needs no compiler", () => {
+    write("package.json", JSON.stringify({ name: "no-sass" }));
+    const sheet = write("src/theme.css", ".a { color: red; }");
+    expect(bundledPreprocessorStylesheetWarning([sheet], tmpDir)).toBeUndefined();
+  });
+
+  // Both modes emit it only after the transform classifier, so a run carries one Sass disclosure.
+  it("is emitted behind the transform classifier in both modes", () => {
+    const dry = fs.readFileSync(path.resolve("src/pipeline/explain-props.ts"), "utf-8");
+    const run = fs.readFileSync(path.resolve("src/pipeline/phases.ts"), "utf-8");
+    for (const source of [dry, run]) {
+      expect(source.indexOf("PROJECT_TRANSFORM_WARNING(hit, availability)")).toBeLessThan(
+        source.indexOf("bundledPreprocessorStylesheetWarning("),
+      );
+      expect(source).toContain(`.some((w) => w.includes(BUNDLED_PREPROCESSOR_DISCLOSED))`);
+      expect(source).toContain("!options.noTransforms");
+    }
   });
 
   it("skips a stylesheet whose compiler exists nowhere, naming the package to install", () => {

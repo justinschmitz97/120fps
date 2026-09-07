@@ -19,10 +19,11 @@ import {
   needsStyleSettle,
   settleStyles,
 } from "../../src/browser/index.js";
-import { resolveCssFiles } from "../../src/pipeline/index.js";
+import { buildCssReport, resolveCssFiles } from "../../src/pipeline/index.js";
 import { buildEnvFingerprint, classifyEnv } from "../../src/report/index.js";
 import {
   DEFAULT_THRESHOLDS,
+  formatStylesheetsLine,
   formatTable,
   type CssReport,
   type Report,
@@ -661,34 +662,45 @@ describe("EnvFingerprint.css", () => {
 });
 
 // M100/M110 parity: one producer, so the dry run's decision cannot describe another pick.
-describe("the dry run and the real run agree on each entry shape", () => {
-  const shapes = [
-    "fixtures/m131/rr7-root-url",
-    "fixtures/m131/side-effect-directory-index",
-    "fixtures/m131/one-hop-plugin",
-    "fixtures/m131/vue-entry-root",
-    "fixtures/m131/nuxt-config-css",
+describe("the stylesheet each entry shape decides on, as both modes print it", () => {
+  // resolveCssFiles is the one producer analyze() and explainProps() both call, so a shape is
+  // pinned here by the sentence a user reads, not by comparing the function with itself.
+  // The seam that still differs is explainProps' own call, which forwards no --css/--no-css yet;
+  // that is lane D's F17 and is asserted there, not here.
+  const shapes: Array<[string, string]> = [
+    ["fixtures/m131/rr7-root-url", "app/app.css"],
+    ["fixtures/m131/side-effect-directory-index", "src/styles/global.css"],
+    ["fixtures/m131/one-hop-plugin", "src/styles/global.css"],
+    ["fixtures/m131/vue-entry-root", "src/app.scss"],
+    ["fixtures/m131/nuxt-config-css", "app/assets/css/main.css"],
   ];
 
-  for (const shape of shapes) {
-    it(`decides the same stylesheets, layer and warnings for ${shape}`, () => {
+  for (const [shape, sheet] of shapes) {
+    it(`names ${sheet} as found in the project entry's own imports`, () => {
       const root = path.resolve(shape);
-      const dryWarnings: string[] = [];
-      const realWarnings: string[] = [];
-      const dry = resolveCssFiles({}, root, dryWarnings);
-      const real = resolveCssFiles({}, root, realWarnings);
-      expect(dry).toEqual(real);
-      expect(dryWarnings).toEqual(realWarnings);
-      expect(dry.layer).toBe("entry-chain");
-      expect(dry.files.length).toBeGreaterThan(0);
+      const warnings: string[] = [];
+      const resolved = resolveCssFiles({}, root, warnings);
+      const line = formatStylesheetsLine(buildCssReport(resolved, root));
+      expect(resolved.layer).toBe("entry-chain");
+      expect(line).toBe(`Stylesheets: ${sheet} (found in the project entry's own imports)`);
     });
   }
 
-  it("reports no stylesheet in either mode when --no-css was passed", () => {
+  it("reports no stylesheet, and no discovery warning, when --no-css was passed", () => {
     const root = path.resolve("fixtures/m131/one-hop-plugin");
-    expect(resolveCssFiles({ noCss: true }, root)).toEqual(
-      resolveCssFiles({ noCss: true }, root),
+    const warnings: string[] = [];
+    const resolved = resolveCssFiles({ noCss: true }, root, warnings);
+    expect(resolved).toEqual({ files: [], autoDetected: false, layer: "disabled" });
+    expect(warnings).toEqual([]);
+    expect(formatStylesheetsLine(buildCssReport(resolved, root))).toBe(
+      "Stylesheets: none (--no-css)",
     );
-    expect(resolveCssFiles({ noCss: true }, root).layer).toBe("disabled");
+  });
+
+  it("keeps an explicit --css sheet over everything the entry chain found", () => {
+    const root = path.resolve("fixtures/m131/one-hop-plugin");
+    const explicit = path.join(root, "src", "deep", "two-hops-down.css");
+    const resolved = resolveCssFiles({ cssFiles: [explicit] }, root);
+    expect(resolved).toEqual({ files: [explicit], autoDetected: false, layer: "explicit" });
   });
 });

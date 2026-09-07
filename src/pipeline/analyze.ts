@@ -426,6 +426,7 @@ export async function analyze(
       progress,
       ...(wrapPath !== undefined ? { wrapPath } : {}),
       ...(vueCompiler !== undefined ? { vueCompiler } : {}),
+      ...(resolvedCss.files.length > 0 ? { cssFiles: resolvedCss.files } : {}),
     });
     providerCandidates = preflightPhase.providerCandidates;
     transitiveProviderCandidates = preflightPhase.transitiveProviderCandidates;

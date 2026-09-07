@@ -2,10 +2,46 @@ import fs from "node:fs";
 import path from "node:path";
 import { discoverGlobalCss, detectWrapper, findProjectRoot } from "../harness/index.js";
 import { detectFramework } from "../project/index.js";
+import {
+  CSS_PREPROCESSOR_PACKAGES,
+  PROJECT_TRANSFORM_WARNING,
+  bundledPreprocessor,
+  isPackageAvailable,
+} from "../project/index.js";
 import { findWorkspaceRoot, isVueFile } from "../project/index.js";
 import { type CssReport } from "../report/index.js";
 import { type AnalyzeOptions } from "./analyze.js";
 import { toPosix } from "../shared/index.js";
+
+// The sentence a run prints when Vite falls through to the Sass 120fps declares; matched on, so a
+// run never carries two of them.
+export const BUNDLED_PREPROCESSOR_DISCLOSED = "falls through to the copy 120fps ships";
+
+// An injected stylesheet is no import edge of the measured graph, so the preflight classification
+// never sees it. Its disclosure is the project-transform one, produced by that same function, and
+// it is emitted only where the transform classification has already had its say.
+export function bundledPreprocessorStylesheetWarning(
+  files: readonly string[],
+  projectRoot: string,
+  workspaceRoot: string = findWorkspaceRoot(projectRoot),
+): string | undefined {
+  for (const file of files) {
+    const extension = path.extname(file).toLowerCase();
+    const packages = CSS_PREPROCESSOR_PACKAGES[extension];
+    if (!packages || !bundledPreprocessor(extension)) continue;
+    if (packages.some((pkg) => isPackageAvailable(pkg, projectRoot, workspaceRoot))) continue;
+    return PROJECT_TRANSFORM_WARNING(
+      {
+        kind: "project-transform",
+        chain: [],
+        specifier: toPosix(path.relative(projectRoot, file)),
+        transformCode: "css-preprocessor",
+      },
+      "bundled",
+    );
+  }
+  return undefined;
+}
 
 // Gated on the mount of `{}` rendering: a component that renders nothing matches no rule anyway.
 export async function probeStylesheetMatchStats(
@@ -46,10 +82,13 @@ export const STYLESHEET_MATCHED_NOTHING_COLLAPSED_WARNING = (
   opts: { othersMatched: boolean },
 ): string => {
   const rest = total > named.length ? ` and ${total - named.length} more` : "";
-  const subject = `${total} injected stylesheets (${named.join(", ")}${rest}) matched no element ` +
-    "inside the component's own tree";
+  const one = total === 1;
+  const subject =
+    `${total} injected stylesheet${one ? "" : "s"} (${named.join(", ")}${rest}) matched no ` +
+    "element inside the component's own tree";
   return opts.othersMatched
-    ? `${subject}, while another injected stylesheet did match. They carry styling this component ` +
+    ? `${subject}, while another injected stylesheet did match. ` +
+      `${one ? "It carries" : "They carry"} styling this component ` +
       "does not use, so the render was not measured unstyled and nothing needs changing."
     : `${subject}, and no injected stylesheet matched anything. Either they are scoped under an ` +
       "ancestor the harness does not render (a theme root, an app shell wrapper), in which case a " +

@@ -5,6 +5,7 @@ import {
   STYLESHEET_MATCHED_NOTHING_WARNING,
   buildCssReport,
   resolveCssFiles,
+  stylesheetMatchWarnings,
 } from "../../src/pipeline/index.js";
 import { formatStylesheetsLine, type CssReport } from "../../src/report/index.js";
 
@@ -63,20 +64,20 @@ describe("css details are built for every discovered file", () => {
 
 // M102 / I7: stats match `css.details` by file path; only sheets with unmatched rules warn.
 describe("match stats reach the details entry they describe", () => {
+  // The run's own producer, so this describe cannot drift from what a run prints.
   function apply(
     details: Array<{ file: string; bytes: number; rules: number; matchedRules?: number }>,
     stats: Array<{ file: string; rules: number; matched: number }>,
+    layer: CssReport["layer"] = "entry-chain",
   ): string[] {
-    const warnings: string[] = [];
+    const probed: NonNullable<CssReport["details"]> = [];
     for (const stat of stats) {
       const detail = details.find((d) => stat.file.endsWith(d.file) || d.file.endsWith(stat.file));
       if (!detail) continue;
       detail.matchedRules = stat.matched;
-      if (detail.rules > 0 && stat.matched === 0) {
-        warnings.push(STYLESHEET_MATCHED_NOTHING_WARNING(detail.file, detail.rules));
-      }
+      probed.push({ ...detail, rules: stat.rules, matchedRules: stat.matched });
     }
-    return warnings;
+    return stylesheetMatchWarnings({ layer, details: probed });
   }
 
   it("warns for a sheet with rules that matched nothing", () => {

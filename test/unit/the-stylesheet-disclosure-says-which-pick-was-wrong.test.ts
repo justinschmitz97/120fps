@@ -72,6 +72,24 @@ describe("a largest-stylesheet pick that matched nothing", () => {
   });
 });
 
+describe("one stylesheet that matched nothing next to one that did", () => {
+  const lines = stylesheetMatchWarnings({
+    layer: "entry-chain",
+    details: [sheet("src/index.css", 40, 12), sheet("styles/monaco.css", 10, 0)],
+  });
+
+  it("reads as one sheet, not as a count with a plural", () => {
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain("1 injected stylesheet (styles/monaco.css)");
+    expect(lines[0]).not.toContain("injected stylesheets");
+    expect(lines[0]).toContain("It carries styling this component does not use");
+  });
+
+  it("still gives no --wrap advice", () => {
+    expect(lines[0]).not.toContain("--wrap");
+  });
+});
+
 describe("stylesheets that all matched something", () => {
   it("produces no line at all", () => {
     expect(
