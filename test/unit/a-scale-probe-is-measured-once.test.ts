@@ -7,7 +7,12 @@ import {
 import type { MountPassGate, MountResult } from "../../src/browser/index.js";
 import type { PropCombination } from "../../src/props/index.js";
 
-const scale = (n: number): PropCombination => ({ __120fps_scaleN: n });
+// A scale combo carries the first prop combo's props beside the copy count (M134 C7's shape).
+const scale = (n: number, base: PropCombination = {}): PropCombination => ({
+  ...base,
+  __120fps_scaleN: n,
+});
+const A: PropCombination = { variant: "a" };
 
 function mountResult(comboIndex: number, props: PropCombination, median: number): MountResult {
   return {
@@ -52,8 +57,8 @@ describe("the scale-point gate", () => {
 
     await measureGatedScaleMounts({ propCombos: [{ variant: "a" }], scalePoints: [1, 5, 20, 50], measure });
 
-    expect(batches[0][0]).toEqual({ variant: "a" });
-    expect(batches[0][1]).toEqual(scale(1));
+    expect(batches[0][0]).toEqual(A);
+    expect(batches[0][1]).toEqual(scale(1, A));
     expect(batches.flat().filter((props) => props.__120fps_scaleN === 1)).toHaveLength(1);
   });
 
@@ -67,7 +72,7 @@ describe("the scale-point gate", () => {
     });
 
     expect(batches).toHaveLength(1);
-    expect(result.combos).toEqual([{ variant: "a" }, scale(1), scale(5), scale(20), scale(50)]);
+    expect(result.combos).toEqual([A, scale(1, A), scale(5, A), scale(20, A), scale(50, A)]);
     expect(result.mounts.map((m) => m.comboIndex)).toEqual([0, 1, 2, 3, 4]);
     expect(result.mounts.map((m) => m.props)).toEqual(result.combos);
     expect(result.warning).toBeUndefined();
@@ -92,7 +97,7 @@ describe("the scale-point gate", () => {
 
     expect(batches).toHaveLength(1);
     expect(batches[0]).toHaveLength(5);
-    expect(result.combos).toEqual([{ variant: "a" }, scale(1)]);
+    expect(result.combos).toEqual([A, scale(1, A)]);
     expect(result.mounts).toHaveLength(2);
     expect(result.warning).toBe(SCALE_PROBE_COST_WARNING(1, SCALE_PROBE_GATE_MS + 1, [5, 20, 50]));
   });
