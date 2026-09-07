@@ -39,7 +39,7 @@ import {
 } from "../modes/context.js";
 import { applyAutoScalingCurves } from "../modes/curve.js";
 import { measureStandardPropDeltas } from "../modes/matrix.js";
-import { NO_PROPS_MEASURED_WARNING, ZERO_PROPS_WARNING, explainsZeroPropCount } from "../remedies.js";
+import { NO_PROPS_MEASURED_WARNING, zeroPropCountWarning, explainsZeroPropCount } from "../remedies.js";
 
 export const COMBO_CAP_WARNING = (kept: number, total: number): string =>
   `measured ${kept} of ${total} prop combos; ${total - kept} were dropped to bound the run. ` +
@@ -269,7 +269,7 @@ export async function runComboMode(ctx: ModeContext, fixtureHasScale: boolean): 
     ctx.disclosureReason !== "propsExcluded" &&
     !runWarnings.some(explainsZeroPropCount)
   ) {
-    report.warnings = [...(report.warnings ?? []), ZERO_PROPS_WARNING];
+    report.warnings = [...(report.warnings ?? []), zeroPropCountWarning(runWarnings)];
   }
 
   if (ctx.wrapper) attachWrapperReport(report, ctx.wrapper);

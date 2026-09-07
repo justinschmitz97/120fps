@@ -59,6 +59,7 @@ export interface PreflightResult {
 export const PROVIDER_LIBRARIES: Record<string, string> = {
   "next-intl": "useTranslations",
   "react-i18next": "useTranslation",
+  "react-intl": "useIntl",
   "react-redux": "useSelector",
   "@tanstack/react-query": "useQuery",
   // Router and meta-framework hooks: the same failure shape as the four above.
@@ -68,10 +69,15 @@ export const PROVIDER_LIBRARIES: Record<string, string> = {
   gatsby: "useStaticQuery",
   "@tanstack/react-router": "useRouter",
   "@tanstack/react-start": "useRouter",
+  // Atom and RPC stores: the hook throws outside the scope component that supplies the store.
+  jotai: "useAtom",
+  "jotai-scope": "useAtom",
+  "@trpc/tanstack-react-query": "useTRPC",
+  "@trpc/react-query": "useQuery",
 };
 
 // A headless kit ships one package per primitive, so PROVIDER_LIBRARIES's names do not fit.
-const PROVIDER_LIBRARY_SCOPES = ["@radix-ui/"];
+const PROVIDER_LIBRARY_SCOPES = ["@radix-ui/", "@mantine/", "@chakra-ui/", "@trpc/"];
 
 export interface ProviderHit {
   // Package name, or the projectRoot-relative path of a local module.
@@ -89,11 +95,17 @@ function packageOf(specifier: string): string {
 
 export function detectProviderImport(
   specifier: string,
+  // The importing file's text. Without it the table's representative hook is named unconditionally.
+  sourceText?: string,
 ): { source: string; hook?: string } | undefined {
   if (specifier.startsWith(".") || specifier.startsWith("/")) return undefined;
   const pkg = packageOf(specifier);
   const hook = PROVIDER_LIBRARIES[pkg];
-  if (hook) return { source: pkg, hook };
+  if (hook) {
+    // A file that imported only `Link` is not told about `useNavigate` it never called.
+    const observed = sourceText === undefined || new RegExp(`\\b${hook}\\b`).test(sourceText);
+    return observed ? { source: pkg, hook } : { source: pkg };
+  }
   if (PROVIDER_LIBRARY_SCOPES.some((scope) => pkg.startsWith(scope))) return { source: pkg };
   return undefined;
 }
@@ -536,7 +548,7 @@ export function runPreflight(options: PreflightOptions): PreflightResult {
     for (const edge of importEdges(sf)) {
       if (edge.typeOnly) continue;
 
-      const provider = detectProviderImport(edge.specifier);
+      const provider = detectProviderImport(edge.specifier, sf.text);
       if (provider && !providerSources.has(provider.source)) {
         providerSources.add(provider.source);
         providers.push({ ...provider, local: false, chain: chainTo(file) });

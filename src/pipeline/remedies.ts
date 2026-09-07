@@ -55,8 +55,46 @@ export function remedyNamesLoadedPreset(warning: string, presetFile: string): st
   );
 }
 
+const ZERO_PROPS_DECLARED_NONE_MARK = "the component declares no props";
+
 export const ZERO_PROPS_WARNING =
-  "No props extracted: component measured with empty props only; if the component has typed props, extraction may have failed";
+  `No props extracted: ${ZERO_PROPS_DECLARED_NONE_MARK}, so it is measured with empty props: ` +
+  "extraction did not fail and the component is not broken.";
+
+// The hedge stands only where the run can name what stopped the extractor.
+export const ZERO_PROPS_EXTRACTION_SUSPECT_WARNING = (reason: string): string =>
+  "No props extracted: component measured with empty props only; if the component has typed props, " +
+  `extraction may have failed: ${reason}.`;
+
+// Each entry: what an extraction warning already said, and how the hedge names it.
+const EXTRACTION_SUSPICIONS: Array<{ mark: string; reason: string }> = [
+  {
+    mark: "which resolves to no module on disk",
+    reason: "the props type names a module that resolves to no file on disk",
+  },
+  {
+    mark: "could not be enumerated",
+    reason: "the props type could not be enumerated",
+  },
+  {
+    mark: "Another declaration in this file has props",
+    reason: "the extractor bound another declaration in the file, not the measured component",
+  },
+  {
+    mark: "recursed too deeply",
+    reason: "TypeScript's type resolution recursed too deeply on the props type",
+  },
+];
+
+// One producer for both modes, reading the same warning list each of them already carries.
+export function zeroPropCountWarning(extractionWarnings: readonly string[]): string {
+  for (const suspicion of EXTRACTION_SUSPICIONS) {
+    if (extractionWarnings.some((warning) => warning.includes(suspicion.mark))) {
+      return ZERO_PROPS_EXTRACTION_SUSPECT_WARNING(suspicion.reason);
+    }
+  }
+  return ZERO_PROPS_WARNING;
+}
 
 // The measured file only re-exports; the props on the table belong to the declaring module.
 export function RE_EXPORT_MEASURED_DISCLOSURE(barrel: string, module: string): string {
@@ -172,6 +210,7 @@ export function suppressHonoredPluginNote(
 
 export function explainsZeroPropCount(warning: string): boolean {
   return (
+    warning.includes(ZERO_PROPS_DECLARED_NONE_MARK) ||
     isVuePropsScopeExclusionWarning(warning) ||
     isVueUnresolvedPropsTypeWarning(warning) ||
     isUntypedJsComponentWarning(warning) ||

@@ -348,15 +348,16 @@ export function hintsForReport(report: Report): HintId[] {
     // A finding about the document, carried on whichever combos observed it.
     if ((combo.unresolvedSpriteRefs?.length ?? 0) > 0) found.add("unresolvedSprite");
 
-    // A render error exceeds no budget, so the budget hint would cite a tree that never was.
+    // A render error exceeds no budget and fits no curve, so both would cite a tree that never was.
     if (combo.renderHealth === "error") {
       found.add(combo.harnessFault ? "harnessFault" : "renderError");
-    } else if (combo.verdict === "fail") found.add("budgetBreach");
-    if (combo.measuredState && combo.measuredState !== "settled") found.add("measuredState");
-
-    for (const curve of [combo.scalingCurve, combo.rerenderScalingCurve]) {
-      if (isSuperlinearGrowth(curve)) found.add("superlinearGrowth");
+    } else {
+      if (combo.verdict === "fail") found.add("budgetBreach");
+      for (const curve of [combo.scalingCurve, combo.rerenderScalingCurve]) {
+        if (isSuperlinearGrowth(curve)) found.add("superlinearGrowth");
+      }
     }
+    if (combo.measuredState && combo.measuredState !== "settled") found.add("measuredState");
   }
 
   const isolation = report.isolation;
@@ -400,8 +401,31 @@ export const PROVIDER_HINT_LINE = (candidate: string): string =>
 export const PROVIDER_HINT_LINE_TRANSITIVE = (candidate: string): string =>
   `component's import graph reaches ${candidate}: likely needs a provider wrapper; see --wrap / 120fps.setup.tsx`;
 
+// The one candidate the run presents as the suspect, with the evidence that ranked it first.
+export const PROVIDER_SUSPECT_LINE = (
+  candidate: string,
+  transitive: boolean,
+  evidence: string | undefined,
+): string =>
+  (transitive
+    ? `component's import graph reaches ${candidate}`
+    : `component imports ${candidate}`) +
+  (evidence ? `, and the page error says "${evidence}"` : "") +
+  ": render it inside that provider. A default-exporting 120fps.setup.tsx (or 120fps.setup.vue) " +
+  "at the package root is picked up automatically; --wrap names another path.";
+
 // Deliberately loose: the goal is withholding a wrong guess, never proving a right one.
 const PROVIDER_ERROR_SIGNATURE = /provider|context/i;
+
+// Long enough to carry the sentence the reader would search for, short enough to read as one line.
+const EVIDENCE_LIMIT = 120;
+
+function providerErrorPhrase(texts: string[]): string | undefined {
+  const named = texts.find((text) => PROVIDER_ERROR_SIGNATURE.test(text));
+  if (!named) return undefined;
+  const phrase = named.replace(/^\w*Error:\s*/, "").replace(/\s*\(×\d+\)$/, "").trim();
+  return phrase.length > EVIDENCE_LIMIT ? `${phrase.slice(0, EVIDENCE_LIMIT).trimEnd()}…` : phrase;
+}
 
 // Curve mode has no combos; its capture is renderErrorPoints (pipeline/modes/curve.ts).
 function capturedErrorTexts(report: Report): string[] {
@@ -438,7 +462,8 @@ function normalizeForMatch(text: string): string {
 function rankProviderCandidates(candidates: string[], texts: string[]): string[] {
   const symbol = namedProviderSymbol(texts);
   if (!symbol) return candidates;
-  const needle = normalizeForMatch(symbol.replace(/(?:Provider|Context)$/, ""));
+  // `OperatingSystemContextProvider` names OperatingSystem: both suffixes come off, not just one.
+  const needle = normalizeForMatch(symbol.replace(/(?:Provider|Context)+$/, ""));
   if (!needle) return candidates;
   return [...candidates].sort((a, b) => {
     const aMatch = normalizeForMatch(a).includes(needle) ? 0 : 1;
@@ -463,8 +488,14 @@ function extraHintLines(id: HintId, report: Report | undefined): string[] {
   const ranked = rankProviderCandidates(report.providerCandidates ?? [], texts);
   // Wording only; which candidate leads is unaffected.
   const transitive = new Set(report.transitiveProviderCandidates ?? []);
-  return ranked.map((candidate) =>
-    transitive.has(candidate) ? PROVIDER_HINT_LINE_TRANSITIVE(candidate) : PROVIDER_HINT_LINE(candidate),
+  const evidence = providerErrorPhrase(texts);
+  // Exactly one line reads as the suspect; the rest stay the list they already were.
+  return ranked.map((candidate, index) =>
+    index === 0
+      ? PROVIDER_SUSPECT_LINE(candidate, transitive.has(candidate), evidence)
+      : transitive.has(candidate)
+        ? PROVIDER_HINT_LINE_TRANSITIVE(candidate)
+        : PROVIDER_HINT_LINE(candidate),
   );
 }
 

@@ -49,7 +49,7 @@ import { MATRIX_SUPPRESSED_BY_COMPOSITION_WARNING, MATRIX_SUPPRESSED_BY_FIXTURE_
 import {
   RE_EXPORT_MEASURED_DISCLOSURE,
   UNRESOLVED_RE_EXPORT_WARNING,
-  ZERO_PROPS_WARNING,
+  zeroPropCountWarning,
   alternativeExportNote,
   explainsZeroPropCount,
   presetShapeDisclosure,
@@ -131,6 +131,9 @@ export async function explainProps(
     maxCombos?: number;
     // Curve points and combo-path anchors are the same list, so the estimate prices either.
     scalePoints?: number[];
+    // The stylesheet decision is the real run's, so the same two flags decide it here.
+    cssFiles?: string[];
+    noCss?: boolean;
     // The file --check would read, so the estimate prices the entry the real run will consult.
     baselineFile?: string;
   } = {},
@@ -154,7 +157,11 @@ export async function explainProps(
   );
   // Before the CSS probe, as the full run resolves it, so a wrapper's imports are discoverable.
   const { wrapPath } = resolveWrapPath({}, projectRoot, framework, warnings);
-  const resolvedCss = resolveCssFiles({}, projectRoot, warnings, {
+  const cssOptions = {
+    ...(options.noCss ? { noCss: true } : {}),
+    ...(options.cssFiles ? { cssFiles: options.cssFiles } : {}),
+  };
+  const resolvedCss = resolveCssFiles(cssOptions, projectRoot, warnings, {
     ...(wrapPath ? { wrapPath } : {}),
     measuredFile: resolvedPath,
   });
@@ -261,7 +268,7 @@ export async function explainProps(
     !detail.unresolvedReExport &&
     !detail.warnings.some(explainsZeroPropCount)
   ) {
-    warnings.push(ZERO_PROPS_WARNING);
+    warnings.push(zeroPropCountWarning(detail.warnings));
   }
 
   // Records, not names: inferComposition reads the shape the dispatcher hands it.
@@ -442,7 +449,8 @@ function explainValue(value: unknown): string {
 }
 
 // Read back from the warning the same extraction produced, never re-derived, so the two agree.
-const COLLAPSED_UNION_WARNING = /^Warning: prop "([^"]+)".* is a union of \d+ different shapes \(([^)]*)\)/;
+const COLLAPSED_UNION_WARNING =
+  /^(?:Warning: )?prop "([^"]+)".* is a union of \d+ different shapes \(([^)]*)\)/;
 
 export function collapsedUnionBranchesFor(
   propName: string,

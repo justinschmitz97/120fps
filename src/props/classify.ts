@@ -269,6 +269,21 @@ function classifyType(
 }
 
 
+// The tags every JSX.IntrinsicElements map declares; a hand-written union rarely holds all three.
+const INTRINSIC_TAG_SAMPLE = ["div", "span", "button"];
+
+// A union of every intrinsic tag plus a component type: React.ElementType and its aliases.
+function acceptsIntrinsicTag(members: ts.Type[]): boolean {
+  const literals = new Set(
+    members.filter((m) => m.isStringLiteral()).map((m) => (m as ts.StringLiteralType).value),
+  );
+  if (!INTRINSIC_TAG_SAMPLE.every((tag) => literals.has(tag))) return false;
+  // A pure literal union is a real enumeration; only a component member makes it an element type.
+  return members.some(
+    (m) => m.getCallSignatures().length > 0 || m.getConstructSignatures().length > 0,
+  );
+}
+
 function classifyTypeByShape(
   name: string,
   type: ts.Type,
@@ -283,6 +298,11 @@ function classifyTypeByShape(
 
   if (isReactNodeMember(type, checker)) {
     return { name, kind: "reactnode", required, values: [], provenance: "placeholder" };
+  }
+
+  // React.ElementType accepts a tag name, so a tag renders where nothing could be constructed.
+  if (acceptsIntrinsicTag(nonUndefinedTypes)) {
+    return { name, kind: "string", required, values: ["div"], provenance: "heuristic" };
   }
 
   // `ReactElement | (props) => ReactElement` has no field-bag shape; objectSchema names it opaque.

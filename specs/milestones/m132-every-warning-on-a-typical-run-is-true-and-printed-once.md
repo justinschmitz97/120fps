@@ -13,6 +13,7 @@ tests:
   - test/unit/the-dry-run-honours-no-css.test.ts
   - test/unit/third-party-build-output-is-captured.test.ts
   - test/unit/a-warning-carries-one-prefix.test.ts
+  - test/unit/a-provider-hint-names-what-the-file-imported.test.ts
 ---
 
 # M132: every warning on a typical run is true, printed once, and names what to do
@@ -175,8 +176,9 @@ The verifier for every item below: run-7 investigation (2026-09-06), refuted by 
 - **C9** — `test/unit/a-warning-carries-one-prefix.test.ts`: a text already carrying the prefix is
   printed with one; a text without it gains one; the JSON array carries the unprefixed text in both
   cases.
-- **C7** — extend `test/unit/preflight.test.ts`: a file importing only `Link` from `react-router`
-  produces "imports react-router" with no hook named; a file importing `useNavigate` names the hook.
+- **C7** — `test/unit/a-provider-hint-names-what-the-file-imported.test.ts`: a file importing only
+  `Link` from `react-router` produces "imports react-router" with no hook named; a file importing
+  `useNavigate` names the hook; a specifier read without its file's text keeps the table's hook.
 - Types: `node node_modules/typescript/bin/tsc --noEmit -p tsconfig.json` clean.
 - Suite: the tests above plus `test/unit/hints.test.ts`,
   `test/unit/postcss-config-plugins-load-from-the-defining-package.test.ts`,
@@ -184,10 +186,26 @@ The verifier for every item below: run-7 investigation (2026-09-06), refuted by 
   `test/unit/dry-run-prints-project-transform-warnings.test.ts`, then the full unit suite once before
   the lane's final commit.
 
-Recorded run of this milestone's verification:
+Recorded run of this milestone's verification (2026-09-07, worktree
+`C:/Projekte/120fps-run7-lane-d`, node 22.22.2):
 
 ```
-<filled by lane D: tsc result, the vitest invocations and their verbatim totals>
+node node_modules/typescript/bin/tsc --noEmit -p tsconfig.json
+-> exit 0, no output
+
+npx vitest run test/unit/a-component-that-declares-no-props-says-so.test.ts   test/unit/the-vite-note-names-only-what-was-dropped.test.ts   test/unit/no-node-warning-reaches-the-users-terminal.test.ts   test/unit/the-dry-run-honours-no-css.test.ts   test/unit/third-party-build-output-is-captured.test.ts   test/unit/a-warning-carries-one-prefix.test.ts   test/unit/a-provider-hint-names-what-the-file-imported.test.ts --maxWorkers=2
+-> Test Files  7 passed (7);  Tests  44 passed (44)
+
+npx vitest run test/unit --maxWorkers=2 (M133's five red test files excluded)
+-> Test Files  2 failed | 371 passed (373)
+   Tests  2 failed | 5216 passed | 1 skipped (5219)
+   Duration 427.89s
+   the two failures are the recorded pre-existing set: prop-cap-ranking.test.ts and
+   vue-setup-inject-evidence.test.ts
+
+npx vitest run test/unit/the-vite-note-names-only-what-was-dropped.test.ts   test/unit/vite-plugin-note-names-what-it-dropped.test.ts   test/unit/static-prebuild-warnings.test.ts test/unit/static-prebuild-warning-parity.test.ts   test/unit/explain-props-parity.test.ts   test/unit/dry-run-prints-project-transform-warnings.test.ts   test/unit/warnings-print-once-per-run.test.ts --maxWorkers=2
+-> Test Files  7 passed (7);  Tests  55 passed (55)
+   (re-run after the `plugins: await getPluginsList(...)` unwrap landed)
 ```
 
 Corpus repros, through a `dist` built in `C:/Projekte/120fps-run7-lane-d`:
@@ -231,6 +249,19 @@ node C:/Projekte/120fps-fieldtest/tools/run120.mjs \
   -- components/ui/label.tsx --explain-props --no-css
 # expected: no stylesheet reported, matching the real run under --no-css
 ```
+
+Recorded corpus results (2026-09-07, `dist` built at this commit; logs under
+`C:/Projekte/120fps-fieldtest/logs/run7-lane-d/<repo>/`):
+
+| Repo | Before | After |
+|---|---|---|
+| soybean-admin | `No props extracted: … if the component has typed props, extraction may have failed`; `vite.config.ts declares resolve.alias and plugins, which the harness read but cannot honor` | `⚠ No props extracted: the component declares no props, so it is measured with empty props: extraction did not fail and the component is not broken.`; `⚠ vite.config.ts declares resolve.alias and plugins the harness cannot honor: setupVitePlugins — the project's Vite config is never executed`; `Result: PASS` |
+| vue-pure-admin (3-candidate `--explain-props`) | the project-level note 3× per dry run, nameless | the note once, `… cannot honor: getPluginsList — …` (`grep -c 'cannot honor'` = 1 over 3 candidates) |
+| midday | `(node:…) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///E:/repositories-run5/midday/packages/ui/tailwind.config.ts …` | `grep -c MODULE_TYPELESS` = 0; the run's own warnings unchanged |
+| plane | same Node warning (`grep -c` = 1) | `grep -c MODULE_TYPELESS` = 0; reaches a report in 25.6 s |
+| taxonomy (`--explain-props --no-css`) | `Stylesheets: styles/globals.css (found in the project entry's own imports)` | `Stylesheets: none (--no-css)` |
+| rallly | 7 `enhanced-resolve` stack lines during `harness: building`, then the same fact as a 120fps warning | 0 stack lines; the covering warning (`… did not compile ([postcss] tailwindcss: … Can't resolve '@tailwindcss/typography' …)`) is the only account printed |
+| anything-llm | `⚠ Warning: no representative value could be synthesized for onToggle …` | `⚠ no representative value could be synthesized for onToggle …` (`grep -c '⚠ Warning:'` = 0) |
 
 ## Deferred
 

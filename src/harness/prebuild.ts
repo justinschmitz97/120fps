@@ -49,8 +49,12 @@ export interface StaticPreBuild {
 // it first keeps it, so the dry run and the real run of one component still report identically.
 const disclosedUnresolvedByProject = new Map<string, Map<string, string>>();
 
+// The vite config is a fact about the project, so a per-candidate walk states it once per run.
+const disclosedViteConfigNotes = new Set<string>();
+
 export function resetPreBuildDisclosures(): void {
   disclosedUnresolvedByProject.clear();
+  disclosedViteConfigNotes.clear();
 }
 
 
@@ -78,7 +82,12 @@ export function collectStaticPreBuildWarnings(
   const shimAliases = buildShimAliases(detected);
   // Read as text; the project's vite.config is never imported.
   const viteConfig = readViteConfigData(projectRoot, workspaceRoot);
-  if (viteConfig.configFile && viteConfig.ignoredKeys.length > 0) {
+  if (
+    viteConfig.configFile &&
+    viteConfig.ignoredKeys.length > 0 &&
+    !disclosedViteConfigNotes.has(viteConfig.configFile)
+  ) {
+    disclosedViteConfigNotes.add(viteConfig.configFile);
     warnings.push(
       VITE_CONFIG_IGNORED_WARNING(
         path.basename(viteConfig.configFile),

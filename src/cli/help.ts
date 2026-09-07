@@ -55,7 +55,7 @@ Options:
 
 Exit codes:
   0   every measured component passed
-  1   a verdict failed: over budget, or a regression under --check/--budget
+  1   a verdict failed: over budget, a regression under --check/--budget, or a render error
   2   setup error: bad flag, missing file, harness or browser failure
 
 Multiple components:

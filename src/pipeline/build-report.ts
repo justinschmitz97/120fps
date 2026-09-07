@@ -101,6 +101,22 @@ export interface BuildReportInput {
   phaseClock?: Pick<PhaseClock, "addAttribution">;
 }
 
+// A value the harness chose reached the DOM of a combo that rendered: the verdict is not the point.
+export function HARNESS_FAULT_DISCLOSURE(
+  comboIndex: number,
+  fault: NonNullable<ComboReport["harnessFault"]>,
+): string {
+  const evidence = fault.evidence.length > 160
+    ? `${fault.evidence.slice(0, 160).trimEnd()}…`
+    : fault.evidence;
+  return (
+    `[harness fault] combo ${comboIndex} rendered with the harness's own synthesized value for ` +
+    `"${fault.propName}" (${JSON.stringify(fault.value)}, provenance: ${fault.provenance}), and a ` +
+    `page error names it: ${evidence}. The verdict is unchanged; add a preset naming the prop to ` +
+    "measure it with a real value."
+  );
+}
+
 // A harness-caused crash is not the component's, but risky provenance alone is never evidence.
 function detectHarnessFault(
   combo: ComboReport,
@@ -350,13 +366,17 @@ export function buildReport(input: BuildReportInput): Report {
   }
 
   // After the tier pass, so it sees the verdict a reader would; it only narrows an explained fail.
+  const harnessFaultDisclosures: string[] = [];
   for (const combo of combos) {
-    if (combo.verdict !== "fail" || combo.renderHealth !== "error") continue;
     const fault = detectHarnessFault(combo, input.schemas);
-    if (fault) {
+    if (!fault) continue;
+    if (combo.verdict === "fail" && combo.renderHealth === "error") {
       combo.harnessFault = fault;
       combo.verdict = "warn";
+      continue;
     }
+    // The combo rendered, so its verdict stands; the reader is still told the value was ours.
+    harnessFaultDisclosures.push(HARNESS_FAULT_DISCLOSURE(combo.comboIndex, fault));
   }
 
   // Stated directly: a verdict mutation added below must not start charging a harnessFault again.
@@ -392,6 +412,10 @@ export function buildReport(input: BuildReportInput): Report {
 
   if (renderHealthInconsistencyWarning) {
     report.warnings = [...(report.warnings ?? []), renderHealthInconsistencyWarning];
+  }
+
+  if (harnessFaultDisclosures.length > 0) {
+    report.warnings = [...(report.warnings ?? []), ...harnessFaultDisclosures];
   }
 
   if (input.fixturePath !== undefined) {
