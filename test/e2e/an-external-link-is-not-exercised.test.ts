@@ -3,6 +3,9 @@ import { buildAndServe, type HarnessResult } from "../../src/harness/index.js";
 import { discoverInteractions, type SkippedTarget } from "../../src/browser/index.js";
 import { chromium, type Browser, type Page } from "playwright";
 
+// The double frame is a settle, not a fence: past this bound the test reads the DOM as it stands.
+const SETTLE_CAP_MS = 2000;
+
 let harness: HarnessResult | undefined;
 let browser: Browser | undefined;
 
@@ -20,8 +23,20 @@ async function mount(fixturePath: string): Promise<Page> {
   await page.goto(harness.url);
   await page.waitForFunction(() => typeof (window as any).__120fps === "object", { timeout: 10000 });
   await page.evaluate(() => (window as any).__120fps.mount({}));
+  // Chromium throttles rAF in a backgrounded page, so the double frame is raced against a timer:
+  // the settle is best-effort, and the assertions below read whatever rendered.
   await page.evaluate(
-    () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))),
+    (capMs: number) =>
+      new Promise<void>((resolve) => {
+        let timer: ReturnType<typeof setTimeout>;
+        const settled = (): void => {
+          clearTimeout(timer);
+          resolve();
+        };
+        timer = setTimeout(resolve, capMs);
+        requestAnimationFrame(() => requestAnimationFrame(settled));
+      }),
+    SETTLE_CAP_MS,
   );
   return page;
 }

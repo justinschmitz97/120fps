@@ -70,7 +70,9 @@ one-prop component) is M134's root causes 5-8 and its C5, sharpened there.
   (`mailto:`, `tel:`, `javascript:`). One carve-out: a `javascript:` anchor whose element also
   carries one of the handler attributes discovery already extracts (`onclick`, `onmousedown`,
   `onmouseup`, `onkeydown`, `onkeyup`, `onkeypress`) is a button the component owns, and stays
-  exercised; a handler-less `javascript:` anchor is declined. A same-page anchor — a fragment, or a
+  exercised; a `javascript:` anchor carrying none of them is declined. The carve-out reads
+  attributes, which is the only handler evidence discovery extracts; a framework-bound listener is
+  Deferred below. A same-page anchor — a fragment, or a
   same-origin path the app routes itself — is still discovered and still exercised. The rule reaches
   every anchor the run would exercise, portal content included.
 - **C2** The exploration report says what it declined and why: one line, in two clauses. The
@@ -111,10 +113,11 @@ Three decisions a reader cannot recover from the code alone.
   `location.origin`. The rule is therefore testable without a browser, and the page-side walk keeps
   one shape.
 - **What discovery declined travels out through `DiscoverOptions.onSkipped`, not the return type.**
-  `discoverInteractions` still returns `InteractionDescriptor[]`. `exploreCombo` accumulates the
-  reports from every discovery in the combo, keyed by reason and selector so a rediscovered anchor
-  counts once, and emits C2's line through `onWarning`. The run's warning sink already dedupes by
-  exact text, so combos that declined the same classes print one line.
+  `discoverInteractions` still returns `InteractionDescriptor[]`. `exploreCombo` owns the record,
+  keyed by reason and selector so a rediscovered anchor counts once, and emits C2's line from its
+  `finally`: a combo that dies mid-walk still says what it did not measure, and the emission is
+  guarded so it runs once. The run's warning sink dedupes by exact text, so combos that declined the
+  same classes print one line.
 - **The portal walk faces the same rule through the same function.** `src/browser/portal-probe.ts`
   runs its own `page.evaluate`, so it extracts the same three anchor fields and calls
   `classifyNavigationEscape` before `toDescriptor`. One rule, two walks; `discoverInteractions`
@@ -134,6 +137,8 @@ Three decisions a reader cannot recover from the code alone.
   declined), on `fixtures/portal-external-links.fixture.tsx` (the portal keeps its fragment anchor
   and its close button, and declines its `target="_blank"` cross-origin anchor) and on
   `fixtures/interactive-basic.tsx` (nothing declined, its anchor kept).
+  `test/unit/explore-replays-state-invariant-path-once-per-edge.test.ts`: a walk that throws after
+  discovery still prints the line, exactly once, and a walk that declined nothing prints none.
 - **C3** — `test/unit/explorer.test.ts`: a popup a click opened is closed and reported as
   `opened-a-page`; a page that lost the harness global reports `left-the-page`; a page that kept it
   (a same-origin route change) reports nothing; a destroyed execution context and a closed target
@@ -151,7 +156,7 @@ Three decisions a reader cannot recover from the code alone.
   `test/e2e/explorer.test.ts`, then the full unit suite once before the lane's final commit.
 
 Recorded run of this milestone's verification (2026-09-07, `C:/Projekte/120fps-run7-lane-h` on
-`run7/lane-h` at the merged tree `de41d6a`, node 22.22.2, `pnpm install --frozen-lockfile`):
+`run7/lane-h` at the merged tree `cc506f0`, node 22.22.2, `pnpm install --frozen-lockfile`):
 
 ```
 node node_modules/typescript/bin/tsc --noEmit -p tsconfig.json
@@ -159,20 +164,20 @@ node node_modules/typescript/bin/tsc --noEmit -p tsconfig.json
 
 npx vitest run test/unit/explorer.test.ts   test/unit/an-external-link-is-not-exercised.test.ts   test/unit/the-discovery-line-counts-what-it-skipped.test.ts   test/unit/explore-degrades-instead-of-ending-the-run.test.ts   test/unit/explore-replays-state-invariant-path-once-per-edge.test.ts   test/unit/explore-stall-hint-names-effective-flags.test.ts   test/unit/noise-sentinel.test.ts test/unit/noise-warning-is-one-terminal-line.test.ts   test/unit/isolation-calc.test.ts test/unit/isolation-cli.test.ts   test/unit/isolation-harden.test.ts test/unit/isolation-orchestrate.test.ts   test/unit/isolation-orchestrate-harden.test.ts test/unit/isolation-phase-warnings.test.ts   test/unit/isolation-report.test.ts test/unit/interaction-step-budgets.test.ts   test/unit/portal-harden.test.ts --maxWorkers=2
 #  Test Files  17 passed (17)
-#       Tests  278 passed (278)
+#       Tests  280 passed (280)
 
+# Three times, for the settle race the portal case used to lose one run in five:
 npx vitest run test/e2e/an-external-link-is-not-exercised.test.ts   test/e2e/a-click-that-opens-a-page-leaves-none-open.test.ts --maxWorkers=1
-#  Test Files  2 passed (2)
-#       Tests  4 passed (4)
+#  Test Files  2 passed (2)      Tests  4 passed (4)      3 of 3 runs
 
 npx vitest run test/e2e/explorer.test.ts --maxWorkers=1
 #  Test Files  1 passed (1)
 #       Tests  9 passed (9)     Duration  88.03s
 
 npx vitest run test/unit --maxWorkers=2
-#  Test Files  2 failed | 363 passed (365)
-#       Tests  2 failed | 5169 passed | 1 skipped (5172)
-#   Duration  581.32s
+#  Test Files  2 failed | 368 passed (370)
+#       Tests  2 failed | 5265 passed | 1 skipped (5268)
+#   Duration  448.68s
 # The two failures are the recorded baseline pair, unchanged by this milestone:
 # test/unit/prop-cap-ranking.test.ts ("variant and size survive the 32-prop cap") and
 # test/unit/vue-setup-inject-evidence.test.ts ("records why each specifier failed").
@@ -223,6 +228,16 @@ its run.
   magnitude ceiling, so a 7x breach fails however noisy the machine was; and compare against the
   combo's own effective budget. C1-C3 turned both Vue scaffolds from FAIL to PASS without this gate
   ever firing: `withheld=false` in all five lane runs and in the reviewer's rerun.
+
+- **A framework-bound listener on a `javascript:` anchor.** C1's carve-out reads the handler
+  attributes discovery extracts (`hasAttribute("onclick")` and its five siblings). Vue's `@click`
+  and React's `onClick` bind through `addEventListener` and event delegation, so they leave no
+  attribute: `E:/repositories-run7/scaffold-create-vue/src/components/TheWelcome.vue:47`
+  (`<a href="javascript:void(0)" @click="openReadmeInEditor">`) is still declined as a non-http
+  link. Nothing in `src` reads `__vue`, `__vnode`, `__reactProps` or `_reactListening` today, so
+  detecting it means teaching discovery a new class of evidence, with its own false-positive
+  surface, rather than reusing one. The cost of the miss is bounded: the run declines a target it
+  could have measured and says so on the skip line, which is the safe direction.
 
 - **The explore phase's wall clock.** `explore: 1 combos, budget 60s each` under
   `--explore-budget 30`, and 60-74 s recorded on a one-prop component, is M134 S4/C5 in lane F, not a
