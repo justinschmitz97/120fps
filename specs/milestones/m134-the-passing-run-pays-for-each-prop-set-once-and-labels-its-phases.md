@@ -102,13 +102,15 @@ profiles under `C:/Projekte/120fps-fieldtest/logs/run7-investigate/` and
 - **C1** The React analysis pass measures each distinct prop set once. Combos that produce the same
   `propCombinationKey` after the probe's own normalisation share one measurement, and the result is
   attributed to every combo that shares the key. The combo ids in the report, and the per-combo
-  medians on the fixtures, are identical to what the per-combo pass produced.
+  measurements, are identical to what the per-combo pass produced.
 - **C2** The scale-point gate does not perform a measurement whose result is discarded. The smallest
-  scale point is measured once, in the main batch, and the gate reads that measurement.
+  scale point is measured once, in the main batch, and the gate reads that measurement mid-batch, so
+  the whole sweep stays in one session and the scaling curve carries no session boundary.
 - **C3** The `calibration` phase contains calibration and nothing else. The work that follows it —
   wrapper overhead, session close, schema collection and combination generation — is its own labelled
-  phase, `setup`; the scale gate C2 folds into the main batch is part of `mount`. Every phase key is
-  still present, phases remain disjoint, and they still sum to `total` exactly (M115 C1).
+  phase, `setup`; the scale gate C2 folds into the main batch is part of `mount`, and so is an
+  isolated run's measurement. Every phase key is still present, phases remain disjoint, and they
+  still sum to `total` exactly (M115 C1).
 - **C4** The memo pass runs only when the snapshot contains at least one `isMemo` fiber that
   `isReportableComponent` accepts. When it does not, the pass is skipped, the result is the same empty
   result it produces today, and the run reports the same thing it reports today.
@@ -129,8 +131,8 @@ profiles under `C:/Projekte/120fps-fieldtest/logs/run7-investigate/` and
     `src/analysis/explorer.ts:433` to `src/analysis/exploration-loop.ts:203`, so the path the comment
     at `:202` names can be selected. Whether it becomes a default is C6's measurement, not this
     clause.
-  - When the budget stops the phase, the run says so and names the flag; a stopped phase is not a
-    failure.
+  - When the budget stops the phase, the run says so and names the flag, whether it refused a
+    whole combo or cut one combo's share short; a stopped phase is not a failure.
 - **C6** The measured effect is recorded, not assumed. This milestone's Verification carries an
   interleaved A/B (five pairs, same window, same machine) of `phaseTimings.analysis` on umbrel and of
   `phaseTimings.explore` on novu. A change that does not produce a warning-free win is reverted; a
@@ -174,34 +176,56 @@ callback arms rather than after them, which is the window the code already asked
 **The `setup` phase.** `progress("setup")` fires the moment the calibration trace is read, and
 `classifyPhaseLabel` also maps every `mode:` line onto it, so a run that reaches a mode without the
 setup line still closes calibration. `setup` holds wrapper overhead, the calibration session's
-close, schema extraction and combination generation. `estimateRunCost` counts it as fixed cost; a
-baseline written before the key existed reads as `0` and keeps its old estimate.
+close, schema extraction and combination generation. `isolation:` classifies to `mount`, so an
+isolated run's measurement is not charged to `setup`. `estimateRunCost` counts `setup` as fixed
+cost; a baseline written before the key existed reads as `0` and keeps its old estimate. This
+supersedes M115 C1's ten-key list, its gap rule for the interval after `calibration`, and C2's rule
+that a `mode:` or `isolation:` label keeps the open phase; the notes sit in that spec at `:74-90`.
 
-**The scale gate reads the main batch.** `measureGatedScaleMounts` puts the smallest scale point in
-the batch that measures the prop combos and gates the remaining points on the median that batch
-reported, so the warning quotes the number the report prints. The remaining points are measured in a
-second batch and renumbered onto the combo list; when the gate refuses them, that batch never opens.
-The sample count is fixed from the planned combo count before the gate decides, so a gated and an
-ungated run report the same samples per combo. The first deferred point opens a fresh session and
-takes that session's warm-up, where before it sat mid-batch.
+**The scale gate reads the batch it runs in.** `measureGatedScaleMounts` builds one combo list — the
+prop combos, then the scale points in ascending order — and hands `measureMount` a `MountPassGate`.
+The pass consults the gate before each combo; once the cheapest scale point has been measured, the
+gate reads that measurement and, over `SCALE_PROBE_GATE_MS`, stops the pass there. One session
+measures everything, so no session boundary lands between two points of the synthetic scaling curve,
+and no mount is paid for twice. The result keeps `measureMount`'s sparseness: a combo nothing
+measured stays a hole, and the caller reads `m?.heapDelta ?? 0`.
+
+The probe's conditions changed with it, and `specs/overview/00-tdd.md:1038` records the new ones: it
+is measured at position `propCombos.length` of the mount batch, warm, with the batch's
+`warmupsForPosition` count rather than alone at position 0, and at `effectiveSamples` rather than 3
+samples. `SCALE_PROBE_COST_WARNING` therefore quotes the median the report prints.
+
+`effectiveSamples` derives from the planned combo count — the prop combos plus every configured
+scale point — because the batch's sample count is fixed before the gate can decide. On a run whose
+plan exceeds the 20-combo throttle threshold and whose gate then trips, the samples recorded are the
+plan's, not the smaller kept set's; that count is part of the M53 environment fingerprint, so such a
+run does not compare like-for-like against a pre-M134 baseline.
 
 **The explore budget.** `exploreUnitWallClockMs` divides the phase budget across the units, clamps
-the share to the unit's own default (60 s per combo, 30 s per curve point) above and to 10 s below,
-then to the phase budget itself, so `--explore-budget 5` yields 5 s and no flag yields exactly the
-bound the run used before. `explore()` starts its clock at the phase's start, refuses a new combo
-once `explorePhaseBudgetSpent`, and hands each combo the smaller of its share and what the phase has
-left. `exploreRunOptions` builds those bounds plus `observerTiming`, which is present only when the
-caller set `AnalyzeOptions.observerTiming`; no CLI flag selects it.
+the share to the unit's own default (60 s per combo, 30 s per curve point, 30 s per matrix cell)
+above and to 10 s below, then to the phase budget itself, so `--explore-budget 5` yields 5 s and no
+flag yields exactly the bound the run used before. `exploreRunOptions` builds those bounds plus
+`observerTiming`, which is present only when the caller set `AnalyzeOptions.observerTiming`; no CLI
+flag selects it. Combo, curve and matrix mode all route through it.
+
+`explore()` starts its clock at the phase's start, so bring-up counts against the budget, and
+refuses a new combo once `explorePhaseBudgetSpent`. `exploreComboWallClockMs` gives each combo the
+smaller of its share and what the phase has left, floored at 10 s (or at the share, when the share
+is already smaller) so a cut combo still reaches a second state. A combo that gets less than its
+share says so through `EXPLORE_COMBO_TRUNCATED_WARNING`, which names `--explore-budget`; a combo
+that never starts is covered by `EXPLORE_BUDGET_WARNING`, which names the unit it stopped counting.
 
 ## Verification
 
 - **C1** — `test/unit/the-analysis-pass-measures-each-prop-set-once.test.ts`: six combos of which four
-  normalise to the same key produce three measurements; every combo still appears in the result;
-  medians and combo ids are byte-identical to the per-combo pass on the `m66-*` fixtures; two combos
-  with genuinely different props are measured separately.
-- **C2** — `test/unit/a-scale-probe-is-measured-once.test.ts`: the gate consumes the main batch's
-  measurement; a run records exactly one measurement session for the smallest scale point; the gate's
-  decision is unchanged for a fixture that previously failed it and one that previously passed.
+  normalise to the same key produce three measurements; every combo still appears in the result; over
+  the combo lists the `m66-*` fixtures' own schemas generate, plus the four auto-scale points, the
+  deduped pass and the per-combo pass return the same measurement under the same combo ids; two
+  combos with genuinely different props are measured separately.
+- **C2** — `test/unit/a-scale-probe-is-measured-once.test.ts`: the gate consumes the batch's own
+  measurement; the whole sweep opens one batch; the smallest scale point appears in it exactly once;
+  a refused sweep measures no larger point and returns the warning; a combo the pass could not
+  measure stays a hole that the caller's `heapDelta` read survives.
 - **C3** — `test/unit/every-phase-label-names-what-it-measured.test.ts`: a synthetic boundary stream
   containing `mode:` yields a `calibration` bucket holding only the calibration interval; the new
   bucket holds the remainder; all keys present; the keys sum to `total`; a run that never calibrates
@@ -209,6 +233,8 @@ caller set `AnalyzeOptions.observerTiming`; no CLI flag selects it.
 - **C4** — `test/unit/the-memo-pass-runs-only-with-a-memo-fiber.test.ts`: a snapshot with no `isMemo`
   fiber runs no mount and no rerender and returns the empty result; a snapshot with one runs the pass
   and returns the same result as today; `fixtures/m66-no-memo.tsx` is the negative case.
+- **C3** also — `test/unit/every-phase-label-names-what-it-measured.test.ts`: an `isolation:` label
+  classifies to `mount`, and an isolated run's table charges its measurement there.
 - **C5** — `test/unit/the-explore-budget-bounds-the-phase.test.ts` and
   `test/unit/a-single-combo-run-is-bounded-too.test.ts`: the per-combo budget derives from
   `--explore-budget`; a single combo that would run past the total budget is stopped before it starts
@@ -236,11 +262,11 @@ node node_modules/typescript/bin/tsc --noEmit -p tsconfig.json
 # clean
 
 npx vitest run test/unit/the-analysis-pass-measures-each-prop-set-once.test.ts   test/unit/a-scale-probe-is-measured-once.test.ts   test/unit/the-memo-pass-runs-only-with-a-memo-fiber.test.ts   test/unit/every-phase-label-names-what-it-measured.test.ts   test/unit/the-explore-budget-bounds-the-phase.test.ts   test/unit/a-single-combo-run-is-bounded-too.test.ts --maxWorkers=2
-# Test Files 6 passed (6) | Tests 43 passed (43)
+# Test Files 6 passed (6) | Tests 53 passed (53)
 
 npx vitest run test/unit --maxWorkers=2
-# Test Files 2 failed | 370 passed (372)
-# Tests 2 failed | 5214 passed | 1 skipped (5217)
+# Test Files 2 failed | 374 passed (376)
+# Tests 2 failed | 5319 passed | 1 skipped (5322)
 # the two failures are the recorded pre-existing pair: prop-cap-ranking.test.ts and
 # vue-setup-inject-evidence.test.ts
 ```
@@ -279,6 +305,15 @@ says otherwise, A = `de41d6a`, B = this branch, logs under
 | calcom `modules/apps/components/Slider.tsx` `--curve` | C5 curve | explore 39 773 ms, total 67 477 ms | explore 30 008 ms, total 55 309 ms; exit 1 and 5 warnings in both |
 | linkwarden `components/ui/Loader.tsx` | deferred row | rerender 7 980 ms | rerender 8 118 ms; exit 1 and 1 warning in both. The rerender phase is not decomposed; the Deferred section records why |
 | commerce `components/label.tsx` (control) | control | exit 0, `pass: true`, 2 warnings | exit 0, `pass: true`, the same 2 warnings, the same 6 combos. Per-combo verdicts shuffle between `pass` and `warn` in both directions across repeats of either build: the `unstable` flags move run to run on a `hostile` machine |
+
+The one-session gate, the explore floor and its disclosure, and the `isolation:` label were measured
+again after they landed:
+
+| Repo | Reads |
+|---|---|
+| commerce `components/label.tsx` (control) | exit 0, `pass: true`, 2 warnings, 6 combos, `mount: up to 6 combos x 3 samples`. All four scale probes measured in the one batch: `1=6.6 5=13.9 20=33.3 50=78.7` ms, the same shape as the pre-M134 build's `1=4.4 5=9.8 20=28.1 50=69.5`, with no step at the `n=1` to `n=5` boundary |
+| commerce `components/label.tsx` `--isolate memory` | `calibration  (0:01)`, `setup  (0:01)`, `mode: isolation (memory)`, `isolation: memory`; `{"preflight":92,"build":1258,"calibration":171,"setup":1218,"mount":900,...,"total":3639}`, the keys summing to `total` exactly. The isolated measurement is charged to `mount`, not to `setup` |
+| novu `src/components/primitives/toggle.tsx` | explore 17 995 ms inside the 30 s budget, `budget 15s each`, per-combo 1 293 ms and 16 287 ms, no combo's share cut and so no truncation disclosure, `pass: true`, 7 warnings |
 
 Corpus repros, through a `dist` built in `C:/Projekte/120fps-run7-lane-f`:
 

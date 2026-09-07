@@ -190,7 +190,7 @@ describe("phase timings over a run's label sequence", () => {
     expect(sumOfPhases(timings)).toBe(timings.total);
   });
 
-  it("charges an isolation run's label to the phase already open", () => {
+  it("charges an isolation run's measurement to the mount phase", () => {
     const time = fakeClock();
     const clock = createPhaseClock(time.now);
 
@@ -201,7 +201,29 @@ describe("phase timings over a run's label sequence", () => {
     time.advance(30_000);
 
     const timings = clock.timings();
-    expect(timings.build).toBe(34_000);
+    expect(timings.preflight).toBe(2_000);
+    expect(timings.build).toBe(4_000);
+    expect(timings.mount).toBe(30_000);
+    expect(sumOfPhases(timings)).toBe(timings.total);
+  });
+
+  it("closes calibration at the mode line a run prints before its first measurement", () => {
+    const time = fakeClock();
+    const clock = createPhaseClock(time.now);
+
+    time.advance(3_000);
+    clock.boundary("calibration");
+    time.advance(5_000);
+    clock.boundary("mode: prop combos");
+    time.advance(7_000);
+    clock.boundary("mount: 4 combos x 5 samples");
+    time.advance(9_000);
+    clock.boundary("report");
+
+    const timings = clock.timings();
+    expect(timings.calibration).toBe(5_000);
+    expect(timings.setup).toBe(7_000);
+    expect(timings.mount).toBe(9_000);
     expect(sumOfPhases(timings)).toBe(timings.total);
   });
 

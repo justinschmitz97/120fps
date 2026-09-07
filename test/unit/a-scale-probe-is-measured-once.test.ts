@@ -4,29 +4,40 @@ import {
   SCALE_PROBE_GATE_MS,
   SCALE_PROBE_COST_WARNING,
 } from "../../src/pipeline/index.js";
-import type { MountResult } from "../../src/browser/index.js";
+import type { MountPassGate, MountResult } from "../../src/browser/index.js";
 import type { PropCombination } from "../../src/props/index.js";
 
 const scale = (n: number): PropCombination => ({ __120fps_scaleN: n });
 
-function batchOf(combos: PropCombination[], medianFor: (props: PropCombination) => number): MountResult[] {
-  return combos.map((props, comboIndex) => ({
+function mountResult(comboIndex: number, props: PropCombination, median: number): MountResult {
+  return {
     comboIndex,
     props,
-    mount: { samples: [medianFor(props)], median: medianFor(props), p95: medianFor(props) },
+    mount: { samples: [median], median, p95: median },
     unmount: { samples: [1], median: 1, p95: 1 },
     domNodeCount: 10,
     heapDelta: 0,
-  }));
+  };
 }
 
-function recordingMeasure(medianFor: (props: PropCombination) => number) {
+// Mirrors measureMount: one batch per call, results indexed by position, a gate consulted after
+// each combo, and a combo nothing measured left as a hole.
+function recordingMeasure(
+  medianFor: (props: PropCombination) => number,
+  unmeasured: (props: PropCombination) => boolean = () => false,
+) {
   const batches: PropCombination[][] = [];
   return {
     batches,
-    measure: async (combos: PropCombination[]) => {
+    measure: async (combos: PropCombination[], gate?: MountPassGate) => {
       batches.push(combos);
-      return batchOf(combos, medianFor);
+      const results: MountResult[] = new Array(combos.length);
+      for (let ci = 0; ci < combos.length; ci++) {
+        if (ci > 0 && gate && !gate.shouldContinue(ci - 1, results)) break;
+        if (unmeasured(combos[ci])) continue;
+        results[ci] = mountResult(ci, combos[ci], medianFor(combos[ci]));
+      }
+      return results;
     },
   };
 }
@@ -36,16 +47,17 @@ const OVER_GATE = (props: PropCombination) =>
   props.__120fps_scaleN === undefined ? 5 : SCALE_PROBE_GATE_MS + 1;
 
 describe("the scale-point gate", () => {
-  it("measures the smallest scale point once, in the main batch", async () => {
+  it("measures the smallest scale point once, in the batch that measures the prop combos", async () => {
     const { batches, measure } = recordingMeasure(CHEAP);
 
     await measureGatedScaleMounts({ propCombos: [{ variant: "a" }], scalePoints: [1, 5, 20, 50], measure });
 
-    expect(batches[0]).toEqual([{ variant: "a" }, scale(1)]);
+    expect(batches[0][0]).toEqual({ variant: "a" });
+    expect(batches[0][1]).toEqual(scale(1));
     expect(batches.flat().filter((props) => props.__120fps_scaleN === 1)).toHaveLength(1);
   });
 
-  it("measures the larger scale points only after the gate lets them through", async () => {
+  it("measures the whole sweep in the one batch the prop combos ran in", async () => {
     const { batches, measure } = recordingMeasure(CHEAP);
 
     const result = await measureGatedScaleMounts({
@@ -54,11 +66,19 @@ describe("the scale-point gate", () => {
       measure,
     });
 
-    expect(batches[1]).toEqual([scale(5), scale(20), scale(50)]);
+    expect(batches).toHaveLength(1);
     expect(result.combos).toEqual([{ variant: "a" }, scale(1), scale(5), scale(20), scale(50)]);
     expect(result.mounts.map((m) => m.comboIndex)).toEqual([0, 1, 2, 3, 4]);
     expect(result.mounts.map((m) => m.props)).toEqual(result.combos);
     expect(result.warning).toBeUndefined();
+  });
+
+  it("puts the scale points in ascending order however the run listed them", async () => {
+    const { batches, measure } = recordingMeasure(CHEAP);
+
+    await measureGatedScaleMounts({ propCombos: [], scalePoints: [50, 1, 20, 5], measure });
+
+    expect(batches[0]).toEqual([scale(1), scale(5), scale(20), scale(50)]);
   });
 
   it("never measures a scale point the gate refused", async () => {
@@ -71,8 +91,26 @@ describe("the scale-point gate", () => {
     });
 
     expect(batches).toHaveLength(1);
+    expect(batches[0]).toHaveLength(5);
     expect(result.combos).toEqual([{ variant: "a" }, scale(1)]);
+    expect(result.mounts).toHaveLength(2);
     expect(result.warning).toBe(SCALE_PROBE_COST_WARNING(1, SCALE_PROBE_GATE_MS + 1, [5, 20, 50]));
+  });
+
+  it("keeps the hole the pass left for a combo it could not measure", async () => {
+    const { measure } = recordingMeasure(CHEAP, (props) => props.variant === "b");
+
+    const result = await measureGatedScaleMounts({
+      propCombos: [{ variant: "a" }, { variant: "b" }],
+      scalePoints: [1, 5, 20, 50],
+      measure,
+    });
+
+    expect(result.mounts).toHaveLength(6);
+    expect(Object.prototype.hasOwnProperty.call(result.mounts, 1)).toBe(false);
+    expect([...result.mounts].filter(Boolean).map((m) => m!.comboIndex)).toEqual([0, 2, 3, 4, 5]);
+    // What runComboMode does with the result: a hole must not become an all-zero row or a throw.
+    expect(() => result.mounts.map((m) => m?.heapDelta ?? 0)).not.toThrow();
   });
 
   it("gates on the median the report prints, not on a separate probe", async () => {
@@ -90,7 +128,7 @@ describe("the scale-point gate", () => {
     expect(result.warning).toContain((SCALE_PROBE_GATE_MS + 12.5).toFixed(1));
   });
 
-  it("opens one batch for a run whose scale points are a single point", async () => {
+  it("asks no gate of a run whose scale points are a single point", async () => {
     const { batches, measure } = recordingMeasure(CHEAP);
 
     const result = await measureGatedScaleMounts({ propCombos: [{}], scalePoints: [1], measure });
@@ -114,17 +152,15 @@ describe("the scale-point gate", () => {
 
     const result = await measureGatedScaleMounts({ propCombos: [], scalePoints: [1, 5], measure });
 
-    expect(batches[0]).toEqual([scale(1)]);
+    expect(batches[0]).toEqual([scale(1), scale(5)]);
     expect(result.combos).toEqual([scale(1), scale(5)]);
     expect(result.mounts.map((m) => m.comboIndex)).toEqual([0, 1]);
   });
 
   it("keeps the larger points when the smallest point's measurement is missing", async () => {
-    const result = await measureGatedScaleMounts({
-      propCombos: [],
-      scalePoints: [1, 5],
-      measure: async (combos) => (combos.length === 1 ? [] : batchOf(combos, CHEAP)),
-    });
+    const { measure } = recordingMeasure(CHEAP, (props) => props.__120fps_scaleN === 1);
+
+    const result = await measureGatedScaleMounts({ propCombos: [], scalePoints: [1, 5], measure });
 
     expect(result.combos).toEqual([scale(1), scale(5)]);
     expect(result.warning).toBeUndefined();

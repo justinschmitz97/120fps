@@ -43,6 +43,8 @@ export function classifyPhaseLabel(line: string): BoundaryPhase | "report" | und
   // The mode line is the last boundary before the first measurement, so calibration ends by here.
   if (line.startsWith("mode:")) return "setup";
   if (line.startsWith("mount:")) return "mount";
+  // An isolation run measures mount, rerender, unmount and memory under one label.
+  if (line.startsWith("isolation:")) return "mount";
   if (line.startsWith("rerender:")) return "rerender";
   if (line.startsWith("explore:")) return "explore";
   if (line.startsWith("scaling curves")) return "scale";

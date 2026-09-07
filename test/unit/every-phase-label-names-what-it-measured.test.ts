@@ -25,6 +25,35 @@ describe("the label that closes the calibration phase", () => {
     expect(classifyPhaseLabel("mode: curve on items")).toBe("setup");
     expect(classifyPhaseLabel("mode: prop matrix")).toBe("setup");
   });
+
+  it("charges an isolation run's measurement to mount, never to setup", () => {
+    expect(classifyPhaseLabel("isolation: mount,unmount")).toBe("mount");
+    expect(classifyPhaseLabel("isolation: memory")).toBe("mount");
+  });
+});
+
+describe("an isolation run's phase table", () => {
+  it("names the phase its measurement went to", () => {
+    const time = fakeClock();
+    const clock = createPhaseClock(time.now);
+
+    clock.boundary("harness: building");
+    time.advance(4_000);
+    clock.boundary("calibration");
+    time.advance(100);
+    clock.boundary("setup");
+    time.advance(900);
+    clock.boundary("isolation: mount,unmount");
+    time.advance(30_000);
+    clock.boundary("report");
+
+    const timings = clock.timings();
+    expect(timings.build).toBe(4_000);
+    expect(timings.calibration).toBe(100);
+    expect(timings.setup).toBe(900);
+    expect(timings.mount).toBe(30_000);
+    expect(sumOfPhases(timings)).toBe(timings.total);
+  });
 });
 
 describe("a run's phase table", () => {

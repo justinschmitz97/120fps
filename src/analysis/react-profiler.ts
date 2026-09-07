@@ -761,7 +761,8 @@ export async function runReactAnalysis(
       return opts;
     });
 
-    // A copy per combo: the report writes each combo's findings under its own key.
+    // A fresh top-level object per combo, so the report writes each combo's findings under its own
+    // key. The arrays inside are shared, which is safe: nothing writes to a result after this loop.
     for (const [ci, opts] of byCombo) results.set(ci, { ...opts });
 
     return results;

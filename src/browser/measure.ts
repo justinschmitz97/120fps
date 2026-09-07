@@ -509,9 +509,15 @@ export async function measureRerender(
   return results;
 }
 
+// Consulted after each combo finishes, so a gate that needs a measurement can refuse the rest of
+// the batch without opening a second session.
+export interface MountPassGate {
+  shouldContinue(afterComboIndex: number, results: readonly (MountResult | undefined)[]): boolean;
+}
+
 export async function measureMount(
   harness: HarnessResult,
-  options: MeasureOptions = {},
+  options: MeasureOptions & { gate?: MountPassGate } = {},
 ): Promise<MountResult[]> {
   const {
     samples: sampleCount = 10,
@@ -555,6 +561,11 @@ export async function measureMount(
     const passBound = createDegradedPassBound("mount", indices.length, options.onWarning);
 
     for (const [position, ci] of indices.entries()) {
+      // Read before the combo rather than after the previous one, so every path out of the body
+      // below — a vsync bail, a combo nothing measured — reaches the gate just the same.
+      if (position > 0 && options.gate && !options.gate.shouldContinue(indices[position - 1], results)) {
+        break;
+      }
       inFlight.combo = ci;
       const props = combos[ci];
 

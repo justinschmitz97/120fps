@@ -1,6 +1,10 @@
 import { describe, it, expect } from "vitest";
+import path from "node:path";
 import { measureOncePerPropSet, propCombinationKey } from "../../src/analysis/index.js";
+import { extractProps, generateCombinations } from "../../src/props/index.js";
 import type { PropCombination } from "../../src/props/index.js";
+
+const FIXTURES = path.resolve(__dirname, "../../fixtures");
 
 const scale = (n: number): PropCombination => ({ __120fps_scaleN: n });
 
@@ -71,6 +75,28 @@ describe("the React analysis pass over a run's combo list", () => {
     expect(propCombinationKey(scale(1))).toBe(propCombinationKey(scale(50)));
     expect(propCombinationKey({})).toBe(propCombinationKey(scale(5)));
     expect(propCombinationKey({ variant: "primary" })).not.toBe(propCombinationKey({}));
+  });
+
+  it("reports what the per-combo pass reported for the combos a fixture's own schema generates", async () => {
+    for (const fixture of ["m66-memo-export.tsx", "m66-callback-sensitive.tsx", "m66-no-memo.tsx"]) {
+      const schemas = await extractProps(path.join(FIXTURES, fixture));
+      const generated = generateCombinations(schemas);
+      const propCombos = generated.length > 0 ? generated : [{}];
+      // What runComboMode hands the analysis pass: the prop combos, then the auto-scale points.
+      const combos = [...propCombos, ...[1, 5, 20, 50].map((n) => ({ __120fps_scaleN: n }))];
+      // A measurement that depends only on what the probe can see, which is what the dedupe claims.
+      const measure = async (props: PropCombination) => ({
+        median: propCombinationKey(props).length,
+      });
+
+      const deduped = await measureOncePerPropSet(combos, measure);
+      const perCombo = await perComboPass(combos, measure);
+
+      expect([...deduped.keys()]).toEqual([...perCombo.keys()]);
+      for (const ci of perCombo.keys()) {
+        expect(deduped.get(ci)!.median).toBe(perCombo.get(ci)!.median);
+      }
+    }
   });
 
   it("measures nothing for an empty combo list", async () => {

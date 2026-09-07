@@ -102,7 +102,7 @@ export async function runCurveMode(ctx: ModeContext, match: ScalingPropMatch): P
   );
   ctx.progress(
     `explore: ${scaleCombos.length} scale points, budget ` +
-      `${Math.round(exploreBounds.maxWallClockMs / 1000)}s each`,
+      `${Math.round(exploreBounds.maxWallClockMs / 1000)}s${scaleCombos.length > 1 ? " each" : ""}`,
   );
   const curveExplores = await explore(harness, {
     samples: Math.min(samples, 5),
