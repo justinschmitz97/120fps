@@ -23,9 +23,44 @@ function source(relative: string): string {
   return fs.readFileSync(path.resolve("src", relative), "utf-8");
 }
 
+// Every argument list, paren-balanced, so a nested harnessReadyTimeoutMs() does not end the slice.
+function navigationCalls(text: string): string[] {
+  const calls: string[] = [];
+  for (let at = text.indexOf(CALL); at !== -1; at = text.indexOf(CALL, at + 1)) {
+    let depth = 0;
+    for (let i = at + CALL.length - 1; i < text.length; i++) {
+      if (text[i] === "(") depth++;
+      else if (text[i] === ")" && --depth === 0) {
+        calls.push(text.slice(at, i + 1));
+        break;
+      }
+    }
+  }
+  return calls;
+}
+
+const CALL = "gotoWithErrorContext(";
+
 function makeCapture() {
   const emitter = new EventEmitter();
   return attachPageErrorCapture(emitter as unknown as Page);
+}
+
+// The seam every navigation goes through: what the wrapper forwards is what Playwright receives.
+function recordingPage(): {
+  page: { goto(url: string, options?: Record<string, unknown>): Promise<unknown> };
+  seen: Array<{ url: string; options?: Record<string, unknown> }>;
+} {
+  const seen: Array<{ url: string; options?: Record<string, unknown> }> = [];
+  return {
+    page: {
+      goto: async (url: string, options?: Record<string, unknown>) => {
+        seen.push({ url, options });
+        return undefined;
+      },
+    },
+    seen,
+  };
 }
 
 function pageThatFailsToNavigate(err: Error) {
@@ -58,18 +93,29 @@ async function navigationFailure(options: Record<string, unknown>): Promise<stri
 }
 
 describe("every harness navigation", () => {
-  it.each(NAVIGATION_SITES)("passes an explicit timeout at the call site in %s", (relative) => {
-    const text = source(relative);
-    const at = text.indexOf("gotoWithErrorContext(");
-    expect(at).toBeGreaterThan(-1);
-    expect(text.slice(at, at + 260)).toContain("timeout:");
+  it.each(NAVIGATION_SITES)("passes an explicit readiness bound at every call site in %s", (relative) => {
+    const calls = navigationCalls(source(relative));
+
+    expect(calls.length).toBeGreaterThan(0);
+    for (const call of calls) {
+      expect(call).toMatch(/timeout: (harnessReadyTimeoutMs\(\)|readyTimeoutMs)/);
+    }
   });
 
-  it.each(NAVIGATION_SITES)("uses the readiness bound as that timeout in %s", (relative) => {
-    const text = source(relative);
-    const at = text.indexOf("gotoWithErrorContext(");
-    const call = text.slice(at, at + 260);
-    expect(call).toMatch(/timeout: (harnessReadyTimeoutMs\(\)|readyTimeoutMs)/);
+  it("forwards the options it was given to the page it navigates", async () => {
+    const { page, seen } = recordingPage();
+
+    await gotoWithErrorContext(page, "http://localhost:5173/.h/", makeCapture(), "component harness", {
+      timeout: harnessReadyTimeoutMs(),
+      waitUntil: "domcontentloaded",
+    });
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0].url).toBe("http://localhost:5173/.h/");
+    expect(seen[0].options).toEqual({
+      timeout: harnessReadyTimeoutMs(),
+      waitUntil: "domcontentloaded",
+    });
   });
 });
 

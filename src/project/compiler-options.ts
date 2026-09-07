@@ -5,6 +5,7 @@ import {
   findProjectRoot,
   findWorkspaceRoot,
   resolveGoverningTsconfig,
+  tsconfigSignature,
 } from "./model.js";
 import { delegatesToReferences } from "./tsconfig-aliases.js";
 import { pathKey } from "../shared/index.js";
@@ -61,10 +62,14 @@ function optionsScope(absolutePath: string): string {
     };
     scopeByDirectory.set(directoryKey, scope);
   }
-  if (scope.perFile) return pathKey(absolutePath);
+  // The signature is what the inner readers key on too, so an edited config invalidates all three.
+  const signature =
+    scope.nearestConfigPath === undefined ? null : tsconfigSignature(scope.nearestConfigPath);
+  if (scope.perFile) return JSON.stringify([pathKey(absolutePath), signature]);
   return JSON.stringify([
     scope.memberRoot === undefined ? null : pathKey(scope.memberRoot),
     scope.nearestConfigPath === undefined ? null : pathKey(scope.nearestConfigPath),
+    signature,
   ]);
 }
 

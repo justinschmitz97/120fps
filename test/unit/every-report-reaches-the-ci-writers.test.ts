@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import {
   DEFAULT_THRESHOLDS,
+  UNREPORTED_RUN_FAILURE_MESSAGE,
+  UNREPORTED_RUN_FAILURE_NAME,
   formatJUnit,
   formatMarkdown,
   formatTable,
@@ -121,6 +123,29 @@ describe("the CI artifact agrees with the process exit code", () => {
   it("headlines a failure for a run that reported on nothing and still exited 1", () => {
     const text = formatMarkdown([], { failed: true });
     expect(text).toContain("**FAIL**: 0 components");
+  });
+
+  it("carries a JUnit failure for a component that finished no report", () => {
+    const xml = formatJUnit([report()], { failed: true });
+    expect(xml).toContain('tests="2"');
+    expect(xml).toContain('failures="1"');
+    expect(xml).toContain(`name="${UNREPORTED_RUN_FAILURE_NAME}"`);
+    expect(xml).toContain(UNREPORTED_RUN_FAILURE_MESSAGE);
+  });
+
+  it("adds no such row when a reported component already carries the failure", () => {
+    const failing = report({ pass: false, combos: [combo({ verdict: "fail" })] });
+    const xml = formatJUnit([failing], { failed: true });
+    expect(xml).toContain('tests="1"');
+    expect(xml).toContain('failures="1"');
+    expect(xml).not.toContain(UNREPORTED_RUN_FAILURE_NAME);
+  });
+
+  it("adds no such row for a run that exits 0", () => {
+    const xml = formatJUnit([report()], { failed: false });
+    expect(xml).toContain('tests="1"');
+    expect(xml).toContain('failures="0"');
+    expect(xml).not.toContain(UNREPORTED_RUN_FAILURE_NAME);
   });
 
   it("reports a failure whenever a measured component failed, told or not", () => {

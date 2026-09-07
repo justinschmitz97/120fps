@@ -22,10 +22,12 @@ import {
   runReactAnalysis,
   hasReactWarning,
   explore,
+  exploreRunOptions,
+  DEFAULT_EXPLORE_PHASE_WALL_CLOCK_MS,
   EXPLORE_BUDGET_WARNING,
   VOLATILE_DOM_NOTICE,
 } from "../../analysis/index.js";
-import { measureMount, measureRerender } from "../../browser/index.js";
+import { measureMount, measureRerender, type MountResult } from "../../browser/index.js";
 import { writeReportJson } from "../analyze.js";
 import { applyBaselineWorkflow, buildReport } from "../build-report.js";
 import {
@@ -78,45 +80,58 @@ function formatComboSpace(n: number): string {
 export const STRATIFIED_SAMPLE_WARNING = (raw: number, sampled: number): string =>
   `prop space has ${formatComboSpace(raw)} combinations; measured a stratified sample of ${sampled}.`;
 
-// The probed point is remeasured in the main batch: measureMount assigns comboIndex by position.
-async function gateScalePoints(
-  ctx: Pick<ModeContext, "harness" | "cpuThrottle" | "warmupRuns" | "pool" | "onWarning" | "samples">,
-  scalePoints: number[],
-): Promise<{ points: number[]; warning?: string }> {
-  if (scalePoints.length <= 1) return { points: scalePoints };
-  const { harness, cpuThrottle, warmupRuns, pool, onWarning, samples } = ctx;
-  const probeN = Math.min(...scalePoints);
-  const [probe] = await measureMount(harness, {
-    // Go/no-go only: this measurement is never reported.
-    samples: Math.min(3, samples),
-    cpuThrottle,
-    warmupRuns,
-    combos: [{ __120fps_scaleN: probeN }],
-    pool,
-    onWarning,
-  });
-  if (!probe) return { points: scalePoints };
-  const { points, skipped } = boundScalePointsByProbeCost(scalePoints, probe.mount.median);
-  if (skipped.length === 0) return { points };
-  return { points, warning: SCALE_PROBE_COST_WARNING(probeN, probe.mount.median, skipped) };
+// The smallest scale point rides the main batch and the gate reads what it measured, so no mount
+// is paid for twice. measureMount assigns comboIndex by position, so the deferred points are
+// renumbered onto the combo list they belong to.
+export async function measureGatedScaleMounts(input: {
+  propCombos: PropCombination[];
+  scalePoints: number[];
+  measure: (combos: PropCombination[]) => Promise<MountResult[]>;
+  gateMs?: number;
+}): Promise<{ combos: PropCombination[]; mounts: MountResult[]; warning?: string }> {
+  const { propCombos, scalePoints, measure, gateMs = SCALE_PROBE_GATE_MS } = input;
+  const probeN = scalePoints.length > 0 ? Math.min(...scalePoints) : undefined;
+  const deferred = scalePoints.filter((n) => n !== probeN);
+  const combos =
+    probeN === undefined ? [...propCombos] : [...propCombos, { __120fps_scaleN: probeN }];
+
+  const mounts = await measure(combos);
+  if (probeN === undefined || deferred.length === 0) return { combos, mounts };
+
+  const probe = mounts[combos.length - 1];
+  const { skipped } = probe
+    ? boundScalePointsByProbeCost(scalePoints, probe.mount.median, gateMs)
+    : { skipped: [] as number[] };
+  if (skipped.length > 0) {
+    return { combos, mounts, warning: SCALE_PROBE_COST_WARNING(probeN, probe!.mount.median, skipped) };
+  }
+
+  const offset = combos.length;
+  const deferredCombos = deferred.map((n) => ({ __120fps_scaleN: n }));
+  const deferredMounts = await measure(deferredCombos);
+  return {
+    combos: [...combos, ...deferredCombos],
+    mounts: [...mounts, ...deferredMounts.map((m) => ({ ...m, comboIndex: m.comboIndex + offset }))],
+  };
 }
 
 export async function runComboMode(ctx: ModeContext, fixtureHasScale: boolean): Promise<Report> {
   const { options, harness, samples, cpuThrottle, warmupRuns, seed, pool, onWarning, runWarnings, machine, calibration, thresholds, explicitThresholds, useFixture, composed } = ctx;
 
-  const scalePoints = options.scalePoints ?? [1, 5, 20, 50];
-  let combos: PropCombination[];
+  const configuredScalePoints = options.scalePoints ?? [1, 5, 20, 50];
+  let propCombos: PropCombination[];
+  let scalePoints: number[];
   let schemas: PropSchema[] | undefined;
   let zeroPropsExtracted = false;
   let measuredWithoutProps = false;
   if (fixtureHasScale) {
-    const gated = await gateScalePoints(ctx, scalePoints);
-    if (gated.warning) runWarnings.push(gated.warning);
-    combos = gated.points.map((n) => ({ __120fps_scaleN: n }));
+    propCombos = [];
+    scalePoints = configuredScalePoints;
   } else if (useFixture || composed) {
     // The fixture owns the render; extraction still runs so its diagnostics are not silenced.
     schemas = await ctx.getSchemas();
-    combos = [{}];
+    propCombos = [{}];
+    scalePoints = [];
     measuredWithoutProps = true;
     // An empty schema had nothing to withhold, and the zero-prop chain already describes that run.
     if (schemas.length > 0) runWarnings.push(NO_PROPS_MEASURED_WARNING(useFixture));
@@ -124,37 +139,45 @@ export async function runComboMode(ctx: ModeContext, fixtureHasScale: boolean): 
     schemas = await ctx.getSchemas();
     zeroPropsExtracted = schemas.length === 0;
     const rawComboSpace = countCombinationSpace(schemas);
-    combos = generateCombinations(schemas);
-    if (combos.length === 0) combos = [{}];
-    if (rawComboSpace > combos.length) {
-      runWarnings.push(STRATIFIED_SAMPLE_WARNING(rawComboSpace, combos.length));
+    propCombos = generateCombinations(schemas);
+    if (propCombos.length === 0) propCombos = [{}];
+    if (rawComboSpace > propCombos.length) {
+      runWarnings.push(STRATIFIED_SAMPLE_WARNING(rawComboSpace, propCombos.length));
     }
     const comboCap = options.maxCombos ?? DEFAULT_MEASURED_COMBOS;
-    if (combos.length > comboCap) {
-      const kept = selectRepresentativeCombos(combos.length, comboCap);
-      runWarnings.push(COMBO_CAP_WARNING(kept.length, combos.length));
-      combos = kept.map((i) => combos[i]);
+    if (propCombos.length > comboCap) {
+      const kept = selectRepresentativeCombos(propCombos.length, comboCap);
+      runWarnings.push(COMBO_CAP_WARNING(kept.length, propCombos.length));
+      propCombos = kept.map((i) => propCombos[i]);
     }
-    const gated = await gateScalePoints(ctx, scalePoints);
-    if (gated.warning) runWarnings.push(gated.warning);
-    const scaleCombos = gated.points.map((n) => ({ __120fps_scaleN: n }));
-    combos = [...combos, ...scaleCombos];
+    scalePoints = configuredScalePoints;
   }
 
-  const effectiveSamples = computeEffectiveSamples(combos.length, samples);
+  // The sample count is fixed before the gate reads its measurement, so every combo in the run,
+  // gated or not, carries the same number of samples.
+  const plannedCombos = propCombos.length + scalePoints.length;
+  const effectiveSamples = computeEffectiveSamples(plannedCombos, samples);
   if (effectiveSamples < samples) {
-    runWarnings.push(EFFECTIVE_SAMPLES_WARNING(effectiveSamples, samples, combos.length));
+    runWarnings.push(EFFECTIVE_SAMPLES_WARNING(effectiveSamples, samples, plannedCombos));
   }
 
-  ctx.progress(`mount: ${combos.length} combos x ${effectiveSamples} samples`);
-  const mounts = await measureMount(harness, {
-    samples: effectiveSamples,
-    cpuThrottle,
-    warmupRuns,
-    combos,
-    pool,
-    onWarning,
+  ctx.progress(`mount: ${plannedCombos} combos x ${effectiveSamples} samples`);
+  const gated = await measureGatedScaleMounts({
+    propCombos,
+    scalePoints,
+    measure: (batch) =>
+      measureMount(harness, {
+        samples: effectiveSamples,
+        cpuThrottle,
+        warmupRuns,
+        combos: batch,
+        pool,
+        onWarning,
+      }),
   });
+  if (gated.warning) runWarnings.push(gated.warning);
+  const combos = gated.combos;
+  const mounts = gated.mounts;
 
   const heapDeltas: number[] = mounts.map((m) => m.heapDelta ?? 0);
 
@@ -170,11 +193,14 @@ export async function runComboMode(ctx: ModeContext, fixtureHasScale: boolean): 
   });
 
   const exploreCombos = combos.filter((c) => !("__120fps_scaleN" in c));
-  const exploreWallClockPerCombo = exploreCombos.length > 1
-    ? Math.max(10000, Math.floor(60000 / exploreCombos.length))
-    : 60000;
+  const exploreBounds = exploreRunOptions(
+    options,
+    exploreCombos.length,
+    DEFAULT_EXPLORE_PHASE_WALL_CLOCK_MS,
+  );
   ctx.progress(
-    `explore: ${exploreCombos.length} combos, budget ${Math.round(exploreWallClockPerCombo / 1000)}s each`,
+    `explore: ${exploreCombos.length} combos, budget ` +
+      `${Math.round(exploreBounds.maxWallClockMs / 1000)}s${exploreCombos.length > 1 ? " each" : ""}`,
   );
   const explores = await explore(harness, {
     samples: Math.min(samples, 5),
@@ -182,8 +208,7 @@ export async function runComboMode(ctx: ModeContext, fixtureHasScale: boolean): 
     warmupRuns,
     seed,
     combos: exploreCombos,
-    maxWallClockMs: exploreWallClockPerCombo,
-    ...(options.exploreBudgetMs !== undefined ? { totalWallClockMs: options.exploreBudgetMs } : {}),
+    ...exploreBounds,
     pool,
     onWarning,
   });

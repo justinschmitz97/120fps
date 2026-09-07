@@ -6,7 +6,7 @@ import {
   generatePropMatrix,
   DEFAULT_MEASURED_COMBOS,
 } from "../props/index.js";
-import { loadBaseline, selectPhaseTimingEntry, type PhaseTimings } from "../report/index.js";
+import { loadBaseline, resolveBaselinePath, selectPhaseTimingEntry, type PhaseTimings } from "../report/index.js";
 import { type PredictedMode, computeEffectiveSamples } from "./modes/context.js";
 
 export interface RunCostEstimate {
@@ -18,7 +18,7 @@ export interface RunCostEstimate {
   source: "baseline" | "defaults";
 }
 
-// fixedMs covers preflight, build, calibration and analysis; perComboMs the non-mount combo work.
+// fixedMs covers preflight, build, calibration, setup and analysis; perComboMs the non-mount combo work.
 export const DEFAULT_PHASE_ESTIMATE = {
   fixedMs: 15_000,
   perMountSampleMs: 700,
@@ -49,7 +49,8 @@ export function estimateRunCost(input: {
   }
   const t = recorded!.timings;
   const recordedUnits = units!;
-  const fixed = t.preflight + t.build + t.calibration + t.analysis;
+  // A baseline written before `setup` was a phase of its own carries the interval inside calibration.
+  const fixed = t.preflight + t.build + t.calibration + (t.setup ?? 0) + t.analysis;
   const perMountSample = t.mount / (recordedUnits.combos * recordedUnits.samples);
   const perCombo =
     (t.rerender + t.explore + t.scale + t.deltas + t.attribution) / recordedUnits.combos;
@@ -97,6 +98,8 @@ export function estimateExplainedRunCost(input: {
   scalePoints?: number[];
   samples?: number;
   maxCombos?: number;
+  // The same file --check would read, so the dry run estimates from the entry the run will use.
+  baselineFile?: string;
 }): RunCostEstimate {
   const cap = input.maxCombos ?? DEFAULT_MEASURED_COMBOS;
   const requested = input.samples ?? 10;
@@ -106,7 +109,7 @@ export function estimateExplainedRunCost(input: {
   // A truncated or hand-edited baseline must not abort a dry run; fall back to the defaults.
   const baseline = (() => {
     try {
-      return loadBaseline(path.join(input.projectRoot, "120fps-baseline.json"));
+      return loadBaseline(resolveBaselinePath(input.projectRoot, input.baselineFile));
     } catch {
       return null;
     }

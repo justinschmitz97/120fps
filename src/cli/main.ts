@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { analyze, explainProps, formatExplainProps, resolveProjectPaths } from "../pipeline/index.js";
 import { compareAgainstRef, formatCompare, validateCompareOptions } from "../analysis/index.js";
-import { formatMarkdown, formatJUnit, formatTable, formatPhaseBreakdown, resolveBaselinePath } from "../report/index.js";
+import { formatMarkdown, formatJUnit, formatTable, formatPhaseBreakdown, resolveBaselinePath, BASELINE_FILE_SPANS_PROJECTS_ERROR } from "../report/index.js";
 import type { PhaseTimings } from "../report/index.js";
 import { createBrowserPool } from "../browser/index.js";
 import { createServerPool, refreshHarnessDirMarkers } from "../harness/index.js";
@@ -101,6 +101,7 @@ export function explainPropsOptions(
   maxCombos?: number;
   cssFiles?: string[];
   noCss?: boolean;
+  baselineFile?: string;
 } {
   // Resolved with the functions runOne uses, so the two paths cannot disagree about a flag.
   const curveMode = resolveCurveOption(args);
@@ -125,6 +126,8 @@ export function explainPropsOptions(
     // The stylesheet the dry run reports is the one the real run would inject.
     ...(args.css ? { cssFiles: args.css } : {}),
     ...(args.noCss ? { noCss: true } : {}),
+    // The estimate reads phase timings from the same file --check would read.
+    ...(args.baselineFile ? { baselineFile: args.baselineFile } : {}),
   };
 }
 
@@ -242,6 +245,19 @@ async function main(): Promise<void> {
   }
 
   const multi = componentPaths.length > 1;
+  // One named file holds one project's entries: its keys are paths relative to a project root,
+  // so two roots would write the same key. Refused before anything is measured.
+  if (args.baselineFile && multi) {
+    const namedRoots = [
+      ...new Set(
+        componentPaths.map((candidate) => resolveProjectPaths(path.resolve(candidate)).projectRoot),
+      ),
+    ];
+    if (namedRoots.length > 1) {
+      process.stderr.write(`Error: ${BASELINE_FILE_SPANS_PROJECTS_ERROR(namedRoots)}\n`);
+      process.exit(2);
+    }
+  }
   const reportPaths = multi
     ? resolveReportPaths(componentPaths, args.jsonExplicit ? args.jsonPath : undefined)
     : [args.jsonPath];
@@ -360,7 +376,7 @@ async function main(): Promise<void> {
 
   // Written even when components failed: a summary that appears only on success is useless.
   if (args.reportMd) writeCiFile(args.reportMd, formatMarkdown(ciReports, { failed: anyFail }));
-  if (args.reportJunit) writeCiFile(args.reportJunit, formatJUnit(ciReports));
+  if (args.reportJunit) writeCiFile(args.reportJunit, formatJUnit(ciReports, { failed: anyFail }));
 
   process.exit(anyFail ? 1 : 0);
 }

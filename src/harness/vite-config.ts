@@ -46,7 +46,7 @@ export interface ViteConfigData {
   // Folded and confirmed on disk, in the config's own order.
   rollupInputs?: string[];
   publicDir?: string;
-  aliases: Array<{ find: RegExp; replacement: string }>;
+  aliases: Array<{ find: RegExp; replacement: string; pattern?: string; target?: string }>;
   ignoredKeys: string[];
   // Named as the config writes them; absent when it declares none.
   pluginNames?: string[];
@@ -580,9 +580,20 @@ function parseViteConfigFile(configFile: string): ParsedViteConfig | undefined {
   };
 }
 
-function toAliasRegex(entry: { find: string; replacement: string }): { find: RegExp; replacement: string } {
+function toAliasRegex(entry: { find: string; replacement: string }): {
+  find: RegExp;
+  replacement: string;
+  pattern: string;
+  target: string;
+} {
   // Vite's object form matches a whole leading segment, the @rollup/plugin-alias rule.
-  return { find: new RegExp(`^${escapeRegex(entry.find)}(?=/|$)`), replacement: entry.replacement };
+  return {
+    find: new RegExp(`^${escapeRegex(entry.find)}(?=/|$)`),
+    replacement: entry.replacement,
+    // What the config wrote, so a stale-alias line names the key instead of the built regex.
+    pattern: entry.find,
+    target: entry.replacement,
+  };
 }
 
 // The workspace root's own config is layered additively: only resolve.alias and conditions.

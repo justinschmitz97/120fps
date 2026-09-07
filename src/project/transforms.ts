@@ -1,7 +1,14 @@
+import fs from "node:fs";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
-import { findWorkspaceRoot, isPackageAvailable, isPackageDeclared } from "./model.js";
+import {
+  findWorkspaceRoot,
+  installedPackageDir,
+  isPackageAvailable,
+  isPackageDeclared,
+  readProjectManifest,
+} from "./model.js";
 
 // A curated passthrough, not vite.config wholesale: each entry resolves from the project.
 export interface TransformPlugin {
@@ -12,6 +19,73 @@ export interface TransformPlugin {
   exportName?: string;
   // Some plugins need options to behave outside their normal dev-server context.
   options?: unknown;
+  // The framework the project declares that owns this plugin, when the project itself does not.
+  hostPackage?: string;
+  // The directory the plugin resolves from; the project root when it is the project's own.
+  resolveFrom?: string;
+}
+
+// A framework a project depends on may own the transform the project never declares itself.
+export const TRANSFORM_HOST_PACKAGES = ["nuxt", "vite"];
+
+// Two levels reach `nuxt` -> `@nuxt/vite-builder` -> `@vitejs/plugin-vue`, which is the deepest
+// chain observed; the visit cap bounds a wide dependency set that holds no answer.
+const HOST_SEARCH_DEPTH = 2;
+const HOST_SEARCH_VISITS = 200;
+
+function realDirectory(dir: string): string {
+  try {
+    return fs.realpathSync(dir);
+  } catch {
+    return dir;
+  }
+}
+
+function declaredDependencies(dir: string): string[] {
+  const manifest = readProjectManifest(dir);
+  return Object.keys((manifest?.dependencies ?? {}) as Record<string, string>);
+}
+
+// A package in the framework's own dependency closure has to declare the plugin and resolve it;
+// a copy that only sits on the shared resolution path is the hoisting accident, not this.
+function searchHostChain(packageName: string, hostDir: string): string | undefined {
+  let frontier = [realDirectory(hostDir)];
+  const seen = new Set(frontier);
+  let visits = 0;
+  for (let depth = 0; depth <= HOST_SEARCH_DEPTH && frontier.length > 0; depth++) {
+    const next: string[] = [];
+    for (const dir of frontier) {
+      if (++visits > HOST_SEARCH_VISITS) return undefined;
+      const dependencies = declaredDependencies(dir);
+      if (dependencies.includes(packageName) && installedPackageDir(packageName, dir)) return dir;
+      if (depth === HOST_SEARCH_DEPTH) continue;
+      for (const dependency of dependencies) {
+        const found = installedPackageDir(dependency, dir);
+        if (!found) continue;
+        const real = realDirectory(found);
+        if (seen.has(real)) continue;
+        seen.add(real);
+        next.push(real);
+      }
+    }
+    frontier = next;
+  }
+  return undefined;
+}
+
+export function resolveTransformThroughHost(
+  packageName: string,
+  projectRoot: string,
+  workspaceRoot: string = findWorkspaceRoot(projectRoot),
+): { hostPackage: string; resolveFrom: string } | undefined {
+  for (const hostPackage of TRANSFORM_HOST_PACKAGES) {
+    if (!isPackageDeclared(hostPackage, projectRoot, workspaceRoot)) continue;
+    const hostDir = installedPackageDir(hostPackage, projectRoot);
+    if (!hostDir) continue;
+    const resolveFrom = searchHostChain(packageName, hostDir);
+    if (resolveFrom) return { hostPackage, resolveFrom };
+  }
+  return undefined;
 }
 
 export const SUPPORTED_TRANSFORM_PLUGINS: TransformPlugin[] = [
@@ -49,11 +123,20 @@ export function detectProjectTransforms(
   workspaceRoot: string = findWorkspaceRoot(projectRoot),
   onWarning?: (warning: string) => void,
 ): TransformPlugin[] {
-  const matched = SUPPORTED_TRANSFORM_PLUGINS.filter((entry) =>
-    isPackageAvailable(entry.packageName, projectRoot, workspaceRoot),
-  );
-  for (const entry of matched) {
-    if (!isPackageDeclared(entry.packageName, projectRoot, workspaceRoot)) {
+  const matched: TransformPlugin[] = [];
+  for (const entry of SUPPORTED_TRANSFORM_PLUGINS) {
+    if (isPackageDeclared(entry.packageName, projectRoot, workspaceRoot)) {
+      matched.push(entry);
+      continue;
+    }
+    // A framework's own resolution stands on its own, so it is not the hoisting accident below.
+    const host = resolveTransformThroughHost(entry.packageName, projectRoot, workspaceRoot);
+    if (host) {
+      matched.push({ ...entry, hostPackage: host.hostPackage, resolveFrom: host.resolveFrom });
+      continue;
+    }
+    if (isPackageAvailable(entry.packageName, projectRoot, workspaceRoot)) {
+      matched.push(entry);
       onWarning?.(HOISTED_TRANSFORM_WARNING(entry.packageName));
     }
   }
@@ -91,7 +174,7 @@ export async function loadProjectTransformPlugins(
   const loaded: unknown[] = [];
   for (const entry of entries) {
     try {
-      const projectRequire = createRequire(path.join(projectRoot, "/"));
+      const projectRequire = createRequire(path.join(entry.resolveFrom ?? projectRoot, "/"));
       const resolved = projectRequire.resolve(entry.packageName);
       const mod = await import(pathToFileURL(resolved).href);
       const factory = resolvePluginFactory(mod, entry.exportName);

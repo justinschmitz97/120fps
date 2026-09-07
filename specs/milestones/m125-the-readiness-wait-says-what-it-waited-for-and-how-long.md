@@ -73,7 +73,9 @@ exit 0, `Total: 48.2s (… build 21s …)` and `Total: 49.7s (… build 31s …)
 - Spin: a wait that ended in under `READY_RETRY_FLOOR_MS` (100 ms) is not entered again. It gave up
   on its own, not on a bound, so re-entering it would burn the deadline in a tight loop.
 - Raise the bound for a navigation failure: `gotoWithErrorContext` keeps today's message, since it
-  waited for a document, not for the global.
+  waited for a document, not for the global. **Superseded by M129 C5**: every navigation now runs
+  under the readiness bound instead of Playwright's 30 s default, so the message names the bound
+  the call actually used. It stays a distinct note, because a navigation waited for a document.
 
 ## Verification
 

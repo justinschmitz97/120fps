@@ -524,7 +524,7 @@ export function applyBaselineWorkflow(
         report.pass = false;
       }
     } else {
-      const legacyWarning = legacyBaselineWarning(ctx.projectRoot, ctx.componentDir);
+      const legacyWarning = legacyBaselineWarning(baselinePath, ctx.projectRoot, ctx.componentDir);
       if (legacyWarning) {
         process.stderr.write(`Warning: ${legacyWarning}\n`);
       }

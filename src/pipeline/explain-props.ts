@@ -56,7 +56,14 @@ import {
   remediesAfterPreset,
   suppressHonoredPluginNote,
 } from "./remedies.js";
-import { resolveCssFiles, resolveFramework, resolveProjectPaths, resolveWrapPath } from "./resolve.js";
+import {
+  BUNDLED_PREPROCESSOR_DISCLOSED,
+  bundledPreprocessorStylesheetWarning,
+  resolveCssFiles,
+  resolveFramework,
+  resolveProjectPaths,
+  resolveWrapPath,
+} from "./resolve.js";
 import { toPosix } from "../shared/index.js";
 
 export interface ExplainedProp {
@@ -127,6 +134,8 @@ export async function explainProps(
     // The stylesheet decision is the real run's, so the same two flags decide it here.
     cssFiles?: string[];
     noCss?: boolean;
+    // The file --check would read, so the estimate prices the entry the real run will consult.
+    baselineFile?: string;
   } = {},
 ): Promise<PropsExplanation> {
   const resolvedPath = path.resolve(componentPath);
@@ -193,6 +202,12 @@ export async function explainProps(
     { ...(options.noTransforms ? { noTransforms: true } : {}) },
   )) {
     warnings.push(PROJECT_TRANSFORM_WARNING(hit, availability));
+  }
+  // The run path's rule: the injected stylesheet discloses its compiler only when the classifier
+  // above disclosed none, so a run never carries two Sass disclosures.
+  if (!options.noTransforms && !warnings.some((w) => w.includes(BUNDLED_PREPROCESSOR_DISCLOSED))) {
+    const injected = bundledPreprocessorStylesheetWarning(resolvedCss.files, projectRoot);
+    if (injected !== undefined) warnings.push(injected);
   }
   if (preflight.hard.length > 0) {
     if (options.noPreflight) warnings.push(PREFLIGHT_BYPASSED_WARNING(preflight.hard));
@@ -344,6 +359,7 @@ export async function explainProps(
     usesFixture: dryRunUsesFixture,
     mode: predictedMode,
     ...(options.scalePoints ? { scalePoints: options.scalePoints } : {}),
+    ...(options.baselineFile ? { baselineFile: options.baselineFile } : {}),
     samples: options.samples,
     maxCombos: options.maxCombos,
   });

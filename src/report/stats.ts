@@ -18,11 +18,11 @@ import type {
   Report,
   ReportMode,
 } from "./types.js";
-import { DEFAULT_THRESHOLDS, TIER_BUDGETS } from "./types.js";
+import { DEFAULT_THRESHOLDS } from "./types.js";
 import type { PhaseClock } from "./phases.js";
 import type { ScalingCurve } from "./metrics.js";
 import { computeScalingCurve, attributeCost } from "./metrics.js";
-import { hasPageErrors, renderDrain, type NoiseLevel } from "../browser/index.js";
+import { hasPageErrors, renderDrain } from "../browser/index.js";
 import { computeCV, computeMedian, computeP95 } from "../shared/index.js";
 import { comboKey } from "../props/index.js";
 
@@ -77,7 +77,7 @@ export function perStepCost(interaction: InteractionReport): number {
 export function computeVerdict(
   combo: ComboReport,
   thresholds: Thresholds,
-  options?: { tierBudget?: TierBudget; explicitInteraction?: boolean; noiseLevel?: NoiseLevel },
+  options?: { tierBudget?: TierBudget; explicitInteraction?: boolean },
 ): "pass" | "warn" | "fail" {
   // The timings are real, but they describe mounting a broken tree, so no budget applies.
   if (combo.renderHealth === "error") return "fail";
@@ -98,11 +98,7 @@ export function computeVerdict(
       ?? thresholds.interactionStepMs
       ?? DEFAULT_THRESHOLDS.interactionStepMs;
   for (const interaction of combo.interactions) {
-    if (perStepCost(interaction) <= perStepMs) continue;
-    // A machine that cannot repeat identical work identically has not proven a breach. Only the
-    // pair withholds: the unstable branches below then report it as a warning.
-    if (options?.noiseLevel === "hostile" && interaction.timing.unstable) continue;
-    return "fail";
+    if (perStepCost(interaction) > perStepMs) return "fail";
   }
   if (combo.mount.unstable || combo.unmount.unstable) return "warn";
   if (combo.rerender.unstable) return "warn";
@@ -112,57 +108,6 @@ export function computeVerdict(
   }
   if (options?.tierBudget && combo.relativeMount > thresholds.relativeMount) return "warn";
   return "pass";
-}
-
-// Only the FAIL rollup is qualified; every interaction keeps the classification it was given.
-export const INTERACTION_FAIL_WITHHELD_WARNING = (
-  cvPercent: number,
-  labels: string[],
-): string =>
-  `${labels.join(", ")} exceeded the per-step budget, but this run's machine noise was hostile ` +
-  `(probe CV ${Math.round(cvPercent)}%) and those samples did not repeat: the FAIL this would ` +
-  "otherwise cause is withheld until a quieter run confirms it.";
-
-// Both budget shapes build-report can pick, each at its tighter bound. A fail that survives the
-// tighter bound was never an interaction's alone, so the withholding declines it.
-function strictestBudget(thresholds: Thresholds, tier: ComponentTier | undefined): TierBudget {
-  const tierBudget = TIER_BUDGETS[tier ?? "T1"];
-  return {
-    mountMs: Math.min(thresholds.mountMs, tierBudget.mountMs),
-    rerenderMs: Math.min(thresholds.rerenderMs, tierBudget.rerenderMs),
-    interactionMs: Math.min(thresholds.interactionMs, tierBudget.interactionMs),
-    // The explicit-aggregate path divides by REFERENCE_EVENTS, so that bound counts as well.
-    interactionStepMs: Math.min(
-      thresholds.interactionStepMs ?? DEFAULT_THRESHOLDS.interactionStepMs,
-      tierBudget.interactionStepMs,
-      thresholds.interactionMs / REFERENCE_EVENTS,
-    ),
-  };
-}
-
-// The verdict path's half of what analysis/isolation.ts already does for the leak check: on a
-// hostile machine an unstable interaction's breach warns. Runs after report.noise is known,
-// because that classification counts the very metrics the combos carry.
-export function withholdInteractionFailsUnderHostileNoise(report: Report): string | undefined {
-  if (report.noise?.level !== "hostile") return undefined;
-  const withheld: string[] = [];
-  for (const combo of report.combos) {
-    if (combo.verdict !== "fail") continue;
-    const tierBudget = strictestBudget(report.thresholds, combo.tier);
-    const thresholds: Thresholds = { ...report.thresholds, ...tierBudget };
-    if (computeVerdict(combo, thresholds, { tierBudget, noiseLevel: "hostile" }) === "fail") continue;
-    if (computeVerdict(combo, thresholds, { noiseLevel: "hostile" }) === "fail") continue;
-    combo.verdict = "warn";
-    for (const interaction of combo.interactions) {
-      if (!interaction.timing.unstable) continue;
-      if (perStepCost(interaction) <= tierBudget.interactionStepMs) continue;
-      withheld.push(interaction.label || interaction.selector);
-    }
-  }
-  if (withheld.length === 0) return undefined;
-  // The harnessFault exemption stays exactly as buildReport wrote it.
-  report.pass = report.combos.every((c) => c.verdict !== "fail" || c.harnessFault !== undefined);
-  return INTERACTION_FAIL_WITHHELD_WARNING(report.noise.signals.probeCv, withheld);
 }
 
 // Both counts come from countComponentNodes, so a disagreement is not proof of no render.

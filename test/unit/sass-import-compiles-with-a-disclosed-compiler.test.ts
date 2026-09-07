@@ -204,20 +204,14 @@ describe("a preprocessor failure only the bundler saw", () => {
     expect(message).toContain("sass-embedded");
     expect(message).toContain("sass");
     expect(message).toContain("its own installed copy");
-    // Vite's own suggestion stays where it arrived, inside the quoted page errors; ours follows.
-    expect(message.indexOf("Try `npm install -D sass-embedded`")).toBeLessThan(
-      message.indexOf("its own installed copy"),
-    );
+    expect(message).not.toContain("Try `npm install -D sass-embedded`");
   });
 
   it("gives the install command in this repository's own package manager", () => {
     const message = presentBundlerFailure(LOGTO_FAILURE, tmpDir);
 
     expect(message).toContain("pnpm add -D sass");
-    // The run's own command is the last one the reader meets, after the quoted page errors.
-    expect(message.lastIndexOf("pnpm add -D sass")).toBeGreaterThan(
-      message.lastIndexOf("npm install -D"),
-    );
+    expect(message).not.toContain("npm install -D");
   });
 
   it("names a style block in a workspace sibling the import walk never entered", () => {

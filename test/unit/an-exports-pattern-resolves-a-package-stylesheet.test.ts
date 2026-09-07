@@ -73,6 +73,10 @@ describe("matching a subpath against an exports field", () => {
     expect(resolveExportsSubpath(field, "400")).toBe("./dist/400.css");
   });
 
+  it("uses a pattern target that names one static file for every subpath", () => {
+    expect(resolveExportsSubpath({ "./*": "./dist/all.css" }, "400.css")).toBe("./dist/all.css");
+  });
+
   it("returns nothing when no key and no pattern matches", () => {
     expect(resolveExportsSubpath({ ".": "./index.js", "./lib": "./lib.js" }, "400.css")).toBeUndefined();
   });

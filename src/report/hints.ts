@@ -230,8 +230,9 @@ export const HINTS: Record<HintId, Hint> = {
     lines: [
       "The abort names an identifier nothing defined. The project's Vite config declares plugins,",
       "which the harness reads and never executes, so a compile-time macro or auto-import they",
-      "install never reaches the transformed source. Write the call out by hand in the component,",
-      "or measure a component that does not depend on the plugin.",
+      "install never reaches the transformed source. The harness resolves what an auto-import map",
+      "on disk (auto-imports.d.ts) declares; anything else has to be written out by hand in the",
+      "component, or measured on a component that does not depend on the plugin.",
     ],
     anchor: "#project-transforms",
   },
@@ -257,6 +258,25 @@ export interface MountAbortEvidence {
   usesInject?: boolean;
   // Keys the harness read and could not honor (`ViteConfigData`, `harness/vite-config.ts`).
   viteConfig?: { file: string; ignoredKeys: string[] };
+  // The generated auto-import table the run read, and the names it declares.
+  autoImportMap?: { file: string; names: string[] };
+}
+
+// Whether the table the run consulted holds the identifier the abort named.
+export function autoImportMapLine(
+  identifier: string,
+  map?: { file: string; names: string[] },
+): string {
+  if (!map) {
+    return (
+      `No auto-import map was found in this project, so nothing on disk mapped ${identifier}; ` +
+      "the harness had no table to resolve it from."
+    );
+  }
+  return map.names.includes(identifier)
+    ? `${map.file} maps ${identifier}, and the harness supplies it only to a module inside this ` +
+        "component's own graph that references it without importing it."
+    : `${map.file} was consulted and declares no ${identifier}.`;
 }
 
 // A mount abort throws before a report exists, so hintsForReport never runs for it.
@@ -308,6 +328,7 @@ export function formatMountAbortHints(
           vitePluginsNotExecuted: [
             `${configFile} declares plugins, which the harness read but did not execute; ` +
               `nothing defined ${identifier}.`,
+            autoImportMapLine(identifier, evidence?.autoImportMap),
           ],
         }
       : {};

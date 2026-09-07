@@ -23,9 +23,13 @@ export function formatTable(report: Report): string {
   lines.push(`120fps: ${report.componentName}`);
   lines.push(`Machine: ${report.machine.cpu} (${report.machine.cores} cores), ${Math.round(report.machine.ramMb / 1024)}GB RAM, ${report.machine.os}`);
   lines.push(`Node ${report.machine.nodeVersion}, Chromium ${report.machine.chromiumVersion}`);
-  lines.push(describeMode(report));
-  // First-run users read 14ms and think their button takes 14ms.
-  lines.push(MEASUREMENT_BASIS_LINE);
+  // Both lines describe a measurement. A reused verdict took none, and describeMode would read
+  // the saving run's replayed cap warning and assert a combo count this run never generated.
+  if (!report.cached) {
+    lines.push(describeMode(report));
+    // First-run users read 14ms and think their button takes 14ms.
+    lines.push(MEASUREMENT_BASIS_LINE);
+  }
   if (report.nextJsShims && report.nextJsShims.length > 0) {
     lines.push(`Next.js shims: ${report.nextJsShims.join(", ")}`);
   }

@@ -356,14 +356,19 @@ export function resolveExportsSubpath(exportsField: unknown, subpath: string): s
     if (subpath.length < prefix.length + suffix.length) continue;
     if (!subpath.startsWith(prefix) || !subpath.endsWith(suffix)) continue;
     const template = exportsTargetFile(entry);
-    if (!template || !template.includes("*")) continue;
+    if (!template) continue;
     const wildcard = subpath.slice(prefix.length, subpath.length - suffix.length);
     const specificity = patternSpecificity(key);
     if (best && (best.specificity[0] > specificity[0] ||
       (best.specificity[0] === specificity[0] && best.specificity[1] >= specificity[1]))) {
       continue;
     }
-    best = { target: template.split("*").join(wildcard), specificity };
+    // A pattern may name one static file for every subpath it matches; then there is nothing
+    // to substitute.
+    best = {
+      target: template.includes("*") ? template.split("*").join(wildcard) : template,
+      specificity,
+    };
   }
   return best?.target;
 }
@@ -417,7 +422,26 @@ const ENTRY_SOURCE_MAX_BYTES = 4 * 1024 * 1024;
 
 interface EntryImport {
   specifier: string;
+  // Everything after "?", which decides whether Vite loads a sheet or hands over a JS string.
+  query: string;
   bound: boolean;
+}
+
+// `?raw` and `?inline` yield a string, `?worker` a constructor: none of them loads a stylesheet.
+const NON_SHEET_QUERY_FLAGS = new Set(["raw", "inline", "worker", "sharedworker"]);
+
+function queryFlags(query: string): string[] {
+  return query
+    .split("&")
+    .map((part) => part.split("=")[0].toLowerCase())
+    .filter((flag) => flag !== "");
+}
+
+// A stylesheet import is a loaded sheet when it carries no query, or only Vite's `?url`.
+function loadsAsStylesheet(query: string, bound: boolean): boolean {
+  const flags = queryFlags(query);
+  if (flags.some((flag) => NON_SHEET_QUERY_FLAGS.has(flag))) return false;
+  return !bound || flags.every((flag) => flag === "url");
 }
 
 // One parse per module, so an entry and a module one hop below it read the same way.
@@ -440,8 +464,14 @@ function moduleImports(file: string): EntryImport[] {
   for (const statement of source.statements) {
     if (!ts.isImportDeclaration(statement)) continue;
     if (!ts.isStringLiteral(statement.moduleSpecifier)) continue;
-    const specifier = statement.moduleSpecifier.text.split("?")[0];
-    if (specifier) imports.push({ specifier, bound: statement.importClause !== undefined });
+    const [specifier, ...rest] = statement.moduleSpecifier.text.split("?");
+    if (specifier) {
+      imports.push({
+        specifier,
+        query: rest.join("?"),
+        bound: statement.importClause !== undefined,
+      });
+    }
   }
   return imports;
 }
@@ -474,9 +504,11 @@ export function entryModuleImports(
   aliases: Array<{ find: RegExp; replacement: string }>,
 ): string[] {
   const found: string[] = [];
-  for (const { specifier } of moduleImports(entryFile)) {
+  for (const { specifier, query } of moduleImports(entryFile)) {
     if (found.length >= MAX_HOP_MODULES) break;
     if (isStylesheet(specifier)) continue;
+    // `?raw` and `?worker` hand over a string or a constructor, not this module's own imports.
+    if (queryFlags(query).some((flag) => NON_SHEET_QUERY_FLAGS.has(flag))) continue;
     let base: string | undefined;
     if (specifier.startsWith(".")) base = path.resolve(path.dirname(entryFile), specifier);
     else if (specifier.startsWith("/")) base = path.join(projectRoot, specifier);
@@ -507,8 +539,9 @@ export function entryStylesheetImports(
 ): string[] {
   const files: string[] = [];
   const unresolved: string[] = [];
-  for (const { specifier, bound } of moduleImports(entryFile)) {
+  for (const { specifier, query, bound } of moduleImports(entryFile)) {
     if (isCssModule(specifier)) continue;
+    if (!loadsAsStylesheet(query, bound)) continue;
     let resolved: string | undefined;
     if (isStylesheet(specifier)) {
       resolved = resolveStylesheetSpecifier(specifier, entryFile, projectRoot, aliases);

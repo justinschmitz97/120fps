@@ -101,6 +101,8 @@ export interface AnalyzeOptions {
   maxCombos?: number;
   initFixture?: boolean;
   exploreBudgetMs?: number;
+  // Selects exploration's observer path; absent, the run measures on the trace path.
+  observerTiming?: boolean;
   cpuThrottle?: number;
   warmupRuns?: number;
   seed?: number;
@@ -426,6 +428,7 @@ export async function analyze(
       progress,
       ...(wrapPath !== undefined ? { wrapPath } : {}),
       ...(vueCompiler !== undefined ? { vueCompiler } : {}),
+      ...(resolvedCss.files.length > 0 ? { cssFiles: resolvedCss.files } : {}),
     });
     providerCandidates = preflightPhase.providerCandidates;
     transitiveProviderCandidates = preflightPhase.transitiveProviderCandidates;
@@ -555,6 +558,9 @@ export async function analyze(
     if (calibration.totalDuration === 0) {
       throw new Error("Calibration produced zero duration: measurement environment is broken");
     }
+
+    // Closes calibration at the trace it measured; wrapper overhead, schemas and combos are setup.
+    progress("setup");
 
     let wrapper: WrapperReport | undefined;
     if (wrapPath) {

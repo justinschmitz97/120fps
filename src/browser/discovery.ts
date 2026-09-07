@@ -109,23 +109,53 @@ export interface SkippedTarget {
   href?: string;
 }
 
+// Decided before any click, from the anchor alone.
+const PRE_CLICK_REASONS: SkipReason[] = ["external-link", "new-tab-link", "non-http-scheme"];
+// Decided by what the click did; a target of any type can reach these.
+const POST_CLICK_REASONS: SkipReason[] = ["opened-a-page", "left-the-page"];
+
 const SKIP_REASON_LABELS: Record<SkipReason, [string, string]> = {
   "external-link": ["external link", "external links"],
   "new-tab-link": ["new-tab link", "new-tab links"],
   "non-http-scheme": ["non-http link", "non-http links"],
-  "opened-a-page": ["link that opened a new page", "links that opened a new page"],
-  "left-the-page": ["link that left the harness page", "links that left the harness page"],
+  // Both counts read after a number, so one form serves singular and plural.
+  "opened-a-page": ["opened a new page", "opened a new page"],
+  "left-the-page": ["navigated away", "navigated away"],
 };
-
-const SKIP_REASON_ORDER = Object.keys(SKIP_REASON_LABELS) as SkipReason[];
 
 function hasRelToken(rel: string | undefined, token: string): boolean {
   return (rel ?? "").toLowerCase().split(/\s+/).includes(token);
 }
 
+export type AnchorEscapeInput = Pick<
+  RawElement,
+  | "tagName"
+  | "href"
+  | "linkTarget"
+  | "linkRel"
+  | "hasOnclick"
+  | "hasOnmousedown"
+  | "hasOnmouseup"
+  | "hasOnkeydown"
+  | "hasOnkeyup"
+  | "hasOnkeypress"
+>;
+
+// The handler set discovery already extracts; an anchor carrying one is driven by the component.
+function hasOwnHandler(raw: AnchorEscapeInput): boolean {
+  return (
+    raw.hasOnclick ||
+    raw.hasOnmousedown ||
+    raw.hasOnmouseup ||
+    raw.hasOnkeydown ||
+    raw.hasOnkeyup ||
+    raw.hasOnkeypress
+  );
+}
+
 // A fragment and a same-origin path an app routes itself are the component's own behaviour.
 export function classifyNavigationEscape(
-  raw: Pick<RawElement, "tagName" | "href" | "linkTarget" | "linkRel">,
+  raw: AnchorEscapeInput,
   pageOrigin: string,
 ): SkipReason | undefined {
   if (raw.tagName !== "A") return undefined;
@@ -138,7 +168,12 @@ export function classifyNavigationEscape(
     // An href the URL parser refuses does not navigate anywhere either.
     return undefined;
   }
-  if (url.protocol !== "http:" && url.protocol !== "https:") return "non-http-scheme";
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    // A "javascript:" href on an element that also carries a handler is a button the component
+    // owns: the click runs the component's code and navigates nowhere.
+    if (url.protocol === "javascript:" && hasOwnHandler(raw)) return undefined;
+    return "non-http-scheme";
+  }
   if (url.origin !== pageOrigin) return "external-link";
   if (hasRelToken(raw.linkRel, "external")) return "external-link";
   if ((raw.linkTarget ?? "").toLowerCase() === "_blank") return "new-tab-link";
@@ -167,22 +202,47 @@ export function partitionExercisableTargets(
   return { exercisable, skipped };
 }
 
-// One line, free of per-combo numbers, so a run that skipped the same classes twice prints once.
-export const SKIPPED_TARGETS_NOTICE = (skipped: SkippedTarget[]): string | undefined => {
-  if (skipped.length === 0) return undefined;
+function countClasses(skipped: SkippedTarget[], reasons: SkipReason[]): string {
   const classes: string[] = [];
-  for (const reason of SKIP_REASON_ORDER) {
+  for (const reason of reasons) {
     const count = skipped.filter((s) => s.reason === reason).length;
     if (count === 0) continue;
     const [one, many] = SKIP_REASON_LABELS[reason];
     classes.push(`${count} ${count === 1 ? one : many}`);
   }
-  const noun = skipped.length === 1 ? "target" : "targets";
-  return (
-    `explore skipped ${skipped.length} interaction ${noun} that would leave the page ` +
-    `(${classes.join(", ")}): a click there measures the browser's navigation, ` +
-    "not the component. Same-page links and every other target were exercised as usual."
-  );
+  return classes.join(", ");
+}
+
+function countTargets(count: number): string {
+  return `${count} interaction ${count === 1 ? "target" : "targets"}`;
+}
+
+// One line, free of per-combo numbers, so a run that skipped the same classes twice prints once.
+// Two clauses: what the anchor said before the click, and what the click then did.
+export const SKIPPED_TARGETS_NOTICE = (skipped: SkippedTarget[]): string | undefined => {
+  if (skipped.length === 0) return undefined;
+  const sentences: string[] = [];
+
+  const beforeClick = skipped.filter((t) => PRE_CLICK_REASONS.includes(t.reason));
+  if (beforeClick.length > 0) {
+    sentences.push(
+      `explore skipped ${countTargets(beforeClick.length)} that would leave the page ` +
+        `(${countClasses(beforeClick, PRE_CLICK_REASONS)}): a click there measures the ` +
+        "browser's navigation, not the component.",
+    );
+  }
+
+  const afterClick = skipped.filter((t) => POST_CLICK_REASONS.includes(t.reason));
+  if (afterClick.length > 0) {
+    sentences.push(
+      `explore stopped exercising ${countTargets(afterClick.length)} whose click left the ` +
+        `harness page (${countClasses(afterClick, POST_CLICK_REASONS)}); their samples timed the ` +
+        "browser, so they were discarded.",
+    );
+  }
+
+  sentences.push("Same-page links and every other target were exercised as usual.");
+  return sentences.join(" ");
 };
 
 export async function discoverInteractions(
@@ -583,7 +643,10 @@ export async function discoverInteractions(
     return rootDescriptors;
   }
 
-  const portalDescriptors = await probePortals(page, rootDescriptors, options.remount);
+  const portalDescriptors = await probePortals(page, rootDescriptors, options.remount, {
+    pageOrigin: discovered.origin,
+    ...(options.onSkipped ? { onSkipped: options.onSkipped } : {}),
+  });
   return [...rootDescriptors, ...portalDescriptors];
 }
 

@@ -82,7 +82,7 @@ function makeReport(overrides: Partial<Report> = {}): Report {
 }
 
 describe("phase timings over a run's label sequence", () => {
-  it("carries every phase key and sums the ten phases to the total", () => {
+  it("carries every phase key and sums the phases to the total", () => {
     const time = fakeClock();
     const clock = createPhaseClock(time.now);
 
@@ -108,7 +108,7 @@ describe("phase timings over a run's label sequence", () => {
     const timings = clock.timings();
     expect(Object.keys(timings).sort()).toEqual(
       ["analysis", "attribution", "build", "calibration", "deltas", "explore",
-       "mount", "preflight", "rerender", "scale", "total"],
+       "mount", "preflight", "rerender", "scale", "setup", "total"],
     );
     expect(timings.total).toBe(195_000);
     expect(sumOfPhases(timings)).toBe(timings.total);
@@ -121,7 +121,7 @@ describe("phase timings over a run's label sequence", () => {
     time.advance(3_000);
     clock.boundary("calibration");
     time.advance(5_000);
-    clock.boundary("mode: prop combos");
+    clock.boundary("wrapper overhead");
     time.advance(7_000);
     clock.boundary("mount: 4 combos x 5 samples");
     time.advance(9_000);
@@ -294,7 +294,7 @@ describe("explore wall clock per combo", () => {
 
 describe("phase breakdown rendering", () => {
   const timings: PhaseTimings = {
-    preflight: 0, build: 41_000, calibration: 0, mount: 58_000, rerender: 0,
+    preflight: 0, build: 41_000, calibration: 0, setup: 0, mount: 58_000, rerender: 0,
     explore: 80_000, scale: 0, deltas: 0, attribution: 0, analysis: 0,
     total: 179_000,
   };
@@ -315,7 +315,7 @@ describe("markdown report phases", () => {
       makeReport({
         componentPath: "./with.tsx",
         phaseTimings: {
-          preflight: 4_000, build: 41_000, calibration: 30_000, mount: 58_000,
+          preflight: 4_000, build: 41_000, calibration: 30_000, setup: 0, mount: 58_000,
           rerender: 20_000, explore: 80_000, scale: 0, deltas: 0,
           attribution: 0, analysis: 12_000, total: 245_000,
         },

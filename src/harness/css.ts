@@ -94,8 +94,13 @@ const NUXT_CONFIG_NAMES = ["nuxt.config.ts", "nuxt.config.mts", "nuxt.config.js"
 const NUXT_ALIAS_ROOTS = ["app", "src", "."];
 
 // The literal `css:` array of a nuxt config, read from source. The config is never executed, so a
-// computed array yields nothing rather than a guess.
-export function nuxtConfigStylesheets(projectRoot: string): string[] {
+// computed array yields nothing rather than a guess. `unresolvedOut` collects the entries that
+// name nothing on disk, which the discovery line reports rather than dropping in silence.
+export function nuxtConfigStylesheets(
+  projectRoot: string,
+  aliases: Array<{ find: RegExp; replacement: string }> = [],
+  unresolvedOut?: string[],
+): string[] {
   const config = NUXT_CONFIG_NAMES.map((name) => path.join(projectRoot, name)).find(isFile);
   if (!config) return [];
   let sourceText: string;
@@ -124,18 +129,25 @@ export function nuxtConfigStylesheets(projectRoot: string): string[] {
 
   const files: string[] = [];
   for (const specifier of specifiers) {
-    if (!isStylesheet(specifier)) continue;
-    const relative = /^[~@]\//.test(specifier) ? specifier.slice(2) : specifier;
-    const bases = /^[~@]\//.test(specifier)
-      ? NUXT_ALIAS_ROOTS.map((root) => path.join(projectRoot, root))
-      : [path.dirname(config)];
-    for (const base of bases) {
-      const candidate = path.resolve(base, relative);
-      if (isFile(candidate) && !files.includes(candidate)) {
-        files.push(candidate);
-        break;
-      }
+    const aliased = /^[~@]\//.test(specifier);
+    const own = aliased || specifier.startsWith(".") || specifier.startsWith("/");
+    let resolved: string | undefined;
+    if (own && isStylesheet(specifier)) {
+      const relative = aliased ? specifier.slice(2) : specifier;
+      const bases = aliased
+        ? NUXT_ALIAS_ROOTS.map((root) => path.join(projectRoot, root))
+        : [path.dirname(config)];
+      resolved = bases.map((base) => path.resolve(base, relative)).find(isFile);
+    } else if (!own) {
+      // `element-plus/dist/index.css`, `vuetify/styles`: an installed package names the sheet.
+      const target = resolveStylesheetImportTarget(specifier, config, projectRoot, aliases);
+      if (target && "file" in target && isStylesheet(target.file)) resolved = target.file;
     }
+    if (resolved === undefined) {
+      if (!unresolvedOut?.includes(specifier)) unresolvedOut?.push(specifier);
+      continue;
+    }
+    if (!files.includes(resolved)) files.push(resolved);
   }
   return files;
 }
@@ -390,12 +402,30 @@ export function discoverGlobalCss(
     if (!entryFiles.includes(resolved)) entryFiles.push(resolved);
   }
   // The config lists the app's global sheets itself, so no entry module names them.
-  const nuxtDeclared = validateCssFiles(nuxtConfigStylesheets(projectRoot), warningsOut);
+  const nuxtUnresolved: string[] = [];
+  const nuxtDeclared = validateCssFiles(
+    nuxtConfigStylesheets(projectRoot, aliases, nuxtUnresolved),
+    warningsOut,
+  );
   // Four is what a reader acts on; a longer list is a catalogue, not a diagnosis.
   const noteSearch = (note: string): void => {
     const sink = opts?.searchNotesOut;
     if (sink && sink.length < 4 && !sink.includes(note)) sink.push(note);
   };
+  // Every layer that rejects a sheet for this reason states it the same way.
+  const notePlaceholder = (file: string): void => {
+    noteSearch(
+      `${relativeToRoot(file, projectRoot)} declares no CSS rule with a body of its own` +
+        (stylesheetTailwindSyntax(file) !== undefined
+          ? " -- it only pulls in Tailwind"
+          : " (comments, imports and bare at-rules only)"),
+    );
+  };
+  if (nuxtUnresolved.length > 0) {
+    noteSearch(
+      `nuxt.config css: names ${nuxtUnresolved.join(", ")}, which resolved to no file on disk`,
+    );
+  }
   if (entryFiles.length > 0 || nuxtDeclared.length > 0) {
     const imported: string[] = [...nuxtDeclared];
     let hops = 0;
@@ -462,6 +492,8 @@ export function discoverGlobalCss(
       if (stylesheetRuleCount(candidate) === 0) {
         rejected.add(candidate);
         warningsOut?.push(CSS_PLACEHOLDER_SKIPPED_WARNING(relativeToRoot(candidate, projectRoot)));
+        // Noted here because the ranked walk skips a rejected file before it can say why.
+        notePlaceholder(candidate);
       }
       continue;
     }
@@ -509,12 +541,7 @@ export function discoverGlobalCss(
     if (rejected.has(candidate.file)) continue;
     if (stylesheetRuleCount(candidate.file) === 0) {
       warningsOut?.push(CSS_PLACEHOLDER_SKIPPED_WARNING(relative));
-      noteSearch(
-        `${relative} declares no CSS rule with a body of its own` +
-          (stylesheetTailwindSyntax(candidate.file) !== undefined
-            ? " -- it only pulls in Tailwind"
-            : " (comments, imports and bare at-rules only)"),
-      );
+      notePlaceholder(candidate.file);
       continue;
     }
     if (isOptInResetName(candidate.file)) {

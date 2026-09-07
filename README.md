@@ -126,7 +126,7 @@ Runs print one line per phase (`mount: 8 combos x 10 samples`) and end with `Tot
 
 ## Where the minutes go
 
-`Total:` breaks down by phase: `Total: 3m 12s  (build 41s, mount 58s, explore 1m 20s, analysis 12s)`; a phase at zero is left out. The JSON report carries the same numbers in `phaseTimings`: `preflight`, `build`, `calibration`, `mount`, `rerender`, `explore`, `scale`, `deltas`, `attribution`, `analysis` and `total`, each an integer millisecond count, the ten phase keys summing to `total`. `--report-md` includes the same breakdown per component; a report from before this existed renders `-`, never `0s`.
+`Total:` breaks down by phase: `Total: 3m 12s  (build 41s, mount 58s, explore 1m 20s, analysis 12s)`; a phase at zero is left out. The JSON report carries the same numbers in `phaseTimings`: `preflight`, `build`, `calibration`, `setup`, `mount`, `rerender`, `explore`, `scale`, `deltas`, `attribution`, `analysis` and `total`, each an integer millisecond count, the eleven phase keys summing to `total`. `setup` holds the wrapper overhead, the calibration session's close, schema extraction and combination planning that used to be counted as calibration. `--report-md` includes the same breakdown per component; a report from before this existed renders `-`, never `0s`.
 
 ## Budgets & baselines (CI)
 
@@ -289,6 +289,7 @@ npx 120fps "src/components/**/*.vue" --budget
 - `120fps.setup.vue` wraps via its default slot; `.fixture.vue` for compounds.
 - No `--isolate strictmode` (React-only concept), no Vue optimization pass yet. Framework is part of the baseline fingerprint.
 - A read-of-undefined abort inside an ordinary SFC render frame gets a provide/inject hint pointing at `120fps.setup.vue` only when the component's own `<script setup>` block calls `inject(`; otherwise the abort prints no hint.
+- The declaration files your own tooling generates are a resolution input, read as text and never executed. `components.d.ts` (also `src/`, `types/`, `app/`, `.nuxt/`) registers your project's own components globally before mount; `auto-imports.d.ts` (same search order) prepends the import for an identifier a module in the measured component's graph uses without importing it. Both are disclosed once per run with the file and the count, along with entries whose module is not on disk. A component the map points at inside a dependency stays unregistered, because it usually needs a router or a Nuxt app context the harness does not provide; the run names the ones your component's own source references. `@vitejs/plugin-vue` also resolves through a framework you *do* declare (`nuxt`, `vite`) that depends on it, with no hoisting warning.
 
 ## Tier Budgets
 

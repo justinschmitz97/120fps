@@ -44,9 +44,12 @@ profiles under `C:/Projekte/120fps-fieldtest/logs/run7-investigate/` and
    combos (`__120fps_scaleN`, generated at `src/pipeline/modes/combo.ts:94`, also used at `:115` and
    `:140`) are identical empty prop sets to the probe: `src/analysis/react-probe-entry.ts` has no
    `scaleN` branch and `src/analysis/react-profiler.ts:78-80` strips it. `propCombinationKey`
-   (`src/analysis/react-profiler.ts:76`) already exists as the identity. The verifier: on umbrel each
-   scale combo costs 1 287 ms, so the four together are 37 % of the analysis phase. M128 applied the
-   same dedupe to the callback pass and measured −28 % on that pass.
+   (`src/analysis/react-profiler.ts:76`) already exists as the identity. The verifier: an interleaved
+   A/B on umbrel (five pairs, Verification below) moves the analysis phase from a 14 315 ms median to
+   13 419 ms, −6.3 %. The earlier estimate of 1 287 ms per scale combo (37 % of the phase) is refuted:
+   the callback-identity pass, which dominates the per-combo cost, was already deduped by the same
+   key, so a scale combo pays only the memo, context and attribution windows, and the rest of the
+   phase is the probe page's own bring-up and Vite transform.
 2. **A gate performs a full measurement and throws it away** — `gateScalePoints`
    (`src/pipeline/modes/combo.ts:82-102`) opens its own session and runs a full `measureMount` whose
    result is discarded; the file says so at `:81` ("remeasured in the main batch") and `:90` ("never
@@ -103,22 +106,25 @@ profiles under `C:/Projekte/120fps-fieldtest/logs/run7-investigate/` and
 - **C2** The scale-point gate does not perform a measurement whose result is discarded. The smallest
   scale point is measured once, in the main batch, and the gate reads that measurement.
 - **C3** The `calibration` phase contains calibration and nothing else. The work that follows it —
-  wrapper overhead, session close, schema collection, combination generation and the scale gate — is
-  its own labelled phase. Every phase key is still present, phases remain disjoint, and they still sum
-  to `total` exactly (M115 C1).
+  wrapper overhead, session close, schema collection and combination generation — is its own labelled
+  phase, `setup`; the scale gate C2 folds into the main batch is part of `mount`. Every phase key is
+  still present, phases remain disjoint, and they still sum to `total` exactly (M115 C1).
 - **C4** The memo pass runs only when the snapshot contains at least one `isMemo` fiber that
   `isReportableComponent` accepts. When it does not, the pass is skipped, the result is the same empty
   result it produces today, and the run reports the same thing it reports today.
 - **C5** `--explore-budget` bounds the explore phase, and this supersedes M116's clause at
   `m116-…:548-549` that left explore's own bounds unchanged:
   - The per-combo budget is derived from `--explore-budget`, not from the hardcoded
-    `Math.max(10000, 60000 / n)`.
+    `Math.max(10000, 60000 / n)`. The flag bounds the phase and never extends it: a combo is never
+    given more than explore's own per-combo default, so a run that passes no flag keeps the bound it
+    had.
   - The total budget is checked *before* the first combo runs and between every pair of combos, so a
     single combo cannot exceed the phase budget.
   - A one-combo run is bounded too: the `: 60000` single-combo branch derives from the flag like every
     other, and the total check is evaluated before the first combo runs, not only after it.
   - Curve mode derives its bound from `--explore-budget` for the *phase*, and divides it across its
-    scale points, instead of applying a hardcoded `maxWallClockMs: 30000` per point.
+    scale points, instead of applying a hardcoded `maxWallClockMs: 30000` per point. Without the
+    flag each point keeps the 30 s the sweep gave it.
   - `observerTiming` is reachable: the option is threaded from the caller through
     `src/analysis/explorer.ts:433` to `src/analysis/exploration-loop.ts:203`, so the path the comment
     at `:202` names can be selected. Whether it becomes a default is C6's measurement, not this
@@ -127,7 +133,8 @@ profiles under `C:/Projekte/120fps-fieldtest/logs/run7-investigate/` and
     failure.
 - **C6** The measured effect is recorded, not assumed. This milestone's Verification carries an
   interleaved A/B (five pairs, same window, same machine) of `phaseTimings.analysis` on umbrel and of
-  `phaseTimings.explore` on novu. A change that does not produce a warning-free win is reverted.
+  `phaseTimings.explore` on novu. A change that does not produce a warning-free win is reverted; a
+  win smaller than the acceptance row estimated is recorded with the estimate it refutes.
 
 ## MUST NOT
 
@@ -151,6 +158,40 @@ profiles under `C:/Projekte/120fps-fieldtest/logs/run7-investigate/` and
   reachable and nothing more (M116's MUST NOT on that default stands).
 - Reduce coverage to hit a number: C5 stops a phase at the user's own bound and says so; it never
   silently drops combos inside a budget that was not reached.
+
+## Design
+
+**One measurement per prop set.** `measureOncePerPropSet` (`src/analysis/react-profiler.ts`) keys the
+per-combo loop by `propCombinationKey` and hands every combo that shares a key a copy of the one
+result. The combo list, the combo ids and the report's rows are untouched.
+
+**One window for attribution and the memo diff.** Both asked the probe for the same mount and
+rerender, so the pass takes it once. The snapshot it produces is the render attribution and the memo
+diff's first snapshot; `detectMemoBailoutsFromSnapshot` spends the second rerender only when
+`snapshotHasMemoFiber` sees a memoized fiber the report would name. Attribution is read before the
+callback arms rather than after them, which is the window the code already asked for.
+
+**The `setup` phase.** `progress("setup")` fires the moment the calibration trace is read, and
+`classifyPhaseLabel` also maps every `mode:` line onto it, so a run that reaches a mode without the
+setup line still closes calibration. `setup` holds wrapper overhead, the calibration session's
+close, schema extraction and combination generation. `estimateRunCost` counts it as fixed cost; a
+baseline written before the key existed reads as `0` and keeps its old estimate.
+
+**The scale gate reads the main batch.** `measureGatedScaleMounts` puts the smallest scale point in
+the batch that measures the prop combos and gates the remaining points on the median that batch
+reported, so the warning quotes the number the report prints. The remaining points are measured in a
+second batch and renumbered onto the combo list; when the gate refuses them, that batch never opens.
+The sample count is fixed from the planned combo count before the gate decides, so a gated and an
+ungated run report the same samples per combo. The first deferred point opens a fresh session and
+takes that session's warm-up, where before it sat mid-batch.
+
+**The explore budget.** `exploreUnitWallClockMs` divides the phase budget across the units, clamps
+the share to the unit's own default (60 s per combo, 30 s per curve point) above and to 10 s below,
+then to the phase budget itself, so `--explore-budget 5` yields 5 s and no flag yields exactly the
+bound the run used before. `explore()` starts its clock at the phase's start, refuses a new combo
+once `explorePhaseBudgetSpent`, and hands each combo the smaller of its share and what the phase has
+left. `exploreRunOptions` builds those bounds plus `observerTiming`, which is present only when the
+caller set `AnalyzeOptions.observerTiming`; no CLI flag selects it.
 
 ## Verification
 
@@ -187,13 +228,57 @@ profiles under `C:/Projekte/120fps-fieldtest/logs/run7-investigate/` and
   `test/unit/curve-*.test.ts`, `test/e2e/callback-identity-harden.test.ts`), then the full unit suite
   once before the lane's final commit.
 
-Recorded run of this milestone's verification:
+Recorded run of this milestone's verification (2026-09-07, `run7/lane-f`, Windows 11, the machine
+reporting `hostile` under a concurrent smoke and two other lanes):
 
 ```
-<filled by lane F: tsc result, the vitest invocations and their verbatim totals,
- and the five interleaved A/B pairs with phaseTimings.analysis (umbrel)
- and phaseTimings.explore (novu) medians on each build>
+node node_modules/typescript/bin/tsc --noEmit -p tsconfig.json
+# clean
+
+npx vitest run test/unit/the-analysis-pass-measures-each-prop-set-once.test.ts   test/unit/a-scale-probe-is-measured-once.test.ts   test/unit/the-memo-pass-runs-only-with-a-memo-fiber.test.ts   test/unit/every-phase-label-names-what-it-measured.test.ts   test/unit/the-explore-budget-bounds-the-phase.test.ts   test/unit/a-single-combo-run-is-bounded-too.test.ts --maxWorkers=2
+# Test Files 6 passed (6) | Tests 43 passed (43)
+
+npx vitest run test/unit --maxWorkers=2
+# Test Files 2 failed | 370 passed (372)
+# Tests 2 failed | 5214 passed | 1 skipped (5217)
+# the two failures are the recorded pre-existing pair: prop-cap-ranking.test.ts and
+# vue-setup-inject-evidence.test.ts
 ```
+
+`phaseTimings.analysis` on umbrel (`E:/repositories-run6/umbrel/packages/ui`,
+`src/components/ui/card.tsx`, `--samples 3 --max-combos 2 --explore-budget 30 --no-deltas`), five
+interleaved pairs, A = `C:/Projekte/120fps-run7/dist` at `de41d6a`, B = this branch's `dist`:
+
+| pair | A analysis ms | B analysis ms | A total ms | B total ms |
+|---|---|---|---|---|
+| 1 | 14 604 | 13 035 | 44 928 | 35 226 |
+| 2 | 14 195 | 36 950 | 36 637 | 60 400 |
+| 3 | 14 096 | 12 623 | 36 741 | 31 820 |
+| 4 | 14 315 | 13 419 | 35 593 | 34 623 |
+| 5 | 15 916 | 13 492 | 39 019 | 37 976 |
+| **median** | **14 315** | **13 419** | **36 741** | **35 226** |
+
+Analysis median ratio 0.937 (−6.3 %); pair 2's B run is a 37 s outlier on a machine that reported
+`hostile` in every run. Both arms print the same five warnings, differing only in the noise figures
+inside the `machine: hostile` text, and both report `pass: true` over the same six combos with the
+same combo ids. The A/B does not reach the 25 % the milestone's acceptance row asked for, and the
+reason is recorded under root cause 1: the lever's size was estimated from a per-scale-combo cost the
+measurement refutes. C1, C2 and C4 stay: each is a MUST in its own right, the change is warning-free,
+and it removes about 0.9 s of duplicated measurement per run.
+
+Other recorded runs, all `--samples 3 --max-combos 2 --explore-budget 30 --no-deltas` unless the row
+says otherwise, A = `de41d6a`, B = this branch, logs under
+`C:/Projekte/120fps-fieldtest/logs/run7-lane-f/<repo>/`:
+
+| Repo | Clause | A | B |
+|---|---|---|---|
+| midday `src/components/tables/invoices/skeleton.tsx` | C3 | calibration 20 780 ms, no setup phase | calibration 144 ms, setup 17 870 ms; phases sum to total exactly in both; exit 1 in both, 7 warnings in both |
+| novu `src/components/primitives/toggle.tsx` | C5 | explore 32 930 ms, combo 2 alone 31 548 ms, `budget 30s each` | explore 18 078 ms, longest combo 16 399 ms, `budget 15s each`; `pass: true` and 7 warnings in both |
+| scaffold-vite-react-ts `src/App.tsx` | C5 single combo | `explore: 1 combos, budget 60s each`, `exploreWallClockMs` 24 849 | `explore: 1 combos, budget 30s`, `exploreWallClockMs` 25 099; 5 warnings in both |
+| rallly `src/components/pagination.tsx` `--curve` | C5 curve | explore 184 771 ms, total 205 760 ms | explore 32 748 ms, total 47 195 ms, `budget 10s each`, 3 of 6 points explored and said so; `pass: true` in both, all 6 curve points present |
+| calcom `modules/apps/components/Slider.tsx` `--curve` | C5 curve | explore 39 773 ms, total 67 477 ms | explore 30 008 ms, total 55 309 ms; exit 1 and 5 warnings in both |
+| linkwarden `components/ui/Loader.tsx` | deferred row | rerender 7 980 ms | rerender 8 118 ms; exit 1 and 1 warning in both. The rerender phase is not decomposed; the Deferred section records why |
+| commerce `components/label.tsx` (control) | control | exit 0, `pass: true`, 2 warnings | exit 0, `pass: true`, the same 2 warnings, the same 6 combos. Per-combo verdicts shuffle between `pass` and `warn` in both directions across repeats of either build: the `unstable` flags move run to run on a `hostile` machine |
 
 Corpus repros, through a `dist` built in `C:/Projekte/120fps-run7-lane-f`:
 

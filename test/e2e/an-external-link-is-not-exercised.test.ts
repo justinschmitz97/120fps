@@ -47,6 +47,27 @@ describe("a rendered page's links are sorted into what may be exercised", () => 
     ]);
   }, 60000);
 
+  it("declines a portal's external anchor and keeps the rest of the portal", async () => {
+    const page = await mount("./fixtures/portal-external-links.fixture.tsx");
+    const skipped: SkippedTarget[] = [];
+    const descriptors = await discoverInteractions(page, {
+      probePortals: true,
+      remount: async () => {
+        await page.evaluate(() => (window as any).__120fps.mount({}));
+      },
+      onSkipped: (targets) => skipped.push(...targets),
+    });
+
+    const portal = descriptors.filter((d) => d.portal);
+    expect(portal.map((d) => d.selector).sort()).toEqual([
+      '[data-testid="portal-close"]',
+      '[data-testid="portal-fragment"]',
+    ]);
+    expect(skipped.map((t) => `${t.selector}:${t.reason}`)).toContain(
+      '[data-testid="portal-external"]:external-link',
+    );
+  }, 60000);
+
   it("declines nothing on a component whose every link stays on the page", async () => {
     const page = await mount("./fixtures/interactive-basic.tsx");
     const skipped: SkippedTarget[] = [];
