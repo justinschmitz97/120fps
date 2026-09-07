@@ -85,11 +85,34 @@ describe("an anchor that would leave the page is not exercised", () => {
   });
 
   it.each(["mailto:team@example.com", "tel:+4930123456", "javascript:void(0)"])(
-    "names %s a non-http scheme",
+    "names %s a non-http scheme when nothing else handles the click",
     (href) => {
+      expect(classifyNavigationEscape(raw({ href }), ORIGIN)).toBeDefined();
       expect(classifyNavigationEscape(raw({ href }), ORIGIN)).toBe("non-http-scheme");
     },
   );
+
+  it.each([
+    ["hasOnclick"],
+    ["hasOnmousedown"],
+    ["hasOnmouseup"],
+    ["hasOnkeydown"],
+    ["hasOnkeyup"],
+    ["hasOnkeypress"],
+  ])("keeps a javascript: anchor the component drives through %s", (handler) => {
+    const button = raw({ href: "javascript:void(0)", [handler]: true });
+    expect(classifyNavigationEscape(button, ORIGIN)).toBeUndefined();
+  });
+
+  it("still declines a mailto the component happens to handle", () => {
+    const handled = raw({ href: "mailto:team@example.com", hasOnclick: true });
+    expect(classifyNavigationEscape(handled, ORIGIN)).toBe("non-http-scheme");
+  });
+
+  it("still declines a cross-origin anchor the component happens to handle", () => {
+    const handled = raw({ href: "https://vite.dev/", hasOnclick: true });
+    expect(classifyNavigationEscape(handled, ORIGIN)).toBe("external-link");
+  });
 
   it("keeps a fragment anchor: the component owns where it scrolls to", () => {
     expect(classifyNavigationEscape(fragment, ORIGIN)).toBeUndefined();

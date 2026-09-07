@@ -155,14 +155,50 @@ describe("a click that leaves the harness page is caught and undone", () => {
     watch.stop();
   });
 
-  it("treats an unreadable page as gone rather than as measured", async () => {
+  it("does not read a destroyed execution context as a click that left", async () => {
+    const page = {
+      on() {},
+      off() {},
+      evaluate: async () => { throw new Error("Execution context was destroyed"); },
+    };
+    const watch = createEscapeWatch(page as never);
+    expect(await watch.check()).toBeUndefined();
+  });
+
+  it("does not read a closed target as a click that left", async () => {
     const page = {
       on() {},
       off() {},
       evaluate: async () => { throw new Error("Target closed"); },
     };
     const watch = createEscapeWatch(page as never);
+    expect(await watch.check()).toBeUndefined();
+  });
+
+  it("re-reads once before believing an unexplained read failure", async () => {
+    let reads = 0;
+    const page = {
+      on() {},
+      off() {},
+      evaluate: async () => {
+        reads++;
+        if (reads === 1) throw new Error("something else went wrong");
+        return false;
+      },
+    };
+    const watch = createEscapeWatch(page as never);
     expect(await watch.check()).toBe("left-the-page");
+    expect(reads).toBe(2);
+  });
+
+  it("reports nothing when the page stays unreadable", async () => {
+    const page = {
+      on() {},
+      off() {},
+      evaluate: async () => { throw new Error("something else went wrong"); },
+    };
+    const watch = createEscapeWatch(page as never);
+    expect(await watch.check()).toBeUndefined();
   });
 
   it("forgets the previous target's popup when the next one starts", async () => {
