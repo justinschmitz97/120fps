@@ -238,9 +238,32 @@ export function appendEmptyRenderNote(lines: string[], report: Report): void {
 // A text that already leads with a warning marker keeps the one it has.
 const CARRIES_ITS_OWN_PREFIX = /^(⚠|Warning:)/;
 
+// One fact about the project, not about the component: every report carries it, the terminal
+// states it once however many components or candidates one invocation walked.
+const PROJECT_LEVEL_NOTE = /the project's Vite config is never executed/;
+
+const printedProjectNotes = new Set<string>();
+
+export function isProjectLevelNote(warning: string): boolean {
+  return PROJECT_LEVEL_NOTE.test(warning);
+}
+
+export function resetPrintedProjectNotes(): void {
+  printedProjectNotes.clear();
+}
+
+// Printing layer only: `report.warnings` and the dry run's list keep every entry they collected.
+export function repeatsPrintedProjectNote(warning: string): boolean {
+  if (!isProjectLevelNote(warning)) return false;
+  if (printedProjectNotes.has(warning)) return true;
+  printedProjectNotes.add(warning);
+  return false;
+}
+
 // Every output mode ends with the run's warnings, or its numbers lose their reason.
 export function appendWarnings(lines: string[], report: Report): void {
   for (const warning of presentWarnings(report)) {
+    if (repeatsPrintedProjectNote(warning)) continue;
     lines.push(CARRIES_ITS_OWN_PREFIX.test(warning) ? warning : `⚠ ${warning}`);
   }
 }

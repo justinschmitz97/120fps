@@ -31,9 +31,11 @@ export function captureThirdPartyErrors(opts: {
   return release;
 }
 
-// Teardown writes its own failures through console.error; an abort must not buffer them away.
-export function releaseThirdPartyCapture(): void {
-  activeCapture?.();
+// Teardown writes its own failures through console.error; an abort must not buffer them away,
+// and what the buffer already holds is the only account of a failure the abort cut short.
+export function releaseThirdPartyCapture(warnings: readonly string[] = []): string | undefined {
+  const captured = activeCapture?.();
+  return captured ? thirdPartyOutputNotice(captured, warnings) : undefined;
 }
 
 // The frame a stack points at: `.../node_modules/<pkg>/lib/...`, pnpm's inner copy included.

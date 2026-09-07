@@ -100,6 +100,43 @@ describe("a teardown that writes through the console it replaced", () => {
     release();
   });
 
+  it("prints what the buffer held, so an aborted run keeps its only account", async () => {
+    const stderr: string[] = [];
+    const original = process.stderr.write.bind(process.stderr);
+    (process.stderr as unknown as { write: (chunk: string) => boolean }).write = (chunk) => {
+      stderr.push(chunk);
+      return true;
+    };
+    const release = captureThirdPartyErrors({ write: () => {} });
+    console.error(RESOLVE_STACK);
+    try {
+      await abortRun(2, undefined, { sweep: () => {}, exit: () => {}, timeoutMs: 50 });
+    } finally {
+      (process.stderr as unknown as { write: typeof original }).write = original;
+      release();
+    }
+    const printed = stderr.join("");
+    expect(printed).toContain("enhanced-resolve");
+    expect(printed).toContain("Can't resolve '@tailwindcss/typography'");
+  });
+
+  it("prints nothing on an abort that captured nothing", async () => {
+    const stderr: string[] = [];
+    const original = process.stderr.write.bind(process.stderr);
+    (process.stderr as unknown as { write: (chunk: string) => boolean }).write = (chunk) => {
+      stderr.push(chunk);
+      return true;
+    };
+    const release = captureThirdPartyErrors({ write: () => {} });
+    try {
+      await abortRun(2, undefined, { sweep: () => {}, exit: () => {}, timeoutMs: 50 });
+    } finally {
+      (process.stderr as unknown as { write: typeof original }).write = original;
+      release();
+    }
+    expect(stderr.join("")).toBe("");
+  });
+
   it("is a no-op when no capture is in force", () => {
     const before = console.error;
     releaseThirdPartyCapture();

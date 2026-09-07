@@ -9,6 +9,7 @@ import {
 } from "../harness/index.js";
 import { formatTotalLine, resolvedRootsOutput } from "./main.js";
 import { releaseThirdPartyCapture } from "./third-party-output.js";
+import { currentRunWarningList } from "./errors.js";
 
 // Teardown that never settles must not block the documented exit code from being delivered.
 export const FATAL_EXIT_WATCHDOG_MS = 8000;
@@ -86,7 +87,10 @@ export async function abortRun(
   } = {},
 ): Promise<void> {
   // Before the first sweep: its own failures go through console.error, which a run may be buffering.
-  releaseThirdPartyCapture();
+  // What the buffer holds is the aborted run's only account of a third party's failure.
+  const uncovered = releaseThirdPartyCapture(currentRunWarningList());
+  if (uncovered) process.stderr.write(`${uncovered}
+`);
   (hooks.sweep ?? sweepActiveHarnessDirs)();
   const timeoutMs = hooks.timeoutMs ?? FATAL_EXIT_WATCHDOG_MS;
   const exit = hooks.exit ?? ((code: number) => process.exit(code));
