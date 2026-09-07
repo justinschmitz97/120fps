@@ -83,6 +83,22 @@ export function propCombinationKey(props: PropCombination): string {
   );
 }
 
+// Combos that share a key are the same measurement to the probe, so one pass answers for all of
+// them; every combo still gets its own entry, and the combo list itself is untouched.
+export async function measureOncePerPropSet<T>(
+  combos: PropCombination[],
+  measure: (props: PropCombination, comboIndex: number) => Promise<T>,
+): Promise<Map<number, T>> {
+  const measured = new Map<string, T>();
+  const byCombo = new Map<number, T>();
+  for (let ci = 0; ci < combos.length; ci++) {
+    const key = propCombinationKey(combos[ci]);
+    if (!measured.has(key)) measured.set(key, await measure(combos[ci], ci));
+    byCombo.set(ci, measured.get(key)!);
+  }
+  return byCombo;
+}
+
 // What one arm of the callback-identity probe needs from the page; a fake bounds the pass's work.
 export interface CallbackProbePort {
   collectGarbage(): Promise<void>;
@@ -193,6 +209,29 @@ export function detectMemoBailouts(diff: ProfilerDiff): string[] {
   return diff.rerenderFibers
     .filter((f) => f.isMemo && isReportableComponent(f.name))
     .map((f) => f.name);
+}
+
+// The filter detectMemoBailouts applies, asked of the tree instead of of a diff over it.
+export function snapshotHasMemoFiber(snapshot: ProfilerSnapshot): boolean {
+  for (const fiber of snapshot.fibers.values()) {
+    if (fiber.isMemo && isReportableComponent(fiber.name)) return true;
+  }
+  return false;
+}
+
+// The second render the memo diff needs; the first snapshot is one the pass already took.
+export interface MemoProbePort {
+  rerenderAndCollect(): Promise<ProfilerSnapshot>;
+}
+
+// A tree with no memoized fiber has no bailout to find, and the diff would say so at a full
+// render's cost.
+export async function detectMemoBailoutsFromSnapshot(
+  snapshot: ProfilerSnapshot,
+  probe: MemoProbePort,
+): Promise<string[]> {
+  if (!snapshotHasMemoFiber(snapshot)) return [];
+  return detectMemoBailouts(diffSnapshots(snapshot, await probe.rerenderAndCollect()));
 }
 
 // The probe's memo boundary means only fibers that actually read the context re-render.
@@ -639,20 +678,24 @@ export async function runReactAnalysis(
     // Read before any measurement: a later baseline would hide the orphans this pass creates.
     const portalBaseline = await countBodyOrphans(page);
 
-    const deltasByPropSet = new Map<string, CallbackIdentityDelta[]>();
-
-    for (let ci = 0; ci < combos.length; ci++) {
+    const byCombo = await measureOncePerPropSet(combos, async (props, ci) => {
       inFlight.combo = ci;
-      const props = combos[ci];
 
+      // One window for the render attribution and the memo diff's first snapshot: the two ask for
+      // the same mount, and it is taken before the callback arms so the counts describe the
+      // component.
       await resetProfilerData(page);
       await mountAndWaitProbe(page, props);
       await rerenderProbe(page, props);
-      const snapA = await collectProfilerData(page);
-      await rerenderProbe(page, props);
-      const snapB = await collectProfilerData(page);
-      const memoDiff = diffSnapshots(snapA, snapB);
-      const memoBailoutComponents = detectMemoBailouts(memoDiff);
+      const fullSnap = await collectProfilerData(page);
+      const renderAttribution = computeRenderAttribution(fullSnap);
+
+      const memoBailoutComponents = await detectMemoBailoutsFromSnapshot(fullSnap, {
+        rerenderAndCollect: async () => {
+          await rerenderProbe(page, props);
+          return await collectProfilerData(page);
+        },
+      });
 
       await resetProfilerData(page);
       await mountAndWaitProbe(page, props);
@@ -668,49 +711,36 @@ export async function runReactAnalysis(
       const ctxDiff = diffSnapshots(ctxSnapA, ctxSnapB);
       const contextFanOutComponents = detectContextFanOut(ctxDiff);
 
-      // The probe renders the component alone, so combos passing equal props do identical work.
-      const propsKey = propCombinationKey(props);
-      let callbackIdentityDeltas = deltasByPropSet.get(propsKey);
-      if (!callbackIdentityDeltas) {
-        callbackIdentityDeltas = await measureCallbackIdentityDeltas(
-          {
-            collectGarbage: async () => {
-              await tryCollectGarbage(cdp);
-            },
-            mountWithStableCallbacks: (fnProp) =>
-              mountWithStableCallbacksProbe(page, props, fnProp),
-            measureRerender: async (fnProp, fresh) => {
-              const events = await collectTrace(cdp, async () => {
-                await page.evaluate(
-                  ([p, name, isFresh]: [any, string, boolean]) =>
-                    (window as any).__120fps[
-                      isFresh ? "rerenderWithFreshCallbacks" : "rerenderWithStableCallbacks"
-                    ](p, name),
-                  [serializeProps(props), fnProp, fresh] as [
-                    Record<string, unknown>,
-                    string,
-                    boolean,
-                  ],
-                );
-                await page.evaluate(
-                  () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))),
-                );
-              });
-              return parseTraceDuration(events).totalDuration;
-            },
+      const callbackIdentityDeltas = await measureCallbackIdentityDeltas(
+        {
+          collectGarbage: async () => {
+            await tryCollectGarbage(cdp);
           },
-          fnPropNames,
-          samples,
-        );
-        deltasByPropSet.set(propsKey, callbackIdentityDeltas);
-      }
-
-      // Its own window: counts that carried the callback arms described the pass, not the component.
-      await resetProfilerData(page);
-      await mountAndWaitProbe(page, props);
-      await rerenderProbe(page, props);
-      const fullSnap = await collectProfilerData(page);
-      const renderAttribution = computeRenderAttribution(fullSnap);
+          mountWithStableCallbacks: (fnProp) =>
+            mountWithStableCallbacksProbe(page, props, fnProp),
+          measureRerender: async (fnProp, fresh) => {
+            const events = await collectTrace(cdp, async () => {
+              await page.evaluate(
+                ([p, name, isFresh]: [any, string, boolean]) =>
+                  (window as any).__120fps[
+                    isFresh ? "rerenderWithFreshCallbacks" : "rerenderWithStableCallbacks"
+                  ](p, name),
+                [serializeProps(props), fnProp, fresh] as [
+                  Record<string, unknown>,
+                  string,
+                  boolean,
+                ],
+              );
+              await page.evaluate(
+                () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))),
+              );
+            });
+            return parseTraceDuration(events).totalDuration;
+          },
+        },
+        fnPropNames,
+        samples,
+      );
 
       const portalPost = await countBodyOrphans(page);
       const portalOrphans = computePortalOrphans(portalBaseline, portalPost);
@@ -728,8 +758,11 @@ export async function runReactAnalysis(
       if (detectDurationsUnavailable(fullSnap)) opts.durationsUnavailable = true;
       if (harness.reactCompiler?.active) opts.compilerActive = true;
 
-      results.set(ci, opts);
-    }
+      return opts;
+    });
+
+    // A copy per combo: the report writes each combo's findings under its own key.
+    for (const [ci, opts] of byCombo) results.set(ci, { ...opts });
 
     return results;
     });
