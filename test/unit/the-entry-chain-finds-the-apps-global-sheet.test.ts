@@ -250,3 +250,110 @@ describe("a stylesheet the project cannot compile itself", () => {
     expect(warnings.join("\n")).toContain("stylus");
   });
 });
+
+describe("a stylesheet import whose query says it is not a loaded sheet", () => {
+  it("keeps a bound import that only asks for the url", () => {
+    write("src/app.css", ".a { color: red; }");
+    const entry = write("src/main.tsx", 'import href from "./app.css?url";');
+    expect(entryStylesheetImports(entry, tmpDir, [])).toEqual([path.join(tmpDir, "src", "app.css")]);
+  });
+
+  it("drops a bound import asking for the source text", () => {
+    write("src/app.css", ".a { color: red; }");
+    const entry = write("src/main.tsx", 'import text from "./app.css?raw";');
+    expect(entryStylesheetImports(entry, tmpDir, [])).toEqual([]);
+  });
+
+  it("drops an import asking for the compiled string instead of a loaded sheet", () => {
+    write("src/app.css", ".a { color: red; }");
+    const entry = write("src/main.tsx", 'import css from "./app.css?inline";');
+    expect(entryStylesheetImports(entry, tmpDir, [])).toEqual([]);
+  });
+
+  it("drops a side-effect import with the same query", () => {
+    write("src/app.css", ".a { color: red; }");
+    const entry = write("src/main.tsx", 'import "./app.css?inline";');
+    expect(entryStylesheetImports(entry, tmpDir, [])).toEqual([]);
+  });
+
+  it("keeps a plain side-effect import that carries an unrelated query", () => {
+    write("src/app.css", ".a { color: red; }");
+    const entry = write("src/main.tsx", 'import "./app.css?used";');
+    expect(entryStylesheetImports(entry, tmpDir, [])).toEqual([path.join(tmpDir, "src", "app.css")]);
+  });
+
+  it("does not follow a module imported for its source text", () => {
+    write("src/worker.ts", "export const w = 1;");
+    const entry = write("src/main.tsx", 'import W from "./worker?worker";');
+    expect(entryModuleImports(entry, tmpDir, [])).toEqual([]);
+  });
+
+  it("never injects a raw-imported sheet as the app's global stylesheet", () => {
+    write("index.html", '<script type="module" src="/src/main.tsx"></script>');
+    write("src/main.tsx", 'import text from "./app.css?raw";');
+    write("src/app.css", ".a { color: red; }");
+    expect(discoverGlobalCss(tmpDir).source).not.toBe("entry");
+  });
+});
+
+describe("a nuxt config that names a package stylesheet", () => {
+  it("resolves it through the installed package", () => {
+    const pkgDir = path.join(tmpDir, "node_modules", "element-plus", "dist");
+    fs.mkdirSync(pkgDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(tmpDir, "node_modules", "element-plus", "package.json"),
+      JSON.stringify({ name: "element-plus", exports: { "./*": "./*" } }),
+    );
+    fs.writeFileSync(path.join(pkgDir, "index.css"), ".el { color: red; }");
+    write("nuxt.config.ts", 'export default defineNuxtConfig({ css: ["element-plus/dist/index.css"] });');
+    expect(nuxtConfigStylesheets(tmpDir)).toEqual([path.join(pkgDir, "index.css")]);
+  });
+
+  it("resolves an extensionless package entry the package exports as a stylesheet", () => {
+    const pkgDir = path.join(tmpDir, "node_modules", "vuetify");
+    fs.mkdirSync(pkgDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(pkgDir, "package.json"),
+      JSON.stringify({ name: "vuetify", exports: { "./styles": "./lib/styles/main.css" } }),
+    );
+    fs.mkdirSync(path.join(pkgDir, "lib", "styles"), { recursive: true });
+    fs.writeFileSync(path.join(pkgDir, "lib", "styles", "main.css"), ".v { color: red; }");
+    write("nuxt.config.ts", 'export default defineNuxtConfig({ css: ["vuetify/styles"] });');
+    expect(nuxtConfigStylesheets(tmpDir)).toEqual([path.join(pkgDir, "lib", "styles", "main.css")]);
+  });
+
+  it("collects the entries that resolve to nothing instead of dropping them silently", () => {
+    write("nuxt.config.ts", 'export default defineNuxtConfig({ css: ["@unocss/reset/tailwind.css"] });');
+    const unresolved: string[] = [];
+    expect(nuxtConfigStylesheets(tmpDir, [], unresolved)).toEqual([]);
+    expect(unresolved).toEqual(["@unocss/reset/tailwind.css"]);
+  });
+
+  it("says on the discovery line that a config entry resolved to no file", () => {
+    write("nuxt.config.ts", 'export default defineNuxtConfig({ css: ["@unocss/reset/tailwind.css"] });');
+    const searchNotesOut: string[] = [];
+    discoverGlobalCss(tmpDir, [], { searchNotesOut });
+    expect(searchNotesOut.join("\n")).toContain("@unocss/reset/tailwind.css");
+    expect(searchNotesOut.join("\n")).toContain("resolved to no file");
+  });
+});
+
+describe("a conventional filename whose sheet has no bodied rule", () => {
+  it("reports none found and names that sheet as the reason", () => {
+    write("app/globals.css", "@layer base;\n@import 'tailwindcss';\n");
+    const searchNotesOut: string[] = [];
+    const found = discoverGlobalCss(tmpDir, [], { searchNotesOut });
+    expect(found).toEqual({ files: [], source: "none" });
+    expect(searchNotesOut.join("\n")).toContain("app/globals.css");
+    expect(searchNotesOut.join("\n")).toContain("no CSS rule with a body of its own");
+    expect(searchNotesOut.join("\n")).toContain("Tailwind");
+  });
+
+  it("states the reason once, not once per layer that saw it", () => {
+    write("app/globals.css", "@layer base;\n@import 'tailwindcss';\n");
+    const searchNotesOut: string[] = [];
+    discoverGlobalCss(tmpDir, [], { searchNotesOut });
+    const named = searchNotesOut.filter((note) => note.startsWith("app/globals.css"));
+    expect(named).toHaveLength(1);
+  });
+});

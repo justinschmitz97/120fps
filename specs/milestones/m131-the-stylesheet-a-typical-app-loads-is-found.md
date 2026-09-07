@@ -93,15 +93,22 @@ The verifier for every item below: run-7 investigation (2026-09-06), refuted by 
   entry's own imports are followed one level, in source order, and any stylesheet reached that way
   is an entry stylesheet. A `.vue` module reached that way contributes what its `<script>` block
   imports; its `<style>` block is compiled with the component and is no injectable file.
+  The import's query decides whether it loads a sheet at all: `?raw`, `?inline`, `?worker` and
+  `?sharedworker` hand over a string or a constructor and are never injected, and a binding is
+  accepted only with no query or with `?url`.
 - **C2** The ranked walk does not stop at the first candidate it cannot preprocess. A candidate with
   no available preprocessor is skipped, the walk continues, and the reason that candidate was skipped
   is available to the disclosure.
 - **C3** `Stylesheets:` states only what the run actually did. When no sheet is found, the line names
-  the shapes that were searched and the reason each candidate was rejected — including "the only
-  stylesheet declares no bodied rules" for a Tailwind-only entry sheet.
+  the shapes that were searched and the reason each candidate was rejected — including "declares no
+  CSS rule with a body of its own -- it only pulls in Tailwind" for a Tailwind-only sheet, whichever
+  layer rejected it. A sheet a conventional filename found and the ranked walk then skipped states
+  its reason once, not once per layer.
 - **C4** A bare package stylesheet specifier resolves through the package's `exports` field including
   `"./*"` and `"./*.css"` patterns, and falls through to the on-disk probe when no pattern matches. A
   file that is genuinely absent is still reported as "resolved to no file", naming the specifier.
+  A `nuxt.config` `css:` entry naming a package (`element-plus/dist/index.css`, `vuetify/styles`)
+  resolves the same way; one that resolves to nothing is named on the discovery line.
 - **C5** The injected-sheet disclosure distinguishes three cases, and prints at most one line for
   the sheets that matched nothing. (a) Some injected sheet did match: the ones that did not collapse
   into a single line naming the count and up to three of them, with no `--wrap` advice, because a
@@ -118,7 +125,10 @@ The verifier for every item below: run-7 investigation (2026-09-06), refuted by 
 - **C8** A `.scss` or `.sass` stylesheet any layer reaches is injected when an implementation
   resolves for it, including the `sass` 120fps declares as its own dependency and Vite's fallback
   base resolves (M122). Only an extension with no implementation at all -- `.less`, `.styl` -- is
-  refused, naming the package the project would have to install.
+  refused, naming the package the project would have to install. When the injected sheet is the only
+  edge that needed that fallback, the run prints M122's disclosure for it, in M122's own wording and
+  from M122's own producer: after the project-transform classifier, only when that classifier
+  disclosed none, and never under `--no-transforms`. A run carries one Sass disclosure or none.
 - **C9** The size-ranked fallback never picks a Sass partial (`_name.scss`): Sass emits no stylesheet
   of its own for one, so no app loads it as its sheet. The reason is stated on the `Stylesheets:`
   line when the walk then finds nothing.
@@ -169,17 +179,17 @@ The verifier for every item below: run-7 investigation (2026-09-06), refuted by 
   `test/unit/sass-import-compiles-with-a-disclosed-compiler.test.ts`, then the full unit suite once
   before the lane's final commit.
 
-Recorded run of this milestone's verification, 2026-09-06 in `C:/Projekte/120fps-run7-lane-c`
-(node 22.22.2, pnpm 9.7.0, two other lanes and a smoke sharing the CPU):
+Recorded run of this milestone's verification, 2026-09-07 in `C:/Projekte/120fps-run7-lane-c` at
+`de41d6a` (the merged wave-1 tree), node 22.22.2, pnpm 9.7.0, other lanes sharing the CPU:
 
 ```
 node node_modules/typescript/bin/tsc -p tsconfig.json      # exit 0
 
-npx vitest run test/unit/the-entry-chain-finds-the-apps-global-sheet.test.ts   test/unit/an-exports-pattern-resolves-a-package-stylesheet.test.ts   test/unit/the-stylesheet-disclosure-says-which-pick-was-wrong.test.ts   test/unit/global-stylesheet-fallbacks.test.ts test/unit/css-injection.test.ts   test/unit/stylesheet-disclosure-completeness.test.ts   test/unit/stylesheet-selection-report.test.ts test/unit/entry-stylesheet-discovery.test.ts   test/unit/package-declared-stylesheets.test.ts   test/unit/stylesheet-candidate-validation.test.ts test/unit/css-injection-harden.test.ts   --maxWorkers=2
-# Test Files 11 passed (11); Tests 300 passed (300)
+npx vitest run test/unit/the-entry-chain-finds-the-apps-global-sheet.test.ts   test/unit/an-exports-pattern-resolves-a-package-stylesheet.test.ts   test/unit/the-stylesheet-disclosure-says-which-pick-was-wrong.test.ts   test/unit/global-stylesheet-fallbacks.test.ts test/unit/css-injection.test.ts   test/unit/stylesheet-disclosure-completeness.test.ts   test/unit/stylesheet-selection-report.test.ts test/unit/entry-stylesheet-discovery.test.ts   test/unit/package-declared-stylesheets.test.ts   test/unit/stylesheet-candidate-validation.test.ts test/unit/css-injection-harden.test.ts   test/unit/sass-import-compiles-with-a-disclosed-compiler.test.ts   test/unit/dry-run-prints-project-transform-warnings.test.ts test/unit/module-ratchets.test.ts   --maxWorkers=2
+# Test Files 14 passed (14); Tests 348 passed (348)
 
 npx vitest run test/unit --maxWorkers=2
-# Test Files 2 failed | 342 passed (344); Tests 2 failed | 4985 passed | 1 skipped (4988)
+# Test Files 2 failed | 364 passed (366); Tests 2 failed | 5192 passed | 1 skipped (5195)
 # The two failures are the recorded pre-existing ones: prop-cap-ranking.test.ts and
 # vue-setup-inject-evidence.test.ts. Baseline at f54be55: 341 files, 4918 passed, 2 failed.
 ```
@@ -206,6 +216,14 @@ node C:/Projekte/120fps-fieldtest/tools/run120.mjs --cwd <appDir>   --out C:/Pro
 | nuxt.com | `app/assets/css/main.css (largest-stylesheet fallback, …)` | `app/assets/css/main.css (found in the project entry's own imports)`, read from `nuxt.config.ts`'s literal `css:` array |
 | posthog | `src/lib/components/MarkdownNotebook/MarkdownNotebook.scss (largest-stylesheet fallback, …)` | unchanged — see Deferred |
 
+Re-recorded at `de41d6a` after the review fixes, logs under
+`C:/Projekte/120fps-fieldtest/logs/run7-lane-c-fix/<repo>/dry.log`: nextjs-boilerplate prints the
+same `none found (…)` line naming `src/styles/global.css`; logto prints the same five entry-chain
+sheets and exactly one Sass disclosure (`grep -c "falls through to the copy 120fps ships"` = 1);
+documenso still reads `app/root.tsx`'s bound `./app.css?url`, and soybean-admin still reaches
+`src/styles/css/global.css` one hop down. No corpus repository under `E:/repositories*` imports a
+stylesheet with `?inline` or `?raw`, so that shape is covered by unit fixtures only.
+
 The supabase disclosure was recorded on a real run, log
 `C:/Projekte/120fps-fieldtest/logs/run7-lane-c/supabase/real.log:79`:
 
@@ -229,6 +247,11 @@ Scaffolds, the most typical entry shapes, all dry runs
 | scaffold-t3 | `src/styles/globals.css (entry)` | unchanged |
 | scaffold-nuxt | (no candidate in run7-new1; measured `app/components/Greeting.vue`) | `none found (…no stylesheet file exists under this project)` — the scaffold ships none |
 
+A run's environment fingerprint includes the discovered stylesheet list, so a project whose
+discovered sheets change here compares against a baseline recorded under the old list and re-records
+rather than reporting a delta. That is the intended consequence of finding the right sheet: the
+numbers are not comparable across a different injected stylesheet set.
+
 ## Deferred
 
 - **mastodon's Rails asset pipeline.** Its stylesheets are compiled by Sprockets from
@@ -246,11 +269,13 @@ Scaffolds, the most typical entry shapes, all dry runs
   lives in that SFC's own `<style lang="scss">`, which the component compiles and no file can be
   injected for. The run now reports none found and names the two Sass partials it refused, which is
   true. Reaching it needs an entrypoint-directory shape and a rule for choosing among entrypoints.
+- **vue-vben-admin.** Its entry reaches its styles through a dynamic `import('./bootstrap')` and a
+  re-export chain, neither of which a static one-hop follow sees, and the measured package ships no
+  stylesheet file of its own: `@vben/styles` is a workspace package the bootstrap module imports two
+  hops down. Widening the walk to reach it is the transitive graph C1's bound excludes.
 - **posthog.** It has no discoverable entry: `frontend/src/index.html` is a Django template with no
   module script, the build is esbuild (`build.mjs`), and `~` is a webpack alias no tsconfig declares,
   so `import '~/styles'` resolves to nothing. The largest-stylesheet fallback stands.
-- **A Sass disclosure for an injected sheet only the bundled compiler can compile.** C8 lets such a
-  sheet through. The M122 disclosure is keyed on a preflight transform hit in the component's own
-  graph, so a run whose only `.scss` edge is the injected stylesheet compiles with 120fps's Sass and
-  says nothing. Adding a second disclosure here would break M122's "no more than one Sass disclosure
-  per run"; the fix belongs in M122's producer.
+- **A second Sass disclosure.** C8's disclosure is emitted only where the project-transform
+  classifier has already had its say, so a graph that names its own `.scss` edge keeps M122's
+  message with its true import chain, and the injected sheet adds nothing.

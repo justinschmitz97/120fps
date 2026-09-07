@@ -55,6 +55,8 @@ import {
   viteConfigIgnoredKeys,
 } from "./remedies.js";
 import {
+  BUNDLED_PREPROCESSOR_DISCLOSED,
+  bundledPreprocessorStylesheetWarning,
   stylesheetMatchWarnings,
   probeStylesheetMatchStats,
   resolveCssFiles,
@@ -355,6 +357,8 @@ export function runPreflightPhase(input: {
   progress: (line: string) => void;
   wrapPath?: string;
   vueCompiler?: VueSfcCompiler;
+  // The stylesheets this run injects, which no import edge of the measured graph names.
+  cssFiles?: string[];
 }): {
   providerCandidates: string[];
   transitiveProviderCandidates: string[];
@@ -399,6 +403,12 @@ export function runPreflightPhase(input: {
   // Named up front, and again if the run dies: an unappliable transform is the first suspect.
   for (const { hit, availability } of candidateTransformHits) {
     runWarnings.push(PROJECT_TRANSFORM_WARNING(hit, availability));
+  }
+  // The injected stylesheet is no edge of the measured graph, so the classifier above never sees
+  // it. Disclosed only when that classifier said nothing: one Sass disclosure per run.
+  if (!options.noTransforms && !runWarnings.some((w) => w.includes(BUNDLED_PREPROCESSOR_DISCLOSED))) {
+    const injected = bundledPreprocessorStylesheetWarning(input.cssFiles ?? [], projectRoot);
+    if (injected !== undefined) runWarnings.push(injected);
   }
   if (loadableTransforms.size > 0) {
     activeTransforms = [...loadableTransforms].sort();
