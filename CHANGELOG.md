@@ -1,8 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.8.0
 
-Field-test run 7 remediation, in progress: fifty repositories measured against 0.7.0 (`f54be55`),
+Field-test run 7 remediation: fifty repositories measured against 0.7.0 (`f54be55`),
 plus a further twenty-one new-repo diagnosis, closing eight clusters.
 A fatal page error or a same-origin module server error that lands before readiness now ends the
 run the moment it happens instead of waiting out the full bound, and the diagnosis that names the
