@@ -2,7 +2,11 @@ import { describe, it, expect, afterAll } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { detectProjectTransforms, HOISTED_TRANSFORM_WARNING } from "../../src/project/index.js";
+import {
+  detectProjectTransforms,
+  HOISTED_TRANSFORM_WARNING,
+  loadProjectTransformPlugins,
+} from "../../src/project/index.js";
 
 const PLUGIN = "@vitejs/plugin-vue";
 const created: string[] = [];
@@ -64,6 +68,26 @@ describe("resolving the Vue plugin a project never declares", () => {
     expect(entry?.hostPackage).toBe("nuxt");
     expect(entry?.resolveFrom).toBeDefined();
     expect(fs.existsSync(path.join(entry!.resolveFrom!, "package.json"))).toBe(true);
+  });
+
+  it("loads the plugin the framework's chain leads to", async () => {
+    const root = project({
+      "package.json": manifest("app", { nuxt: "^4.5.0" }),
+      "node_modules/nuxt/package.json": manifest("nuxt", { "@nuxt/vite-builder": "4.5.0" }),
+      "node_modules/nuxt/node_modules/@nuxt/vite-builder/package.json": manifest(
+        "@nuxt/vite-builder",
+        { [PLUGIN]: "^6.0.0" },
+      ),
+      [`node_modules/nuxt/node_modules/@nuxt/vite-builder/node_modules/${PLUGIN}/package.json`]:
+        JSON.stringify({ name: PLUGIN, version: "6.0.0", main: "index.js" }),
+      [`node_modules/nuxt/node_modules/@nuxt/vite-builder/node_modules/${PLUGIN}/index.js`]:
+        'module.exports = () => ({ name: "vite:vue-stub" });',
+    });
+    const entries = detectProjectTransforms(root, root);
+    const warnings: string[] = [];
+    const loaded = await loadProjectTransformPlugins(root, entries, (w) => warnings.push(w));
+    expect(warnings).toEqual([]);
+    expect(loaded.map((plugin) => (plugin as { name: string }).name)).toEqual(["vite:vue-stub"]);
   });
 
   it("keeps the direct declaration unchanged and free of a host", () => {

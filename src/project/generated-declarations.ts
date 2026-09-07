@@ -1,7 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import ts from "typescript";
-import { findWorkspaceRoot, isPackageAvailable } from "./model.js";
+import { installedPackageDir } from "./model.js";
+import { isVueFile } from "./vue-sfc.js";
 import { toPosix } from "../shared/index.js";
 
 // A name the project's own tooling wrote down, with the module it comes from.
@@ -66,8 +67,9 @@ export function GENERATED_MAP_SKIPPED_WARNING(file: string, skipped: readonly st
   const rest = skipped.length - shown.length;
   const tail = rest > 0 ? `, and ${rest} more` : "";
   return (
-    `${file}: ${skipped.length} entr${skipped.length === 1 ? "y names a module" : "ies name modules"} ` +
-    `that is not on disk, so ${skipped.length === 1 ? "it was" : "they were"} skipped ` +
+    `${file}: ${skipped.length} ` +
+    `entr${skipped.length === 1 ? "y names a module that is" : "ies name modules that are"} ` +
+    `not on disk, so ${skipped.length === 1 ? "it was" : "they were"} skipped ` +
     `(${shown.join(", ")}${tail}). Run the project's own build or type generation to refresh it.`
   );
 }
@@ -97,19 +99,79 @@ export function kebabCase(name: string): string {
     .toLowerCase();
 }
 
+// Vue resolves these itself, so a map entry whose kebab form collides with one is not that tag.
+const RESERVED_TAGS = new Set([
+  "slot", "component", "template", "transition", "transition-group", "teleport", "keep-alive",
+  "suspense",
+  "a", "abbr", "address", "area", "article", "aside", "audio", "b", "base", "bdi", "bdo", "big",
+  "blockquote", "body", "br", "button", "canvas", "caption", "circle", "cite", "clip-path", "code",
+  "col", "colgroup", "data", "datalist", "dd", "defs", "del", "details", "dfn", "dialog", "div",
+  "dl", "dt", "ellipse", "em", "embed", "fieldset", "figcaption", "figure", "footer", "form", "g",
+  "h1", "h2", "h3", "h4", "h5", "h6", "head", "header", "hgroup", "hr", "html", "i", "iframe",
+  "image", "img", "input", "ins", "kbd", "label", "legend", "li", "line", "link", "main", "map",
+  "mark", "marker", "mask", "menu", "meta", "meter", "nav", "noscript", "object", "ol", "optgroup",
+  "option", "output", "p", "param", "path", "pattern", "picture", "polygon", "polyline", "pre",
+  "progress", "q", "rect", "rp", "rt", "ruby", "s", "samp", "script", "search", "section", "select",
+  "small", "source", "span", "stop", "strong", "style", "sub", "summary", "sup", "svg", "table",
+  "tbody", "td", "text", "textarea", "tfoot", "th", "thead", "time", "title", "tr", "track",
+  "tspan", "u", "ul", "use", "var", "video", "wbr",
+]);
+
+// The blocks a single-file component is written in; a file with neither is all script.
+function sfcBlocks(source: string): { script: string; template: string } {
+  const scripts = [...source.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script\s*>/gi)].map((m) => m[1]);
+  const opening = /<template\b[^>]*>/i.exec(source);
+  if (scripts.length === 0 && !opening) return { script: source, template: "" };
+  let template = "";
+  if (opening && opening.index !== undefined) {
+    const from = opening.index + opening[0].length;
+    const to = source.lastIndexOf("</template>");
+    template = to > from ? source.slice(from, to) : source.slice(from);
+  }
+  return { script: scripts.join("\n"), template };
+}
+
+// Element names the template writes; a commented-out tag renders nothing and is not one.
+function templateTags(template: string): Set<string> {
+  const body = template.replace(/<!--[\s\S]*?-->/g, "");
+  const tags = new Set<string>();
+  for (const match of body.matchAll(/<\/?([A-Za-z][\w.-]*)/g)) tags.add(match[1]);
+  return tags;
+}
+
+// A name the measured component reaches for: a tag it writes, or a free binding in its script.
+// An imported name, a local declaration and a tag Vue resolves itself are none of those.
 export function deferredComponentsUsedBy(source: string, deferred: readonly string[]): string[] {
-  const words = new Set(source.match(WORD) ?? []);
-  const tags = new Set(
-    (source.match(/<\/?[a-z][\w-]*/g) ?? []).map((tag) => tag.replace(/^<\/?/, "")),
-  );
-  return deferred.filter((name) => words.has(name) || tags.has(kebabCase(name)));
+  const { script, template } = sfcBlocks(source);
+  const tags = templateTags(template);
+  const jsx = /<script[^>]*\blang=["'](?:t|j)sx["']/i.test(source);
+  const free =
+    script.length > 0 ? freeIdentifiers(script, jsx ? "block.tsx" : "block.ts") : new Set<string>();
+  return deferred.filter((name) => {
+    if (tags.has(name)) return true;
+    const kebab = kebabCase(name);
+    if (tags.has(kebab) && !RESERVED_TAGS.has(kebab)) return true;
+    return free.has(name);
+  });
+}
+
+// The whole decision in one place: a component that reaches for none of them gets no line.
+export function deferredComponentsWarning(
+  source: string,
+  map: ResolvedDeclarationMap,
+): string | undefined {
+  if (map.deferred.length === 0) return undefined;
+  const reached = deferredComponentsUsedBy(source, map.deferred);
+  if (reached.length === 0) return undefined;
+  return DEFERRED_COMPONENTS_WARNING(map.file, reached, map.deferred.length);
 }
 
 export function AUTO_IMPORT_DISCLOSURE(file: string, count: number): string {
   return (
     `${file} maps ${count} auto-imported identifier${count === 1 ? "" : "s"}; the harness ` +
-    "prepends the import to a module in this component's own graph that references one without " +
-    "importing it."
+    "prepends the import to the script block of a module in this component's own graph that " +
+    "references one without importing it. A template-only reference is left to Vue's own " +
+    "resolution and is not supplied."
   );
 }
 
@@ -136,7 +198,7 @@ export function parseDeclarationMap(source: string, fileName: string): DeclaredN
       for (const declaration of node.declarationList.declarations) {
         if (ts.isIdentifier(declaration.name)) record(declaration.name.text, declaration.type);
       }
-    } else if (ts.isInterfaceDeclaration(node)) {
+    } else if (ts.isInterfaceDeclaration(node) && node.name.text === "GlobalComponents") {
       for (const member of node.members) {
         if (!ts.isPropertySignature(member)) continue;
         const key = propertyName(member.name);
@@ -259,7 +321,6 @@ export function isProjectSourceFile(target: string, projectRoot: string): boolea
 
 function readDeclarationMap(
   projectRoot: string,
-  workspaceRoot: string,
   candidates: readonly string[],
   projectSourceOnly = false,
 ): ResolvedDeclarationMap | undefined {
@@ -284,7 +345,7 @@ function readDeclarationMap(
       deferred.push(entry.name);
       continue;
     }
-    if (isPackageAvailable(packageNameOf(entry.module), projectRoot, workspaceRoot)) {
+    if (installedPackageDir(packageNameOf(entry.module), projectRoot)) {
       names.push({ ...entry, target: entry.module, targetIsFile: false });
     } else {
       skipped.push(entry.name);
@@ -295,22 +356,33 @@ function readDeclarationMap(
 
 export function readComponentDeclarationMap(
   projectRoot: string,
-  workspaceRoot: string = findWorkspaceRoot(projectRoot),
 ): ResolvedDeclarationMap | undefined {
-  return readDeclarationMap(projectRoot, workspaceRoot, COMPONENT_MAP_FILES, true);
+  return readDeclarationMap(projectRoot, COMPONENT_MAP_FILES, true);
 }
 
 export function readAutoImportDeclarationMap(
   projectRoot: string,
-  workspaceRoot: string = findWorkspaceRoot(projectRoot),
 ): ResolvedDeclarationMap | undefined {
-  return readDeclarationMap(projectRoot, workspaceRoot, AUTO_IMPORT_MAP_FILES);
+  return readDeclarationMap(projectRoot, AUTO_IMPORT_MAP_FILES);
 }
 
-// What a mount abort quotes when it names an identifier nothing defined.
+// The files whose contents decide what the harness resolves, for the run's own fingerprint.
+export function generatedDeclarationMapFiles(projectRoot: string, componentPath: string): string[] {
+  if (!isVueFile(componentPath)) return [];
+  return [
+    findDeclarationMap(projectRoot, COMPONENT_MAP_FILES),
+    findDeclarationMap(projectRoot, AUTO_IMPORT_MAP_FILES),
+  ].filter((file): file is string => file !== undefined);
+}
+
+// What a mount abort quotes when it names an identifier nothing defined. A run that read no map
+// has none to quote, so the gate the harness applies decides whether there is evidence at all.
 export function autoImportMapEvidence(
   projectRoot: string,
+  componentPath: string,
+  noTransforms?: boolean,
 ): { autoImportMap: { file: string; names: string[] } } | undefined {
+  if (noTransforms === true || !isVueFile(componentPath)) return undefined;
   const map = readAutoImportDeclarationMap(projectRoot);
   if (!map) return undefined;
   return { autoImportMap: { file: map.file, names: map.names.map((entry) => entry.name) } };

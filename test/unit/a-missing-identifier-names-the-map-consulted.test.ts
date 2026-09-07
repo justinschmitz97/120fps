@@ -41,12 +41,14 @@ describe("an undefined identifier reports the map the run consulted", () => {
 
 describe("the evidence a run collects for that hint", () => {
   it("reads the project's own map", () => {
-    const evidence = autoImportMapEvidence(path.resolve("fixtures/vue-auto-imports-map"));
+    const root = path.resolve("fixtures/vue-auto-imports-map");
+    const evidence = autoImportMapEvidence(root, path.join(root, "src", "components", "UsesCounter.vue"));
     expect(evidence?.autoImportMap.file).toContain("auto-imports.d.ts");
-    expect(evidence?.autoImportMap.names).toContain("useCounter");
+    expect(evidence?.autoImportMap.names).toContain("useLocal");
   });
 
   it("reports nothing for a project without one", () => {
-    expect(autoImportMapEvidence(path.resolve("fixtures/vue-no-generated-map"))).toBeUndefined();
+    const root = path.resolve("fixtures/vue-no-generated-map");
+    expect(autoImportMapEvidence(root, path.join(root, "Plain.vue"))).toBeUndefined();
   });
 });

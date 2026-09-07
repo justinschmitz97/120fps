@@ -12,3 +12,10 @@ declare module 'vue' {
     TheCounter: typeof import('./src/components/TheCounter.vue')['default']
   }
 }
+
+/* prettier-ignore */
+declare module 'vue' {
+  export interface GlobalDirectives {
+    vFocus: typeof import('element-plus/es')['ElInfiniteScroll']
+  }
+}

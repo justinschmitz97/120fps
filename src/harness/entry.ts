@@ -251,16 +251,33 @@ export interface GlobalComponentRegistration {
 }
 
 // Lazy by construction: a map of hundreds of names costs one resolve each and no evaluation.
+// The page reports a failed registration on this prefix; the run reads it back off page errors.
+export const COMPONENT_LOAD_FAILURE_PREFIX = "[120fps] registered component";
+
 export function vueGlobalComponentBlock(
   registrations: readonly GlobalComponentRegistration[],
 ): string {
   if (registrations.length === 0) return "";
   const lines = registrations.map(
     ({ name, specifier, exportName }) =>
-      `  app.component(${JSON.stringify(name)}, defineAsyncComponent(() => import(` +
-      `${JSON.stringify(specifier)}).then((m: any) => m[${JSON.stringify(exportName)}] ?? m.default ?? m)));`,
+      `  app.component(${JSON.stringify(name)}, defineAsyncComponent({\n` +
+      `    loader: () => import(${JSON.stringify(specifier)})` +
+      `.then((m: any) => m[${JSON.stringify(exportName)}] ?? m.default ?? m),\n` +
+      `    onError: (err: any, _retry: any, fail: any) => {\n` +
+      `      __120fpsComponentLoadFailed(${JSON.stringify(name)}, err);\n` +
+      `      fail(err);\n` +
+      `    },\n` +
+      `  }));`,
   );
-  return `const __120fpsRegisterGlobals = (app: any) => {
+  // Reported through the page-error channel the run already collects, once per component.
+  return `const __120fpsLoadFailures: Record<string, string> = {};
+const __120fpsComponentLoadFailed = (name: string, err: any): void => {
+  if (name in __120fpsLoadFailures) return;
+  __120fpsLoadFailures[name] = err && err.message ? String(err.message) : String(err);
+  console.error(${JSON.stringify(COMPONENT_LOAD_FAILURE_PREFIX)} + " " + name +
+    " failed to load: " + __120fpsLoadFailures[name]);
+};
+const __120fpsRegisterGlobals = (app: any) => {
 ${lines.join("\n")}
 };
 `;

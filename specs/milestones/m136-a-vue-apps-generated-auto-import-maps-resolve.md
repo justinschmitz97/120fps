@@ -8,6 +8,7 @@ tests:
   - test/unit/an-auto-import-map-supplies-a-free-identifier.test.ts
   - test/unit/a-missing-identifier-names-the-map-consulted.test.ts
   - test/unit/a-vue-file-is-covered-by-its-referenced-config.test.ts
+  - test/unit/a-registered-component-that-cannot-load-is-named.test.ts
 ---
 
 # M136: a Vue app's generated auto-import maps resolve its components and composables
@@ -105,14 +106,33 @@ advances M123's "nuxt.com must still reach the browser".
   class, reported only when the measured component's own source references one of them: the run
   names those, counts the rest, and says why a dependency's component is not registered. A run whose
   component reaches for none of them prints no line, because none of them changes what it renders.
+- **C14** A name the measured component reaches for is a tag its `<template>` block writes, or a
+  binding its script block leaves free. An imported name, a name the script declares, a name only a
+  template comment or a script string spells, and a tag Vue resolves itself (a native HTML element,
+  `slot`, `component`, `template`, `transition`, `teleport`, `keep-alive`, `suspense`) are none of
+  those. The verifier for the gap: wg-easy's `app/components/Form/Label.vue` was reported as
+  referencing `Label` and `Slot`, where `Label` occurs only inside
+  `import { Label as RLabel } from 'reka-ui'` and `Slot` only as `<slot />`.
+- **C15** A registered component the browser cannot fetch is named. It renders nothing and throws
+  no render error, so the entry logs one line per component on the page-error channel the run
+  already collects, and the report carries one warning naming each component, its error, and that
+  the numbers describe a tree without it.
+- **C16** Both map files join the run's source fingerprint (`src/pipeline/phases.ts`,
+  `getSourceFingerprint`) and the report records them under `generatedMaps`. Regenerating a map
+  changes which components and identifiers resolve, so a cached verdict for the previous table is
+  not reused. `--no-transforms` leaves both out, because the run reads neither.
 
 ### Stage 3 — an auto-import map supplies a free identifier
 
-- **C6** When a Vue project has an auto-import declaration map on disk (`auto-imports.d.ts`, or the
-  path the project's config writes it to, including `types/auto-imports.d.ts`), the harness parses it
-  into `identifier → { module, exportName }` and, through a harness-owned Vite plugin in the list at
-  `src/harness/build.ts:267`, prepends the corresponding import to a module that references the
-  identifier freely.
+- **C6** When a Vue project has an auto-import declaration map on disk (`auto-imports.d.ts`,
+  `src/auto-imports.d.ts`, `types/auto-imports.d.ts`, `src/types/auto-imports.d.ts` or
+  `app/auto-imports.d.ts`, searched in that order), the harness parses it into
+  `identifier -> { module, exportName }` and, through a harness-owned Vite plugin in the harness's
+  own plugin list, prepends the corresponding import to the script of a module that references the
+  identifier freely. The plugin is added only when the Vue transform itself loaded: without it
+  nothing turns an SFC into a module to prepend an import to. An entry whose module is a package
+  resolves only when that package is installed on the project's resolution chain, never merely
+  because the manifest declares it (ADR 0006 item 4).
 - **C7** The transform is scoped to the measured component's own module graph. A file outside that
   graph, a file in `node_modules`, and a file that already imports or declares the identifier are all
   left untouched.
@@ -126,8 +146,9 @@ advances M123's "nuxt.com must still reach the browser".
 ### Stage 4 — the hint names the map
 
 - **C9** When an identifier is still undefined at render time, the hint names the map file the run
-  consulted and whether the identifier was in it. `vitePluginsNotExecuted`
-  (`src/report/hints.ts:227-237`) keeps its meaning and gains that sentence.
+  consulted and whether the identifier was in it. `vitePluginsNotExecuted` (`src/report/hints.ts`)
+  keeps its meaning and gains that sentence. A run that read no map has none to name: the hint says
+  so for a React component and under `--no-transforms`, instead of claiming a table it never used.
 
 ### Across all stages
 
@@ -209,6 +230,16 @@ advances M123's "nuxt.com must still reach the browser".
   directory, resolves and transforms an SFC; a fixture that declares the plugin directly is unchanged;
   a fixture where the plugin exists only via hoisting still warns; a fixture with no plugin anywhere
   produces today's refusal.
+- **C14** — `test/unit/a-components-map-registers-its-components.test.ts`, "deciding which deferred
+  names a component reaches for": the wg-easy `Form/Label.vue` shape names none of them; a template
+  tag in either case form names one; a native element, a Vue built-in, an imported name, a local
+  declaration, a template comment and a script string each name none.
+- **C15** — `test/unit/a-registered-component-that-cannot-load-is-named.test.ts`: the entry
+  registers with an `onError` that logs the prefixed line; the line is read back off a combo and off
+  a curve point, deduped across both; an ordinary page error yields nothing; the warning names each
+  component and its error.
+- **C16** — same file: the map files a Vue component's run resolves through are listed, and a React
+  component and a project without a map list none.
 - **C3, C4, C5** — `test/unit/a-components-map-registers-its-components.test.ts`: a `components.d.ts`
   with a project-source entry, a dependency entry and an unresolvable entry registers the first,
   defers the second by name and skips the third by name; `.nuxt/components.d.ts` is parsed with the
@@ -249,98 +280,46 @@ Recorded run of this milestone's verification:
 $ node node_modules/typescript/bin/tsc --noEmit -p tsconfig.json
 (no output, exit 0)
 
-$ npx vitest run     test/unit/the-vue-plugin-resolves-through-its-host-framework.test.ts     test/unit/a-components-map-registers-its-components.test.ts     test/unit/an-auto-import-map-supplies-a-free-identifier.test.ts     test/unit/a-missing-identifier-names-the-map-consulted.test.ts     test/unit/a-vue-file-is-covered-by-its-referenced-config.test.ts     test/unit/module-ratchets.test.ts test/unit/module-boundaries.test.ts --maxWorkers=2
- Test Files  7 passed (7)
-      Tests  51 passed (51)
+$ npx vitest run     test/unit/the-vue-plugin-resolves-through-its-host-framework.test.ts     test/unit/a-components-map-registers-its-components.test.ts     test/unit/an-auto-import-map-supplies-a-free-identifier.test.ts     test/unit/a-missing-identifier-names-the-map-consulted.test.ts     test/unit/a-vue-file-is-covered-by-its-referenced-config.test.ts     test/unit/a-registered-component-that-cannot-load-is-named.test.ts --maxWorkers=2
+ Test Files  6 passed (6)
+      Tests  71 passed (71)
 
-$ npx vitest run test/unit/vue-support.test.ts test/unit/project-transforms.test.ts     test/unit/nuxt-app-is-refused-or-reaches-the-first-measurement.test.ts     test/unit/nuxt-diagnosis-requires-nuxt.test.ts     test/unit/entry-selects-exports-at-runtime.test.ts test/unit/hints.test.ts     test/unit/mount-abort-hints-name-read-evidence.test.ts     test/unit/explain-props-parity.test.ts test/unit/a-tsconfig-is-parsed-once-per-path.test.ts     test/unit/module-boundaries.test.ts test/unit/module-ratchets.test.ts --maxWorkers=2
- Test Files  11 passed (11)
-      Tests  168 passed (168)
+$ npx vitest run test/unit/module-ratchets.test.ts test/unit/module-boundaries.test.ts     test/unit/hints.test.ts test/unit/mount-abort-hints-name-read-evidence.test.ts     test/unit/project-transforms.test.ts     test/unit/nuxt-app-is-refused-or-reaches-the-first-measurement.test.ts     test/unit/entry-selects-exports-at-runtime.test.ts --maxWorkers=2
+ Test Files  7 passed (7)
+      Tests  83 passed (83)
 
 $ npx vitest run test/unit --maxWorkers=2
- Test Files  2 failed | 369 passed (371)
-      Tests  2 failed | 5214 passed | 1 skipped (5217)
-   Duration  384.81s
+ Test Files  2 failed | 375 passed (377)
+      Tests  2 failed | 5334 passed | 1 skipped (5337)
+   Duration  472.12s
 # the two failures are the recorded pre-existing pair, confirmed in isolation:
 $ npx vitest run test/unit/prop-cap-ranking.test.ts test/unit/vue-setup-inject-evidence.test.ts
  Test Files  2 failed (2)
       Tests  2 failed | 6 passed (8)
 ```
 
-Corpus results, `dist` built in `C:/Projekte/120fps-run7-lane-g`, profile
+Corpus results, `dist` built in `C:/Projekte/120fps-run7-lane-g` at the review-fix commit, profile
 `--samples 3 --max-combos 2 --explore-budget 30 --no-deltas`, logs under
 `C:/Projekte/120fps-fieldtest/logs/run7-lane-g/<repo>/`:
 
 | Repo | Component | Baseline | Observed | Stage |
 |---|---|---|---|---|
-| wg-easy | `app/components/Form/Label.vue` | setup-error, exit 2, 93 s | **PASS**, exit 0, 17.9 s; no hoisting warning; 206 project components registered from `src/.nuxt/components.d.ts`, and `Label, Slot` named as reached-for entries inside a dependency | 1 |
-| scaffold-nuxt | `app/components/Greeting.vue` | pass with "found via a hoisted transitive install" | **PASS**, exit 0, 12.0 s; hoisting warning gone; `no referenced config covers` gone, replaced by `.nuxt/tsconfig.app.json covers app/components/Greeting.vue and supplies paths, jsxImportSource` | 1, C13 |
-| nuxt.com | `app/components/content/Carousel.vue` | setup-error, exit 2, 37 s; log never names `UCarousel` | exit 2, 46 s, same `Cannot destructure property 'item'` abort, and the run now names it: `.nuxt/components.d.ts maps ProseImg, UCarousel, which this component's source references, to modules inside a dependency ... 600 further entries are in the same class.` | 2, C12 |
-| vitesse | `src/components/TheCounter.vue` | diagnosed-error, exit 2, 4 s (`useCounter is not defined`) | **PASS**, exit 0, 46.2 s; 4 DOM nodes, 9 interactions; `src/auto-imports.d.ts maps 305 auto-imported identifiers` | 3 |
-| vue3-element-admin | `src/components/Fullscreen/index.vue` | diagnosed-error, exit 2, 6 s | **PASS**, exit 0, 16.8 s; `types/auto-imports.d.ts maps 296 auto-imported identifiers`, 40 components registered | 3 |
-| it-tools | `src/ui/c-modal/c-modal.demo.vue` | diagnosed-error, exit 2, 4 s | **PASS**, exit 0, 14.1 s; 153 components registered, 280 identifiers available. The run also discloses a page error from the project's own `c-button.vue`, `Cannot access 'size' before initialization`; `size` is absent from `auto-imports.d.ts`, so the injector cannot be its source, and the earlier abort had hidden it. | 3 |
-| uptime-kuma (control) | `src/components/Tag.vue` | setup-error, exit 2 | unchanged class: setup-error, exit 2, 12 s, now carrying M129's `sass 1.42.1 ... does not define compileStringAsync` diagnosis | control |
-| vue-pure-admin (control) | `src/views/components/slider/components/Input.vue` | pass-warn, exit 0 | unchanged: PASS, exit 0, 48.1 s, 4 warnings, no map lines (the project has no generated map at a searched path) | control |
+| wg-easy | `app/components/Form/Label.vue` | setup-error, exit 2, 93 s | **PASS**, exit 0, 17.0 s; no hoisting warning; 206 project components registered from `src/.nuxt/components.d.ts`; no deferred line, because the map's `Label` occurs in this component only inside `import { Label as RLabel }` and `Slot` only as `<slot />` (C14) | 1 |
+| scaffold-nuxt | `app/components/Greeting.vue` | pass with "found via a hoisted transitive install" | **PASS**, exit 0, 10.9 s; hoisting warning gone; `no referenced config covers` gone, replaced by `.nuxt/tsconfig.app.json covers app/components/Greeting.vue and supplies paths, jsxImportSource`; 2 components registered | 1, C13 |
+| nuxt.com | `app/components/content/Carousel.vue` | setup-error, exit 2, 37 s; log never names `UCarousel` | exit 2, 48 s, same `Cannot destructure property 'item'` abort; 192 project components registered, and the run names what it declined: `.nuxt/components.d.ts maps ProseImg, UCarousel, which this component's source references, to modules inside a dependency … 600 further entries are in the same class.` Both tags are written in this SFC's `<template>` (`:9` and `:8`). | 2, C12 |
+| vitesse | `src/components/TheCounter.vue` | diagnosed-error, exit 2, 4 s (`useCounter is not defined`) | **PASS**, exit 0, 39.5 s; 4 DOM nodes, 9 interactions; `src/auto-imports.d.ts maps 305 auto-imported identifiers`, 3 components registered, 1 entry skipped (`README`, a `.md` module) | 3 |
+| vue3-element-admin | `src/components/Fullscreen/index.vue` | diagnosed-error, exit 2, 6 s | **PASS**, exit 0, 12.8 s; `types/auto-imports.d.ts maps 296 auto-imported identifiers`, 40 components registered | 3 |
+| it-tools | `src/ui/c-modal/c-modal.demo.vue` | diagnosed-error, exit 2, 4 s | **PASS**, exit 0, 11.0 s; 153 components, 280 identifiers; `generatedMaps` in the report names both files (C16). The run also discloses a page error from the project's own `src/ui/c-button/c-button.vue:51`, `Cannot access 'size' before initialization`; `size` appears in no entry of `auto-imports.d.ts`, so the injector cannot be its source, and the earlier abort had hidden it. | 3 |
+| uptime-kuma (control) | `src/components/Tag.vue` | setup-error, exit 2 | unchanged class: setup-error, exit 2, 5 s, carrying M129's `sass 1.42.1 … does not define it. Install sass 1.45.0 or newer` diagnosis; no map lines | control |
+| vue-pure-admin (control) | `src/views/components/slider/components/Input.vue` | pass-warn, exit 0 | unchanged: PASS, exit 0, 25.6 s, 4 warnings, `generatedMaps` absent (the project has no generated map at a searched path) | control |
+
+No repository in the corpus produced a `could not be loaded by the browser` warning (C15) after stage 2
+was re-scoped, which is the expected result: every registered module is now a file in the project's
+own source tree.
 
 `git status --porcelain` in every target repository is unchanged by these runs. `vue3-element-admin`
 (`pnpm-lock.yaml`) and `uptime-kuma` (`package-lock.json`) carry a pre-existing lockfile edit that
 predates the lane.
-
-Corpus repros, through a `dist` built in `C:/Projekte/120fps-run7-lane-g`:
-
-```
-# stage 1
-node C:/Projekte/120fps-fieldtest/tools/run120.mjs \
-  --cwd E:/repositories-run7/wg-easy/src \
-  --out C:/Projekte/120fps-fieldtest/logs/run7-lane-g/wg-easy \
-  --label m136-wg-easy --cli C:/Projekte/120fps-run7-lane-g/dist/cli/main.js \
-  -- app/components/Form/Label.vue --samples 3 --max-combos 2 --explore-budget 30 --no-deltas
-# expected: the SFC compiles (baseline: 500 -> readiness timeout, exit 2, 93 s)
-
-node C:/Projekte/120fps-fieldtest/tools/run120.mjs \
-  --cwd E:/repositories-run7/scaffold-nuxt \
-  --out C:/Projekte/120fps-fieldtest/logs/run7-lane-g/scaffold-nuxt \
-  --label m136-scaffold-nuxt --cli C:/Projekte/120fps-run7-lane-g/dist/cli/main.js \
-  -- app/components/Greeting.vue --samples 3 --max-combos 2 \
-     --explore-budget 30 --no-deltas
-# expected: passes with no "hoisted transitive install" warning.
-#   Note: smoke/run7-new1/scaffold-nuxt.json records class `no-candidate` with an empty
-#   candidates array; the component above and the baseline behaviour come from the
-#   investigator's manual run, not from the smoke row.
-
-# stage 2
-node C:/Projekte/120fps-fieldtest/tools/run120.mjs \
-  --cwd E:/repositories-run6/nuxt.com \
-  --out C:/Projekte/120fps-fieldtest/logs/run7-lane-g/nuxt.com \
-  --label m136-nuxt-com --cli C:/Projekte/120fps-run7-lane-g/dist/cli/main.js \
-  -- app/components/content/Carousel.vue --samples 3 --max-combos 2 --explore-budget 30 --no-deltas
-# observed: C12 fired; the run stops on the same abort as the baseline and now names UCarousel
-#           and .nuxt/components.d.ts
-
-# stage 3
-node C:/Projekte/120fps-fieldtest/tools/run120.mjs \
-  --cwd E:/repositories-run5/vitesse \
-  --out C:/Projekte/120fps-fieldtest/logs/run7-lane-g/vitesse \
-  --label m136-vitesse --cli C:/Projekte/120fps-run7-lane-g/dist/cli/main.js \
-  -- src/components/TheCounter.vue --samples 3 --max-combos 2 --explore-budget 30 --no-deltas
-# expected: reaches a report; useCounter resolves via src/auto-imports.d.ts (baseline exit 2, 4 s)
-
-node C:/Projekte/120fps-fieldtest/tools/run120.mjs \
-  --cwd E:/repositories-run6/vue3-element-admin \
-  --out C:/Projekte/120fps-fieldtest/logs/run7-lane-g/vue3-element-admin \
-  --label m136-vue3-element-admin --cli C:/Projekte/120fps-run7-lane-g/dist/cli/main.js \
-  -- src/components/Fullscreen/index.vue --samples 3 --max-combos 2 --explore-budget 30 --no-deltas
-# expected: reaches a report (baseline exit 2, 6 s)
-
-node C:/Projekte/120fps-fieldtest/tools/run120.mjs \
-  --cwd E:/repositories-run7/it-tools \
-  --out C:/Projekte/120fps-fieldtest/logs/run7-lane-g/it-tools \
-  --label m136-it-tools --cli C:/Projekte/120fps-run7-lane-g/dist/cli/main.js \
-  -- src/ui/c-modal/c-modal.demo.vue --samples 3 --max-combos 2 --explore-budget 30 --no-deltas
-# expected: reaches a report (baseline exit 2, 4 s)
-
-# controls: uptime-kuma, soybean-admin, vue-pure-admin unchanged from run7-smoke1 / run7-new1
-```
 
 ## Deferred
 
