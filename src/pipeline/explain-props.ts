@@ -37,6 +37,7 @@ import {
 import {
   CURVE_NOT_ACTIVATED_WARNING,
   formatStylesheetsLine,
+  repeatsPrintedProjectNote,
   formatPhaseDuration,
   dedupeWarnings,
 } from "../report/index.js";
@@ -607,10 +608,12 @@ export function formatExplainProps(explained: PropsExplanation): string {
     );
   }
 
-  if (explained.warnings.length > 0) {
+  // The list stays whole; the terminal states a project-level note once per invocation.
+  const printable = explained.warnings.filter((w) => !repeatsPrintedProjectNote(w));
+  if (printable.length > 0) {
     lines.push("");
     lines.push("Warnings:");
-    for (const warning of explained.warnings) lines.push(`  ${warning}`);
+    for (const warning of printable) lines.push(`  ${warning}`);
   }
 
   lines.push("");

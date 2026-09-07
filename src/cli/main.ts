@@ -201,6 +201,9 @@ async function main(): Promise<void> {
       } catch (err: unknown) {
         failed = true;
         process.stderr.write(formatCliError(err, process.env.DEBUG));
+      } finally {
+        // One candidate is one run: candidate 2's own list carries the project's config note too.
+        resetPreBuildDisclosures();
       }
     }
     process.exit(failed ? 2 : 0);

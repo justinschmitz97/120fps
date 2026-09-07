@@ -7,6 +7,8 @@ import {
   readViteConfigData,
   resetPreBuildDisclosures,
 } from "../../src/harness/index.js";
+import { appendWarnings, resetPrintedProjectNotes, type Report } from "../../src/report/index.js";
+import { formatExplainProps, type PropsExplanation } from "../../src/pipeline/index.js";
 
 let tmpDir: string;
 
@@ -142,8 +144,61 @@ describe("a computed plugins expression in a vite config", () => {
   });
 });
 
-describe("the project-level vite-config note across a multi-candidate dry run", () => {
-  it("is produced once per project, not once per candidate", () => {
+describe("the project-level vite-config note across the components one invocation walks", () => {
+  function withPluginConfig(): void {
+    writeConfig(["export default defineConfig({", "  plugins: [react()],", "});"].join("\n"));
+  }
+
+  function warningsFor(component: string): string[] {
+    // One component is one run; the CLI clears the ledger between them in both modes.
+    resetPreBuildDisclosures();
+    return collectStaticPreBuildWarnings(tmpDir, {
+      componentPath: path.join(tmpDir, component),
+    }).warnings;
+  }
+
+  it("is in every component's own warning list, dry run and real run alike", () => {
+    withPluginConfig();
+    for (const component of ["Card.tsx", "Badge.tsx"]) {
+      expect(warningsFor(component).some((w) => w.includes("cannot honor"))).toBe(true);
+    }
+  });
+
+  it("is printed once per invocation however many reports carry it", () => {
+    resetPrintedProjectNotes();
+    const note =
+      "vite.config.ts declares plugins the harness cannot honor: react — " +
+      "the project's Vite config is never executed";
+    const first: string[] = [];
+    const second: string[] = [];
+    appendWarnings(first, { warnings: [note, "measured 2 of 3 prop combos"] } as unknown as Report);
+    appendWarnings(second, { warnings: [note, "measured 2 of 3 prop combos"] } as unknown as Report);
+    expect(first.filter((l) => l.includes("cannot honor"))).toHaveLength(1);
+    expect(second.filter((l) => l.includes("cannot honor"))).toHaveLength(0);
+    // A per-component warning is about that component, so it prints for each of them.
+    expect(second.filter((l) => l.includes("measured 2 of 3"))).toHaveLength(1);
+  });
+
+  it("is printed once across a dry run's candidate blocks too", () => {
+    resetPrintedProjectNotes();
+    const note =
+      "vite.config.ts declares plugins the harness cannot honor: react — " +
+      "the project's Vite config is never executed";
+    const explained = {
+      componentPath: "./Card.tsx",
+      componentName: "Card",
+      exports: ["Card"],
+      props: [],
+      matrixWouldActivate: false,
+      scaleProbeWillRun: false,
+      predictedMode: "combo",
+      warnings: [note],
+    } as unknown as PropsExplanation;
+    expect(formatExplainProps(explained)).toContain("cannot honor");
+    expect(formatExplainProps(explained)).not.toContain("cannot honor");
+  });
+
+  it("is produced once per project inside one component's own run", () => {
     writeConfig(
       [
         "export default defineConfig({",

@@ -110,12 +110,21 @@ The verifier for every item below: run-7 investigation (2026-09-06), refuted by 
   - Everything else M117 C3 and C4 fix stands: an object literal by its `name`, anything else as
     `unnamed plugin #<n>`, no plugin named whose transform this run applied, the note omitted when
     the list empties, and `--explain-props` deciding from the same detection as the real run.
-- **C4** The project-level vite-config note is produced once per run, not once per candidate, in the
-  dry run and in the real run. This is M117 C1's dedup rule applied at the producer. "Once per run"
-  is once per *measured component*: `collectStaticPreBuildWarnings` keeps a per-project ledger that
-  `src/cli/main.ts` clears beside `resetCurrentRunWarnings()` in the per-component `finally`, so a
-  glob sweep states the project's config for every component it measures. `--explain-props` walks
-  all its candidates inside one such window, so a three-candidate dry run still states it once.
+- **C4** The project-level vite-config note is stated once, and the same way in both modes:
+  - **Per component, in the data.** Every component's own warnings carry it — its JSON report, and
+    its `=== candidate ===` block's collected list — so a report read on its own, or read out of
+    order, is complete. `collectStaticPreBuildWarnings` keeps a per-project ledger that
+    `src/cli/main.ts` clears in the per-component `finally` of the measuring loop and in the
+    per-candidate `finally` of the `--explain-props` loop, so no component inherits an earlier
+    component's disclosure. Inside one component the ledger still collapses a rebuild's second
+    emission, which is what M117 C3 means by "once per run, including a run that rebuilt".
+  - **Once per invocation, on the terminal.** The printing layer states it once however many
+    components or candidates the invocation walked: `repeatsPrintedProjectNote`
+    (`src/report/terminal.ts`) drops a repeat in `appendWarnings` and in `formatExplainProps`. It
+    keys on the note's own text, so a per-component warning that two components happen to share
+    still prints for each of them.
+  - The dry run and the real run therefore produce the same per-component warnings and the same
+    terminal count (M100/M110 parity).
 - **C5** No Node runtime warning emitted because of a file inside the *project* reaches the user's
   terminal. A `process.on("warning", …)` listener installed before `parseArgs`
   (`src/cli/main.ts:130`) swallows exactly `MODULE_TYPELESS_PACKAGE_JSON` for a filename outside
@@ -124,6 +133,8 @@ The verifier for every item below: run-7 investigation (2026-09-06), refuted by 
   `src/pipeline/explain-props.ts:148` forwards `{ noCss, cssFiles }`. With `--no-css`, the dry run
   reports no stylesheet and prints no stylesheet warning (M100/M110 parity).
 - **C8** Output a third party writes through `console.error` during a run is captured, not streamed.
+  An abort empties the buffer before it sweeps and prints whatever no warning covers, so the run it
+  cut short still carries the third party's only account.
   It is printed only when no 120fps warning reports the same fact — compared after normalising case,
   whitespace, path separators and drive letters, because a 120fps warning re-words the fact — and
   when it is printed it is introduced by a 120fps sentence naming the tool that produced it (M94).
@@ -164,6 +175,10 @@ The verifier for every item below: run-7 investigation (2026-09-06), refuted by 
   `memo(() => …)` component and a Vue SFC with no `defineProps` each produce the "declares none"
   wording and no hedge; a component whose annotation references an unresolved module produces the
   hedge *and* names the module; `explainsZeroPropCount` returns true for the new text.
+- **C4** — `test/unit/the-vite-note-names-only-what-was-dropped.test.ts`: two components of one
+  project each carry the note in their own list; two `appendWarnings` calls print it once and a
+  per-component warning twice; two `formatExplainProps` calls print it once; the per-component and
+  per-candidate `finally` blocks in `src/cli/main.ts` both clear the producer's ledger.
 - **C3, C4** — `test/unit/the-vite-note-names-only-what-was-dropped.test.ts`,
   `test/unit/vite-plugin-note-names-what-it-dropped.test.ts` and
   `test/unit/warnings-print-once-per-run.test.ts`: a config with three aliases of which one fails
@@ -232,6 +247,31 @@ npx vitest run test/unit --maxWorkers=2
    the two failures are the recorded pre-existing set: prop-cap-ranking.test.ts and
    vue-setup-inject-evidence.test.ts
 ```
+
+Recorded run of the D4/D3 fixes (2026-09-07, merged with `feat/run7-remediation` at `1e95d0f`):
+
+```
+node node_modules/typescript/bin/tsc --noEmit -p tsconfig.json   -> exit 0, no output
+
+npx vitest run <23 files: the note's producers and every terminal, markdown, dry-run, abort and
+  harness-dir consumer of the two printing seams> --maxWorkers=2
+-> Test Files  23 passed (23);  Tests  294 passed (294)
+
+npx vitest run test/unit --maxWorkers=2
+-> Test Files  2 failed | 389 passed (391)
+   Tests  2 failed | 5460 passed | 1 skipped (5463)
+   Duration 436.22s
+   the two failures are the recorded pre-existing set: prop-cap-ranking.test.ts and
+   vue-setup-inject-evidence.test.ts
+```
+
+Corpus, `dist` built at this commit:
+
+| Run | Result |
+|---|---|
+| vue-pure-admin, 3-candidate `--explain-props` | `grep -c 'cannot honor'` = 1; the note prints under the first candidate that reaches a warnings list |
+| vue-pure-admin, the same two candidates in the other order | `grep -c` = 1, and the note moves with the first candidate that reaches a warnings list, not with a position |
+| scaffold-vite-react-ts, 2-component real sweep | `grep -c` = 1 on the terminal; both `…App.json` and `…Greeting.json` carry the note in `warnings` |
 
 Corpus repros, through a `dist` built in `C:/Projekte/120fps-run7-lane-d`:
 
