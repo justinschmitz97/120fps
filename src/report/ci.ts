@@ -351,12 +351,21 @@ function failureBody(report: Report): string {
   return lines.join("\n") || "failed";
 }
 
-export function formatJUnit(reports: Report[]): string {
-  const failures = reports.filter((r) => !r.pass).length;
+// A component that threw finished no Report, so nothing in `reports` carries its failure.
+export const UNREPORTED_RUN_FAILURE_NAME = "120fps run";
+export const UNREPORTED_RUN_FAILURE_MESSAGE =
+  "the run exited 1 without a report for every component";
+
+export function formatJUnit(reports: Report[], run: CiRunOutcome = {}): string {
+  const reportedFailures = reports.filter((r) => !r.pass).length;
+  // Without this case a sweep that threw would claim every component it finished passed.
+  const unreported = !!run.failed && reportedFailures === 0;
+  const failures = reportedFailures + (unreported ? 1 : 0);
+  const tests = reports.length + (unreported ? 1 : 0);
   const lines: string[] = [
     '<?xml version="1.0" encoding="UTF-8"?>',
-    `<testsuites name="120fps" tests="${reports.length}" failures="${failures}">`,
-    `  <testsuite name="120fps" tests="${reports.length}" failures="${failures}">`,
+    `<testsuites name="120fps" tests="${tests}" failures="${failures}">`,
+    `  <testsuite name="120fps" tests="${tests}" failures="${failures}">`,
   ];
 
   for (const report of reports) {
@@ -370,6 +379,14 @@ export function formatJUnit(reports: Report[]): string {
       `      <failure message="${escapeXml(report.componentPath)} regressed">` +
       escapeXml(failureBody(report)) +
       "</failure>",
+      "    </testcase>",
+    );
+  }
+
+  if (unreported) {
+    lines.push(
+      `    <testcase name="${UNREPORTED_RUN_FAILURE_NAME}" classname="120fps">`,
+      `      <failure message="${escapeXml(UNREPORTED_RUN_FAILURE_MESSAGE)}" />`,
       "    </testcase>",
     );
   }

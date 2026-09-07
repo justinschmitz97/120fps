@@ -6,7 +6,7 @@ import {
   generatePropMatrix,
   DEFAULT_MEASURED_COMBOS,
 } from "../props/index.js";
-import { loadBaseline, selectPhaseTimingEntry, type PhaseTimings } from "../report/index.js";
+import { loadBaseline, resolveBaselinePath, selectPhaseTimingEntry, type PhaseTimings } from "../report/index.js";
 import { type PredictedMode, computeEffectiveSamples } from "./modes/context.js";
 
 export interface RunCostEstimate {
@@ -97,6 +97,8 @@ export function estimateExplainedRunCost(input: {
   scalePoints?: number[];
   samples?: number;
   maxCombos?: number;
+  // The same file --check would read, so the dry run estimates from the entry the run will use.
+  baselineFile?: string;
 }): RunCostEstimate {
   const cap = input.maxCombos ?? DEFAULT_MEASURED_COMBOS;
   const requested = input.samples ?? 10;
@@ -106,7 +108,7 @@ export function estimateExplainedRunCost(input: {
   // A truncated or hand-edited baseline must not abort a dry run; fall back to the defaults.
   const baseline = (() => {
     try {
-      return loadBaseline(path.join(input.projectRoot, "120fps-baseline.json"));
+      return loadBaseline(resolveBaselinePath(input.projectRoot, input.baselineFile));
     } catch {
       return null;
     }

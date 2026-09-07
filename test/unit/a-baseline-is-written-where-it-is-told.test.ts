@@ -6,6 +6,7 @@ import { KNOWN_FLAGS, parseArgs } from "../../src/cli/index.js";
 import { helpText } from "../../src/cli/help.js";
 import {
   BASELINE_FILE_NAME,
+  BASELINE_FILE_SPANS_PROJECTS_ERROR,
   DEFAULT_THRESHOLDS,
   buildEnvFingerprint,
   loadBaseline,
@@ -211,6 +212,40 @@ describe("a caller-named destination is handled like any other path", () => {
     workflow(report(), { saveBaseline: true, baselineFile: NAMED });
     expect(() => slotFor(NAMED, "./other.tsx")).not.toThrow();
     expect(() => slotFor(NAMED, "./card.tsx")).not.toThrow();
+  });
+});
+
+describe("a baseline that cannot be read names the file", () => {
+  it("names a destination that is a directory", () => {
+    fs.mkdirSync(NAMED, { recursive: true });
+    expect(() => loadBaseline(NAMED)).toThrow(NAMED);
+  });
+
+  it("names a file whose contents are not JSON", () => {
+    fs.mkdirSync(path.dirname(NAMED), { recursive: true });
+    fs.writeFileSync(NAMED, "{ not json", "utf-8");
+    expect(() => loadBaseline(NAMED)).toThrow(NAMED);
+  });
+
+  it("still reports an absent file as no baseline rather than an error", () => {
+    expect(loadBaseline(NAMED)).toBeNull();
+  });
+
+  it("starts a fresh file rather than lose the run over an unreadable one", () => {
+    fs.mkdirSync(path.dirname(NAMED), { recursive: true });
+    fs.writeFileSync(NAMED, "{ not json", "utf-8");
+    expect(() => saveBaseline(NAMED, slotless(), "./card.tsx")).not.toThrow();
+    expect(slotFor(NAMED, "./card.tsx").mount).toBe(4);
+  });
+});
+
+describe("one named baseline cannot serve two projects", () => {
+  it("names both roots and what to do instead", () => {
+    const message = BASELINE_FILE_SPANS_PROJECTS_ERROR(["/a", "/b"]);
+    expect(message).toContain("--baseline-file");
+    expect(message).toContain("/a");
+    expect(message).toContain("/b");
+    expect(message).toContain("2 project roots");
   });
 });
 

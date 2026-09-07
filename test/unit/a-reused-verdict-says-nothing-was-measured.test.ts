@@ -4,6 +4,9 @@ import os from "node:os";
 import path from "node:path";
 import {
   DEFAULT_THRESHOLDS,
+  MAX_REPLAYED_WARNINGS,
+  MAX_REPLAYED_WARNING_CHARS,
+  MEASUREMENT_BASIS_LINE,
   VERDICT_REUSED_LINE,
   buildEnvFingerprint,
   formatTable,
@@ -15,6 +18,7 @@ import {
 import {
   BASELINE_MODE_MISMATCH_NOTICE,
   collectMachineInfo,
+  describeStoredMode,
   tryReuseStoredVerdict,
 } from "../../src/pipeline/verdict-reuse.js";
 import type { BrowserPool } from "../../src/browser/index.js";
@@ -24,6 +28,7 @@ const CHROMIUM = "120.0.0.0";
 const PROJECT = path.join(os.tmpdir(), `120fps-reuse-${process.pid}`);
 const COMPONENT = path.join(PROJECT, "card.tsx");
 const BASELINE_PATH = path.join(PROJECT, "120fps-baseline.json");
+const CONTROL_CHAR = /[\u0000-\u001f\u007f-\u009f]/;
 const STORED_WARNING =
   "src/theme.css was injected and none of its rules matched an element inside the component's tree.";
 
@@ -75,9 +80,13 @@ async function realStoredEntry(mode: "combo" | "curve", warnings?: string[]): Pr
   };
 }
 
-function reuse(): Promise<Report | undefined> {
+function reuse(extra: Partial<AnalyzeOptions> = {}): Promise<Report | undefined> {
   return tryReuseStoredVerdict({
-    options: { check: true, jsonPath: path.join(PROJECT, "report.json") } as AnalyzeOptions,
+    options: {
+      check: true,
+      jsonPath: path.join(PROJECT, "report.json"),
+      ...extra,
+    } as AnalyzeOptions,
     pool,
     projectRoot: PROJECT,
     relativeComponent: "./card.tsx",
@@ -182,6 +191,25 @@ describe("a reused verdict describes only the reuse", () => {
     const text = formatTable(REUSED);
     expect(text).not.toContain("Interactions");
     expect(text).not.toContain("0 interactions found");
+  });
+
+  it("counts nothing it did not measure, whatever the replayed warnings say", () => {
+    const text = formatTable({
+      ...REUSED,
+      warnings: ["measured 8 of 32 prop combos (--max-combos raises the cap)"],
+    });
+    expect(text).not.toMatch(/\d+ measured/);
+    expect(text).not.toContain("Mode:");
+  });
+
+  it("does not explain how numbers were measured when none were", () => {
+    expect(formatTable(REUSED)).not.toContain(MEASUREMENT_BASIS_LINE);
+  });
+
+  it("still names the mode and the measurement basis for a run that measured", () => {
+    const text = formatTable(report());
+    expect(text).toContain("Mode:");
+    expect(text).toContain(MEASUREMENT_BASIS_LINE);
   });
 
   it("still prints the verdict it reused", () => {
@@ -324,5 +352,100 @@ describe("a suggested fixture path is pasteable wherever it was measured", () =>
     const hint = text.split("\n").find((line) => line.includes("Consider creating"))!;
     expect(hint).toContain("src/ui/Card.fixture.vue");
     expect(hint).not.toContain("\\");
+  });
+});
+
+describe("a committed baseline cannot dictate what the terminal prints", () => {
+  it("strips control characters out of a replayed warning", async () => {
+    const entry = await realStoredEntry("combo");
+    fs.rmSync(BASELINE_PATH, { force: true });
+    const escaped = "before" + String.fromCharCode(27) + "[31mred" + String.fromCharCode(7) + " after";
+    saveBaseline(BASELINE_PATH, { ...entry, warnings: [escaped] }, "./card.tsx");
+    const reused = await reuse();
+    const replayed = reused?.warnings?.[0] ?? "";
+    expect(replayed).not.toMatch(CONTROL_CHAR);
+    expect(replayed).toContain("before");
+    expect(replayed).toContain("after");
+  });
+
+  it("caps how many warnings a stored entry may replay", async () => {
+    const entry = await realStoredEntry("combo");
+    fs.rmSync(BASELINE_PATH, { force: true });
+    const many = Array.from({ length: MAX_REPLAYED_WARNINGS + 5 }, (_, i) => `warning ${i}`);
+    saveBaseline(BASELINE_PATH, { ...entry, warnings: many }, "./card.tsx");
+    const reused = await reuse();
+    expect(reused?.cached).toBe(true);
+    expect(reused?.warnings?.length).toBe(MAX_REPLAYED_WARNINGS);
+  });
+
+  it("caps how long one replayed warning may be", async () => {
+    const entry = await realStoredEntry("combo");
+    fs.rmSync(BASELINE_PATH, { force: true });
+    saveBaseline(BASELINE_PATH, { ...entry, warnings: ["x".repeat(5000)] }, "./card.tsx");
+    const reused = await reuse();
+    expect(reused?.cached).toBe(true);
+    expect(reused?.warnings?.[0].length).toBe(MAX_REPLAYED_WARNING_CHARS);
+  });
+
+  it("drops a warning that is only whitespace once its controls are gone", async () => {
+    const entry = await realStoredEntry("combo");
+    fs.rmSync(BASELINE_PATH, { force: true });
+    saveBaseline(
+      BASELINE_PATH,
+      { ...entry, warnings: [String.fromCharCode(7, 7, 7), "a real one"] },
+      "./card.tsx",
+    );
+    const reused = await reuse();
+    expect(reused?.warnings).toEqual(["a real one"]);
+  });
+
+  it("refuses to name a stored mode it does not recognize", async () => {
+    const entry = await realStoredEntry("combo");
+    fs.rmSync(BASELINE_PATH, { force: true });
+    saveBaseline(
+      BASELINE_PATH,
+      { ...entry, env: { ...entry.env!, mode: "</details><h1>hi" as never } },
+      "./card.tsx",
+    );
+    const written: string[] = [];
+    const spy = vi.spyOn(process.stderr, "write").mockImplementation((chunk: any) => {
+      written.push(String(chunk));
+      return true;
+    });
+    try {
+      expect(await reuse()).toBeUndefined();
+      const notice = written.join("");
+      expect(notice).toContain("an unknown mode");
+      expect(notice).not.toContain("<h1>");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("names only the four modes a baseline can carry", () => {
+    expect(describeStoredMode("curve")).toBe("curve mode");
+    expect(describeStoredMode("isolation")).toBe("isolation mode");
+    expect(describeStoredMode(undefined)).toBe("an unknown mode");
+    expect(describeStoredMode(7)).toBe("an unknown mode");
+  });
+});
+
+describe("--baseline-file names the file the reuse check reads", () => {
+  it("reuses a verdict stored at the named path, with the project root empty", async () => {
+    const named = path.join(PROJECT, "elsewhere", "named-baseline.json");
+    fs.rmSync(BASELINE_PATH, { force: true });
+    const entry = await realStoredEntry("combo", [STORED_WARNING]);
+    saveBaseline(named, entry, "./card.tsx");
+    expect(fs.existsSync(BASELINE_PATH)).toBe(false);
+    const reused = await reuse({ baselineFile: named });
+    expect(reused?.cached).toBe(true);
+    expect(reused?.warnings).toEqual([STORED_WARNING]);
+  });
+
+  it("finds nothing at the default path when the entry lives elsewhere", async () => {
+    const named = path.join(PROJECT, "elsewhere", "named-baseline.json");
+    fs.rmSync(BASELINE_PATH, { force: true });
+    saveBaseline(named, await realStoredEntry("combo"), "./card.tsx");
+    expect(await reuse()).toBeUndefined();
   });
 });

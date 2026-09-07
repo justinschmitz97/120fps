@@ -83,15 +83,24 @@ and artifacts under `C:/Projekte/120fps-fieldtest/smoke/run7-new1/logs/<repo>/`.
   printed for that component.
 - **C2** The artifact and the process agree: a run that exits 1 does not produce an artifact whose
   headline is `**PASS**`, and a run that exits 0 does not produce one that reports a failure. The
-  component count in the artifact equals the number of components the run reported on.
+  component count in the artifact equals the number of components the run reported on. A sweep that
+  exits 1 while every component it finished passed — one threw before finishing a `Report` — carries
+  one further JUnit testcase, named `120fps run`, whose failure says so; it is the only row in either
+  artifact that is not a component.
 - **C3** A run whose verdict was reused says so and describes nothing else. The terminal prints one
   sentence naming that the verdict was reused from the baseline and that nothing was re-measured,
-  and prints no baseline-comparison line, no environment-match line and no interaction count.
+  and prints no baseline-comparison line, no environment-match line, no interaction count, no mode
+  line and no measurement-basis line. A count of combos measured or generated never appears on a run
+  that measured and generated none.
 - **C4** The "0 interactions found" hint never fires on a reused report. It fires only when a run
   measured a component and found no interaction.
 - **C5** A path 120fps suggests in prose is written with `/` separators on every platform.
 - **C6** A reused verdict carries the warnings of the run it reuses. A reused report's `warnings`
-  array equals the stored entry's, so a disclosure is not lost by caching.
+  array equals the stored entry's, so a disclosure is not lost by caching. A baseline file is
+  editable text a reviewer commits, so the replay is bounded: at most ten entries, at most 300
+  characters each, control characters replaced by a space, entries that are then empty dropped. A
+  stored mode outside `combo | curve | matrix | isolation` is named `an unknown mode` rather than
+  quoted.
 - **C7** A baseline entry stored under a mode other than `combo` either matches the probe fingerprint
   of a run in that same mode, or the run states which stored mode it found and which mode its reuse
   check is in, and re-measures. Silence is not an option here. A run whose source fingerprint already
@@ -102,7 +111,10 @@ and artifacts under `C:/Projekte/120fps-fieldtest/smoke/run7-new1/logs/<repo>/`.
   `--baseline-env`, and the vocabulary is kebab-case with `<path>` placeholders for value flags
   (`--report-md <path>`, `--report-junit <path>`). It is documented in `--help` beside
   `--save-baseline` and `--check`. With the flag absent, the path is exactly today's
-  (`<projectRoot>/120fps-baseline.json`) — the default does not change.
+  (`<projectRoot>/120fps-baseline.json`) — the default does not change. One named file serves one
+  project: entry keys are component paths relative to their own project root, so a sweep spanning
+  two roots with `--baseline-file` is refused with exit 2 before anything is measured. A baseline
+  that cannot be read — a directory, unparseable text — fails with a message naming the file.
 
 ## MUST NOT
 
@@ -127,23 +139,31 @@ and artifacts under `C:/Projekte/120fps-fieldtest/smoke/run7-new1/logs/<repo>/`.
 - **C1, C2** — `test/unit/every-report-reaches-the-ci-writers.test.ts`: a three-component run produces
   markdown with three rows whose verdicts equal the terminal's and JUnit with `tests="3"`; a
   zero-component run still produces the empty artifact it produces today; a run told it exits 1
-  headlines a failure whatever its rows say. `test/e2e/ci-artifacts-carry-the-run.test.ts` measures a
+  headlines a failure whatever its rows say, and its JUnit carries the `120fps run` row — which is
+  absent when a reported component already carries the failure, and absent at exit 0. `test/e2e/ci-artifacts-carry-the-run.test.ts` measures a
   real component through the CLI: the artifacts carry one row and `tests="1"`, and a run forced over
   budget exits 1 with a `**FAIL**` headline and `failures="1"`.
 - **C3, C4, C5, C6** — `test/unit/a-reused-verdict-says-nothing-was-measured.test.ts`: a reused report
-  prints the reuse sentence and none of the three forbidden lines; a measured report with zero
+  prints the reuse sentence, none of the forbidden lines, no `Mode:` line, no measurement basis and
+  no `N measured` even when a replayed cap warning names a combo count, while a measured report still
+  prints both header lines; a replayed warning is stripped of control characters, capped in count and
+  in length, and dropped when nothing legible is left; a measured report with zero
   interactions still prints the fixture hint, and its suggested path contains no backslash on any
   platform; a reused report's `warnings` array equals the stored entry's, and a hand-edited entry
   whose `warnings` is not a list of strings neither crashes the run nor reaches the report.
 - **C7** — same file: an entry whose `env.mode` is `curve` or `isolation` is passed over and the run
-  names both modes on stderr before measuring again; an entry whose source fingerprint already
+  names both modes on stderr before measuring again; a mode outside the four is named
+  `an unknown mode` and never quoted into the terminal; an entry whose source fingerprint already
   differs is passed over in silence.
 - **C8** — `test/unit/a-baseline-is-written-where-it-is-told.test.ts`: with `--baseline-file`, the
   baseline is written to the named path, read back from it by `--check`, and the project root is
   left alone; without it, the path is `<projectRoot>/120fps-baseline.json` exactly as today; a
   relative path resolves against the process cwd; the directories a named path needs are created;
   a second component merges into the named file; `--help` and the README options block name the
-  flag; a destination that cannot be written fails with a message naming the path.
+  flag; a destination that cannot be written, read or parsed fails with a message naming the path,
+  while an absent file is still no baseline rather than an error; a verdict saved at the named path
+  is reused from it and is not looked for at the project root; and the refusal text for a sweep
+  spanning two project roots names both roots and what to do instead.
 - Types: `node node_modules/typescript/bin/tsc --noEmit -p tsconfig.json` clean.
 - Suite: the tests above plus `test/unit/ci-report*.test.ts`, `test/unit/baseline*.test.ts`,
   `test/unit/verdict-report-clarity*.test.ts`, `test/unit/fixture-harden.test.ts`,
@@ -176,6 +196,55 @@ npx vitest run test/unit --maxWorkers=2
 # ("variant and size survive the 32-prop cap") and vue-setup-inject-evidence.test.ts
 # ("records why each specifier failed"). Against the recorded baseline of 341 files /
 # 4921 tests, the deltas are exactly this milestone's three new unit files and their 42 tests.
+```
+
+Re-run on the merged wave-1 tree (`de41d6a`, lanes A, B, C, H and I merged) after the review fixes:
+
+```
+node node_modules/typescript/bin/tsc --noEmit -p tsconfig.json     # exit 0, no output
+
+npx vitest run test/unit/every-report-reaches-the-ci-writers.test.ts   test/unit/a-reused-verdict-says-nothing-was-measured.test.ts   test/unit/a-baseline-is-written-where-it-is-told.test.ts --maxWorkers=2
+# Test Files  3 passed (3)
+#      Tests  61 passed (61)
+# The same command against the pre-fix sources fails 11 of the new assertions
+# (the mode and basis lines on a reused report, the JUnit run row, the four sanitizer
+# bounds, describeStoredMode, the two loadBaseline messages, the two-root refusal text).
+
+npx vitest run <14 neighbouring unit files> --maxWorkers=2      # 384 passed
+npx vitest run test/e2e/ci-artifacts-carry-the-run.test.ts --maxWorkers=1   # 2 passed, 49.0 s
+npx vitest run test/e2e/cached-check.test.ts --maxWorkers=1                 # 7 passed, 97.9 s
+
+npx vitest run test/unit --maxWorkers=2
+# Test Files  2 failed | 364 passed (366)
+#      Tests  2 failed | 5190 passed | 1 skipped (5193)      589.25 s
+# The same two baseline failures, no others.
+```
+
+Corpus re-run of the reuse path against the merged tree's `dist` (a baseline saved by a pre-merge
+build no longer reuses: M131 changed the discovered stylesheet list, which is part of the
+environment key, so the entry is re-saved first):
+
+```
+node .../run120.mjs --cwd E:/repositories-run7/scaffold-vite-react-js --label m138fix-save   -- src/App.jsx --save-baseline --baseline-file .../baselines/scaffold-vite-react-js.fix.json ...
+# exit 1, 62 s, the baseline at the named path, the repository clean
+
+node .../run120.mjs --cwd E:/repositories-run7/scaffold-vite-react-js --label m138fix-check   -- src/App.jsx --check --baseline-file .../baselines/scaffold-vite-react-js.fix.json ...
+# exit 1, 2 s. The whole body after "Node v22.22.2, Chromium 147.0.7727.15":
+#
+#   Verdict reused from baseline, nothing re-measured (--no-cache measures fresh numbers).
+#
+#   Result: FAIL
+#   [the save run's four warnings, verbatim]
+#
+# No "Mode: prop combos (0 measured of 32 generated)", no measurement-basis line, no combo table,
+# no baseline comparison, no environment line, no fixture hint. The repository is still clean.
+
+node dist/cli/main.js E:/repositories-run7/scaffold-vite-react-js/src/App.jsx   E:/repositories-run7/scaffold-vite-react-ts/src/App.tsx --check   --baseline-file .../baselines/shared.json --samples 2
+# exit 2 before any measurement, nothing written at the named path:
+#   Error: --baseline-file names one file, but this run spans 2 project roots
+#   (E:\repositories-run7\scaffold-vite-react-js, E:\repositories-run7\scaffold-vite-react-ts) whose entries
+#   are keyed by a path relative to their own root. Run each project separately, or drop
+#   --baseline-file to write each project's own baseline.
 ```
 
 Corpus repros, through a `dist` built in `C:/Projekte/120fps-run7-lane-i`, logs under
@@ -233,6 +302,17 @@ node ... --cwd E:/repositories-run7/rallly/apps/web --label m138-curve-check   -
 - **The `README:141` sentence that calls the project root the only destination.** The README's fenced
   options block lists `--baseline-file` because a test holds it to `KNOWN_FLAGS`; the prose above it
   is the coordinator's, and follows C8 in the same batch as M133's README rewording.
+- **A replayed warning is the saving run's, in that run's tense.** "measuring with no props" reads as
+  a claim about a run that measured nothing. Rewording every disclosure for replay is a text pass
+  across every warning the tool prints, not a caching fix.
+- **A gitignore tip for a caller-named path inside the repository.** `--baseline-file` pointed at a
+  path under the git root is not offered the hygiene hint the default path gets, because the tip is
+  keyed on the baseline's conventional name.
+- **Escaping a replayed warning for markdown.** The Warnings fold in `report/ci.ts` writes each
+  warning as a list item without passing it through `escapeMdCell`, so a committed baseline can close
+  the fold or open a heading in a CI artifact. The replay is stripped of control characters and
+  bounded in size; the markdown escape belongs with the fold, whose other writers are equally
+  unescaped today.
 - **A baseline for curve mode and matrix mode.** Only combo mode and isolation mode reach
   `applyBaselineWorkflow`, so `--save-baseline` under an auto-activated curve records nothing and
   `--check` has nothing to compare. C7 makes the entry that does exist speak; whether these modes

@@ -10,6 +10,8 @@ import {
   parseBaselineKey,
   resolveBaselinePath,
   sameMachineIdentity,
+  sanitizeStoredWarnings,
+  BASELINE_FILE_NAME,
   type MachineInfo,
   type Report,
   type Thresholds,
@@ -69,9 +71,23 @@ export async function collectMachineInfo(
 // The mode the reuse probe can describe before any combo is extracted.
 const REUSE_PROBE_MODE = "combo";
 
-export const BASELINE_MODE_MISMATCH_NOTICE = (stored: string, current: string): string =>
-  `no verdict was reused: the stored baseline entry was recorded in ${stored} mode and this ` +
-  `run's reuse check runs in ${current} mode, so the component is measured again.`;
+// EnvFingerprint.mode's own vocabulary; a baseline file is editable, so the value is checked.
+const KNOWN_BASELINE_MODES: ReadonlySet<string> = new Set([
+  "combo",
+  "curve",
+  "matrix",
+  "isolation",
+]);
+
+export function describeStoredMode(mode: unknown): string {
+  return typeof mode === "string" && KNOWN_BASELINE_MODES.has(mode)
+    ? `${mode} mode`
+    : "an unknown mode";
+}
+
+export const BASELINE_MODE_MISMATCH_NOTICE = (stored: unknown, current: string): string =>
+  `no verdict was reused: the stored baseline entry was recorded in ${describeStoredMode(stored)} ` +
+  `and this run's reuse check runs in ${current} mode, so the component is measured again.`;
 
 // Safe because identical source in an identical environment redraws the same distribution.
 export async function tryReuseStoredVerdict(args: {
@@ -159,10 +175,8 @@ export async function tryReuseStoredVerdict(args: {
     },
   };
   // A reused verdict repeats every disclosure that came with it, so caching loses none.
-  // Baseline files are user-editable JSON, so the stored list is treated as untrusted.
-  const stored = Array.isArray(entry.warnings)
-    ? entry.warnings.filter((warning): warning is string => typeof warning === "string")
-    : [];
+  // Baseline files are user-editable JSON: the stored list is capped and stripped of controls.
+  const stored = sanitizeStoredWarnings(entry.warnings);
   if (stored.length > 0) {
     report.warnings = [...stored];
   } else if (entry.measuredState && entry.measuredState !== "settled") {
@@ -206,14 +220,15 @@ export function projectConfigFingerprintFiles(
 }
 
 export function legacyBaselineWarning(
+  baselinePath: string,
   projectRoot: string,
   componentDir: string,
 ): string | undefined {
   if (componentDir === projectRoot) return undefined;
-  if (!fs.existsSync(path.join(componentDir, "120fps-baseline.json"))) return undefined;
+  if (!fs.existsSync(path.join(componentDir, BASELINE_FILE_NAME))) return undefined;
   return (
-    `no baseline entry found at ${path.join(projectRoot, "120fps-baseline.json")}, ` +
-    `but a legacy 120fps-baseline.json exists next to the component in ${componentDir}. ` +
+    `no baseline entry found at ${baselinePath}, ` +
+    `but a legacy ${BASELINE_FILE_NAME} exists next to the component in ${componentDir}. ` +
     `Baselines now live at the package root: re-run with --save-baseline to migrate.`
   );
 }
