@@ -118,11 +118,14 @@ The verifier for every item below: run-7 investigation (2026-09-06), refuted by 
   traffic. A module error that arrives while readiness is already resolving loses the race: readiness
   wins, and the run continues.
 - **C4** A bundler diagnosis is appended to the readiness report, never substituted for it. The
-  presented failure keeps the readiness sentence, keeps M125's `It waited <n> s …` note, and adds the
-  diagnosis below it. `presentBundlerFailure` matches only the lead sentence of the message, not the
-  `Page errors:` block, so a page error whose text happens to contain a bundler pattern does not
-  become the diagnosis of the run. The kept report keeps the stack frames its page-error block
-  carries; only frames inside 120fps's own installation are stripped, as they always were.
+  presented failure keeps the readiness sentence first, keeps M125's `It waited <n> s …` note, and
+  adds the diagnosis below it. The lead sentence decides which rule applies: a readiness lead is
+  appended to, every other lead is replaced as before. A diagnosis found anywhere in the message —
+  the `Page errors:` block included, which is where a transform failure arrives — is appended once,
+  and presenting an already-presented report adds nothing further. The kept report keeps the stack
+  frames its page-error block carries; only frames inside 120fps's own installation are stripped, as
+  they always were. A preprocessor diagnosis also drops Vite's own `Try `npm install …`` hint from
+  the kept block, so one install command reaches the reader (M122).
 - **C5** Every `page.goto` in the run passes an explicit timeout equal to the readiness bound
   (`harnessReadyTimeoutMs()`, M125 C4), and `gotoWithErrorContext` prints the same
   raise-the-bound note the readiness timeout prints, naming `FPS120_READY_TIMEOUT_MS` and the bound
@@ -179,7 +182,8 @@ The verifier for every item below: run-7 investigation (2026-09-06), refuted by 
   `test/unit/bundler-error-presentation.test.ts`: a timeout message whose `Page errors:` block
   contains `Failed to resolve import` keeps its readiness sentence and its `It waited` note and gains
   the diagnosis below; a lead sentence that matches `VIRTUAL_NAMESPACE_IMPORT_ERROR` is diagnosed; a
-  bundler pattern that appears only inside the page-error block is not treated as the lead.
+  bundler pattern that appears only inside the page-error block is appended, never promoted to the
+  lead; presenting the result again returns it unchanged.
 - **C5** — `test/unit/every-navigation-carries-the-readiness-bound.test.ts`: each `page.goto` call
   site is invoked with a `timeout` equal to `harnessReadyTimeoutMs()`; a navigation failure message
   names `FPS120_READY_TIMEOUT_MS` and the bound used.
@@ -222,13 +226,13 @@ $ npx vitest run test/unit/a-fatal-before-readiness-ends-the-wait.test.ts \
     test/unit/bundler-error-presentation.test.ts test/unit/page-errors.test.ts \
     test/unit/page-error-reaches-its-own-remedy.test.ts \
     test/unit/readiness-timeout-names-the-wait-and-its-bound.test.ts \
-    test/unit/import-cycle-preflight-hit.test.ts test/unit/harness-crash-warnings.test.ts --maxWorkers=2
- Test Files  13 passed (13)
-      Tests  190 passed (190)
+    test/unit/import-cycle-preflight-hit.test.ts test/unit/harness-crash-warnings.test.ts \n    test/unit/sass-import-compiles-with-a-disclosed-compiler.test.ts \n    test/unit/babel-macro-import-is-refused.test.ts test/unit/css-injection-harden.test.ts \n    test/unit/module-ratchets.test.ts --maxWorkers=2
+ Test Files  17 passed (17)
+      Tests  242 passed (242)
 
 $ npx vitest run test/unit --maxWorkers=2
- Test Files  2 failed | 346 passed (348)
-      Tests  2 failed | 4978 passed | 1 skipped (4981)
+ Test Files  2 failed | 364 passed (366)
+      Tests  2 failed | 5173 passed | 1 skipped (5176)
 # the two failures are the run-7 baseline pair, unchanged by this milestone:
 #   test/unit/prop-cap-ranking.test.ts, test/unit/vue-setup-inject-evidence.test.ts
 ```
@@ -292,6 +296,12 @@ epic-stack (control)  E:/repositories-run5/epic-stack  app/components/ui/label.t
 ```
 
 ## Deferred
+
+- **The worst case a hung page can cost is now 180 s.** C5 gives the navigation the readiness
+  bound, so a page that never answers spends 90 s navigating and 90 s waiting for the global
+  instead of 30 s plus 90 s. The alternative — one deadline across both halves — is a different
+  contract from M125 C4 and belongs with the per-phase wall-clock bound below. Raising or lowering
+  both halves at once is what `FPS120_READY_TIMEOUT_MS` already does.
 
 - **n8n's dry run.** C7 refuses every virtual-namespace edge the preflight walk reaches. n8n's
   `~icons/` import lives in `@n8n/design-system`, an unbuilt workspace sibling the walk does not

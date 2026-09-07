@@ -107,3 +107,29 @@ describe("the preprocessor failures that already had a diagnosis", () => {
     expect(presentBundlerFailure(report, tmpDir, [])).toBe(report);
   });
 });
+
+// M122: the run's own install command replaces Vite's npm hint; the two must never be printed side by side.
+describe("the install command a preprocessor diagnosis leaves standing", () => {
+  it("drops Vite's npm hint from the kept page errors", () => {
+    fs.writeFileSync(path.join(tmpDir, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
+    const report = [
+      "component harness did not become ready within timeout. Page errors:",
+      "  - [vite] Internal Server Error",
+      'Preprocessor dependency "sass-embedded" not found. Did you install it? Try `npm install -D sass-embedded`.',
+      "  - response 500: GET http://localhost:5173/src/app.scss",
+    ].join("\n");
+
+    const presented = presentBundlerFailure(report, tmpDir, []);
+
+    expect(presented).toContain('Preprocessor dependency "sass-embedded" not found.');
+    expect(presented).not.toContain("npm install -D");
+    expect(presented).toContain("pnpm add -D sass");
+  });
+
+  it("presents the stale-preprocessor report once, however often it is presented", () => {
+    installPackage("sass", "1.42.1");
+    const once = presentBundlerFailure(STALE_SASS_REPORT, tmpDir, []);
+
+    expect(presentBundlerFailure(once, tmpDir, [])).toBe(once);
+  });
+});

@@ -97,6 +97,9 @@ function isHarnessReadinessReport(message: string): boolean {
   return HARNESS_READINESS_LEAD.test(message.split("\n", 1)[0]);
 }
 
+// Vite's own hint names npm and a package this project may not use; the diagnosis replaces it.
+const VITE_INSTALL_HINT = /\s*(?:Did you install it\?\s*)?Try `npm install[^`]*`\.?/g;
+
 // One diagnosis pipeline for every arrival surface, so a shape recognized on one is on all.
 export function presentBundlerFailure(
   message: string,
@@ -104,20 +107,29 @@ export function presentBundlerFailure(
   // Optional: the unhandled-rejection surface has no in-flight warnings array to offer.
   buildWarnings: readonly string[] = [],
 ): string {
+  const preprocessor =
+    diagnosePreprocessorMissing(message, projectRoot) ??
+    diagnoseStalePreprocessor(message, projectRoot);
   const diagnosis =
     diagnoseUnbuiltWorkspacePackage(message, projectRoot) ??
     diagnoseMissingShimExport(message) ??
     diagnoseGitignoredGeneratedFile(message, projectRoot) ??
     diagnoseNuxtBuildModule(message, buildWarnings, projectRoot) ??
-    diagnosePreprocessorMissing(message, projectRoot) ??
-    diagnoseStalePreprocessor(message, projectRoot) ??
+    preprocessor ??
     diagnoseBundlerFailure(message, projectRoot);
   // The readiness report is the run's own account of the wait; a diagnosis explains it, never
   // replaces it. One of the two, never both: a second explanation of one failure reads as a guess.
   if (isHarnessReadinessReport(message)) {
     const explanation = diagnosis ?? diagnoseMuteReadinessTimeout(message, buildWarnings);
-    const report = stripBundlerStackFrames(message);
-    return explanation ? `${report}\n${explanation}` : report;
+    // A preprocessor diagnosis carries this project's own install command, so Vite's npm hint goes.
+    const kept =
+      preprocessor !== undefined && explanation === preprocessor
+        ? message.replace(VITE_INSTALL_HINT, "")
+        : message;
+    const report = stripBundlerStackFrames(kept);
+    // Presenting a presented report again must not stack a second copy of the same explanation.
+    if (!explanation || report.includes(explanation)) return report;
+    return `${report}\n${explanation}`;
   }
   return diagnosis ?? stripBundlerStackFrames(message);
 }
@@ -239,12 +251,16 @@ export function STALE_PREPROCESSOR_ERROR(
   minimum: string | undefined,
   upgradeCommand: string,
 ): string {
-  const installed = version ? `${pkg} ${version} is installed and` : `the installed ${pkg}`;
+  // Two different findings: a copy too old to answer, and no copy resolving from here at all.
+  const lead = version
+    ? `${file} needs a CSS preprocessor this project pins below what the dev server calls: Vite ` +
+      `asks for ${method}(), and ${pkg} ${version} is installed and does not define it.`
+    : `${file} needs a CSS preprocessor that answers what the dev server calls: Vite asks for ` +
+      `${method}(), and no ${pkg} resolves from this project to answer it.`;
   const wanted = minimum ? `${pkg} ${minimum} or newer` : `a ${pkg} that provides it`;
   return (
-    `${file} needs a CSS preprocessor this project pins below what the dev server calls: Vite asks ` +
-    `for ${method}(), and ${installed} does not define it. Install ${wanted} where the measured ` +
-    `package resolves it: ${upgradeCommand}. Or pass --no-css to measure without the stylesheet.`
+    `${lead} Install ${wanted} where the measured package resolves it: ${upgradeCommand}. Or ` +
+    "pass --no-css to measure without the stylesheet."
   );
 }
 
