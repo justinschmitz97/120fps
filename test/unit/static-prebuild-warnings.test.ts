@@ -1,13 +1,20 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
-import { buildAndServe, collectStaticPreBuildWarnings } from "../../src/harness/index.js";
+import {
+  buildAndServe,
+  collectStaticPreBuildWarnings,
+  resetPreBuildDisclosures,
+} from "../../src/harness/index.js";
 
 const PROJECT = path.resolve("fixtures/vite-config-project");
 const COMPONENT = path.join(PROJECT, "src", "widget.tsx");
 
 // V6 rows 5, 17-21: filesystem-probe facts the dry run must report before a server starts.
 describe("pre-build facts a run can state without building", () => {
+  // The project-level vite-config note is produced once per run: each case is its own run.
+  beforeEach(resetPreBuildDisclosures);
+
   it("names the vite.config keys the harness cannot honor", () => {
     const pre = collectStaticPreBuildWarnings(PROJECT, { componentPath: COMPONENT });
     const configWarning = pre.warnings.find((w) => w.startsWith("vite.config.ts"));
@@ -23,6 +30,8 @@ describe("pre-build facts a run can state without building", () => {
   // I5's set-and-order pin: toEqual on arrays is order-sensitive to a reordered or dropped warning.
   it("produces the warnings the harness itself would produce", async () => {
     const pre = collectStaticPreBuildWarnings(PROJECT, { componentPath: COMPONENT });
+    // The probe above stood for one run; the harness below is another one.
+    resetPreBuildDisclosures();
     const harness = await buildAndServe(COMPONENT);
     try {
       expect(harness.warnings).toEqual([...new Set(pre.warnings)]);

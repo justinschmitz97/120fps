@@ -41,6 +41,11 @@ export function resetCurrentRunWarnings(): void {
   currentRunWarnings = [];
 }
 
+// What the run has said so far, for a caller deciding whether a third party's line adds anything.
+export function currentRunWarningList(): readonly string[] {
+  return currentRunWarnings;
+}
+
 // Rebuild only when the diagnosis changed the message, so the original .stack survives.
 function presentDiagnosedProcessError(err: unknown, projectRoot: string): unknown {
   if (!(err instanceof Error)) return err;

@@ -179,6 +179,7 @@ describe("the cap warning routed through the warning sink", () => {
     });
     const cap = extraction.warningRecords.find((r) => r.kind === "prop-cap");
     expect(cap?.stem).toBe("re-export");
-    expect(extraction.warnings).toContain(cap?.text);
+    // The record keeps the stderr form; the collected entry drops the prefix its printer adds.
+    expect(extraction.warnings).toContain(cap?.text.replace(/^Warning: /, ""));
   });
 });

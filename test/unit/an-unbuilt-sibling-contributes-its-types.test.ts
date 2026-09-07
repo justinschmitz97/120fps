@@ -141,8 +141,10 @@ describe("a props annotation whose module resolves nowhere", () => {
     await extractPropsDetailed(entry, { onWarning: (message) => collected.push(message) });
 
     const annotation = 'Omit<ComponentProps<typeof Missing>, "children">';
+    // A collected entry carries no "Warning: " prefix; the reader that prints it adds one.
     expect(collected).toContain(
-      UNRESOLVED_ANNOTATION_MODULE_WARNING(entry, "Card", annotation, ["nowhere-at-all"]),
+      UNRESOLVED_ANNOTATION_MODULE_WARNING(entry, "Card", annotation, ["nowhere-at-all"])
+        .replace(/^Warning: /, ""),
     );
   });
 

@@ -89,11 +89,17 @@ function packageOf(specifier: string): string {
 
 export function detectProviderImport(
   specifier: string,
+  // The importing file's text. Without it the table's representative hook is named unconditionally.
+  sourceText?: string,
 ): { source: string; hook?: string } | undefined {
   if (specifier.startsWith(".") || specifier.startsWith("/")) return undefined;
   const pkg = packageOf(specifier);
   const hook = PROVIDER_LIBRARIES[pkg];
-  if (hook) return { source: pkg, hook };
+  if (hook) {
+    // A file that imported only `Link` is not told about `useNavigate` it never called.
+    const observed = sourceText === undefined || new RegExp(`\\b${hook}\\b`).test(sourceText);
+    return observed ? { source: pkg, hook } : { source: pkg };
+  }
   if (PROVIDER_LIBRARY_SCOPES.some((scope) => pkg.startsWith(scope))) return { source: pkg };
   return undefined;
 }
@@ -503,7 +509,7 @@ export function runPreflight(options: PreflightOptions): PreflightResult {
     for (const edge of importEdges(sf)) {
       if (edge.typeOnly) continue;
 
-      const provider = detectProviderImport(edge.specifier);
+      const provider = detectProviderImport(edge.specifier, sf.text);
       if (provider && !providerSources.has(provider.source)) {
         providerSources.add(provider.source);
         providers.push({ ...provider, local: false, chain: chainTo(file) });

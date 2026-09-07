@@ -9,6 +9,8 @@ import type { PhaseTimings } from "../report/index.js";
 import { createBrowserPool } from "../browser/index.js";
 import { createServerPool, refreshHarnessDirMarkers } from "../harness/index.js";
 import { formatResolvedRoots, resolveProjectModel, setPreflightBypassed } from "../project/index.js";
+import { filterProjectModuleTypeWarnings } from "./node-warnings.js";
+import { captureThirdPartyErrors, thirdPartyOutputNotice } from "./third-party-output.js";
 import {
   CliArgs,
   parseArgs,
@@ -22,6 +24,7 @@ import {
   wrapperNotFoundMessage,
   stylesheetNotFoundMessage,
   pushCurrentRunWarning,
+  currentRunWarningList,
   resolveFatalProcessError,
   nodeVersionError,
   setCurrentRunProjectRoot,
@@ -96,6 +99,8 @@ export function explainPropsOptions(
   noShims?: boolean;
   samples?: number;
   maxCombos?: number;
+  cssFiles?: string[];
+  noCss?: boolean;
 } {
   // Resolved with the functions runOne uses, so the two paths cannot disagree about a flag.
   const curveMode = resolveCurveOption(args);
@@ -117,10 +122,20 @@ export function explainPropsOptions(
     // The estimate is priced against the command line the user typed, not the defaults.
     ...(args.samples !== undefined ? { samples: args.samples } : {}),
     ...(args.maxCombos !== undefined ? { maxCombos: args.maxCombos } : {}),
+    // The stylesheet the dry run reports is the one the real run would inject.
+    ...(args.css ? { cssFiles: args.css } : {}),
+    ...(args.noCss ? { noCss: true } : {}),
   };
 }
 
+// Resolved from the running file, so a global install and a workspace checkout both answer it.
+function ownInstallRoot(): string {
+  return path.resolve(import.meta.dirname ?? __dirname, "../..");
+}
+
 async function main(): Promise<void> {
+  // Before parseArgs, so every project file a later step imports is already covered.
+  filterProjectModuleTypeWarnings(ownInstallRoot());
   const versionError = nodeVersionError(process.version);
   if (versionError) {
     process.stderr.write(`Error: ${versionError}\n`);
@@ -265,6 +280,10 @@ async function main(): Promise<void> {
       if (out.stdout) process.stdout.write(out.stdout);
       void abortRun(2, { pool, serverPool });
     });
+    // A library the build loads writes to the console; 120fps decides whether it adds anything.
+    const releaseThirdPartyOutput = captureThirdPartyErrors({
+      ...(process.env.DEBUG ? { debug: true } : {}),
+    });
     try {
       const report = await runOne(
         componentPath,
@@ -278,6 +297,9 @@ async function main(): Promise<void> {
           refreshHarnessDirMarkers();
         },
       );
+      const uncovered = thirdPartyOutputNotice(releaseThirdPartyOutput(), report.warnings ?? []);
+      if (uncovered) process.stderr.write(`${uncovered}
+`);
       if (!args.ci) {
         process.stdout.write(resolvedRootsOutput(componentPath, false));
         process.stdout.write(formatTable(report) + "\n");
@@ -292,6 +314,9 @@ async function main(): Promise<void> {
     } catch (err: unknown) {
       // The abort already printed and owns the exit; returning avoids a second error.
       if (aborted) return;
+      const uncovered = thirdPartyOutputNotice(releaseThirdPartyOutput(), currentRunWarningList());
+      if (uncovered) process.stderr.write(`${uncovered}
+`);
       if (!multi) {
         process.stderr.write(formatCliError(err, process.env.DEBUG));
         // Bounded teardown first: a bare process.exit(2) would skip every pending finally.
@@ -303,6 +328,7 @@ async function main(): Promise<void> {
       anyFail = true;
       process.stderr.write(`[${componentPath}] ` + formatCliError(err, process.env.DEBUG));
     } finally {
+      releaseThirdPartyOutput();
       runWatchdog.clear();
       setCurrentRunProjectRoot(undefined);
       resetCurrentRunWarnings();

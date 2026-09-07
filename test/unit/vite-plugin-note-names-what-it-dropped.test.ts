@@ -6,6 +6,7 @@ import {
   VITE_CONFIG_IGNORED_WARNING,
   readViteConfigData,
   collectStaticPreBuildWarnings,
+  resetPreBuildDisclosures,
 } from "../../src/harness/index.js";
 import {
   suppressHonoredPluginNote,
@@ -19,6 +20,8 @@ let tmpDir: string;
 
 beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "120fps-vite-plugins-"));
+  // The project-level note is produced once per run: each case is its own run.
+  resetPreBuildDisclosures();
 });
 
 afterEach(() => {

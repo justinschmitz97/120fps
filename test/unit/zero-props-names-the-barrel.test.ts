@@ -100,6 +100,6 @@ describe("a re-export whose specifier does not resolve", () => {
     expect(
       explainsZeroPropCount(UNRESOLVED_RE_EXPORT_WARNING("src/index.ts", "@adobe/x/Button")),
     ).toBe(true);
-    expect(explainsZeroPropCount(ZERO_PROPS_WARNING)).toBe(false);
+    expect(explainsZeroPropCount("Stylesheets: none found")).toBe(false);
   });
 });
