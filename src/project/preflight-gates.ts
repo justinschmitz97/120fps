@@ -441,8 +441,7 @@ export function preflightFailureMessage(hits: PreflightHit[]): string {
         "vite.config, so nothing here answers for that import: the dev server would answer it " +
         "with a 500 and the page would never evaluate.",
       hardRemedyFor(kind),
-    ].join("
-");
+    ].join("\n");
   }
   // Decided from disk: the alias, its target and the importer are all known before Vite starts.
   if (kind === "unresolved-alias") {
