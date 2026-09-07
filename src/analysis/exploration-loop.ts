@@ -14,6 +14,7 @@ import {
 } from "./explorer.js";
 import {
   discoverInteractions,
+  isContextLostError,
   SKIPPED_TARGETS_NOTICE,
   withContextRetry,
   withFrameStarvationRetry,
@@ -100,6 +101,10 @@ export interface EscapeWatch {
   check(): Promise<EscapeReason | undefined>;
 }
 
+function onHarnessPage(page: Page): Promise<boolean> {
+  return page.evaluate(() => typeof (window as any).__120fps === "object");
+}
+
 // Discovery decides before the click; this is the net for a click that leaves anyway. The harness
 // global is the test: a same-origin route change keeps it, a navigation away destroys it.
 export function createEscapeWatch(page: Page): EscapeWatch {
@@ -119,12 +124,17 @@ export function createEscapeWatch(page: Page): EscapeWatch {
     check: async (): Promise<EscapeReason | undefined> => {
       if (popupSeen) return "opened-a-page";
       try {
-        const onHarness = await page.evaluate(
-          () => typeof (window as any).__120fps === "object",
-        );
-        return onHarness ? undefined : "left-the-page";
-      } catch {
-        return "left-the-page";
+        return (await onHarnessPage(page)) ? undefined : "left-the-page";
+      } catch (err) {
+        // A destroyed context is the dev server reloading, not a click that left the page: the
+        // retry and stall layers own that. Any other read failure is re-read once before it counts,
+        // and an unreadable page reports nothing rather than inventing a navigation.
+        if (isContextLostError(err)) return undefined;
+        try {
+          return (await onHarnessPage(page)) ? undefined : "left-the-page";
+        } catch {
+          return undefined;
+        }
       }
     },
   };
@@ -135,6 +145,25 @@ export const EXPLORE_STALLED_WARNING = (comboIndex: number, edgeCount: number): 
   `${edgeCount === 1 ? "" : "s"} measured before the stall are kept and the report still prints`;
 
 export async function exploreCombo(
+  page: Page,
+  session: CdpHolder,
+  props: PropCombination,
+  opts: InternalOptions,
+  enter: () => Promise<void>,
+  onWarning?: (warning: string) => void,
+  budget?: RetryBudget,
+): Promise<StateGraph> {
+  // The listener outlives every path out of the walk below, a throw included.
+  const escape = createEscapeWatch(page);
+  try {
+    return await walkStateGraph(escape, page, session, props, opts, enter, onWarning, budget);
+  } finally {
+    escape.stop();
+  }
+}
+
+async function walkStateGraph(
+  escape: EscapeWatch,
   page: Page,
   session: CdpHolder,
   props: PropCombination,
@@ -183,8 +212,6 @@ export async function exploreCombo(
     interactions: initialInteractions,
     pathFromRoot: [],
   });
-
-  const escape = createEscapeWatch(page);
 
   // Work queues: priority (expensive path follow-ups) and normal (BFS)
   const priorityQueue: WorkItem[] = [];
@@ -437,7 +464,6 @@ export async function exploreCombo(
     convergenceWindow.push(discoveredNew);
   }
 
-  escape.stop();
   const skipNotice = SKIPPED_TARGETS_NOTICE([...skippedTargets.values()]);
   if (skipNotice !== undefined) onWarning?.(skipNotice);
 

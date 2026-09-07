@@ -5,9 +5,9 @@ tests:
   - test/unit/explorer.test.ts
   - test/unit/an-external-link-is-not-exercised.test.ts
   - test/unit/the-discovery-line-counts-what-it-skipped.test.ts
-  - test/unit/an-unstable-sample-on-a-hostile-machine-warns.test.ts
   - test/unit/explore-replays-state-invariant-path-once-per-edge.test.ts
   - test/e2e/an-external-link-is-not-exercised.test.ts
+  - test/e2e/a-click-that-opens-a-page-leaves-none-open.test.ts
 ---
 
 # M137: explore measures the component, not the browser it runs in
@@ -25,11 +25,8 @@ anchors, clicks each one eleven times per sample, and measures the browser's att
 page. The per-step cost climbs from 234 ms to 2 614 ms across three samples, which is a real
 measurement of a real cost, of the wrong thing. The React scaffolds click the same anchors and land
 at 20-82 ms per step, so they warn instead of failing: the difference between PASS and FAIL on a
-generated starter is which browser tab won a race. Separately, an interaction whose samples the noise
-sentinel already calls `unstable` on a machine it already calls `hostile` still produces a hard FAIL,
-although the same run's leak check withholds its own FAIL for exactly that reason. After this
-milestone explore exercises the component's own interactions, says how many it declined to exercise
-and why, and does not convert measurement noise on a busy machine into a verdict.
+generated starter is which browser tab won a race. After this milestone explore exercises the
+component's own interactions and says how many it declined to exercise and why.
 
 Evidence: `C:/Projekte/120fps-fieldtest/smoke/run7-new1/` — `scaffold-create-vue.json`
 (verdict-fail, exit 1, 83 s, flag `slow-explore`), `scaffold-vite-vue-ts.json` (verdict-fail, exit 1,
@@ -58,15 +55,10 @@ under `C:/Projekte/120fps-fieldtest/smoke/run7-new1/logs/<repo>/`.
    toggle does not produce. Per-step: 215-255 ms against the T1 budget of 33 ms and the T4 budget of
    100 ms, hence FAIL. The React scaffolds measured 20-82 ms per step on the same class of anchor and
    passed with warnings; nothing about the component explains the difference.
-3. **An unstable sample on a hostile machine still fails** — `src/report/stats.ts:100-101` returns
-   `"fail"` before the `unstable` branches at `:103-108` are reached, so the noise classification
-   cannot soften a threshold breach. The verifier: the run's own leak check already does the
-   opposite — `src/analysis/isolation.ts:469-470` is the single place a noise signal withholds a FAIL
-   — so the two halves of the same report treat the same evidence differently. M46 built the
-   sentinel, M53 fixed what the numbers mean, and M64 fixed what the verdict says about them; none of
-   the three reached this branch.
+Not this milestone's: an unstable sample on a hostile machine still fails; that is Deferred below,
+with the evidence that removed it from this milestone's scope.
 
-Not this milestone's: the explore phase's wall clock on the same scaffolds
+Not this milestone's either: the explore phase's wall clock on the same scaffolds
 (`explore: 1 combos, budget 60s each` under `--explore-budget 30`, 60 496-73 844 ms recorded on a
 one-prop component) is M134's root causes 5-8 and its C5, sharpened there.
 
@@ -75,22 +67,23 @@ one-prop component) is M134's root causes 5-8 and its C5, sharpened there.
 - **C1** An anchor that would leave the page is not exercised. "Would leave the page" means: an
   `href` whose resolved origin differs from the harness page's origin, or an anchor carrying
   `target="_blank"` or `rel="external"`, or an `href` with a non-`http(s)` scheme
-  (`mailto:`, `tel:`, `javascript:`). A same-page anchor — a fragment, or a same-origin path the app
-  routes itself — is still discovered and still exercised.
-- **C2** The exploration report says what it declined and why: one line naming how many interaction
-  targets were skipped and the reason class (external link, new-tab link, non-http scheme). A run
-  that skipped none prints no such line.
+  (`mailto:`, `tel:`, `javascript:`). One carve-out: a `javascript:` anchor whose element also
+  carries one of the handler attributes discovery already extracts (`onclick`, `onmousedown`,
+  `onmouseup`, `onkeydown`, `onkeyup`, `onkeypress`) is a button the component owns, and stays
+  exercised; a handler-less `javascript:` anchor is declined. A same-page anchor — a fragment, or a
+  same-origin path the app routes itself — is still discovered and still exercised. The rule reaches
+  every anchor the run would exercise, portal content included.
+- **C2** The exploration report says what it declined and why: one line, in two clauses. The
+  pre-click clause names how many interaction targets would leave the page and their reason class
+  (external link, new-tab link, non-http link); the post-hoc clause names how many targets the run
+  stopped exercising because the click itself left, and how (opened a new page, navigated away).
+  Only the clauses with a count are printed, and a run that declined nothing prints no such line.
 - **C3** No click opens a page the run does not close. If a click nonetheless produces a popup or a
   navigation away from the harness page, the run closes the popup, returns to the harness page, stops
-  exercising that target, and records it as skipped under C2 — it does not measure the result.
-- **C4** An interaction whose samples the noise sentinel classifies `unstable` on a machine it
-  classifies `hostile` warns instead of failing, and the warning states that a FAIL was withheld
-  because the machine could not repeat identical work identically. This mirrors the leak check's
-  existing suppression (`src/analysis/isolation.ts:469-470`) and extends the noise handling M46
-  introduced, M53 made honest and M64 made legible to the verdict path in `src/report/stats.ts`.
-- **C5** C4 is scoped to the noise combination it names. `unstable` on a machine that is not
-  `hostile` still fails; a stable sample on a hostile machine still fails; the JSON report carries the
-  unsuppressed classification either way, so a consumer can tell what was withheld.
+  exercising that target, and records it as skipped under C2 — it does not measure the result. The
+  test is the harness global, not the URL: a same-origin route change keeps it, so a routed click
+  stays measured. A read that fails because the execution context was destroyed is the dev server
+  reloading, not a click that left, and is left to the retry and stall paths that already own it.
 
 ## MUST NOT
 
@@ -101,8 +94,9 @@ one-prop component) is M134's root causes 5-8 and its C5, sharpened there.
   loads. C1 decides before the click; C3 is the safety net for what slips through.
 - Change `rapid-toggle-11`'s shape, its eleven-click count, its per-click timeout or the state-graph
   ids it produces (M116 owns the replay contract).
-- Change a verdict for any reason other than C4's exact combination, or change what the noise
-  sentinel classifies. C4 changes what a classification *does*, not what it is (M46).
+- Change a verdict, a budget or what the noise sentinel classifies. Budget verdicts stay absolute
+  (`specs/overview/00-tdd.md:839`, `01-glossary.md:71`); this milestone changes which interactions
+  are measured, never what a measured breach means.
 - Suppress the leak FAIL, or widen `src/analysis/isolation.ts:469-470`'s existing suppression.
 - Touch `src/analysis/explorer.ts`. Lanes A and F own it; the `observerTiming` threading M134 needs
   there is F's, and this lane's need for it is interface I12.
@@ -121,112 +115,114 @@ Three decisions a reader cannot recover from the code alone.
   reports from every discovery in the combo, keyed by reason and selector so a rediscovered anchor
   counts once, and emits C2's line through `onWarning`. The run's warning sink already dedupes by
   exact text, so combos that declined the same classes print one line.
-- **C4's withholding runs after the noise classification exists.** `report.noise` is derived from
-  the very metrics the combos carry, so it cannot exist while `buildReport` is writing verdicts.
-  `withholdInteractionFailsUnderHostileNoise` therefore re-reads each failing combo once
-  `report.noise` is attached, at the tightest budget either budget shape could have used: a fail
-  that survives the tighter bound was never an unstable interaction's alone, so it is left standing.
+- **The portal walk faces the same rule through the same function.** `src/browser/portal-probe.ts`
+  runs its own `page.evaluate`, so it extracts the same three anchor fields and calls
+  `classifyNavigationEscape` before `toDescriptor`. One rule, two walks; `discoverInteractions`
+  hands it the origin it already read.
 
 ## Verification
 
 - **C1, C2** — `test/unit/an-external-link-is-not-exercised.test.ts` and
   `test/unit/the-discovery-line-counts-what-it-skipped.test.ts`: a cross-origin anchor, a
   `target="_blank"` same-origin anchor and a `mailto:` anchor are declined with their reason class,
-  a fragment anchor and a same-origin route link are not; a page with no such anchors is returned
-  unchanged and prints no line; the line's counts, its singular and plural forms, and its stability
-  across two combos that declined the same classes. `test/e2e/an-external-link-is-not-exercised.test.ts`
-  runs the same decision through a real browser on `fixtures/external-links.tsx`: three targets kept
-  (`#content`, `/settings`, the button), four declined; `fixtures/interactive-basic.tsx` declines
-  none and keeps its anchor.
+  a fragment anchor and a same-origin route link are not; each of the six handler attributes keeps a
+  `javascript:` anchor, while a handled `mailto:` and a handled cross-origin anchor are still
+  declined; a page with no such anchors is returned unchanged and prints no line; the two clauses are
+  printed only when they have a count, in order, and the post-hoc clause counts targets rather than
+  links. `test/e2e/an-external-link-is-not-exercised.test.ts` runs the same decision through a real
+  browser on `fixtures/external-links.tsx` (three kept: `#content`, `/settings`, the button; four
+  declined), on `fixtures/portal-external-links.fixture.tsx` (the portal keeps its fragment anchor
+  and its close button, and declines its `target="_blank"` cross-origin anchor) and on
+  `fixtures/interactive-basic.tsx` (nothing declined, its anchor kept).
 - **C3** — `test/unit/explorer.test.ts`: a popup a click opened is closed and reported as
   `opened-a-page`; a page that lost the harness global reports `left-the-page`; a page that kept it
-  (a same-origin route change) reports nothing; an unreadable page counts as gone; the watch clears
-  between targets and leaves no listener behind.
-- **C4, C5** — `test/unit/an-unstable-sample-on-a-hostile-machine-warns.test.ts`: `unstable` +
-  `hostile` yields `warn` with the withheld-FAIL sentence; `unstable` + `noisy` yields `fail`;
-  `stable` + `hostile` yields `fail`; the JSON carries the classification in all three; the existing
-  pass and warn paths are unchanged; a mount breach, a render failure and a second failing combo all
-  keep the run failing.
+  (a same-origin route change) reports nothing; a destroyed execution context and a closed target
+  report nothing; an unexplained read failure is re-read once before it counts, and reports nothing
+  if it persists; the watch clears between targets and leaves no listener behind.
+  `test/e2e/a-click-that-opens-a-page-leaves-none-open.test.ts` runs a combo against
+  `fixtures/opens-a-window.tsx`, whose button calls `window.open`: the context holds one page
+  afterwards, the graph has no edge for that target, and the notice names it.
 - Types: `node node_modules/typescript/bin/tsc --noEmit -p tsconfig.json` clean.
 - Suite: the tests above plus `test/unit/explorer.test.ts`,
   `test/unit/explore-degrades-instead-of-ending-the-run.test.ts`,
   `test/unit/explore-replays-state-invariant-path-once-per-edge.test.ts`,
   `test/unit/explore-stall-hint-names-effective-flags.test.ts`, `test/unit/noise*.test.ts`,
-  `test/unit/isolation*.test.ts`, `test/e2e/explorer.test.ts`, then the full unit suite once before
-  the lane's final commit.
+  `test/unit/isolation*.test.ts`, `test/unit/interaction-step-budgets.test.ts`,
+  `test/e2e/explorer.test.ts`, then the full unit suite once before the lane's final commit.
 
-Recorded run of this milestone's verification (2026-09-06, `C:/Projekte/120fps-run7-lane-h` on
-`run7/lane-h`, node 22.22.2, `pnpm install --frozen-lockfile`):
+Recorded run of this milestone's verification (2026-09-07, `C:/Projekte/120fps-run7-lane-h` on
+`run7/lane-h` at the merged tree `de41d6a`, node 22.22.2, `pnpm install --frozen-lockfile`):
 
 ```
 node node_modules/typescript/bin/tsc --noEmit -p tsconfig.json
 # exit 0, no output
 
-npx vitest run test/unit/explorer.test.ts \
-  test/unit/an-external-link-is-not-exercised.test.ts \
-  test/unit/the-discovery-line-counts-what-it-skipped.test.ts \
-  test/unit/an-unstable-sample-on-a-hostile-machine-warns.test.ts \
-  test/unit/explore-degrades-instead-of-ending-the-run.test.ts \
-  test/unit/explore-replays-state-invariant-path-once-per-edge.test.ts \
-  test/unit/explore-stall-hint-names-effective-flags.test.ts \
-  test/unit/noise-sentinel.test.ts test/unit/noise-warning-is-one-terminal-line.test.ts \
-  test/unit/isolation-calc.test.ts test/unit/isolation-cli.test.ts \
-  test/unit/isolation-harden.test.ts test/unit/isolation-orchestrate.test.ts \
-  test/unit/isolation-orchestrate-harden.test.ts test/unit/isolation-phase-warnings.test.ts \
-  test/unit/isolation-report.test.ts test/unit/interaction-step-budgets.test.ts \
-  test/unit/portal-harden.test.ts --maxWorkers=2
-#  Test Files  18 passed (18)
-#       Tests  280 passed (280)
+npx vitest run test/unit/explorer.test.ts   test/unit/an-external-link-is-not-exercised.test.ts   test/unit/the-discovery-line-counts-what-it-skipped.test.ts   test/unit/explore-degrades-instead-of-ending-the-run.test.ts   test/unit/explore-replays-state-invariant-path-once-per-edge.test.ts   test/unit/explore-stall-hint-names-effective-flags.test.ts   test/unit/noise-sentinel.test.ts test/unit/noise-warning-is-one-terminal-line.test.ts   test/unit/isolation-calc.test.ts test/unit/isolation-cli.test.ts   test/unit/isolation-harden.test.ts test/unit/isolation-orchestrate.test.ts   test/unit/isolation-orchestrate-harden.test.ts test/unit/isolation-phase-warnings.test.ts   test/unit/isolation-report.test.ts test/unit/interaction-step-budgets.test.ts   test/unit/portal-harden.test.ts --maxWorkers=2
+#  Test Files  17 passed (17)
+#       Tests  278 passed (278)
 
-npx vitest run test/e2e/an-external-link-is-not-exercised.test.ts --maxWorkers=1
-#  Test Files  1 passed (1)
-#       Tests  2 passed (2)
+npx vitest run test/e2e/an-external-link-is-not-exercised.test.ts   test/e2e/a-click-that-opens-a-page-leaves-none-open.test.ts --maxWorkers=1
+#  Test Files  2 passed (2)
+#       Tests  4 passed (4)
 
 npx vitest run test/e2e/explorer.test.ts --maxWorkers=1
 #  Test Files  1 passed (1)
-#       Tests  9 passed (9)
+#       Tests  9 passed (9)     Duration  88.03s
 
 npx vitest run test/unit --maxWorkers=2
-#  Test Files  2 failed | 342 passed (344)
-#       Tests  2 failed | 4962 passed | 1 skipped (4965)
-#   Duration  335.49s
+#  Test Files  2 failed | 363 passed (365)
+#       Tests  2 failed | 5169 passed | 1 skipped (5172)
+#   Duration  581.32s
 # The two failures are the recorded baseline pair, unchanged by this milestone:
 # test/unit/prop-cap-ranking.test.ts ("variant and size survive the 32-prop cap") and
 # test/unit/vue-setup-inject-evidence.test.ts ("records why each specifier failed").
 ```
 
-Corpus repros, through a `dist` built in `C:/Projekte/120fps-run7-lane-h` (2026-09-06, logs under
+Corpus repros, through a `dist` built in `C:/Projekte/120fps-run7-lane-h` (logs under
 `C:/Projekte/120fps-fieldtest/logs/run7-lane-h/<repo>/`). Every run:
 
 ```
-node C:/Projekte/120fps-fieldtest/tools/run120.mjs --cwd <appDir> \
-  --out C:/Projekte/120fps-fieldtest/logs/run7-lane-h/<repo> --label <label> --timeout 600 \
-  --cli C:/Projekte/120fps-run7-lane-h/dist/cli/main.js \
-  -- <component> --samples 3 --max-combos 2 --explore-budget 30 --no-deltas
+node C:/Projekte/120fps-fieldtest/tools/run120.mjs --cwd <appDir>   --out C:/Projekte/120fps-fieldtest/logs/run7-lane-h/<repo> --label <label> --timeout 600   --cli C:/Projekte/120fps-run7-lane-h/dist/cli/main.js   -- <component> --samples 3 --max-combos 2 --explore-budget 30 --no-deltas
 ```
 
 | Repo, component | Label | Before | After | Skip line |
 |---|---|---|---|---|
-| scaffold-create-vue, `src/components/HelloWorld.vue` | `m137-create-vue` | verdict-fail, exit 1, 83 s; Vite 237.6 ms/step and Vue 3 34.1 ms/step against T1's 33 ms | PASS, exit 0, 19 s; 0 interactions, explore 1 s | `explore skipped 2 interaction targets that would leave the page (2 external links)` |
-| scaffold-vite-vue-ts, `src/components/HelloWorld.vue` | `m137-vite-vue-ts` | verdict-fail, exit 1, 80 s; Bluesky 255.3 ms/step against T4's 100 ms | PASS, exit 0, 36 s; 8 interactions, the component's own button at 9.7-10.9 ms/step and the document scroll at 10.0-16.0 ms/step | `... (6 external links)` |
+| scaffold-create-vue, `src/components/HelloWorld.vue` | `m137fix-create-vue` | verdict-fail, exit 1, 83 s; Vite 237.6 ms/step and Vue 3 34.1 ms/step against T1's 33 ms | PASS, exit 0, 15 s; 0 interactions; explore 1 m 14 s → 1 s | `explore skipped 2 interaction targets that would leave the page (2 external links)` |
+| scaffold-vite-vue-ts, `src/components/HelloWorld.vue` | `m137fix-vite-vue-ts` | verdict-fail, exit 1, 80 s; Bluesky 255.3 ms/step against T4's 100 ms | PASS, exit 0, 44 s; 8 interactions — the component's own button at 12.2-16.0 ms/step, the document scroll at 14.8-20.7 ms/step | `... (6 external links)` |
 | scaffold-vite-react-ts, `src/App.tsx` | `m137-vite-react-ts` | pass-warn, exit 0, 91 s; Explore Vite 66.2 ms/step, Bluesky 44.2 ms/step | pass-warn, exit 0, 67 s; 8 interactions, none an anchor that leaves | `... (6 external links)` |
 | umbrel (control), `src/components/ui/card.tsx` | `m137-control` | pass-warn, exit 0, 46 s, 0 interactions | pass-warn, exit 0, 45 s, 0 interactions | none |
 | shadcn-admin, `src/components/skip-to-main.tsx` | `m137-same-page-anchor` | not measured before | pass-warn, exit 0, 88 s; the component's single `href="#content"` anchor exercised at 20.2 ms/step under `rapid-toggle-11` | none |
 
 The last row is C1's negative: a component whose only interactive element is a same-page anchor is
-still discovered, still exercised, and prints no line. `git status --porcelain` in each target
-repository is empty after its run (umbrel's `package-lock.json` was already modified on
-2026-09-05, before this lane existed).
+still discovered, still exercised, and prints no line. Both Vue scaffolds reach PASS on a machine the
+sentinel called `hostile` (probe CV 46 % and 52 %), which is what makes the deferral below safe:
+C1-C3 carry the fix on their own. `git status --porcelain` in each target repository is empty after
+its run.
 
 ## Deferred
 
-- **Interface request — the one call site outside this lane's files.** C4's withholding is
-  implemented in `src/report/stats.ts`, and it is invoked from the noise block of
-  `createHarnessContextAttacher` in `src/pipeline/phases.ts` (three lines, immediately after
-  `report.noise = noise`, plus one named import). That block belongs to no lane: A owns
-  `presentBundlerFailure` in the same file and C owns the injected-stylesheet disclosure, neither of
-  which this hunk touches. `buildReport` cannot host it, because `report.noise` does not exist
-  while the verdicts are being written. The coordinator relocates it if a lane claims the block.
+- **Withholding a per-step FAIL on a hostile machine (was C4, C5).** An interaction whose samples the
+  noise sentinel calls `unstable` on a machine it calls `hostile` still fails, as every other budget
+  breach does. Four findings removed it from this milestone:
+  1. **The gate would swallow the verdict, not qualify it.** The measuring machine reports
+     `machine: hostile` on 217 of 278 recorded runs and `quiet` on none, at probe CV 46-58 % on an
+     idle 12-core box. A gate that fires on `hostile` makes the per-step interaction FAIL
+     effectively unreachable.
+  2. **The signal is circular.** `classifyNoise` reaches `hostile` on `unstableFraction` alone, and
+     that fraction counts the component's own metrics: a jittery component would classify its own
+     machine as hostile and then be excused by it. A future gate reads the probe signal only.
+  3. **The reconstruction was unsound in the applied direction.** Taking the tighter of the two
+     budget shapes keeps the FAIL for a T2-T4 combo whose mount sits inside its tier budget but
+     outside T1's, and in flat-threshold mode. A future gate reconstructs with the combo's own
+     effective budget, or is computed where that budget is still in hand.
+  4. **It contradicts an approved contract.** "Budget verdicts are absolute" is stated at
+     `specs/overview/00-tdd.md:839` and `specs/overview/01-glossary.md:71`, and the M117 known limit
+     at `CHANGELOG:196-197` says the same. Any future gate amends those first.
+
+  A future gate must therefore: read the probe signal only, never `unstableFraction`; carry a
+  magnitude ceiling, so a 7x breach fails however noisy the machine was; and compare against the
+  combo's own effective budget. C1-C3 turned both Vue scaffolds from FAIL to PASS without this gate
+  ever firing: `withheld=false` in all five lane runs and in the reviewer's rerun.
 
 - **The explore phase's wall clock.** `explore: 1 combos, budget 60s each` under
   `--explore-budget 30`, and 60-74 s recorded on a one-prop component, is M134 S4/C5 in lane F, not a
