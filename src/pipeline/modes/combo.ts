@@ -27,7 +27,12 @@ import {
   EXPLORE_BUDGET_WARNING,
   VOLATILE_DOM_NOTICE,
 } from "../../analysis/index.js";
-import { measureMount, measureRerender, type MountResult } from "../../browser/index.js";
+import {
+  measureMount,
+  measureRerender,
+  type MountPassGate,
+  type MountResult,
+} from "../../browser/index.js";
 import { writeReportJson } from "../analyze.js";
 import { applyBaselineWorkflow, buildReport } from "../build-report.js";
 import {
@@ -80,38 +85,42 @@ function formatComboSpace(n: number): string {
 export const STRATIFIED_SAMPLE_WARNING = (raw: number, sampled: number): string =>
   `prop space has ${formatComboSpace(raw)} combinations; measured a stratified sample of ${sampled}.`;
 
-// The smallest scale point rides the main batch and the gate reads what it measured, so no mount
-// is paid for twice. measureMount assigns comboIndex by position, so the deferred points are
-// renumbered onto the combo list they belong to.
+// One batch, one session: the prop combos, then the scale points in ascending order. The cheapest
+// point is measured in that batch and the gate reads its measurement mid-batch, so no mount is paid
+// for twice and no session boundary lands inside the scaling curve. The pass keeps its sparseness:
+// a combo nothing measured stays a hole rather than becoming an all-zero row.
 export async function measureGatedScaleMounts(input: {
   propCombos: PropCombination[];
   scalePoints: number[];
-  measure: (combos: PropCombination[]) => Promise<MountResult[]>;
+  measure: (combos: PropCombination[], gate?: MountPassGate) => Promise<MountResult[]>;
   gateMs?: number;
 }): Promise<{ combos: PropCombination[]; mounts: MountResult[]; warning?: string }> {
   const { propCombos, scalePoints, measure, gateMs = SCALE_PROBE_GATE_MS } = input;
-  const probeN = scalePoints.length > 0 ? Math.min(...scalePoints) : undefined;
-  const deferred = scalePoints.filter((n) => n !== probeN);
-  const combos =
-    probeN === undefined ? [...propCombos] : [...propCombos, { __120fps_scaleN: probeN }];
+  const ascending = [...scalePoints].sort((a, b) => a - b);
+  const combos = [...propCombos, ...ascending.map((n) => ({ __120fps_scaleN: n }))];
+  if (ascending.length <= 1) return { combos, mounts: await measure(combos) };
 
-  const mounts = await measure(combos);
-  if (probeN === undefined || deferred.length === 0) return { combos, mounts };
+  const probeIndex = propCombos.length;
+  let warning: string | undefined;
+  let kept = combos.length;
+  const mounts = await measure(combos, {
+    shouldContinue(afterComboIndex, results) {
+      // Only the cheapest point decides, and only once it has a measurement to decide on.
+      if (afterComboIndex !== probeIndex) return true;
+      const probe = results[probeIndex];
+      if (!probe) return true;
+      const { skipped } = boundScalePointsByProbeCost(ascending, probe.mount.median, gateMs);
+      if (skipped.length === 0) return true;
+      warning = SCALE_PROBE_COST_WARNING(ascending[0], probe.mount.median, skipped);
+      kept = combos.length - skipped.length;
+      return false;
+    },
+  });
 
-  const probe = mounts[combos.length - 1];
-  const { skipped } = probe
-    ? boundScalePointsByProbeCost(scalePoints, probe.mount.median, gateMs)
-    : { skipped: [] as number[] };
-  if (skipped.length > 0) {
-    return { combos, mounts, warning: SCALE_PROBE_COST_WARNING(probeN, probe!.mount.median, skipped) };
-  }
-
-  const offset = combos.length;
-  const deferredCombos = deferred.map((n) => ({ __120fps_scaleN: n }));
-  const deferredMounts = await measure(deferredCombos);
   return {
-    combos: [...combos, ...deferredCombos],
-    mounts: [...mounts, ...deferredMounts.map((m) => ({ ...m, comboIndex: m.comboIndex + offset }))],
+    combos: combos.slice(0, kept),
+    mounts: mounts.slice(0, kept),
+    ...(warning !== undefined ? { warning } : {}),
   };
 }
 
@@ -161,11 +170,13 @@ export async function runComboMode(ctx: ModeContext, fixtureHasScale: boolean): 
     runWarnings.push(EFFECTIVE_SAMPLES_WARNING(effectiveSamples, samples, plannedCombos));
   }
 
-  ctx.progress(`mount: ${plannedCombos} combos x ${effectiveSamples} samples`);
+  // "up to": the scale gate can still refuse the larger points once it has measured the cheapest.
+  const planWord = scalePoints.length > 1 ? "up to " : "";
+  ctx.progress(`mount: ${planWord}${plannedCombos} combos x ${effectiveSamples} samples`);
   const gated = await measureGatedScaleMounts({
     propCombos,
     scalePoints,
-    measure: (batch) =>
+    measure: (batch, gate) =>
       measureMount(harness, {
         samples: effectiveSamples,
         cpuThrottle,
@@ -173,13 +184,15 @@ export async function runComboMode(ctx: ModeContext, fixtureHasScale: boolean): 
         combos: batch,
         pool,
         onWarning,
+        ...(gate ? { gate } : {}),
       }),
   });
   if (gated.warning) runWarnings.push(gated.warning);
   const combos = gated.combos;
   const mounts = gated.mounts;
 
-  const heapDeltas: number[] = mounts.map((m) => m.heapDelta ?? 0);
+  // The pass omits a combo it could not measure, so the row stays a hole all the way to the report.
+  const heapDeltas: number[] = mounts.map((m) => m?.heapDelta ?? 0);
 
   ctx.progress(`rerender: ${combos.length} combos`);
   const rerenders = await measureRerender(harness, {

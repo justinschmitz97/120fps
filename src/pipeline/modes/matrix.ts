@@ -19,7 +19,17 @@ import {
   type DeltaPair,
   type PropCombination,
 } from "../../props/index.js";
-import { hasReactWarning, explore, restoreComboIndices } from "../../analysis/index.js";
+import {
+  EXPLORE_BUDGET_WARNING,
+  hasReactWarning,
+  explore,
+  exploreRunOptions,
+  restoreComboIndices,
+} from "../../analysis/index.js";
+
+// What one matrix cell may spend when the run names no budget of its own; the phase budget, when
+// the run does name one, is divided across the cells instead.
+export const MATRIX_CELL_WALL_CLOCK_MS = 30000;
 import {
   attachWrapperReport,
   type PropDelta,
@@ -167,7 +177,17 @@ export async function runMatrixMode(ctx: ModeContext, matrixAutoActivated: boole
   const sortedMounts = [...matrixMounts].sort((a, b) => b.mount.median - a.mount.median);
   const hotIndices = sortedMounts.slice(0, 5).map((m) => m.comboIndex);
   const hotCombos = hotIndices.map((i) => matrixCombos[i]);
-  if (hotCombos.length > 0) ctx.progress(`explore: ${hotCombos.length} hottest cells`);
+  const exploreBounds = exploreRunOptions(
+    options,
+    hotCombos.length,
+    hotCombos.length * MATRIX_CELL_WALL_CLOCK_MS,
+  );
+  if (hotCombos.length > 0) {
+    ctx.progress(
+      `explore: ${hotCombos.length} hottest cells, budget ` +
+        `${Math.round(exploreBounds.maxWallClockMs / 1000)}s${hotCombos.length > 1 ? " each" : ""}`,
+    );
+  }
   const rawExplores = hotCombos.length > 0
     ? await explore(harness, {
         samples: Math.min(samples, 5),
@@ -175,11 +195,14 @@ export async function runMatrixMode(ctx: ModeContext, matrixAutoActivated: boole
         warmupRuns,
         seed: ctx.seed,
         combos: hotCombos,
-        maxWallClockMs: 30000,
+        ...exploreBounds,
         pool,
         onWarning,
       })
     : [];
+  if (rawExplores.length < hotCombos.length) {
+    runWarnings.push(EXPLORE_BUDGET_WARNING(rawExplores.length, hotCombos.length, "matrix cells"));
+  }
   const matrixExplores = restoreComboIndices(rawExplores, hotIndices);
 
   let matrixDeltas: PropDelta[] | undefined;

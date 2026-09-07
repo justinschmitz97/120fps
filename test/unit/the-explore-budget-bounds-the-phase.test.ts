@@ -2,7 +2,9 @@ import { describe, it, expect } from "vitest";
 import {
   DEFAULT_EXPLORE_PHASE_WALL_CLOCK_MS,
   EXPLORE_BUDGET_WARNING,
+  EXPLORE_COMBO_TRUNCATED_WARNING,
   MIN_EXPLORE_UNIT_WALL_CLOCK_MS,
+  exploreComboWallClockMs,
   explorePhaseBudgetSpent,
   exploreRunOptions,
 } from "../../src/analysis/index.js";
@@ -69,6 +71,36 @@ describe("what the run says when the budget stopped the phase", () => {
     expect(EXPLORE_BUDGET_WARNING(1, 2)).toContain("--explore-budget");
     expect(EXPLORE_BUDGET_WARNING(1, 2)).toContain("1 of 2 prop combos");
     expect(EXPLORE_BUDGET_WARNING(3, 6, "scale points")).toContain("3 of 6 scale points");
+    expect(EXPLORE_BUDGET_WARNING(3, 6, "scale points")).toContain("Skipped scale points");
+  });
+
+  it("names the flag when a combo's own share was cut short", () => {
+    const warning = EXPLORE_COMBO_TRUNCATED_WARNING(1, 12_800, 15_000);
+    expect(warning).toContain("combo 1");
+    expect(warning).toContain("12.8s");
+    expect(warning).toContain("15.0s");
+    expect(warning).toContain("--explore-budget");
+  });
+});
+
+describe("what one combo may spend once the phase has been running", () => {
+  it("hands over its whole share while the phase has room for it", () => {
+    expect(exploreComboWallClockMs(15_000, 3_000, 30_000)).toBe(15_000);
+    expect(exploreComboWallClockMs(15_000, 0, 30_000)).toBe(15_000);
+  });
+
+  it("cuts the share to what the phase has left", () => {
+    expect(exploreComboWallClockMs(15_000, 18_000, 30_000)).toBe(12_000);
+  });
+
+  it("never cuts a walk below the floor, so a cut combo still reaches a second state", () => {
+    expect(exploreComboWallClockMs(15_000, 28_000, 30_000)).toBe(MIN_EXPLORE_UNIT_WALL_CLOCK_MS);
+    expect(exploreComboWallClockMs(15_000, 40_000, 30_000)).toBe(MIN_EXPLORE_UNIT_WALL_CLOCK_MS);
+  });
+
+  it("never raises a share that was already below the floor", () => {
+    expect(exploreComboWallClockMs(5_000, 4_000, 5_000)).toBe(5_000);
+    expect(exploreComboWallClockMs(5_000, 5_000, 5_000)).toBe(5_000);
   });
 });
 

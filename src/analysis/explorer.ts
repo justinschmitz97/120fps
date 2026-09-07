@@ -121,6 +121,27 @@ export function explorePhaseBudgetSpent(elapsedMs: number, totalWallClockMs: num
   return elapsedMs >= totalWallClockMs;
 }
 
+// What is left of the phase, never less than a walk can use and never more than the combo's share.
+// A combo cut this way stops its search early, which is a finding the run has to disclose.
+export function exploreComboWallClockMs(
+  shareMs: number,
+  elapsedMs: number,
+  totalWallClockMs: number,
+): number {
+  const remaining = Math.max(0, totalWallClockMs - elapsedMs);
+  const floor = Math.min(MIN_EXPLORE_UNIT_WALL_CLOCK_MS, shareMs);
+  return Math.max(floor, Math.min(shareMs, remaining));
+}
+
+export const EXPLORE_COMBO_TRUNCATED_WARNING = (
+  comboIndex: number,
+  grantedMs: number,
+  shareMs: number,
+): string =>
+  `combo ${comboIndex} explored for ${(grantedMs / 1000).toFixed(1)}s of the ${(shareMs / 1000).toFixed(1)}s ` +
+  `it was given: the exploration budget ran out first, so its interactions are a partial walk. ` +
+  `Raise it with --explore-budget <seconds>.`;
+
 // One selection algorithm for exploration and measurement, so the two never disagree.
 export function selectExploreCombos(count: number, maxCombos: number): number[] {
   return selectRepresentativeCombos(count, maxCombos);
@@ -132,7 +153,7 @@ export const EXPLORE_BUDGET_WARNING = (
   unit = "prop combos",
 ): string =>
   `explored ${explored} of ${total} ${unit}; ${total - explored} were skipped to stay inside ` +
-  `the exploration budget. Skipped combos report no interactions. Raise it with ` +
+  `the exploration budget. Skipped ${unit} report no interactions. Raise it with ` +
   `--explore-budget <seconds>.`;
 
 export interface ExploreResult {
@@ -464,11 +485,15 @@ export async function explore(
       if (explorePhaseBudgetSpent(Date.now() - runStart, totalWallClockMs)) break;
       const props = combos[ci];
       inFlight.combo = ci;
-      // The last combo gets what the phase has left, so the phase ends at the bound it advertised.
-      const comboWallClockMs = Math.min(
+      // The last combo gets what the phase has left, so the phase ends near the bound it advertised.
+      const comboWallClockMs = exploreComboWallClockMs(
         maxWallClockMs,
-        Math.max(0, totalWallClockMs - (Date.now() - runStart)),
+        Date.now() - runStart,
+        totalWallClockMs,
       );
+      if (comboWallClockMs < maxWallClockMs) {
+        options.onWarning?.(EXPLORE_COMBO_TRUNCATED_WARNING(ci, comboWallClockMs, maxWallClockMs));
+      }
       const graph = await inFlight.run(() => exploreCombo(
         page,
         session,
