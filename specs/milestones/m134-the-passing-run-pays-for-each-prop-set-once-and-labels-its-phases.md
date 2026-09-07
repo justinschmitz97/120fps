@@ -8,6 +8,7 @@ tests:
   - test/unit/every-phase-label-names-what-it-measured.test.ts
   - test/unit/the-explore-budget-bounds-the-phase.test.ts
   - test/unit/a-single-combo-run-is-bounded-too.test.ts
+  - test/unit/a-scale-probe-renders-what-the-component-needs.test.ts
 ---
 
 # M134: the passing run pays for each distinct prop set once and labels its phases truthfully
@@ -97,6 +98,15 @@ profiles under `C:/Projekte/120fps-fieldtest/logs/run7-investigate/` and
    in curve mode, identically in all five mode runs (`smoke/run7-new1/rallly.json`, flags `slow-real`
    and `slow-explore`, real 207 s).
 
+9. **A scale probe renders a component the run never asked for** — the auto-scale combos are
+   built as `{ __120fps_scaleN: n }` alone (`src/pipeline/modes/combo.ts:100`), so the N copies the
+   harness entry fans out (`src/harness/entry.ts:417-422` for React, `:321-325` for Vue, both of
+   which already spread whatever else the combo carries) receive no props at all. A component with a
+   required prop then throws on every scale row while its real combos render. The verifier: dub
+   `ui/shared/empty-state.tsx` under M133's `icon` synthesis renders 8 and 4 DOM nodes on combos 0
+   and 1 and throws `Element type is invalid ... got: undefined` on all four scale probes
+   (`logs/run7-lane-d/dub/m133-dub.log:29-70`).
+
 ## MUST
 
 - **C1** The React analysis pass measures each distinct prop set once. Combos that produce the same
@@ -133,6 +143,18 @@ profiles under `C:/Projekte/120fps-fieldtest/logs/run7-investigate/` and
     clause.
   - When the budget stops the phase, the run says so and names the flag, whether it refused a
     whole combo or cut one combo's share short; a stopped phase is not a failure.
+  - The bound has one deliberate overrun. A combo that starts with less than ten seconds of budget
+    left is given ten seconds anyway, so the phase can end up to ten seconds past the flag. A walk
+    shorter than that reaches no second state, so the alternative is a combo that costs its
+    bring-up and reports nothing; the run would rather overrun by a bounded amount and say so.
+    Every such combo carries the truncation disclosure, and a combo that cannot start at all is
+    refused outright rather than given the floor.
+- **C7** A scale probe renders the component the way the run renders it. Each auto-scale combo
+  carries the first measured combo's prop set beside `__120fps_scaleN`, and the harness entry mounts
+  each of the N copies with that prop set, so a component with a required prop renders on its scale
+  rows as it does on its prop rows. A run with no prop combos of its own — a fixture that exports its
+  own `scale` — keeps the bare trigger. `__120fps_scaleN` still never reaches `ComboReport.props`;
+  the base props do, because they are what the row measured.
 - **C6** The measured effect is recorded, not assumed. This milestone's Verification carries an
   interleaved A/B (five pairs, same window, same machine) of `phaseTimings.analysis` on umbrel and of
   `phaseTimings.explore` on novu. A change that does not produce a warning-free win is reverted; a
@@ -151,7 +173,8 @@ profiles under `C:/Projekte/120fps-fieldtest/logs/run7-investigate/` and
   so skipping it moves the cost rather than removing it, and M121 A4 requires the harness to compile
   each candidate before the page is opened (`m121-…:67-71`); A5 depends on its result.
 - Change what a combo *is*: C1 deduplicates measurement, never the combo list, the combo ids, the
-  report shape or the number of rows the user sees.
+  report shape or the number of rows the user sees. C7 changes what a scale row renders, never how
+  many rows there are or which N each carries.
 - Change a default: `--samples`, `--max-combos`, the trace-versus-observer path (M52), the cold
   session per phase (M37) and the begin-frame control path all stay as they are.
 - Change `--explore-budget`'s default or its meaning as a *phase* budget. C5 makes the phase obey it;
@@ -201,6 +224,15 @@ plan exceeds the 20-combo throttle threshold and whose gate then trips, the samp
 plan's, not the smaller kept set's; that count is part of the M53 environment fingerprint, so such a
 run does not compare like-for-like against a pre-M134 baseline.
 
+**A scale probe's props.** `measureGatedScaleMounts` spreads the first prop combo's props into
+every scale combo, so `{ __120fps_scaleN: 5 }` becomes `{ ...propCombos[0], __120fps_scaleN: 5 }`.
+The harness entry needed no change: both templates already strip the trigger key and spread the rest
+into each copy (`src/harness/entry.ts:417-422`, `:321-325`), and the React analysis probe has no
+`scaleN` branch at all, so it mounts the single instance those props describe. `propCombinationKey`
+strips only the trigger, so the scale rows now share the first prop combo's key and its one
+measurement rather than the empty set's. `buildReport` still lifts `__120fps_scaleN` out into
+`scaleProbe` and leaves the rest as the row's `props`.
+
 **The explore budget.** `exploreUnitWallClockMs` divides the phase budget across the units, clamps
 the share to the unit's own default (60 s per combo, 30 s per curve point, 30 s per matrix cell)
 above and to 10 s below, then to the phase budget itself, so `--explore-budget 5` yields 5 s and no
@@ -210,10 +242,17 @@ flag selects it. Combo, curve and matrix mode all route through it.
 
 `explore()` starts its clock at the phase's start, so bring-up counts against the budget, and
 refuses a new combo once `explorePhaseBudgetSpent`. `exploreComboWallClockMs` gives each combo the
-smaller of its share and what the phase has left, floored at 10 s (or at the share, when the share
-is already smaller) so a cut combo still reaches a second state. A combo that gets less than its
-share says so through `EXPLORE_COMBO_TRUNCATED_WARNING`, which names `--explore-budget`; a combo
-that never starts is covered by `EXPLORE_BUDGET_WARNING`, which names the unit it stopped counting.
+smaller of its share and what the phase has left, floored at `MIN_EXPLORE_UNIT_WALL_CLOCK_MS` (or at
+the share, when the share is already smaller) so a cut combo still reaches a second state. A combo
+that gets less than its share says so through `EXPLORE_COMBO_TRUNCATED_WARNING`, which names
+`--explore-budget`; a combo that never starts is covered by `EXPLORE_BUDGET_WARNING`, which names
+the unit it stopped counting.
+
+The floor is what C5's overrun clause records. A combo only starts while the budget is unspent, and
+it then takes at most the floor, so the phase ends less than `MIN_EXPLORE_UNIT_WALL_CLOCK_MS` past
+the flag — `exploreComboWallClockMs(15_000, 28_000, 30_000)` is `10_000`, not `2_000`. Dropping the
+floor would trade that bounded overrun for combos that pay a bring-up and report nothing, so the
+floor stays and the disclosure carries the cost.
 
 ## Verification
 
@@ -243,6 +282,11 @@ that never starts is covered by `EXPLORE_BUDGET_WARNING`, which names the unit i
   budget divided across its points; `observerTiming` set by the caller reaches
   `src/analysis/exploration-loop.ts:203`; the default budget produces today's behaviour on a fixture
   that fits inside it.
+- **C7** — `test/unit/a-scale-probe-renders-what-the-component-needs.test.ts`: every scale combo
+  carries the first prop combo's props beside its `__120fps_scaleN`; a run with no prop combos keeps
+  the bare trigger; over the schema of `fixtures/m134-required-icon/RequiredIcon.tsx`, whose `icon`
+  prop is required and whose absence throws, every scale combo carries a defined `icon`; both
+  generated entries spread the combo's remaining props into each of the N copies.
 - **C6** — recorded below: five interleaved A/B pairs per repo, `phaseTimings` medians, and the
   decision.
 - Types: `node node_modules/typescript/bin/tsc --noEmit -p tsconfig.json` clean.
@@ -261,12 +305,12 @@ reporting `hostile` under a concurrent smoke and two other lanes):
 node node_modules/typescript/bin/tsc --noEmit -p tsconfig.json
 # clean
 
-npx vitest run test/unit/the-analysis-pass-measures-each-prop-set-once.test.ts   test/unit/a-scale-probe-is-measured-once.test.ts   test/unit/the-memo-pass-runs-only-with-a-memo-fiber.test.ts   test/unit/every-phase-label-names-what-it-measured.test.ts   test/unit/the-explore-budget-bounds-the-phase.test.ts   test/unit/a-single-combo-run-is-bounded-too.test.ts --maxWorkers=2
-# Test Files 6 passed (6) | Tests 53 passed (53)
+npx vitest run test/unit/the-analysis-pass-measures-each-prop-set-once.test.ts test/unit/a-scale-probe-is-measured-once.test.ts test/unit/a-scale-probe-renders-what-the-component-needs.test.ts test/unit/the-memo-pass-runs-only-with-a-memo-fiber.test.ts test/unit/every-phase-label-names-what-it-measured.test.ts test/unit/the-explore-budget-bounds-the-phase.test.ts test/unit/a-single-combo-run-is-bounded-too.test.ts --maxWorkers=2
+# Test Files 7 passed (7) | Tests 59 passed (59)
 
 npx vitest run test/unit --maxWorkers=2
-# Test Files 2 failed | 374 passed (376)
-# Tests 2 failed | 5319 passed | 1 skipped (5322)
+# Test Files 2 failed | 389 passed (391)
+# Tests 2 failed | 5434 passed | 1 skipped (5437)
 # the two failures are the recorded pre-existing pair: prop-cap-ranking.test.ts and
 # vue-setup-inject-evidence.test.ts
 ```
@@ -314,6 +358,25 @@ again after they landed:
 | commerce `components/label.tsx` (control) | exit 0, `pass: true`, 2 warnings, 6 combos, `mount: up to 6 combos x 3 samples`. All four scale probes measured in the one batch: `1=6.6 5=13.9 20=33.3 50=78.7` ms, the same shape as the pre-M134 build's `1=4.4 5=9.8 20=28.1 50=69.5`, with no step at the `n=1` to `n=5` boundary |
 | commerce `components/label.tsx` `--isolate memory` | `calibration  (0:01)`, `setup  (0:01)`, `mode: isolation (memory)`, `isolation: memory`; `{"preflight":92,"build":1258,"calibration":171,"setup":1218,"mount":900,...,"total":3639}`, the keys summing to `total` exactly. The isolated measurement is charged to `mount`, not to `setup` |
 | novu `src/components/primitives/toggle.tsx` | explore 17 995 ms inside the 30 s budget, `budget 15s each`, per-combo 1 293 ms and 16 287 ms, no combo's share cut and so no truncation disclosure, `pass: true`, 7 warnings |
+
+C7 was measured on the component that found it, dub `ui/shared/empty-state.tsx`
+(`E:/repositories/dub/apps/web`), A = `de41d6a`, B = this branch, same profile:
+
+| Row | A | B |
+|---|---|---|
+| combo 0 | 8 DOM nodes, `warn` | 8 DOM nodes, `warn` |
+| combo 1 | 4 DOM nodes, `pass` | 4 DOM nodes, `warn` |
+| N=1 | 0 DOM nodes, `renderHealth: error`, `fail` | 9 DOM nodes, `pass` |
+| N=5 | 0 DOM nodes, `renderHealth: error`, `fail` | 41 DOM nodes, `pass` |
+| N=20 | 0 DOM nodes, `renderHealth: error`, `fail` | 161 DOM nodes, `pass` |
+| N=50 | 0 DOM nodes, `renderHealth: error`, `fail` | 401 DOM nodes, `pass` |
+| run | `pass: false`, exit 1, 9 warnings | `pass: true`, exit 0, 9 warnings |
+
+The node counts are the component's own 8 nodes per copy plus the one wrapper the entry adds, so the
+synthetic curve now measures N copies of what the report is about. commerce, the control, keeps its
+shape: 6 combos, `pass: true`, the same 2 warnings, and scale probes at 6, 26, 101 and 251 DOM nodes
+exactly as the pre-M134 build recorded them — its props are all optional, so carrying them changes
+nothing it renders.
 
 Corpus repros, through a `dist` built in `C:/Projekte/120fps-run7-lane-f`:
 

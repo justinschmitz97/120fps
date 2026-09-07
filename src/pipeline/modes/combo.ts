@@ -97,7 +97,13 @@ export async function measureGatedScaleMounts(input: {
 }): Promise<{ combos: PropCombination[]; mounts: MountResult[]; warning?: string }> {
   const { propCombos, scalePoints, measure, gateMs = SCALE_PROBE_GATE_MS } = input;
   const ascending = [...scalePoints].sort((a, b) => a - b);
-  const combos = [...propCombos, ...ascending.map((n) => ({ __120fps_scaleN: n }))];
+  // Each copy renders with the prop set the run measures first, so a required prop reaches every
+  // copy and the curve describes N of the component the report is about.
+  const baseProps = propCombos[0] ?? {};
+  const combos = [
+    ...propCombos,
+    ...ascending.map((n) => ({ ...baseProps, __120fps_scaleN: n })),
+  ];
   if (ascending.length <= 1) return { combos, mounts: await measure(combos) };
 
   const probeIndex = propCombos.length;
