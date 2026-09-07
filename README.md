@@ -126,7 +126,7 @@ Runs print one line per phase (`mount: 8 combos x 10 samples`) and end with `Tot
 
 ## Where the minutes go
 
-`Total:` breaks down by phase: `Total: 3m 12s  (build 41s, mount 58s, explore 1m 20s, analysis 12s)`; a phase at zero is left out. The JSON report carries the same numbers in `phaseTimings`: `preflight`, `build`, `calibration`, `mount`, `rerender`, `explore`, `scale`, `deltas`, `attribution`, `analysis` and `total`, each an integer millisecond count, the ten phase keys summing to `total`. `--report-md` includes the same breakdown per component; a report from before this existed renders `-`, never `0s`.
+`Total:` breaks down by phase: `Total: 3m 12s  (build 41s, mount 58s, explore 1m 20s, analysis 12s)`; a phase at zero is left out. The JSON report carries the same numbers in `phaseTimings`: `preflight`, `build`, `calibration`, `setup`, `mount`, `rerender`, `explore`, `scale`, `deltas`, `attribution`, `analysis` and `total`, each an integer millisecond count, the eleven phase keys summing to `total`. `setup` holds the wrapper overhead, the calibration session's close, schema extraction and combination planning that used to be counted as calibration. `--report-md` includes the same breakdown per component; a report from before this existed renders `-`, never `0s`.
 
 ## Budgets & baselines (CI)
 
