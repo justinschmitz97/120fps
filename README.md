@@ -289,6 +289,7 @@ npx 120fps "src/components/**/*.vue" --budget
 - `120fps.setup.vue` wraps via its default slot; `.fixture.vue` for compounds.
 - No `--isolate strictmode` (React-only concept), no Vue optimization pass yet. Framework is part of the baseline fingerprint.
 - A read-of-undefined abort inside an ordinary SFC render frame gets a provide/inject hint pointing at `120fps.setup.vue` only when the component's own `<script setup>` block calls `inject(`; otherwise the abort prints no hint.
+- The declaration files your own tooling generates are a resolution input, read as text and never executed. `components.d.ts` (also `src/`, `types/`, `app/`, `.nuxt/`) registers your project's own components globally before mount; `auto-imports.d.ts` (same search order) prepends the import for an identifier a module in the measured component's graph uses without importing it. Both are disclosed once per run with the file and the count, along with entries whose module is not on disk. A component the map points at inside a dependency stays unregistered, because it usually needs a router or a Nuxt app context the harness does not provide; the run names the ones your component's own source references. `@vitejs/plugin-vue` also resolves through a framework you *do* declare (`nuxt`, `vite`) that depends on it, with no hoisting warning.
 
 ## Tier Budgets
 

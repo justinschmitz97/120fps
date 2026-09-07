@@ -1,5 +1,6 @@
 export * from "./compiler-options.js";
 export * from "./framework.js";
+export * from "./generated-declarations.js";
 export * from "./model.js";
 export * from "./nuxt.js";
 export * from "./package-manager.js";

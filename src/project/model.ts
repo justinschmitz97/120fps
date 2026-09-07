@@ -322,6 +322,12 @@ function parseCompilerConfig(
   }
 }
 
+// TypeScript globs no .vue file on its own, so a config covering an SFC would read as covering
+// nothing; the editor tooling a Vue project runs passes the same extension.
+const SINGLE_FILE_COMPONENT_EXTENSION: readonly ts.FileExtensionInfo[] = [
+  { extension: ".vue", isMixedContent: true, scriptKind: ts.ScriptKind.Deferred },
+];
+
 // The real file system, once per config path: only a references walk needs the file list.
 function expandConfigFileNames(configPath: string, config: unknown): readonly string[] {
   const key = pathKey(configPath);
@@ -336,6 +342,8 @@ function expandConfigFileNames(configPath: string, config: unknown): readonly st
       path.dirname(configPath),
       undefined,
       configPath,
+      undefined,
+      SINGLE_FILE_COMPONENT_EXTENSION,
     ).fileNames;
   } catch {
     files = [];

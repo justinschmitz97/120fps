@@ -1,0 +1,9 @@
+{
+  "name": "vue-nuxt-components-map-fixture",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "nuxt": "^4.5.0",
+    "vue": "^3.5.0"
+  }
+}
