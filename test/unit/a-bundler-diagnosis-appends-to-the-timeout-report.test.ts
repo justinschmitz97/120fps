@@ -107,3 +107,28 @@ describe("a bundler failure that is itself the lead sentence", () => {
     expect(presented).not.toContain("did not become ready");
   });
 });
+
+// cli/errors.ts presents an unhandled rejection whose message may already be a presented report.
+describe("presenting a report that was already presented", () => {
+  it("prints one diagnosis, not a second copy of the same one", () => {
+    const once = presentBundlerFailure(timeoutReport(UNRESOLVED_IMPORT), tmpDir, []);
+
+    const twice = presentBundlerFailure(once, tmpDir, []);
+
+    expect(twice).toBe(once);
+  });
+
+  it("stays stable over a third pass", () => {
+    const once = presentBundlerFailure(timeoutReport(UNRESOLVED_IMPORT), tmpDir, []);
+
+    expect(presentBundlerFailure(presentBundlerFailure(once, tmpDir, []), tmpDir, [])).toBe(once);
+  });
+
+  it("does not stack the mute-readiness stylesheet suspect either", () => {
+    const warnings = ["Stylesheets: src/app.css (found in the project entry's own imports)"];
+    const mute = "component harness did not become ready within timeout. No page errors were captured.";
+    const once = presentBundlerFailure(mute, tmpDir, warnings);
+
+    expect(presentBundlerFailure(once, tmpDir, warnings)).toBe(once);
+  });
+});
