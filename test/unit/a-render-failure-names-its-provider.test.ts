@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { detectProviderImport, providerCandidateLabels } from "../../src/project/index.js";
-import { hintsForReport, formatHints } from "../../src/report/index.js";
+import { hintsForReport, formatHints, PROVIDER_SUSPECT_LINE } from "../../src/report/index.js";
 import type { Report } from "../../src/report/index.js";
 
 function renderFailure(pageErrors: string[], providerCandidates: string[]): Report {
@@ -79,6 +79,46 @@ describe("the remedy a render failure with a provider suspect prints", () => {
     const radix = text.indexOf("@radix-ui/react-switch");
     expect(local).toBeGreaterThan(-1);
     expect(local).toBeLessThan(radix);
+  });
+
+  it("quotes the phrase whose symbol ranked the leader, not the first error", () => {
+    const report = renderFailure(
+      [
+        "Error: something about a context that came first",
+        "Please wrap your application in an OperatingSystemContextProvider.",
+      ],
+      ["@radix-ui/react-switch", "app/primitives/OperatingSystemProvider.tsx (useOperatingSystem)"],
+    );
+    const text = formatHints(hintsForReport(report), report);
+    expect(text).toContain('the page error says "Please wrap your application in an OperatingSystemContextProvider."');
+    expect(text).not.toContain("something about a context that came first");
+  });
+
+  it("never instructs without the phrase that supports the instruction", () => {
+    // The imperative and its evidence are one string, so neither can print without the other.
+    expect(PROVIDER_SUSPECT_LINE("@mantine/core", false, "MantineProvider was not found")).toContain(
+      'the page error says "MantineProvider was not found"',
+    );
+    for (const errors of [
+      ["Error: cannot read properties of null"],
+      ["Error: useChakra: `context` is undefined"],
+      [],
+    ]) {
+      const report = renderFailure(errors, ["@mantine/core"]);
+      const text = formatHints(hintsForReport(report), report);
+      if (text.includes("render it inside that provider")) {
+        expect(text).toContain('the page error says "');
+      }
+    }
+  });
+
+  it("hedges for every candidate below the leader", () => {
+    const report = renderFailure(
+      ["Error: useChakra: `context` is undefined. Seems you forgot to wrap in <ChakraProvider />"],
+      ["react-redux (useSelector)", "@chakra-ui/react"],
+    );
+    const text = formatHints(hintsForReport(report), report);
+    expect(text).toContain("component imports react-redux (useSelector): likely needs a provider wrapper");
   });
 
   it("keeps the generic remedy when the run found no candidate", () => {

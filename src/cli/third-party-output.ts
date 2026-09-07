@@ -6,6 +6,9 @@ function formatArgs(args: unknown[]): string {
 
 // A library the harness build loads writes through console.error; 120fps's own diagnostics go
 // straight to process.stderr. Buffering the former lets the run decide whether it adds anything.
+// The capture in force, so a path that exits without unwinding can still hand the console back.
+let activeCapture: (() => string[]) | undefined;
+
 export function captureThirdPartyErrors(opts: {
   write?: (chunk: string) => void;
   debug?: boolean;
@@ -19,10 +22,18 @@ export function captureThirdPartyErrors(opts: {
     if (opts.debug) stream(`${text}\n`);
     else captured.push(text);
   };
-  return (): string[] => {
+  const release = (): string[] => {
+    if (activeCapture === release) activeCapture = undefined;
     console.error = original;
     return captured;
   };
+  activeCapture = release;
+  return release;
+}
+
+// Teardown writes its own failures through console.error; an abort must not buffer them away.
+export function releaseThirdPartyCapture(): void {
+  activeCapture?.();
 }
 
 // The frame a stack points at: `.../node_modules/<pkg>/lib/...`, pnpm's inner copy included.
@@ -45,20 +56,30 @@ function reportedFact(output: string): string {
   return first.replace(/^\w*Error:\s*/, "");
 }
 
+// A 120fps warning re-words the same fact: separators, drive letters, case and wrapping differ.
+function normalizeFact(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/\\/g, "/")
+    .replace(/\b[a-z]:\//g, "/")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 // A third party's failure is re-presented as a 120fps message, never as a bare stack.
 export function thirdPartyOutputNotice(
   captured: readonly string[],
   warnings: readonly string[],
 ): string | undefined {
   const uncovered = captured.filter((output) => {
-    const fact = reportedFact(output);
-    return fact.length > 0 && !warnings.some((warning) => warning.includes(fact));
+    const fact = normalizeFact(reportedFact(output));
+    return fact.length > 0 && !warnings.some((warning) => normalizeFact(warning).includes(fact));
   });
   if (uncovered.length === 0) return undefined;
   const lines: string[] = [];
   for (const output of uncovered) {
     lines.push(
-      `${thirdPartyToolName(output)} wrote this while the harness was building, and no 120fps ` +
+      `${thirdPartyToolName(output)} wrote this to the console during the run, and no 120fps ` +
         "warning covers it:",
     );
     lines.push(output);

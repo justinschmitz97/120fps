@@ -162,6 +162,16 @@ describe("the project-level vite-config note across a multi-candidate dry run", 
     expect(noteCount()).toBe(0);
   });
 
+  it("is reset once per measured component, so a glob sweep states it for each", () => {
+    const cliSrc = fs.readFileSync(path.resolve("src/cli/main.ts"), "utf8");
+    const perComponentFinally = cliSrc.slice(
+      cliSrc.indexOf("      releaseThirdPartyOutput();"),
+      cliSrc.indexOf("armExitWatchdog(anyFail"),
+    );
+    expect(perComponentFinally).toContain("resetPreBuildDisclosures();");
+    expect(perComponentFinally).toContain("resetCurrentRunWarnings();");
+  });
+
   it("starts over for the next run", () => {
     writeConfig(
       [

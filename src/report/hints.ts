@@ -379,8 +379,11 @@ export function hintsForReport(report: Report): HintId[] {
   if (curveReport?.domFlat && !curveRenderError && !curveRenderedNothing) found.add("domFlat");
   if (curveRenderedNothing && !curveRenderError) found.add("curveRenderedNothing");
   // Both classes print on the curve screen's `Growth:` line, so no hint cites an unseen one.
-  for (const curve of [curveReport?.mountCurve, curveReport?.rerenderCurve]) {
-    if (isSuperlinearGrowth(curve)) found.add("superlinearGrowth");
+  // A curve fitted over points that threw or rendered nothing describes no tree either.
+  if (!curveRenderError && !curveRenderedNothing) {
+    for (const curve of [curveReport?.mountCurve, curveReport?.rerenderCurve]) {
+      if (isSuperlinearGrowth(curve)) found.add("superlinearGrowth");
+    }
   }
 
   // Stable order so the terminal output does not reshuffle between runs.
@@ -405,12 +408,12 @@ export const PROVIDER_HINT_LINE_TRANSITIVE = (candidate: string): string =>
 export const PROVIDER_SUSPECT_LINE = (
   candidate: string,
   transitive: boolean,
-  evidence: string | undefined,
+  evidence: string,
 ): string =>
   (transitive
     ? `component's import graph reaches ${candidate}`
     : `component imports ${candidate}`) +
-  (evidence ? `, and the page error says "${evidence}"` : "") +
+  `, and the page error says "${evidence}"` +
   ": render it inside that provider. A default-exporting 120fps.setup.tsx (or 120fps.setup.vue) " +
   "at the package root is picked up automatically; --wrap names another path.";
 
@@ -421,9 +424,14 @@ const PROVIDER_ERROR_SIGNATURE = /provider|context/i;
 const EVIDENCE_LIMIT = 120;
 
 function providerErrorPhrase(texts: string[]): string | undefined {
-  const named = texts.find((text) => PROVIDER_ERROR_SIGNATURE.test(text));
+  // The text carrying the symbol that ranked the leader, so the quote explains the order.
+  const symbol = namedProviderSymbol(texts);
+  const named =
+    (symbol ? texts.find((text) => text.includes(symbol)) : undefined) ??
+    texts.find((text) => PROVIDER_ERROR_SIGNATURE.test(text));
   if (!named) return undefined;
   const phrase = named.replace(/^\w*Error:\s*/, "").replace(/\s*\(×\d+\)$/, "").trim();
+  if (phrase.length === 0) return undefined;
   return phrase.length > EVIDENCE_LIMIT ? `${phrase.slice(0, EVIDENCE_LIMIT).trimEnd()}…` : phrase;
 }
 
@@ -489,9 +497,9 @@ function extraHintLines(id: HintId, report: Report | undefined): string[] {
   // Wording only; which candidate leads is unaffected.
   const transitive = new Set(report.transitiveProviderCandidates ?? []);
   const evidence = providerErrorPhrase(texts);
-  // Exactly one line reads as the suspect; the rest stay the list they already were.
+  // Exactly one line reads as the suspect, and only while an error phrase supports the imperative.
   return ranked.map((candidate, index) =>
-    index === 0
+    index === 0 && evidence !== undefined
       ? PROVIDER_SUSPECT_LINE(candidate, transitive.has(candidate), evidence)
       : transitive.has(candidate)
         ? PROVIDER_HINT_LINE_TRANSITIVE(candidate)

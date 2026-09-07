@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import {
+  abortRun,
   captureThirdPartyErrors,
+  releaseThirdPartyCapture,
   thirdPartyOutputNotice,
 } from "../../src/cli/index.js";
 
@@ -45,6 +47,18 @@ describe("the notice for captured third-party output", () => {
     expect(thirdPartyOutputNotice([RESOLVE_STACK], [COVERING_WARNING])).toBeUndefined();
   });
 
+  it("recognises the same fact through a re-worded warning", () => {
+    const reworded =
+      "  SRC/APP/GLOBALS.CSS did not compile ([postcss] tailwindcss: can't resolve\n" +
+      "  '@tailwindcss/typography' in 'e:/app/src'); the stylesheet was not injected";
+    expect(thirdPartyOutputNotice([RESOLVE_STACK], [reworded])).toBeUndefined();
+  });
+
+  it("still prints a fact no warning mentions at all", () => {
+    const unrelated = "styles/emoji.css did not compile ([postcss] tailwindcss: unknown utility)";
+    expect(thirdPartyOutputNotice([RESOLVE_STACK], [unrelated])).toBeDefined();
+  });
+
   it("prints the output once, named by the tool that wrote it, when no warning covers it", () => {
     const notice = thirdPartyOutputNotice([RESOLVE_STACK], ["Stylesheets: none found"]);
     expect(notice).toBeDefined();
@@ -57,8 +71,38 @@ describe("the notice for captured third-party output", () => {
     expect(thirdPartyOutputNotice([], [])).toBeUndefined();
   });
 
+  it("makes no claim about which phase wrote it", () => {
+    const notice = thirdPartyOutputNotice([RESOLVE_STACK], []);
+    expect(notice).not.toContain("while the harness was building");
+    expect(notice).toContain("during the run");
+  });
+
   it("names no tool it cannot read from the output", () => {
     const notice = thirdPartyOutputNotice(["something went wrong"], []);
     expect(notice).toContain("a tool the harness build loaded");
+  });
+});
+
+describe("a teardown that writes through the console it replaced", () => {
+  it("gets the console back before an abort sweeps", async () => {
+    const before = console.error;
+    const release = captureThirdPartyErrors({ write: () => {} });
+    expect(console.error).not.toBe(before);
+    const swept: string[] = [];
+    await abortRun(2, undefined, {
+      sweep: () => swept.push("sweep"),
+      finalSweep: () => swept.push("finalSweep"),
+      exit: () => {},
+      timeoutMs: 50,
+    });
+    expect(console.error).toBe(before);
+    expect(swept[0]).toBe("sweep");
+    release();
+  });
+
+  it("is a no-op when no capture is in force", () => {
+    const before = console.error;
+    releaseThirdPartyCapture();
+    expect(console.error).toBe(before);
   });
 });

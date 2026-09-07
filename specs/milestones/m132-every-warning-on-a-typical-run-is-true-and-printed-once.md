@@ -111,7 +111,11 @@ The verifier for every item below: run-7 investigation (2026-09-06), refuted by 
     `unnamed plugin #<n>`, no plugin named whose transform this run applied, the note omitted when
     the list empties, and `--explain-props` deciding from the same detection as the real run.
 - **C4** The project-level vite-config note is produced once per run, not once per candidate, in the
-  dry run and in the real run. This is M117 C1's dedup rule applied at the producer.
+  dry run and in the real run. This is M117 C1's dedup rule applied at the producer. "Once per run"
+  is once per *measured component*: `collectStaticPreBuildWarnings` keeps a per-project ledger that
+  `src/cli/main.ts` clears beside `resetCurrentRunWarnings()` in the per-component `finally`, so a
+  glob sweep states the project's config for every component it measures. `--explain-props` walks
+  all its candidates inside one such window, so a three-candidate dry run still states it once.
 - **C5** No Node runtime warning emitted because of a file inside the *project* reaches the user's
   terminal. A `process.on("warning", …)` listener installed before `parseArgs`
   (`src/cli/main.ts:130`) swallows exactly `MODULE_TYPELESS_PACKAGE_JSON` for a filename outside
@@ -119,10 +123,15 @@ The verifier for every item below: run-7 investigation (2026-09-06), refuted by 
 - **C6** `--no-css` and `--css <file>` decide the dry run exactly as they decide the real run:
   `src/pipeline/explain-props.ts:148` forwards `{ noCss, cssFiles }`. With `--no-css`, the dry run
   reports no stylesheet and prints no stylesheet warning (M100/M110 parity).
-- **C8** Output a third party writes to stderr while the harness builds is captured, not streamed. It
-  is printed only when no 120fps warning reports the same fact, and when it is printed it is
-  introduced by a 120fps sentence naming the tool that produced it (M94). `DEBUG` still shows
-  everything.
+- **C8** Output a third party writes through `console.error` during a run is captured, not streamed.
+  It is printed only when no 120fps warning reports the same fact — compared after normalising case,
+  whitespace, path separators and drive letters, because a 120fps warning re-words the fact — and
+  when it is printed it is introduced by a 120fps sentence naming the tool that produced it (M94).
+  The sentence claims no phase: the capture spans the run, not the build alone. `DEBUG` still shows
+  everything. `console.error` is the interception point rather than `process.stderr.write`, which
+  120fps's own diagnostics use: wrapping the stream itself would buffer the tool's own output and
+  breach the MUST NOT below. A tool that writes to the stream directly (linkwarden's daisyUI banner)
+  still streams raw; see Deferred.
 - **C9** A warning carries exactly one prefix. A text that already begins with the warning prefix is
   not prefixed again, in the terminal, the JSON `warnings` array and the markdown report.
 - **C7** The provider hint names what the file imported. When the run observed the representative
@@ -208,6 +217,22 @@ npx vitest run test/unit/the-vite-note-names-only-what-was-dropped.test.ts   tes
    (re-run after the `plugins: await getPluginsList(...)` unwrap landed)
 ```
 
+Recorded run of the review fixes (2026-09-07, merged with `feat/run7-remediation` at `55f5102`):
+
+```
+node node_modules/typescript/bin/tsc --noEmit -p tsconfig.json   -> exit 0, no output
+
+npx vitest run <the 16 files this lane's two milestones touch> --maxWorkers=2
+-> Test Files  16 passed (16);  Tests  169 passed (169)
+
+npx vitest run test/unit --maxWorkers=2
+-> Test Files  2 failed | 389 passed (391)
+   Tests  2 failed | 5455 passed | 1 skipped (5458)
+   Duration 460.04s
+   the two failures are the recorded pre-existing set: prop-cap-ranking.test.ts and
+   vue-setup-inject-evidence.test.ts
+```
+
 Corpus repros, through a `dist` built in `C:/Projekte/120fps-run7-lane-d`:
 
 ```
@@ -265,6 +290,13 @@ Recorded corpus results (2026-09-07, `dist` built at this commit; logs under
 
 ## Deferred
 
+- **A positive "declares no props" claim.** C1 infers it from the absence of a suspicion mark, so an
+  extractor failure that emits no warning at all would still read as "declares none". A positive
+  signal needs a field on `PropsBinding` (`src/props/candidates.ts`), which is another lane's file.
+- **Third-party output written straight to the stream.** C8 intercepts `console.error`; a tool that
+  calls `process.stdout.write` or `process.stderr.write` (linkwarden's daisyUI banner) still streams
+  raw. Wrapping the streams would capture 120fps's own writes, which the MUST NOT above forbids;
+  separating the two needs a tagged writer, not a wrapper.
 - **A structured diagnostic record** in place of string constants and `isXWarning` predicates. ADR
   0005 item 6 names it as a later decision; this milestone keeps warning text beside its emitter.
 - **The `(×N)` dedup rule itself.** M117 C1 owns it; C4 only moves one producer so it emits once.
