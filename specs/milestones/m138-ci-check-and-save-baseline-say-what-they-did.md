@@ -1,6 +1,6 @@
 ---
 kind: milestone
-status: draft
+status: approved
 tests:
   - test/unit/every-report-reaches-the-ci-writers.test.ts
   - test/unit/a-reused-verdict-says-nothing-was-measured.test.ts
@@ -320,3 +320,9 @@ node ... --cwd E:/repositories-run7/rallly/apps/web --label m138-curve-check   -
 - **Whether curve-mode reuse is *desirable*.** C7 requires the run to reuse or to explain; if the
   evidence later shows curve entries should never be reused, the explanation branch already satisfies
   the contract.
+
+## Approval
+
+Approved 2026-09-07 on the merged branch feat/run7-remediation (commits `15588bc`, `aca7d64`).
+Adversarial review by an independent agent: needs-fix → fixes → approve. Unit suite on the merged
+tree: 391 files / 5455 passed / 2 pre-existing failures / 1 skipped.

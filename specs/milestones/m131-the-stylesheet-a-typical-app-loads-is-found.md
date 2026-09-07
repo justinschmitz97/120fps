@@ -1,6 +1,6 @@
 ---
 kind: milestone
-status: draft
+status: approved
 tests:
   - test/unit/entry-stylesheet-discovery.test.ts
   - test/unit/global-stylesheet-fallbacks.test.ts
@@ -279,3 +279,9 @@ numbers are not comparable across a different injected stylesheet set.
 - **A second Sass disclosure.** C8's disclosure is emitted only where the project-transform
   classifier has already had its say, so a graph that names its own `.scss` edge keeps M122's
   message with its true import chain, and the injected sheet adds nothing.
+
+## Approval
+
+Approved 2026-09-07 on the merged branch feat/run7-remediation (commits `d6b8a0e`, `4b3d7e5`).
+Adversarial review by an independent agent: needs-fix → fixes → approve. Unit suite on the merged
+tree: 391 files / 5455 passed / 2 pre-existing failures / 1 skipped.

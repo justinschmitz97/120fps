@@ -1,6 +1,6 @@
 ---
 kind: milestone
-status: draft
+status: approved
 tests:
   - test/unit/page-errors.test.ts
   - test/unit/bundler-error-presentation.test.ts
@@ -321,3 +321,9 @@ epic-stack (control)  E:/repositories-run5/epic-stack  app/components/ui/label.t
   developer's action, and 120fps never edits a target repository.
 - **A per-phase wall-clock bound.** The readiness bound governs one wait; a bound on the whole run is
   a separate contract with its own failure mode.
+
+## Approval
+
+Approved 2026-09-07 on the merged branch feat/run7-remediation (commits `c48af66`, `9c48cef`).
+Adversarial review by an independent agent: needs-fix → fixes → approve. Unit suite on the merged
+tree: 391 files / 5455 passed / 2 pre-existing failures / 1 skipped.

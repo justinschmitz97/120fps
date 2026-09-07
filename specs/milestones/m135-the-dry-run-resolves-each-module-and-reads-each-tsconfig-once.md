@@ -1,6 +1,6 @@
 ---
 kind: milestone
-status: draft
+status: approved
 tests:
   - test/unit/preflight.test.ts
   - test/unit/explain-props-parity.test.ts
@@ -195,3 +195,9 @@ node C:/Projekte/120fps-fieldtest/tools/run120.mjs \
   process; the bare-specifier cache carries the measured win without it.
 - **Persisting any cache between invocations.** Forbidden by M116's cross-process clause; a warm dry
   run is a different contract with its own staleness surface.
+
+## Approval
+
+Approved 2026-09-07 on the merged branch feat/run7-remediation (commits `d030e75`, `c5be3ed`).
+Adversarial review by an independent agent: needs-fix → fixes → approve. Unit suite on the merged
+tree: 391 files / 5455 passed / 2 pre-existing failures / 1 skipped.

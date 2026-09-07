@@ -1,6 +1,6 @@
 ---
 kind: milestone
-status: draft
+status: approved
 tests:
   - test/unit/unbuilt-workspace-source-alias.test.ts
   - test/unit/unresolved-alias-reporting.test.ts
@@ -293,3 +293,9 @@ still stops librechat is one alias namespace claimed by two packages (`~/*` in b
   in `src/harness/build.ts` and `src/harness/vite-config.ts` — neither is lane B's file.
 - **Extending the walk into built siblings' sources.** A built sibling's `dist/` is what the browser
   would load, so walking its source would gate on code the run never executes.
+
+## Approval
+
+Approved 2026-09-07 on the merged branch feat/run7-remediation (commits `7001cae`, `c5be3ed`).
+Adversarial review by an independent agent: needs-fix → fixes → approve. Unit suite on the merged
+tree: 391 files / 5455 passed / 2 pre-existing failures / 1 skipped.

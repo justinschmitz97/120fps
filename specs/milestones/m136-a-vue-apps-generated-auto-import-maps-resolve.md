@@ -1,6 +1,6 @@
 ---
 kind: milestone
-status: draft
+status: approved
 tests:
   - test/unit/vue-support.test.ts
   - test/unit/the-vue-plugin-resolves-through-its-host-framework.test.ts
@@ -342,3 +342,9 @@ predates the lane.
   list is consumed before the page loads, so the count of identifiers actually supplied has no
   channel to reach the report. C8 states what the run does state: the map file and the size of its
   table.
+
+## Approval
+
+Approved 2026-09-07 on the merged branch feat/run7-remediation (commits `5046559`, `4dff8a9`).
+Adversarial review by an independent agent: needs-fix → fixes → approve. Unit suite on the merged
+tree: 391 files / 5455 passed / 2 pre-existing failures / 1 skipped.

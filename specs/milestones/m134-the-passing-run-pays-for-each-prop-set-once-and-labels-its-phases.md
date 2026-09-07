@@ -1,6 +1,6 @@
 ---
 kind: milestone
-status: draft
+status: approved
 tests:
   - test/unit/the-analysis-pass-measures-each-prop-set-once.test.ts
   - test/unit/a-scale-probe-is-measured-once.test.ts
@@ -447,3 +447,9 @@ node C:/Projekte/120fps-fieldtest/tools/run120.mjs \
   per arm) stay deferred exactly as `m128-…:189-214` records them.
 - **The callback-identity finding's instability.** M128 recorded that what the pass finds moves
   between runs; this milestone changes how long it takes, not what it means.
+
+## Approval
+
+Approved 2026-09-07 on the merged branch feat/run7-remediation (commits `71b06c4`, `0c89d60`,
+`2c24403`). Adversarial review by an independent agent: needs-fix → fixes → approve. Unit suite on
+the merged tree: 391 files / 5455 passed / 2 pre-existing failures / 1 skipped.

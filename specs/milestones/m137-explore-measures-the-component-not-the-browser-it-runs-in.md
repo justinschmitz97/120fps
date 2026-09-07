@@ -1,6 +1,6 @@
 ---
 kind: milestone
-status: draft
+status: approved
 tests:
   - test/unit/explorer.test.ts
   - test/unit/an-external-link-is-not-exercised.test.ts
@@ -252,3 +252,9 @@ its run.
 - **Anchors that leave the origin but are the component's own subject** (a link-preview component, a
   router `<Link>` to an external site). C1 declines to exercise them and says so; measuring them
   safely needs its own evidence.
+
+## Approval
+
+Approved 2026-09-07 on the merged branch feat/run7-remediation (commits `88784fa`, `e70a846`,
+`5bc4834`). Adversarial review by an independent agent: needs-fix → fixes → approve. Unit suite on
+the merged tree: 391 files / 5455 passed / 2 pre-existing failures / 1 skipped.

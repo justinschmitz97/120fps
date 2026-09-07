@@ -1,6 +1,6 @@
 ---
 kind: milestone
-status: draft
+status: approved
 tests:
   - test/unit/report-informational-warnings.test.ts
   - test/unit/zero-prop-count-names-its-cause.test.ts
@@ -304,3 +304,9 @@ Recorded corpus results (2026-09-07, `dist` built at this commit; logs under
   the filter needs a repository that produces another.
 - **A per-alias report of what the harness did honour.** C3 names what was dropped; a positive
   listing is output the corpus never asked for.
+
+## Approval
+
+Approved 2026-09-07 on the merged branch feat/run7-remediation (commits `20643f7`, `cf9c132`).
+Adversarial review by an independent agent: needs-fix → fixes → approve. Unit suite on the merged
+tree: 391 files / 5455 passed / 2 pre-existing failures / 1 skipped.

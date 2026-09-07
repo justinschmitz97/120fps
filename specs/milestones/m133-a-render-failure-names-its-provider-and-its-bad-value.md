@@ -1,6 +1,6 @@
 ---
 kind: milestone
-status: draft
+status: approved
 tests:
   - test/unit/hints.test.ts
   - test/unit/prop-synthesis-image-src.test.ts
@@ -281,3 +281,9 @@ Recorded corpus results (2026-09-07, `dist` built at this commit; logs under
   auto-detected; generating it is M136's option (c), which the findings mark opt-in only.
 - **linkwarden's remaining rerender cost.** The value fix removes the fallback element; the ~16 s of
   per-sample overhead the log does not decompose is M134's.
+
+## Approval
+
+Approved 2026-09-07 on the merged branch feat/run7-remediation (commits `8149597`, `cf9c132`).
+Adversarial review by an independent agent: needs-fix → fixes → approve. Unit suite on the merged
+tree: 391 files / 5455 passed / 2 pre-existing failures / 1 skipped.
