@@ -405,6 +405,8 @@ export interface Report {
   noise?: NoiseReport;
   // Recognizer codes of the project's own Vite transforms that compiled this run.
   projectTransforms?: string[];
+  // Generated declaration files the run resolved component and identifier names through.
+  generatedMaps?: string[];
   // Ids, never prose, so a hint can be reworded without a schema change.
   hints?: HintId[];
   // Attached only when a combo failed to render, never a finding on a healthy run.

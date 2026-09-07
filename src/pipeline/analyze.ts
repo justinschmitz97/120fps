@@ -679,6 +679,7 @@ export async function analyze(
       resolvedPath,
       cssDecisionWarning,
       runWarnings,
+      ...(options.noTransforms ? { noTransforms: true } : {}),
     });
     throw new Error(presented + formatAccumulatedWarnings(combined) + abortHints, { cause: err });
   } finally {

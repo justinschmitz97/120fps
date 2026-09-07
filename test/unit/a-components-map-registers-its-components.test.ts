@@ -5,6 +5,7 @@ import {
   GENERATED_COMPONENTS_DISCLOSURE,
   GENERATED_MAP_SKIPPED_WARNING,
   deferredComponentsUsedBy,
+  deferredComponentsWarning,
   isProjectSourceFile,
   readComponentDeclarationMap,
 } from "../../src/project/index.js";
@@ -14,7 +15,7 @@ const UNPLUGIN = path.resolve("fixtures/vue-components-map");
 const NUXT = path.resolve("fixtures/vue-nuxt-components-map");
 const NONE = path.resolve("fixtures/vue-no-generated-map");
 
-const read = (root: string) => readComponentDeclarationMap(root, root);
+const read = (root: string) => readComponentDeclarationMap(root);
 const byName = (root: string, name: string) =>
   read(root)!.names.find((entry) => entry.name === name);
 
@@ -48,18 +49,25 @@ describe("reading a components declaration map", () => {
     expect(isProjectSourceFile(path.join(NONE, "Plain.vue"), UNPLUGIN)).toBe(false);
   });
 
-  it("matches a deferred name written as a kebab-case tag", () => {
-    expect(deferredComponentsUsedBy("<template><u-carousel /></template>", ["UCarousel"])).toEqual([
-      "UCarousel",
-    ]);
-    expect(deferredComponentsUsedBy("<template><p>hi</p></template>", ["UCarousel"])).toEqual([]);
-  });
-
   it("skips an entry whose module is not on disk and names it", () => {
     const map = read(UNPLUGIN)!;
     expect(map.names.map((entry) => entry.name)).not.toContain("Gone");
     expect(map.skipped).toContain("Gone");
-    expect(GENERATED_MAP_SKIPPED_WARNING(map.file, map.skipped)).toContain("Gone");
+    const text = GENERATED_MAP_SKIPPED_WARNING(map.file, map.skipped);
+    expect(text).toContain("Gone");
+    expect(text).toContain("entry names a module that is");
+  });
+
+  it("puts the plural of the skipped line in the plural", () => {
+    expect(GENERATED_MAP_SKIPPED_WARNING("m.d.ts", ["A", "B"])).toContain(
+      "entries name modules that are",
+    );
+  });
+
+  it("reads only the components interface, never another the same file declares", () => {
+    const map = read(UNPLUGIN)!;
+    const known = [...map.names.map((entry) => entry.name), ...map.skipped, ...map.deferred];
+    expect(known).not.toContain("vFocus");
   });
 
   it("names the map it read", () => {
@@ -82,6 +90,111 @@ describe("reading a components declaration map", () => {
 
   it("reads nothing from a project that has no map", () => {
     expect(read(NONE)).toBeUndefined();
+  });
+});
+
+describe("deciding which deferred names a component reaches for", () => {
+  const deferred = ["Label", "Slot", "UCarousel", "ElAlert", "Transition"];
+
+  // The wg-easy Form/Label.vue shape: the map's names appear only as an import and a Vue built-in.
+  const WG_EASY_LABEL = `<template>
+  <RLabel :for="props.for" class="md:leading-[2.75rem]">
+    <slot />
+  </RLabel>
+</template>
+
+<script lang="ts" setup>
+import { Label as RLabel } from 'reka-ui';
+
+const props = defineProps<{ for: string }>();
+</script>
+`;
+
+  it("names none of them for a component that only imports and slots", () => {
+    expect(deferredComponentsUsedBy(WG_EASY_LABEL, deferred)).toEqual([]);
+  });
+
+  it("names a tag the template actually writes", () => {
+    expect(
+      deferredComponentsUsedBy(
+        '<template><UCarousel v-slot="{ item }">{{ item }}</UCarousel></template>',
+        deferred,
+      ),
+    ).toEqual(["UCarousel"]);
+  });
+
+  it("matches a deferred name written as a kebab-case tag", () => {
+    expect(deferredComponentsUsedBy("<template><u-carousel /></template>", ["UCarousel"])).toEqual([
+      "UCarousel",
+    ]);
+  });
+
+  it("never reads a native element or a Vue built-in as a mapped component", () => {
+    const source = "<template><label /><transition><div /></transition><component :is=\"x\" /></template>";
+    expect(deferredComponentsUsedBy(source, deferred)).toEqual([]);
+  });
+
+  it("ignores a name that only appears in the script as an import", () => {
+    const source = `<template><div /></template>
+<script setup lang="ts">
+import { ElAlert } from 'element-plus';
+</script>`;
+    expect(deferredComponentsUsedBy(source, deferred)).toEqual([]);
+  });
+
+  it("ignores a name the script declares itself", () => {
+    const source = `<template><div /></template>
+<script setup lang="ts">
+const UCarousel = 1;
+</script>`;
+    expect(deferredComponentsUsedBy(source, deferred)).toEqual([]);
+  });
+
+  it("ignores a tag inside a template comment", () => {
+    expect(
+      deferredComponentsUsedBy("<template><!-- <UCarousel /> --><div /></template>", deferred),
+    ).toEqual([]);
+  });
+
+  it("ignores a tag written only in the script block", () => {
+    const source = `<template><div /></template>
+<script setup lang="ts">
+const markup = "<UCarousel />";
+</script>`;
+    expect(deferredComponentsUsedBy(source, deferred)).toEqual([]);
+  });
+
+  it("still names a free script binding the map knows", () => {
+    const source = `<template><div /></template>
+<script setup lang="ts">
+const used = UCarousel;
+</script>`;
+    expect(deferredComponentsUsedBy(source, deferred)).toEqual(["UCarousel"]);
+  });
+});
+
+describe("the line a deferred entry produces", () => {
+  const map = read(UNPLUGIN)!;
+
+  it("prints nothing when the component references no deferred name", () => {
+    expect(deferredComponentsWarning("<template><div /></template>", map)).toBeUndefined();
+  });
+
+  it("prints one line naming what the component reaches for", () => {
+    const line = deferredComponentsWarning("<template><ElAlert /></template>", map);
+    expect(line).toContain("ElAlert");
+    expect(line).toContain("components.d.ts");
+  });
+
+  it("prints nothing for a map with no deferred entry at all", () => {
+    expect(
+      deferredComponentsWarning("<template><ElAlert /></template>", {
+        file: "m.d.ts",
+        names: [],
+        skipped: [],
+        deferred: [],
+      }),
+    ).toBeUndefined();
   });
 });
 
@@ -108,6 +221,16 @@ describe("registering mapped components in the Vue entry", () => {
     expect(source.indexOf('app.component("TheCounter"')).toBeLessThan(
       source.indexOf("app.mount(container)"),
     );
+  });
+
+  it("reports a registration the browser cannot load instead of rendering nothing quietly", () => {
+    const source = vueEntry([
+      { name: "TheCounter", specifier: "/src/components/TheCounter.vue", exportName: "default" },
+    ]);
+    expect(source).toContain("onError:");
+    expect(source).toContain("__120fpsComponentLoadFailed");
+    expect(source).toContain("[120fps] registered component");
+    expect(source).toContain("fail(err)");
   });
 
   it("leaves the measured component bound to its own module import", () => {

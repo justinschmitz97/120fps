@@ -5,8 +5,7 @@ import type { CompositionTree, ExportInfo } from "../props/index.js";
 import {
   AUTO_IMPORT_DISCLOSURE,
   autoImportTransformPlugin,
-  DEFERRED_COMPONENTS_WARNING,
-  deferredComponentsUsedBy,
+  deferredComponentsWarning,
   detectProjectTransforms,
   findProjectRoot,
   findWorkspaceRoot,
@@ -88,6 +87,8 @@ export interface HarnessResult {
   viteAliases?: Array<{ find: RegExp; replacement: string }>;
   // Build-time advisories, e.g. a shared server whose frozen dep list misses this scan.
   warnings?: string[];
+  // The generated declaration files this build resolved names through.
+  generatedMaps?: string[];
 }
 
 export function SWEEP_DEP_WARNING(missing: string[]): string {
@@ -216,17 +217,16 @@ export async function buildAndServe(
   if (autoImportMap && autoImportMap.names.length > 0) {
     generatedMapWarnings.push(AUTO_IMPORT_DISCLOSURE(autoImportMap.file, autoImportMap.names.length));
   }
-  if (componentMap && componentMap.deferred.length > 0) {
+  const generatedMapFiles = [componentMap?.file, autoImportMap?.file].filter(
+    (file): file is string => file !== undefined,
+  );
+  if (componentMap) {
     // Named only when the measured component reaches for one: the rest changes nothing it renders.
-    const reached = deferredComponentsUsedBy(
+    const deferredLine = deferredComponentsWarning(
       fs.readFileSync(absoluteComponentPath, "utf-8"),
-      componentMap.deferred,
+      componentMap,
     );
-    if (reached.length > 0) {
-      generatedMapWarnings.push(
-        DEFERRED_COMPONENTS_WARNING(componentMap.file, reached, componentMap.deferred.length),
-      );
-    }
+    if (deferredLine) generatedMapWarnings.push(deferredLine);
   }
 
   // Re-rendered when the stylesheet probe drops a sheet, before the page is ever requested.
@@ -356,8 +356,10 @@ export async function buildAndServe(
       )),
     );
   }
-  // After the SFC compiler, so the identifiers it reads are the ones the module really evaluates.
-  if (autoImportMap && autoImportMap.names.length > 0) {
+  // After the SFC compiler, so the identifiers it reads are the ones the module really evaluates;
+  // without that compiler nothing turns an SFC into a module to prepend an import to.
+  const vueTransformLoaded = transformEntries.some((entry) => entry.code === "vue");
+  if (vueTransformLoaded && autoImportMap && autoImportMap.names.length > 0) {
     plugins.push(
       autoImportTransformPlugin({
         projectRoot,
@@ -535,5 +537,6 @@ export async function buildAndServe(
     ...(injectedCssFiles.length > 0 ? { cssFiles: injectedCssFiles } : {}),
     ...(viteConfig.aliases.length > 0 ? { viteAliases: viteConfig.aliases } : {}),
     ...(buildWarnings.length > 0 ? { warnings: buildWarnings } : {}),
+    ...(generatedMapFiles.length > 0 ? { generatedMaps: generatedMapFiles } : {}),
   };
 }
