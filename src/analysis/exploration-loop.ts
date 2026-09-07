@@ -153,17 +153,38 @@ export async function exploreCombo(
   onWarning?: (warning: string) => void,
   budget?: RetryBudget,
 ): Promise<StateGraph> {
-  // The listener outlives every path out of the walk below, a throw included.
+  // Both the listener and the count of what was declined outlive every path out of the walk
+  // below, a throw included: a combo that dies mid-walk still says what it did not measure.
   const escape = createEscapeWatch(page);
+  const skippedTargets = new Map<string, SkippedTarget>();
+  let noticeSent = false;
+  const reportSkipped = (): void => {
+    if (noticeSent) return;
+    noticeSent = true;
+    const notice = SKIPPED_TARGETS_NOTICE([...skippedTargets.values()]);
+    if (notice !== undefined) onWarning?.(notice);
+  };
   try {
-    return await walkStateGraph(escape, page, session, props, opts, enter, onWarning, budget);
+    return await walkStateGraph(
+      escape,
+      skippedTargets,
+      page,
+      session,
+      props,
+      opts,
+      enter,
+      onWarning,
+      budget,
+    );
   } finally {
     escape.stop();
+    reportSkipped();
   }
 }
 
 async function walkStateGraph(
   escape: EscapeWatch,
+  skippedTargets: Map<string, SkippedTarget>,
   page: Page,
   session: CdpHolder,
   props: PropCombination,
@@ -177,7 +198,6 @@ async function walkStateGraph(
   const nodes = new Map<string, StateNode>();
   const edges: StateEdge[] = [];
   const exploredEdges = new Set<string>();
-  const skippedTargets = new Map<string, SkippedTarget>();
   const recordSkipped = (targets: SkippedTarget[]): void => {
     for (const target of targets) skippedTargets.set(`${target.reason}:${target.selector}`, target);
   };
@@ -463,9 +483,6 @@ async function walkStateGraph(
 
     convergenceWindow.push(discoveredNew);
   }
-
-  const skipNotice = SKIPPED_TARGETS_NOTICE([...skippedTargets.values()]);
-  if (skipNotice !== undefined) onWarning?.(skipNotice);
 
   return {
     nodes,
