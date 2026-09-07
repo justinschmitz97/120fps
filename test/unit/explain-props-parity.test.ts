@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { explainProps } from "../../src/pipeline/index.js";
+import { collectStaticPreBuildWarnings } from "../../src/harness/index.js";
 
 // M91 (preact-app-F2): pins parity for three pre-build warnings: alias, node-builtin hit, wrapper.
 
@@ -102,5 +103,40 @@ describe("M91: --explain-props warning parity", () => {
 
     const explained = await explainProps(entry);
     expect(explained.warnings.some((w) => w.includes("workspace root"))).toBe(true);
+  });
+
+  // M130 C7: the dry run and the real run read one pre-build, so their alias verdicts agree.
+  it("reports the collapsed stale-alias line the real run's pre-build produces", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "120fps-explain-parity-stale-"));
+    tmpDirs.push(root);
+    fs.writeFileSync(
+      path.join(root, "package.json"),
+      JSON.stringify({ dependencies: { react: "18.3.1", "react-dom": "18.3.1" } }),
+    );
+    fs.writeFileSync(
+      path.join(root, "tsconfig.json"),
+      JSON.stringify({ compilerOptions: { baseUrl: ".", paths: { "@/*": ["./src/*"] } } }),
+    );
+    // Behind a dynamic import: outside the preflight graph, so the aliases stay a warning.
+    const imports = ["a", "b", "c", "d", "e"]
+      .map((name) => `import "@/gone-${name}";`)
+      .join("\n");
+    fs.writeFileSync(path.join(root, "lazy.ts"), `${imports}\nexport const lazy = 1;\n`);
+    const entry = path.join(root, "Card.tsx");
+    fs.writeFileSync(
+      entry,
+      'const later = () => import("./lazy");\n' +
+        "export default function Card() { return later ? null : null; }\n",
+    );
+    fs.mkdirSync(path.join(root, "node_modules"), { recursive: true });
+    installReactDom(root, "18.3.1", true);
+
+    const preBuild = collectStaticPreBuildWarnings(root, { componentPath: entry });
+    const explained = await explainProps(entry);
+
+    const stale = preBuild.warnings.filter((warning) => warning.includes("path alias"));
+    expect(stale).toHaveLength(1);
+    expect(stale[0]).toContain("and 2 more");
+    for (const warning of stale) expect(explained.warnings).toContain(warning);
   });
 });

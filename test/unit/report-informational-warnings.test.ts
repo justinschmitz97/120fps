@@ -58,9 +58,10 @@ describe("D6: Report.warnings printed by formatTable", () => {
     expect(output).toContain("Result: PASS");
   });
 
-  it("zero-props warning text matches the D6 hint", () => {
+  it("zero-props warning text names the cause instead of hedging", () => {
     expect(ZERO_PROPS_WARNING).toContain("No props extracted");
-    expect(ZERO_PROPS_WARNING).toContain("extraction may have failed");
+    expect(ZERO_PROPS_WARNING).toContain("declares no props");
+    expect(ZERO_PROPS_WARNING).toContain("extraction did not fail");
   });
 });
 

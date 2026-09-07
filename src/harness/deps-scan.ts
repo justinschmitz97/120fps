@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { escapeRegex, toPosix } from "../shared/index.js";
+import { escapeRegex, pathKey, toPosix } from "../shared/index.js";
 import {
   findWorkspaceRoot,
   installedPackageDir,
@@ -11,6 +11,7 @@ import {
   resolveTarget,
   SOURCE_EXTENSIONS,
   subpathImportPackage,
+  unbuiltSiblingSourceEntry,
   WORKSPACE_ROOT_ALIAS_WARNING,
   type WorkspaceRootAliasSource,
 } from "../project/index.js";
@@ -53,14 +54,38 @@ export function UNRESOLVED_PREBUNDLE_ENTRY_WARNING(specifier: string, importer: 
   );
 }
 
-export function BROKEN_ALIAS_WARNING(specifier: string, target: string): string {
+// One line per alias: 149 imports under one stale pattern are one fact, not 149.
+export function BROKEN_ALIAS_WARNING(
+  pattern: string,
+  targetRoot: string,
+  examples: string[],
+  total: number,
+): string {
+  const rest = total - examples.length;
+  const sample = rest > 0 ? `${examples.join(", ")} and ${rest} more` : examples.join(", ");
+  const subject =
+    total === 1 ? "1 import whose target does not exist" : `${total} imports whose targets do not exist`;
   return (
-    `import "${specifier}" matches a configured path alias, but its target ${target} does not exist; ` +
-    "the alias is stale or the file was moved, and the import will not resolve in the harness"
+    `the path alias "${pattern}" -> "${targetRoot}" matched ${subject} (${sample}); the alias is ` +
+    "stale or those files were moved, and the imports will not resolve in the harness"
   );
 }
 
 // Proven, not guessed: the installed package has no main/module/exports and no index file.
+// The dev server has one alias list, so two packages claiming one name cannot both be served.
+export function GOVERNING_ALIAS_CONFLICT_WARNING(
+  specifier: string,
+  importer: string,
+  siblingTarget: string,
+  servedTarget: string,
+): string {
+  return (
+    `${importer} imports "${specifier}" through its own package's path alias, which names ` +
+    `${siblingTarget}; this run serves ${servedTarget} for that name. The dev server resolves ` +
+    "aliases from one list, so this import loads the wrong file."
+  );
+}
+
 export function TYPE_ONLY_PACKAGE_WARNING(pkg: string): string {
   return (
     `import "${pkg}" resolved to an installed package with no runtime entry ` +
@@ -183,8 +208,13 @@ type ExternalDepsAliases = Array<{
   find: RegExp;
   replacement: string;
   isShim?: boolean;
+  pattern?: string;
+  target?: string;
   fromWorkspaceRoot?: WorkspaceRootAliasSource;
 }>;
+
+// The table that governs one file. Absent, every file is judged by the measured package's table.
+export type AliasesForFile = (file: string) => ExternalDepsAliases;
 
 interface ExternalDepsWalkRecord {
   packages: string[];
@@ -209,24 +239,33 @@ function sourceSignature(file: string): string | undefined {
   }
 }
 
+function serializeAliases(aliases: ExternalDepsAliases): unknown[] {
+  return aliases.map((alias) => [
+    alias.find.source,
+    alias.find.flags,
+    alias.replacement,
+    alias.isShim ?? false,
+    alias.pattern ?? null,
+    alias.fromWorkspaceRoot ?? null,
+  ]);
+}
+
 function externalDepsKey(
   componentPath: string,
   projectRoot: string,
   workspaceRoot: string,
   aliases: ExternalDepsAliases,
   reported: Set<string> | undefined,
+  aliasesForFile: AliasesForFile | undefined,
 ): string {
+  const resolvedComponent = path.resolve(componentPath);
   return JSON.stringify([
-    path.resolve(componentPath),
+    resolvedComponent,
     path.resolve(projectRoot),
     path.resolve(workspaceRoot),
-    aliases.map((alias) => [
-      alias.find.source,
-      alias.find.flags,
-      alias.replacement,
-      alias.isShim ?? false,
-      alias.fromWorkspaceRoot ?? null,
-    ]),
+    serializeAliases(aliases),
+    // A per-file walk is a different walk; the tables it reads follow from the two roots above.
+    aliasesForFile === undefined ? null : serializeAliases(aliasesForFile(resolvedComponent)),
     [...(reported ?? [])].sort(),
   ]);
 }
@@ -241,6 +280,7 @@ export function scanExternalDeps(
   extraAliasesOut?: Array<{ find: RegExp; replacement: string }>,
   unresolvedOut?: Array<{ specifier: string; importer: string }>,
   reportedUnresolvedOut?: Set<string>,
+  aliasesForFile?: AliasesForFile,
 ): string[] {
   const key = externalDepsKey(
     componentPath,
@@ -248,6 +288,7 @@ export function scanExternalDeps(
     workspaceRoot,
     aliases,
     reportedUnresolvedOut,
+    aliasesForFile,
   );
   const cached = externalDepsWalks.get(key);
   if (cached && cached.files.every(([file, signature]) => sourceSignature(file) === signature)) {
@@ -283,6 +324,7 @@ export function scanExternalDeps(
     unresolved,
     reported,
     files,
+    aliasesForFile,
   );
 
   for (const specifier of collected) specifiersOut?.add(specifier);
@@ -302,12 +344,7 @@ export function scanExternalDeps(
 function walkExternalDeps(
   componentPath: string,
   projectRoot: string,
-  aliases: Array<{
-    find: RegExp;
-    replacement: string;
-    isShim?: boolean;
-    fromWorkspaceRoot?: WorkspaceRootAliasSource;
-  }>,
+  aliases: ExternalDepsAliases,
   specifiersOut?: Set<string>,
   warningsOut?: string[],
   workspaceRoot: string = findWorkspaceRoot(projectRoot),
@@ -319,10 +356,52 @@ function walkExternalDeps(
   reportedUnresolvedOut?: Set<string>,
   // With the mtime and size it had, for the memo that decides whether the result still stands.
   filesReadOut?: Map<string, string | undefined>,
+  // An import is judged by the tsconfig governing the file it was written in, not the measured one.
+  aliasesForFile?: AliasesForFile,
 ): string[] {
   const externalPkgs = new Set<string>();
   const visited = new Set<string>();
   const reportedBrokenAliases = new Set<string>();
+  // Grouped by the alias that matched, so one stale pattern is one line however many it caught.
+  const brokenAliasGroups = new Map<string, { targetRoot: string; specifiers: string[] }>();
+  // Specifiers a stale project alias claimed while the sibling's own source answers for them.
+  const rescuedFromStaleAlias = new Set<string>();
+  // What this run will serve for each bare specifier, whoever claimed it first.
+  const servedGoverningTargets = new Map<string, string>();
+
+  // The dev server reads one alias list, so a governing answer it cannot reproduce is disclosed.
+  const serveGoverningAlias = (spec: string, resolvedPath: string, importer: string): void => {
+    let served = servedGoverningTargets.get(spec);
+    if (served === undefined) {
+      const measured = resolveLocalImport(importer, spec, projectRoot, aliases);
+      if (measured.kind === "resolved") {
+        // The measured package's own table already answers this name; that is what Vite serves.
+        served = measured.path;
+      } else {
+        // Nothing else resolves it, so this package's answer becomes the one the run serves.
+        served = resolvedPath;
+        extraAliasesOut?.unshift({
+          find: new RegExp(`^${escapeRegex(spec)}$`),
+          replacement: toPosix(resolvedPath),
+        });
+      }
+      servedGoverningTargets.set(spec, served);
+    }
+    if (pathKey(served) === pathKey(resolvedPath)) return;
+    // A second package wants a different file behind the same name; one list cannot hold both.
+    // Keyed by target in the run-wide register: each wrong file is named once, not once per candidate.
+    const disclosureKey = `alias-conflict ${spec} ${pathKey(resolvedPath)}`;
+    if (reportedUnresolved.has(disclosureKey)) return;
+    reportedUnresolved.add(disclosureKey);
+    warningsOut?.push(
+      GOVERNING_ALIAS_CONFLICT_WARNING(
+        spec,
+        relativeToRoot(importer, projectRoot),
+        toPosix(resolvedPath),
+        toPosix(served),
+      ),
+    );
+  };
   const reportedWorkspaceRootAliases = new Set<string>();
   // One report per specifier, however many files import it.
   const reportedUnresolved = reportedUnresolvedOut ?? new Set<string>();
@@ -354,16 +433,34 @@ function walkExternalDeps(
       continue;
     }
 
+    // Hoisted: the governing table is a property of the file, and the lookup walks the tree.
+    let fileAliases = aliasesForFile === undefined ? aliases : aliasesForFile(normalizedFile);
+    let aliasCount = aliases.length;
+
     for (const raw of readSpecifiers(content)) {
+      // A rescue this file's own imports added applies to the imports below them.
+      if (aliasesForFile !== undefined && aliases.length !== aliasCount) {
+        aliasCount = aliases.length;
+        fileAliases = aliasesForFile(normalizedFile);
+      }
       // `./icon.svg?url` never resolved with the query; a "#" survives, it opens a subpath import.
       const spec = raw.split("?")[0];
       if (!spec) continue;
 
       const isBareSpecifier = !spec.startsWith(".") && !spec.startsWith("/");
-      const localResolved = resolveLocalImport(normalizedFile, spec, projectRoot, aliases);
+      const localResolved = resolveLocalImport(normalizedFile, spec, projectRoot, fileAliases);
       if (localResolved.kind === "resolved") {
         if (SOURCE_EXTENSIONS.includes(path.extname(localResolved.path))) {
           queue.push(localResolved.path);
+        }
+        // Only a governing table can answer differently from the one the harness hands Vite.
+        if (
+          isBareSpecifier &&
+          aliasesForFile !== undefined &&
+          localResolved.aliasPattern !== undefined &&
+          !localResolved.viaShimAlias
+        ) {
+          serveGoverningAlias(spec, localResolved.path, normalizedFile);
         }
         // The specifier was still imported and must be reported; only the bookkeeping changes.
         if (isBareSpecifier && localResolved.viaShimAlias) specifiersOut?.add(spec);
@@ -378,12 +475,33 @@ function walkExternalDeps(
           warningsOut?.push(WORKSPACE_ROOT_ALIAS_WARNING(spec, tag.pattern, tag.target, tag.configFile));
         }
       } else if (localResolved.kind === "alias-miss") {
+        // A project alias that matches first must not hide the sibling source behind it.
+        const siblingEntry = localResolved.viaShimAlias
+          ? undefined
+          : unbuiltSiblingSourceEntry(spec, normalizedFile, projectRoot, workspaceRoot);
+        if (siblingEntry !== undefined) {
+          if (!rescuedFromStaleAlias.has(spec)) {
+            rescuedFromStaleAlias.add(spec);
+            // Ahead of the alias that matched: Vite stops at its own first match too.
+            extraAliasesOut?.unshift({
+              find: new RegExp(`^${escapeRegex(spec)}$`),
+              replacement: siblingEntry,
+            });
+          }
+          if (SOURCE_EXTENSIONS.includes(path.extname(siblingEntry))) queue.push(siblingEntry);
+          continue;
+        }
         // A shim alias whose file is not built is this tool's own state; a project alias is theirs.
         if (localResolved.viaShimAlias) {
           specifiersOut?.add(spec);
         } else if (!reportedBrokenAliases.has(spec)) {
           reportedBrokenAliases.add(spec);
-          warningsOut?.push(BROKEN_ALIAS_WARNING(spec, localResolved.target));
+          const group = brokenAliasGroups.get(localResolved.aliasPattern) ?? {
+            targetRoot: localResolved.aliasTargetRoot,
+            specifiers: [],
+          };
+          group.specifiers.push(spec);
+          brokenAliasGroups.set(localResolved.aliasPattern, group);
         }
       } else if (spec.startsWith("#")) {
         // Never a package to pre-bundle, and never a truncation of one ("#app/x" is not "#app").
@@ -600,6 +718,13 @@ function walkExternalDeps(
     walk();
     dropIgnored();
     if (!resolvePackages()) break;
+  }
+
+  // After the fixed point: a rescued sibling source may still add specifiers under one alias.
+  for (const [pattern, group] of brokenAliasGroups) {
+    warningsOut?.push(
+      BROKEN_ALIAS_WARNING(pattern, group.targetRoot, group.specifiers.slice(0, 3), group.specifiers.length),
+    );
   }
 
   // react-native's own manifest answers a native runtime, so the browser never resolves it here.

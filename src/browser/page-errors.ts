@@ -26,6 +26,8 @@ export interface PageErrorCapture {
   capturedFatal(): FatalPageError | undefined;
   // A new document ends the old one's fatal, or it would lead the next readiness timeout.
   resetCapturedFatal(): void;
+  // A readiness resolution proves the graph evaluated, so an armed module error was optional.
+  cancelPendingModuleFatal(): void;
 }
 
 // Retention is by distinct message: repeats of one noisy message must not evict the real one.
@@ -84,6 +86,35 @@ export function isHarnessInternalNoise(url: string, harnessDirName: string): boo
   return !match[1].includes(".");
 }
 
+// Vite serves these itself, so a server error on one is a transform that failed, not a miss.
+const MODULE_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".vue", ".svelte"];
+
+// Below 500 the module may still be optional; at 500 the dev server itself could not serve it.
+const MODULE_RESPONSE_FATAL_STATUS = 500;
+
+// Long enough for an optional `import().catch()` to be overtaken by a readiness that succeeds.
+export const MODULE_RESPONSE_GRACE_MS = 1500;
+
+// The two shapes Vite asks for a module in: an explicit `?import`, or a source extension.
+export function isModuleRequest(url: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  if (parsed.searchParams.has("import")) return true;
+  return MODULE_EXTENSIONS.some((ext) => parsed.pathname.endsWith(ext));
+}
+
+// Named as the fatal's own message, so buildFatalPageErrorMessage frames it like any other throw.
+export function MODULE_RESPONSE_FATAL(status: number, url: string): string {
+  return (
+    `the dev server answered ${url} with ${status}: that module's transform failed, and the module ` +
+    "graph the harness entry pulls cannot evaluate without it"
+  );
+}
+
 // Playwright substitutes nothing, so React's `Warning: %s is invalid` arrives with `%s` intact.
 export function substituteConsoleFormat(text: string, args: string[]): string {
   const format = args[0];
@@ -121,7 +152,12 @@ export function substituteConsoleFormat(text: string, args: string[]): string {
   return surplus.length > 0 ? [out, ...surplus].join(" ") : out;
 }
 
-export function attachPageErrorCapture(page: Page, harnessDirName?: string): PageErrorCapture {
+export function attachPageErrorCapture(
+  page: Page,
+  harnessDirName?: string,
+  // Only the grace is injectable: a test cannot wait out the real one, and nothing else varies.
+  options?: { moduleErrorGraceMs?: number },
+): PageErrorCapture {
   // The session bucket spans the run; the segment resets per drain so each combo has its cap.
   const session = createBucket();
   const segment = createBucket();
@@ -130,18 +166,53 @@ export function attachPageErrorCapture(page: Page, harnessDirName?: string): Pag
   let capturedFatal: FatalPageError | undefined;
   // Fresh per call, so a caller that missed an earlier fatal gets the next one, never a replay.
   let fatalWaiters: Array<(fatal: FatalPageError) => void> = [];
+  // Latched from the harness document: every module its graph pulls is served from that origin.
+  let harnessOrigin: string | undefined;
+  let armedModuleFatal: NodeJS.Timeout | undefined;
+  const moduleErrorGraceMs = options?.moduleErrorGraceMs ?? MODULE_RESPONSE_GRACE_MS;
+
+  const deliverFatal = (fatal: FatalPageError): void => {
+    capturedFatal ??= fatal;
+    if (fatalWaiters.length === 0) return;
+    const waiters = fatalWaiters;
+    fatalWaiters = [];
+    for (const resolve of waiters) resolve(fatal);
+  };
+
+  const disarmModuleFatal = (): void => {
+    if (armedModuleFatal === undefined) return;
+    clearTimeout(armedModuleFatal);
+    armedModuleFatal = undefined;
+  };
+
+  // The document is the first response the harness makes, and it is the one that names the origin.
+  const rememberHarnessOrigin = (url: string, dirName: string): void => {
+    if (harnessOrigin !== undefined) return;
+    try {
+      const parsed = new URL(url);
+      if (parsed.pathname.startsWith(`/${dirName}/`)) harnessOrigin = parsed.origin;
+    } catch {
+      return;
+    }
+  };
+
+  // Armed rather than delivered: an optional import().catch() can 500 and the page still be ready.
+  const armModuleFatal = (status: number, url: string): void => {
+    if (status < MODULE_RESPONSE_FATAL_STATUS || armedModuleFatal !== undefined) return;
+    if (harnessOrigin === undefined || !url.startsWith(`${harnessOrigin}/`)) return;
+    if (!isModuleRequest(url)) return;
+    armedModuleFatal = setTimeout(() => {
+      armedModuleFatal = undefined;
+      deliverFatal({ message: MODULE_RESPONSE_FATAL(status, url) });
+    }, moduleErrorGraceMs);
+    armedModuleFatal.unref?.();
+  };
 
   page.on("pageerror", (err) => {
     session.record(err.message);
     segment.record(err.message);
     segmentFatal = true;
-    const fatal: FatalPageError = { message: err.message, ...(err.stack ? { stack: err.stack } : {}) };
-    capturedFatal ??= fatal;
-    if (fatalWaiters.length > 0) {
-      const waiters = fatalWaiters;
-      fatalWaiters = [];
-      for (const resolve of waiters) resolve(fatal);
-    }
+    deliverFatal({ message: err.message, ...(err.stack ? { stack: err.stack } : {}) });
   });
   page.on("console", (msg) => {
     if (msg.type() !== "error") return;
@@ -163,12 +234,16 @@ export function attachPageErrorCapture(page: Page, harnessDirName?: string): Pag
     segment.record(message);
   });
   page.on("response", (response) => {
-    if (response.status() < 400) return;
     const url = response.url();
+    // Before the status gate: the document that names the origin is a 200.
+    if (harnessDirName) rememberHarnessOrigin(url, harnessDirName);
+    const status = response.status();
+    if (status < 400) return;
     if (harnessDirName && isHarnessInternalNoise(url, harnessDirName)) return;
-    const message = `response ${response.status()}: ${response.request().method()} ${url}`;
+    const message = `response ${status}: ${response.request().method()} ${url}`;
     session.record(message);
     segment.record(message);
+    armModuleFatal(status, url);
   });
 
   return {
@@ -190,6 +265,7 @@ export function attachPageErrorCapture(page: Page, harnessDirName?: string): Pag
       segment.reset();
       segmentFatal = false;
       capturedFatal = undefined;
+      disarmModuleFatal();
       return result;
     },
     waitForFatal() {
@@ -202,7 +278,9 @@ export function attachPageErrorCapture(page: Page, harnessDirName?: string): Pag
     },
     resetCapturedFatal() {
       capturedFatal = undefined;
+      disarmModuleFatal();
     },
+    cancelPendingModuleFatal: disarmModuleFatal,
   };
 }
 
@@ -304,6 +382,16 @@ function readinessWaitNote(waitedMs: number): string {
   );
 }
 
+// Distinct from readinessWaitNote: this bound governed the navigation, not the __120fps poll.
+function navigationBoundNote(boundMs: number): string {
+  return (
+    `The navigation to that page did not finish within ${formatWaited(boundMs)}, so the readiness ` +
+    "wait never started. A first-run dependency pre-bundle, or a machine busy with parallel work, " +
+    `can push a navigation past that bound. ${HARNESS_READY_TIMEOUT_ENV}=<milliseconds> raises it ` +
+    `(default ${DEFAULT_HARNESS_READY_TIMEOUT_MS}).`
+  );
+}
+
 function isTimeoutError(err: Error): boolean {
   return err.name === "TimeoutError" || err.message.includes("Timeout");
 }
@@ -337,8 +425,8 @@ export function enrichTimeoutError(
   capture: PageErrorCapture,
   context: string,
   remedyLine?: string,
-  // Set by a readiness wait, which knows the global it polled; a navigation wait leaves it out.
-  readiness?: { waitedMs: number },
+  // A readiness wait knows what it waited; a navigation knows only the bound it was handed.
+  bound?: { waitedMs: number } | { navigationMs: number },
 ): Error {
   const base = err instanceof Error ? err : new Error(String(err));
   if (!isTimeoutError(base)) return base;
@@ -346,9 +434,14 @@ export function enrichTimeoutError(
   const remedy = envRemedyFor(capture, remedyLine);
   // A temporal-dead-zone error has a known cause, so the env-file line would read as a guess.
   const cycle = tdzCycleNote(capture);
+  const note = bound
+    ? "waitedMs" in bound
+      ? readinessWaitNote(bound.waitedMs)
+      : navigationBoundNote(bound.navigationMs)
+    : undefined;
   return new Error(
     `${context} did not become ready within timeout.${errorDetailBlock(capture)}` +
-      (readiness ? `\n${readinessWaitNote(readiness.waitedMs)}` : "") +
+      (note ? `\n${note}` : "") +
       (cycle ? `\n${cycle}` : remedy),
     { cause: err },
   );
@@ -391,6 +484,11 @@ export async function waitForReadyOrFatal(
   context: string,
   buildEnvRemedyLine?: () => string | undefined,
 ): Promise<void> {
+  // A throw that landed before this wait existed is in the capture and is never re-delivered.
+  const alreadyCaptured = capture.capturedFatal();
+  if (alreadyCaptured) {
+    throw buildFatalPageErrorMessage(alreadyCaptured, capture, context, buildEnvRemedyLine?.());
+  }
   let fatal: FatalPageError | undefined;
   const fatalSignal = capture.waitForFatal().then((f) => {
     fatal = f;
@@ -422,6 +520,8 @@ export async function waitForReadyOrFatal(
   if (fatal) {
     throw buildFatalPageErrorMessage(fatal, capture, context, buildEnvRemedyLine?.());
   }
+  // The graph evaluated, so a module error still armed belongs to an import the page never needed.
+  capture.cancelPendingModuleFatal();
 }
 
 // Structural subset of Page, so the wrapper is testable without a browser.
@@ -441,7 +541,9 @@ export async function gotoWithErrorContext(
     capture.resetCapturedFatal();
     await page.goto(url, options);
   } catch (err) {
-    throw enrichTimeoutError(err, capture, context);
+    const declared = options?.timeout;
+    const navigationMs = typeof declared === "number" ? declared : harnessReadyTimeoutMs();
+    throw enrichTimeoutError(err, capture, context, undefined, { navigationMs });
   }
 }
 

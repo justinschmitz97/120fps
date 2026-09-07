@@ -101,6 +101,8 @@ export interface AnalyzeOptions {
   maxCombos?: number;
   initFixture?: boolean;
   exploreBudgetMs?: number;
+  // Selects exploration's observer path; absent, the run measures on the trace path.
+  observerTiming?: boolean;
   cpuThrottle?: number;
   warmupRuns?: number;
   seed?: number;
@@ -122,6 +124,8 @@ export interface AnalyzeOptions {
   saveBaseline?: boolean;
   check?: boolean;
   noBaseline?: boolean;
+  // The file --save-baseline writes and --check reads; absent means the project root's own.
+  baselineFile?: string;
   baselineEnv?: BaselineEnvPolicy;
   isolation?: { phases: string[]; memoryCycles?: number };
   wrapPath?: string;
@@ -424,6 +428,7 @@ export async function analyze(
       progress,
       ...(wrapPath !== undefined ? { wrapPath } : {}),
       ...(vueCompiler !== undefined ? { vueCompiler } : {}),
+      ...(resolvedCss.files.length > 0 ? { cssFiles: resolvedCss.files } : {}),
     });
     providerCandidates = preflightPhase.providerCandidates;
     transitiveProviderCandidates = preflightPhase.transitiveProviderCandidates;
@@ -474,6 +479,8 @@ export async function analyze(
     const enterHarnessPage = async (): Promise<void> => {
       await gotoWithErrorContext(page, harness!.url, pageErrors, "component harness", {
         waitUntil: HARNESS_NAV_WAIT,
+        // The bound the readiness wait below advertises, so neither half reports another.
+        timeout: harnessReadyTimeoutMs(),
       });
       // Races readiness against a fatal page error instead of waiting out the full timeout.
       await waitForReadyOrFatal(
@@ -551,6 +558,9 @@ export async function analyze(
     if (calibration.totalDuration === 0) {
       throw new Error("Calibration produced zero duration: measurement environment is broken");
     }
+
+    // Closes calibration at the trace it measured; wrapper overhead, schemas and combos are setup.
+    progress("setup");
 
     let wrapper: WrapperReport | undefined;
     if (wrapPath) {
@@ -669,6 +679,7 @@ export async function analyze(
       resolvedPath,
       cssDecisionWarning,
       runWarnings,
+      ...(options.noTransforms ? { noTransforms: true } : {}),
     });
     throw new Error(presented + formatAccumulatedWarnings(combined) + abortHints, { cause: err });
   } finally {

@@ -335,3 +335,22 @@ describe("dead SERVER_ONLY_PACKAGES entry removed", () => {
     expect(result.hard.map((h) => h.kind)).not.toContain("server-only");
   });
 });
+
+// The package boundary still holds for everything that is not an unbuilt workspace sibling.
+describe("an edge that resolves into node_modules", () => {
+  it("is not walked when the package is a plain dependency", () => {
+    const { root, entry } = makeIsolatedRoot("120fps-preflight-node-modules-edge-", {
+      "package.json": JSON.stringify({ name: "solo", dependencies: { kit: "1.0.0" } }),
+      "Card.tsx":
+        'import { x } from "kit";\nexport function Card() { return null; }\nexport const shown = x;\n',
+      "node_modules/kit/package.json": JSON.stringify({ name: "kit", main: "./index.js" }),
+      "node_modules/kit/index.js": 'import "./data.yaml";\nexport const x = 1;\n',
+      "node_modules/kit/data.yaml": "a: 1\n",
+    });
+
+    const result = runPreflight({ projectRoot: root, entries: [entry] });
+
+    expect(result.hard).toEqual([]);
+    expect(result.transforms).toEqual([]);
+  });
+});

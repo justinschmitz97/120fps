@@ -72,7 +72,7 @@ describe("matrix branch wiring", () => {
 
   it("the plain-combo path uses the same computeEffectiveSamples helper", () => {
     expect(src("pipeline/modes/combo.ts")).toContain(
-      "const effectiveSamples = computeEffectiveSamples(combos.length, samples);",
+      "const effectiveSamples = computeEffectiveSamples(plannedCombos, samples);",
     );
   });
 

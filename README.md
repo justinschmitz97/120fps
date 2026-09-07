@@ -65,6 +65,7 @@ Options:
   --compare <gitref>             Measure the working tree against <gitref>, samples interleaved
   --save-baseline                Save current measurements as baseline
   --check                        Compare against baseline, fail on regression
+  --baseline-file <path>         Baseline file --save-baseline writes and --check reads (default: <project root>/120fps-baseline.json)
   --budget                       Shorthand for --ci --check
   --no-baseline                  Skip baseline comparison in CI mode
   --no-cache                     Measure even when an unchanged component could reuse its baseline verdict
@@ -94,7 +95,7 @@ Notes:
 - `--matrix` auto-activates on ≥2 small boolean/union axes; the run announces the cell count first. Above 256 cells it falls back to pairwise cover and says how many cells it measured.
 - Matrix runs don't participate in baselines. Use `--no-matrix` to save/check a baseline for such a component.
 - `--curve`, `--matrix`, `--isolate` are exclusive whole-run modes; combining them is a usage error.
-- Exit codes: 0 pass, 1 verdict fail, 2 setup/usage error.
+- Exit codes: 0 pass, 1 verdict fail (over budget, a regression under `--check`/`--budget`, or a render error), 2 setup/usage error.
 - The harness readiness wait is bounded at 90s by default; raise it with the `FPS120_READY_TIMEOUT_MS` environment variable (a positive whole number of milliseconds) on a slow or busy machine.
 - A Nuxt project whose `.nuxt/` directory is missing a file its own tsconfig names is refused before the browser starts, naming the missing file and the `nuxi prepare` remedy, in the dry run and the real run alike.
 - A component whose import graph reaches a Babel macro (`*/macro`, `*.macro`, `babel-plugin-macros`) is refused before the browser, naming the importer, the macro and the compiler the project declares for it; `--no-preflight` bypasses the refusal and runs the rest of the pipeline unchanged.
@@ -125,7 +126,7 @@ Runs print one line per phase (`mount: 8 combos x 10 samples`) and end with `Tot
 
 ## Where the minutes go
 
-`Total:` breaks down by phase: `Total: 3m 12s  (build 41s, mount 58s, explore 1m 20s, analysis 12s)`; a phase at zero is left out. The JSON report carries the same numbers in `phaseTimings`: `preflight`, `build`, `calibration`, `mount`, `rerender`, `explore`, `scale`, `deltas`, `attribution`, `analysis` and `total`, each an integer millisecond count, the ten phase keys summing to `total`. `--report-md` includes the same breakdown per component; a report from before this existed renders `-`, never `0s`.
+`Total:` breaks down by phase: `Total: 3m 12s  (build 41s, mount 58s, explore 1m 20s, analysis 12s)`; a phase at zero is left out. The JSON report carries the same numbers in `phaseTimings`: `preflight`, `build`, `calibration`, `setup`, `mount`, `rerender`, `explore`, `scale`, `deltas`, `attribution`, `analysis` and `total`, each an integer millisecond count, the eleven phase keys summing to `total`. `setup` holds the wrapper overhead, the calibration session's close, schema extraction and combination planning that used to be counted as calibration. `--report-md` includes the same breakdown per component; a report from before this existed renders `-`, never `0s`.
 
 ## Budgets & baselines (CI)
 
@@ -138,7 +139,7 @@ Runs print one line per phase (`mount: 8 combos x 10 samples`) and end with `Tot
 - run: npx 120fps "src/components/**/*.tsx" --budget
 ```
 
-- `--save-baseline` writes `120fps-baseline.json` at the project root; `--check` exits 1 on regression; `--budget` = `--ci --check`.
+- `--save-baseline` writes `120fps-baseline.json` at the project root, or the file `--baseline-file <path>` names; `--check` reads the same file; `--budget` = `--ci --check`.
 - Per-component overrides: `120fps.config.json`, keyed by component path. Invalid numbers throw before measuring.
 - Save and check on the same runner image. Keep local baselines out of your commits with `git update-index --skip-worktree 120fps-baseline.json`.
 
@@ -288,6 +289,7 @@ npx 120fps "src/components/**/*.vue" --budget
 - `120fps.setup.vue` wraps via its default slot; `.fixture.vue` for compounds.
 - No `--isolate strictmode` (React-only concept), no Vue optimization pass yet. Framework is part of the baseline fingerprint.
 - A read-of-undefined abort inside an ordinary SFC render frame gets a provide/inject hint pointing at `120fps.setup.vue` only when the component's own `<script setup>` block calls `inject(`; otherwise the abort prints no hint.
+- The declaration files your own tooling generates are a resolution input, read as text and never executed. `components.d.ts` (also `src/`, `types/`, `app/`, `.nuxt/`) registers your project's own components globally before mount; `auto-imports.d.ts` (same search order) prepends the import into the script block of a module in the measured component's graph that uses an identifier without importing it. Both are disclosed once per run with the file and the count, along with entries whose module is not on disk, and both files join the baseline fingerprint, so regenerating one re-measures instead of reusing a stale verdict. A component the map points at inside a dependency stays unregistered, because it usually needs a router or a Nuxt app context the harness does not provide; the run names the ones your component's own source references. A registered component the browser then fails to fetch is named in a warning instead of silently rendering nothing. `--no-transforms` switches all of this off along with the project's plugins. `@vitejs/plugin-vue` also resolves through a framework you *do* declare (`nuxt`, `vite`) that depends on it, with no hoisting warning.
 
 ## Tier Budgets
 
@@ -352,7 +354,26 @@ Scale points measured but DOM count never moved: the curve describes nothing ren
 
 ### Render errors
 
-Page errors during a combo are printed under `Page errors`; zero DOM + a throw = `FAIL [render error]`: the timings describe a broken tree, not your component. Usual causes: missing provider (`--wrap`), unpopulatable prop (`<stem>.props.tsx` preset). Rendering nothing *without* throwing is legal and only annotated.
+Page errors during a combo are printed under `Page errors`; zero DOM + a throw = `FAIL [render error]`, and the run exits 1: the timings describe a broken tree, not your component. Usual causes: missing provider (`--wrap`), unpopulatable prop (`<stem>.props.tsx` preset). Rendering nothing *without* throwing is legal and only annotated.
+
+A missing provider reads like this:
+
+```
+Page errors
+  Combo #0:
+    - @mantine/core: MantineProvider was not found in component tree, make sure you have it in your app
+
+What to do about it:
+
+  the component threw instead of rendering
+    ...
+    component imports @mantine/core, and the page error says "@mantine/core: MantineProvider was
+    not found in component tree, make sure you have it in your app": render it inside that
+    provider. A default-exporting 120fps.setup.tsx (or 120fps.setup.vue) at the package root is
+    picked up automatically; --wrap names another path.
+```
+
+Write that wrapper once — the six-line recipe is under [Provider wrapper](#provider-wrapper) — and the same component measures.
 
 ### Harness fault
 

@@ -1,6 +1,6 @@
 import path from "node:path";
 import { type AnalyzeOptions } from "./analyze.js";
-import { BUNDLER_PREACT_ALIAS_WARNING, type BuildHarnessOptions, CSS_UNREADABLE_DROPPED_WARNING, type HarnessResult, detectBundlerReactDomAlias, detectComponentExport, presentBundlerFailure, stylesheetReadFailureTarget } from "../harness/index.js";
+import { BUNDLER_PREACT_ALIAS_WARNING, type BuildHarnessOptions, COMPONENT_LOAD_FAILURE_PREFIX, CSS_UNREADABLE_DROPPED_WARNING, type HarnessResult, detectBundlerReactDomAlias, detectComponentExport, presentBundlerFailure, stylesheetReadFailureTarget } from "../harness/index.js";
 import { detectProjectTransforms } from "../project/index.js";
 import {
   COMPOSITION_EMPTY_WARNING,
@@ -35,7 +35,9 @@ import {
   PreflightHardRejectionError,
   type PreflightHit,
   type VueSfcCompiler,
+  autoImportMapEvidence,
   classifyProjectTransformHits,
+  generatedDeclarationMapFiles,
   isDirectProviderHit,
   preflightFailureMessage,
   providerCandidateLabels,
@@ -54,7 +56,9 @@ import {
   viteConfigIgnoredKeys,
 } from "./remedies.js";
 import {
-  STYLESHEET_MATCHED_NOTHING_WARNING,
+  BUNDLED_PREPROCESSOR_DISCLOSED,
+  bundledPreprocessorStylesheetWarning,
+  stylesheetMatchWarnings,
   probeStylesheetMatchStats,
   resolveCssFiles,
   resolveFramework,
@@ -251,6 +255,10 @@ export function createSourceFingerprint(deps: {
       extras.push(path.resolve(metadataPath));
     }
     extras.push(...projectConfigFingerprintFiles(projectRoot));
+    // A regenerated map changes which components and identifiers resolve, so it decides identity.
+    if (!options.noTransforms) {
+      extras.push(...generatedDeclarationMapFiles(projectRoot, path.resolve(harnessPath)));
+    }
     fingerprintValue = computeSourceFingerprint(
       projectRoot,
       [...graph, ...extras],
@@ -259,6 +267,38 @@ export function createSourceFingerprint(deps: {
     return fingerprintValue;
   };
   return { getSourceFingerprint, resetSourceFingerprint: () => (fingerprintValue = undefined) };
+}
+
+// A registration the browser could not fetch renders nothing and throws no render error, so the
+// only trace it leaves is the line the entry logged; the run reads it back and says it once.
+const COMPONENT_LOAD_FAILURE = new RegExp(
+  `${COMPONENT_LOAD_FAILURE_PREFIX.replace(/[[\]]/g, "\\$&")} (\\S+) failed to load: ([^\n]*)`,
+);
+
+export function componentLoadFailures(report: Report): { name: string; detail: string }[] {
+  const sources: string[] = [];
+  for (const combo of report.combos) sources.push(...(combo.pageErrors ?? []));
+  for (const point of report.scalingCurveReport?.points ?? []) {
+    sources.push(...(point.pageErrors ?? []));
+  }
+  const byName = new Map<string, string>();
+  for (const line of sources) {
+    const match = COMPONENT_LOAD_FAILURE.exec(line);
+    // The capture keeps the browser's own repeat suffix out of the detail it reports.
+    if (match && !byName.has(match[1])) byName.set(match[1], match[2].replace(/\s*\(\u00d7\d+\)$/, ""));
+  }
+  return [...byName].sort(([a], [b]) => a.localeCompare(b)).map(([name, detail]) => ({ name, detail }));
+}
+
+export function COMPONENT_LOAD_FAILURES_WARNING(
+  failures: readonly { name: string; detail: string }[],
+): string {
+  const listed = failures.map((failure) => `${failure.name} (${failure.detail})`).join("; ");
+  return (
+    `${failures.length} component${failures.length === 1 ? "" : "s"} the generated components map ` +
+    `registered could not be loaded by the browser and rendered nothing: ${listed}. The numbers ` +
+    "below describe a tree without them."
+  );
 }
 
 // Everything a report carries that the run, rather than a measurement pass, knows.
@@ -327,6 +367,17 @@ export function createHarnessContextAttacher(deps: {
     if (activeTransforms && activeTransforms.length > 0) {
       report.projectTransforms = activeTransforms;
     }
+    if (harness?.generatedMaps && harness.generatedMaps.length > 0) {
+      report.generatedMaps = harness.generatedMaps;
+    }
+    // A registration the browser could not fetch renders nothing, which no timing would show.
+    const loadFailures = componentLoadFailures(report);
+    if (loadFailures.length > 0) {
+      report.warnings = dedupeWarnings([
+        ...(report.warnings ?? []),
+        COMPONENT_LOAD_FAILURES_WARNING(loadFailures),
+      ]);
+    }
     const compiler = harness?.reactCompiler;
     const compilerReport = buildReactCompilerReport(compiler);
     if (compilerReport) {
@@ -348,6 +399,8 @@ export function runPreflightPhase(input: {
   progress: (line: string) => void;
   wrapPath?: string;
   vueCompiler?: VueSfcCompiler;
+  // The stylesheets this run injects, which no import edge of the measured graph names.
+  cssFiles?: string[];
 }): {
   providerCandidates: string[];
   transitiveProviderCandidates: string[];
@@ -392,6 +445,12 @@ export function runPreflightPhase(input: {
   // Named up front, and again if the run dies: an unappliable transform is the first suspect.
   for (const { hit, availability } of candidateTransformHits) {
     runWarnings.push(PROJECT_TRANSFORM_WARNING(hit, availability));
+  }
+  // The injected stylesheet is no edge of the measured graph, so the classifier above never sees
+  // it. Disclosed only when that classifier said nothing: one Sass disclosure per run.
+  if (!options.noTransforms && !runWarnings.some((w) => w.includes(BUNDLED_PREPROCESSOR_DISCLOSED))) {
+    const injected = bundledPreprocessorStylesheetWarning(input.cssFiles ?? [], projectRoot);
+    if (injected !== undefined) runWarnings.push(injected);
   }
   if (loadableTransforms.size > 0) {
     activeTransforms = [...loadableTransforms].sort();
@@ -471,6 +530,8 @@ export async function classifyHarnessFault(input: {
   resolvedPath: string;
   cssDecisionWarning: string;
   runWarnings: string[];
+  // The maps are off under --no-transforms, so the hint must not claim one was consulted.
+  noTransforms?: boolean;
 }): Promise<{ presented: string; combined: string[]; abortHints: string }> {
   const { err, projectRoot, resolvedPath, cssDecisionWarning, runWarnings } = input;
   // Warnings the harness attached to the error itself fold in with the run's own.
@@ -487,6 +548,7 @@ export async function classifyHarnessFault(input: {
       combined.push(warning);
     }),
     ...(viteConfigIgnoredKeys(combined) ?? {}),
+    ...(autoImportMapEvidence(projectRoot, resolvedPath, input.noTransforms) ?? {}),
   });
   return { presented, combined, abortHints };
 }
@@ -541,16 +603,19 @@ export async function recordStylesheetMatches(input: {
 // Read on the harness this run measures on, before throttling and any traced window.
 if (cssReport.details && cssReport.details.length > 0) {
   const stats = await probeStylesheetMatchStats(page);
+  // The probe reports rules: 0 for a sheet it could not read, and detail.rules is only static.
+  const probed: NonNullable<CssReport["details"]> = [];
   for (const stat of stats ?? []) {
     // One direction only: the reverse match misattaches when two sheets share a trailing segment.
     const normalized = stat.file.split("\\").join("/");
     const detail = cssReport.details.find((d) => normalized.endsWith(d.file));
     if (!detail) continue;
     detail.matchedRules = stat.matched;
-    // The probe reports rules: 0 for a sheet it could not read, and detail.rules is only static.
-    if (stat.rules > 0 && stat.matched === 0) {
-      onWarning(STYLESHEET_MATCHED_NOTHING_WARNING(detail.file, stat.rules));
-    }
+    probed.push({ ...detail, rules: stat.rules, matchedRules: stat.matched });
+  }
+  // One disclosure for the whole run: a wrong pick reads differently from an unused feature sheet.
+  for (const warning of stylesheetMatchWarnings({ layer: cssReport.layer, details: probed })) {
+    onWarning(warning);
   }
 }
 }

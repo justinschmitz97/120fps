@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import ts from "typescript";
 import {
+  bundledPreprocessor,
   findWorkspaceRoot,
   installedPackageDir,
   isPackageAvailable,
@@ -93,6 +94,11 @@ export function isCssModule(file: string): boolean {
 
 // Opt-in by convention, so the name alone disqualifies it from the largest-sheet fallback.
 export const RESET_STYLESHEET_STEMS = ["reset", "normalize", "preflight", "sanitize"];
+
+// `_name.scss` is a Sass partial: the compiler refuses to emit it as a stylesheet of its own.
+export function isPreprocessorPartialName(file: string): boolean {
+  return path.basename(file).startsWith("_") && path.extname(file).toLowerCase() !== ".css";
+}
 
 export function isOptInResetName(file: string): boolean {
   const stem = path.basename(file, path.extname(file)).toLowerCase();
@@ -218,10 +224,14 @@ export function resolveStylesheetImportTarget(
   return declaredBareStylesheetTarget(specifier, fromDir);
 }
 
+// Undefined means the sheet compiles: with the project's own implementation, or with the one
+// 120fps declares itself, which Vite's own fallback search base resolves.
 export function preprocessorFor(file: string, memberRoot: string, workspaceRoot: string): string | undefined {
-  const packages = PREPROCESSOR_PACKAGES[path.extname(file).toLowerCase()];
+  const extension = path.extname(file).toLowerCase();
+  const packages = PREPROCESSOR_PACKAGES[extension];
   if (!packages) return undefined;
   if (packages.some((pkg) => isPackageAvailable(pkg, memberRoot, workspaceRoot))) return undefined;
+  if (bundledPreprocessor(extension)) return undefined;
   return packages[0];
 }
 
@@ -303,6 +313,66 @@ function declaredBareStylesheetTarget(specifier: string, fromDir: string): Style
   return target && "declared" in target ? target : undefined;
 }
 
+// One target per exports entry: a string, or the first condition that names a file.
+function exportsTargetFile(entry: unknown): string | undefined {
+  if (typeof entry === "string") return entry;
+  if (!entry || typeof entry !== "object") return undefined;
+  if (Array.isArray(entry)) {
+    for (const alternative of entry) {
+      const target = exportsTargetFile(alternative);
+      if (target) return target;
+    }
+    return undefined;
+  }
+  const conditions = entry as Record<string, unknown>;
+  for (const condition of ["style", "default", "import", "require", "sass"]) {
+    const target = exportsTargetFile(conditions[condition]);
+    if (target) return target;
+  }
+  return undefined;
+}
+
+// Node's own pattern specificity: longest prefix before the star, then longest suffix after it.
+function patternSpecificity(key: string): [number, number] {
+  const star = key.indexOf("*");
+  return [star, key.length - star - 1];
+}
+
+// An exact key wins; otherwise the most specific `*` pattern the subpath matches decides.
+export function resolveExportsSubpath(exportsField: unknown, subpath: string): string | undefined {
+  if (!exportsField || typeof exportsField !== "object" || Array.isArray(exportsField)) {
+    return undefined;
+  }
+  const entries = exportsField as Record<string, unknown>;
+  const exact = exportsTargetFile(entries[`./${subpath}`]);
+  if (exact) return exact;
+
+  let best: { target: string; specificity: [number, number] } | undefined;
+  for (const [key, entry] of Object.entries(entries)) {
+    if (!key.startsWith("./") || key.indexOf("*") !== key.lastIndexOf("*") || !key.includes("*")) {
+      continue;
+    }
+    const [prefix, suffix] = key.slice(2).split("*");
+    if (subpath.length < prefix.length + suffix.length) continue;
+    if (!subpath.startsWith(prefix) || !subpath.endsWith(suffix)) continue;
+    const template = exportsTargetFile(entry);
+    if (!template) continue;
+    const wildcard = subpath.slice(prefix.length, subpath.length - suffix.length);
+    const specificity = patternSpecificity(key);
+    if (best && (best.specificity[0] > specificity[0] ||
+      (best.specificity[0] === specificity[0] && best.specificity[1] >= specificity[1]))) {
+      continue;
+    }
+    // A pattern may name one static file for every subpath it matches; then there is nothing
+    // to substitute.
+    best = {
+      target: template.includes("*") ? template.split("*").join(wildcard) : template,
+      specificity,
+    };
+  }
+  return best?.target;
+}
+
 function bareStylesheetTarget(specifier: string, fromDir: string): StylesheetImportTarget {
   const pkg = specifier.startsWith("@")
     ? specifier.split("/").slice(0, 2).join("/")
@@ -311,21 +381,15 @@ function bareStylesheetTarget(specifier: string, fromDir: string): StylesheetImp
   if (!subpath) return undefined;
   const pkgDir = installedPackageDir(pkg, fromDir);
   if (!pkgDir) return undefined;
-  const exportsField = readProjectManifest(pkgDir)?.exports;
-  if (exportsField && typeof exportsField === "object" && !Array.isArray(exportsField)) {
-    const entry = (exportsField as Record<string, unknown>)[`./${subpath}`];
-    const target =
-      typeof entry === "string"
-        ? entry
-        : entry && typeof entry === "object" && !Array.isArray(entry)
-          ? ["default", "import", "require", "style"]
-              .map((condition) => (entry as Record<string, unknown>)[condition])
-              .find((value): value is string => typeof value === "string")
-          : undefined;
-    if (!target) return undefined;
+  const target = resolveExportsSubpath(readProjectManifest(pkgDir)?.exports, subpath);
+  if (target) {
     const resolved = path.resolve(pkgDir, target);
-    return isFile(resolved) ? { file: resolved } : { declared: resolved };
+    if (isFile(resolved)) return { file: resolved };
+    // A pattern can name a file a build produces; the file on disk still decides.
+    const direct = path.resolve(pkgDir, subpath);
+    return isFile(direct) ? { file: direct } : { declared: resolved };
   }
+  // No key and no pattern matched: the package still ships the file at its own path.
   const direct = path.resolve(pkgDir, subpath);
   return isFile(direct) ? { file: direct } : { declared: direct };
 }
@@ -352,7 +416,120 @@ function resolveStylesheetSpecifier(
   return resolveBareStylesheetSpecifier(specifier, path.dirname(entryFile));
 }
 
-// A bound import is a CSS module read; only a side-effect import is a global stylesheet.
+// An SFC's imports live in its script block; its <style> block is compiled with the component.
+const SFC_SCRIPT_BLOCK = /<script\b[^>]*>([\s\S]*?)<\/script>/gi;
+const ENTRY_SOURCE_MAX_BYTES = 4 * 1024 * 1024;
+
+interface EntryImport {
+  specifier: string;
+  // Everything after "?", which decides whether Vite loads a sheet or hands over a JS string.
+  query: string;
+  bound: boolean;
+}
+
+// `?raw` and `?inline` yield a string, `?worker` a constructor: none of them loads a stylesheet.
+const NON_SHEET_QUERY_FLAGS = new Set(["raw", "inline", "worker", "sharedworker"]);
+
+function queryFlags(query: string): string[] {
+  return query
+    .split("&")
+    .map((part) => part.split("=")[0].toLowerCase())
+    .filter((flag) => flag !== "");
+}
+
+// A stylesheet import is a loaded sheet when it carries no query, or only Vite's `?url`.
+function loadsAsStylesheet(query: string, bound: boolean): boolean {
+  const flags = queryFlags(query);
+  if (flags.some((flag) => NON_SHEET_QUERY_FLAGS.has(flag))) return false;
+  return !bound || flags.every((flag) => flag === "url");
+}
+
+// One parse per module, so an entry and a module one hop below it read the same way.
+function moduleImports(file: string): EntryImport[] {
+  let sourceText: string;
+  try {
+    if (fs.statSync(file).size > ENTRY_SOURCE_MAX_BYTES) return [];
+    sourceText = fs.readFileSync(file, "utf-8");
+  } catch {
+    return [];
+  }
+  let kind = /\.[jt]sx$/i.test(file) ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
+  if (/\.vue$/i.test(file)) {
+    SFC_SCRIPT_BLOCK.lastIndex = 0;
+    sourceText = [...sourceText.matchAll(SFC_SCRIPT_BLOCK)].map((match) => match[1]).join("\n");
+    kind = ts.ScriptKind.TS;
+  }
+  const source = ts.createSourceFile(file, sourceText, ts.ScriptTarget.Latest, false, kind);
+  const imports: EntryImport[] = [];
+  for (const statement of source.statements) {
+    if (!ts.isImportDeclaration(statement)) continue;
+    if (!ts.isStringLiteral(statement.moduleSpecifier)) continue;
+    const [specifier, ...rest] = statement.moduleSpecifier.text.split("?");
+    if (specifier) {
+      imports.push({
+        specifier,
+        query: rest.join("?"),
+        bound: statement.importClause !== undefined,
+      });
+    }
+  }
+  return imports;
+}
+
+const MODULE_EXTENSIONS = [".ts", ".tsx", ".mts", ".js", ".jsx", ".mjs", ".cjs", ".cts", ".vue"];
+// The entry's own imports are followed one level; a whole module graph is not this layer's job.
+const MAX_HOP_MODULES = 32;
+
+function resolveModuleFile(base: string): string | undefined {
+  if (isFile(base) && MODULE_EXTENSIONS.includes(path.extname(base).toLowerCase())) return base;
+  for (const extension of MODULE_EXTENSIONS) {
+    if (isFile(base + extension)) return base + extension;
+  }
+  for (const extension of MODULE_EXTENSIONS) {
+    const index = path.join(base, "index" + extension);
+    if (isFile(index)) return index;
+  }
+  return undefined;
+}
+
+function within(dir: string, file: string): boolean {
+  const relative = path.relative(dir, file);
+  return relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
+}
+
+// The modules the entry itself loads, from this project's own sources: the one hop the walk takes.
+export function entryModuleImports(
+  entryFile: string,
+  projectRoot: string,
+  aliases: Array<{ find: RegExp; replacement: string }>,
+): string[] {
+  const found: string[] = [];
+  for (const { specifier, query } of moduleImports(entryFile)) {
+    if (found.length >= MAX_HOP_MODULES) break;
+    if (isStylesheet(specifier)) continue;
+    // `?raw` and `?worker` hand over a string or a constructor, not this module's own imports.
+    if (queryFlags(query).some((flag) => NON_SHEET_QUERY_FLAGS.has(flag))) continue;
+    let base: string | undefined;
+    if (specifier.startsWith(".")) base = path.resolve(path.dirname(entryFile), specifier);
+    else if (specifier.startsWith("/")) base = path.join(projectRoot, specifier);
+    else {
+      for (const { find, replacement } of aliases) {
+        if (!find.test(specifier)) continue;
+        base = path.resolve(specifier.replace(find, replacement));
+        break;
+      }
+    }
+    if (!base) continue;
+    const resolved = resolveModuleFile(base);
+    if (!resolved) continue;
+    if (!within(projectRoot, resolved) || resolved.split(path.sep).includes("node_modules")) continue;
+    if (!found.includes(resolved) && resolved !== path.resolve(entryFile)) found.push(resolved);
+  }
+  return found;
+}
+
+// A stylesheet import is global whether it binds a name (`./app.css?url`) or not; a CSS module
+// import is a class-name read, and an extensionless specifier counts only when it lands on a sheet.
 export function entryStylesheetImports(
   entryFile: string,
   projectRoot: string,
@@ -360,27 +537,26 @@ export function entryStylesheetImports(
   warningsOut?: string[],
   workspaceRoot: string = findWorkspaceRoot(projectRoot),
 ): string[] {
-  let sourceText: string;
-  try {
-    sourceText = fs.readFileSync(entryFile, "utf-8");
-  } catch {
-    return [];
-  }
-  const kind = /\.[jt]sx$/i.test(entryFile) ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
-  const source = ts.createSourceFile(entryFile, sourceText, ts.ScriptTarget.Latest, false, kind);
-
   const files: string[] = [];
   const unresolved: string[] = [];
-  for (const statement of source.statements) {
-    if (!ts.isImportDeclaration(statement) || statement.importClause) continue;
-    if (!ts.isStringLiteral(statement.moduleSpecifier)) continue;
-    const specifier = statement.moduleSpecifier.text.split("?")[0];
-    if (!specifier || !isStylesheet(specifier) || isCssModule(specifier)) continue;
-    const resolved = resolveStylesheetSpecifier(specifier, entryFile, projectRoot, aliases);
-    if (!resolved) {
-      unresolved.push(specifier);
-      continue;
+  for (const { specifier, query, bound } of moduleImports(entryFile)) {
+    if (isCssModule(specifier)) continue;
+    if (!loadsAsStylesheet(query, bound)) continue;
+    let resolved: string | undefined;
+    if (isStylesheet(specifier)) {
+      resolved = resolveStylesheetSpecifier(specifier, entryFile, projectRoot, aliases);
+      if (!resolved) {
+        unresolved.push(specifier);
+        continue;
+      }
+    } else {
+      // A bound import with no stylesheet extension reads a module's exports, never a sheet.
+      if (bound) continue;
+      const target = resolveStylesheetImportTarget(specifier, entryFile, projectRoot, aliases);
+      if (!target || !("file" in target) || !isStylesheet(target.file)) continue;
+      resolved = target.file;
     }
+    if (isCssModule(resolved)) continue;
     const missing = preprocessorFor(resolved, projectRoot, workspaceRoot);
     if (missing) {
       warningsOut?.push(CSS_PREPROCESSOR_MISSING_WARNING(resolved, missing));

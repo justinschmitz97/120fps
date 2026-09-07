@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { fnv1aHash, createRng, restoreComboIndices } from "../../src/analysis/index.js";
+import { fnv1aHash, createRng, restoreComboIndices, createEscapeWatch } from "../../src/analysis/index.js";
 
 describe("restoreComboIndices", () => {
   it("translates subset positions back into full combo indices", () => {
@@ -96,5 +96,118 @@ describe("createRng", () => {
     const rng = createRng(0);
     const vals = Array.from({ length: 5 }, () => rng());
     expect(new Set(vals).size).toBeGreaterThan(1);
+  });
+});
+
+describe("a click that leaves the harness page is caught and undone", () => {
+  function fakePage(harnessAlive: () => boolean) {
+    const handlers = new Map<string, ((...args: unknown[]) => void)[]>();
+    return {
+      on(event: string, handler: (...args: unknown[]) => void) {
+        handlers.set(event, [...(handlers.get(event) ?? []), handler]);
+      },
+      off(event: string, handler: (...args: unknown[]) => void) {
+        handlers.set(event, (handlers.get(event) ?? []).filter((h) => h !== handler));
+      },
+      evaluate: async () => harnessAlive(),
+      emit(event: string, ...args: unknown[]) {
+        for (const handler of handlers.get(event) ?? []) handler(...args);
+      },
+      listeners(event: string) {
+        return handlers.get(event) ?? [];
+      },
+    };
+  }
+
+  it("closes a popup a click opened and reports the target as skipped", async () => {
+    const page = fakePage(() => true);
+    const watch = createEscapeWatch(page as never);
+    let closed = false;
+    page.emit("popup", { close: async () => { closed = true; } });
+
+    expect(await watch.check()).toBe("opened-a-page");
+    expect(closed).toBe(true);
+    watch.stop();
+  });
+
+  it("leaves no popup listener behind once the combo is done", () => {
+    const page = fakePage(() => true);
+    const watch = createEscapeWatch(page as never);
+    expect(page.listeners("popup")).toHaveLength(1);
+    watch.stop();
+    expect(page.listeners("popup")).toHaveLength(0);
+  });
+
+  it("reports a navigation that took the harness global with it", async () => {
+    let alive = true;
+    const page = fakePage(() => alive);
+    const watch = createEscapeWatch(page as never);
+    expect(await watch.check()).toBeUndefined();
+    alive = false;
+    expect(await watch.check()).toBe("left-the-page");
+    watch.stop();
+  });
+
+  it("reads a same-origin route change as the component's own behaviour", async () => {
+    const page = fakePage(() => true);
+    const watch = createEscapeWatch(page as never);
+    expect(await watch.check()).toBeUndefined();
+    watch.stop();
+  });
+
+  it("does not read a destroyed execution context as a click that left", async () => {
+    const page = {
+      on() {},
+      off() {},
+      evaluate: async () => { throw new Error("Execution context was destroyed"); },
+    };
+    const watch = createEscapeWatch(page as never);
+    expect(await watch.check()).toBeUndefined();
+  });
+
+  it("does not read a closed target as a click that left", async () => {
+    const page = {
+      on() {},
+      off() {},
+      evaluate: async () => { throw new Error("Target closed"); },
+    };
+    const watch = createEscapeWatch(page as never);
+    expect(await watch.check()).toBeUndefined();
+  });
+
+  it("re-reads once before believing an unexplained read failure", async () => {
+    let reads = 0;
+    const page = {
+      on() {},
+      off() {},
+      evaluate: async () => {
+        reads++;
+        if (reads === 1) throw new Error("something else went wrong");
+        return false;
+      },
+    };
+    const watch = createEscapeWatch(page as never);
+    expect(await watch.check()).toBe("left-the-page");
+    expect(reads).toBe(2);
+  });
+
+  it("reports nothing when the page stays unreadable", async () => {
+    const page = {
+      on() {},
+      off() {},
+      evaluate: async () => { throw new Error("something else went wrong"); },
+    };
+    const watch = createEscapeWatch(page as never);
+    expect(await watch.check()).toBeUndefined();
+  });
+
+  it("forgets the previous target's popup when the next one starts", async () => {
+    const page = fakePage(() => true);
+    const watch = createEscapeWatch(page as never);
+    page.emit("popup", { close: async () => {} });
+    expect(await watch.check()).toBe("opened-a-page");
+    watch.reset();
+    expect(await watch.check()).toBeUndefined();
+    watch.stop();
   });
 });

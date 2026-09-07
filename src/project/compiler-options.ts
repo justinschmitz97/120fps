@@ -1,6 +1,15 @@
 import path from "node:path";
 import ts from "typescript";
-import { findProjectRoot, findWorkspaceRoot, resolveGoverningTsconfig } from "./model.js";
+import {
+  findCompilerConfig,
+  findProjectRoot,
+  findWorkspaceRoot,
+  resolveGoverningTsconfig,
+  tsconfigSignature,
+} from "./model.js";
+import { delegatesToReferences } from "./tsconfig-aliases.js";
+import { pathKey } from "../shared/index.js";
+import { unbuiltWorkspaceSiblingPaths } from "./workspace-source.js";
 
 // One warning per tsconfig path per process.
 const warnedTsconfigPaths = new Set<string>();
@@ -16,6 +25,52 @@ function warnTsconfigOnce(configPath: string, detail: string): void {
 // The same options prop extraction uses, so preflight follows the measured graph's paths.
 export function projectCompilerOptions(absolutePath: string): ts.CompilerOptions {
   return createCompilerOptions(path.resolve(absolutePath));
+}
+
+
+// Which files share one answer: the roots and the config that governs them.
+interface OptionsScope {
+  memberRoot: string | undefined;
+  nearestConfigPath: string | undefined;
+  // A references-only config answers per file, so those files cannot share a key.
+  perFile: boolean;
+}
+
+const scopeByDirectory = new Map<string, OptionsScope>();
+const optionsByScope = new Map<string, ts.CompilerOptions>();
+
+// Both registers span a process, so a test worker must start from empty.
+export function resetCompilerOptionsCache(): void {
+  scopeByDirectory.clear();
+  optionsByScope.clear();
+}
+
+function optionsScope(absolutePath: string): string {
+  const startDir = path.dirname(absolutePath);
+  const directoryKey = pathKey(startDir);
+  let scope = scopeByDirectory.get(directoryKey);
+  if (scope === undefined) {
+    const memberRoot = findProjectRoot(startDir);
+    const nearestConfigPath = findCompilerConfig(
+      startDir,
+      memberRoot === undefined ? undefined : findWorkspaceRoot(memberRoot),
+    );
+    scope = {
+      memberRoot,
+      nearestConfigPath,
+      perFile: nearestConfigPath !== undefined && delegatesToReferences(nearestConfigPath),
+    };
+    scopeByDirectory.set(directoryKey, scope);
+  }
+  // The signature is what the inner readers key on too, so an edited config invalidates all three.
+  const signature =
+    scope.nearestConfigPath === undefined ? null : tsconfigSignature(scope.nearestConfigPath);
+  if (scope.perFile) return JSON.stringify([pathKey(absolutePath), signature]);
+  return JSON.stringify([
+    scope.memberRoot === undefined ? null : pathKey(scope.memberRoot),
+    scope.nearestConfigPath === undefined ? null : pathKey(scope.nearestConfigPath),
+    signature,
+  ]);
 }
 
 
@@ -56,13 +111,21 @@ function declaredOptionDiagnostic(configPath: string): string | undefined {
 
 
 export function createCompilerOptions(absolutePath: string): ts.CompilerOptions {
+  const scope = optionsScope(absolutePath);
+  const cached = optionsByScope.get(scope);
+  if (cached !== undefined) return cached;
+  const options = readCompilerOptions(absolutePath);
+  optionsByScope.set(scope, options);
+  return options;
+}
+
+
+function readCompilerOptions(absolutePath: string): ts.CompilerOptions {
   const startDir = path.dirname(absolutePath);
   const memberRoot = findProjectRoot(startDir);
+  const workspaceRoot = memberRoot === undefined ? undefined : findWorkspaceRoot(memberRoot);
   // The shared reader, so extraction and the harness aliases resolve from the same config.
-  const governing = resolveGoverningTsconfig(
-    absolutePath,
-    memberRoot === undefined ? undefined : findWorkspaceRoot(memberRoot),
-  );
+  const governing = resolveGoverningTsconfig(absolutePath, workspaceRoot);
   const tsconfigPath = governing.configPath;
 
   let compilerOptions: ts.CompilerOptions = {
@@ -95,6 +158,19 @@ export function createCompilerOptions(absolutePath: string): ts.CompilerOptions 
       module: ts.ModuleKind.ESNext,
       // The user named the file, so a project that type-checks no JavaScript still reads .jsx.
       allowJs: true,
+    };
+  }
+
+  // An unbuilt sibling declares a dist/ nothing wrote; without this its types resolve to nothing.
+  const siblingPaths =
+    memberRoot === undefined || workspaceRoot === undefined
+      ? undefined
+      : unbuiltWorkspaceSiblingPaths(memberRoot, workspaceRoot);
+  if (siblingPaths) {
+    // The project's own keys win: a declared alias for the same name is the user's decision.
+    compilerOptions = {
+      ...compilerOptions,
+      paths: { ...siblingPaths, ...(compilerOptions.paths ?? {}) },
     };
   }
 

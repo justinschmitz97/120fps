@@ -20,15 +20,24 @@ const VITE_CONFIG_FILES = [
   "vite.config.cjs",
 ];
 
+// Stands in for the entry list until readViteConfigData can render the names it dropped.
+const PARTIAL_ALIAS_KEY = "resolve.alias:dropped-entries";
+
 // Ordered so the warning reads the same however the config file was written.
 const IGNORED_KEY_ORDER = [
   "a computed config object",
   "root",
   "publicDir",
   "resolve.alias",
+  PARTIAL_ALIAS_KEY,
   "css.preprocessorOptions",
   "plugins",
 ];
+
+// Rendered from droppedAliases: naming the key would condemn the entries the harness honored.
+function partialAliasText(dropped: string[]): string {
+  return `resolve.alias ${dropped.map((find) => JSON.stringify(find)).join(", ")}`;
+}
 
 export interface ViteConfigData {
   configFile?: string;
@@ -37,7 +46,7 @@ export interface ViteConfigData {
   // Folded and confirmed on disk, in the config's own order.
   rollupInputs?: string[];
   publicDir?: string;
-  aliases: Array<{ find: RegExp; replacement: string }>;
+  aliases: Array<{ find: RegExp; replacement: string; pattern?: string; target?: string }>;
   ignoredKeys: string[];
   // Named as the config writes them; absent when it declares none.
   pluginNames?: string[];
@@ -335,6 +344,13 @@ function declaredPluginName(element: ts.Expression, index: number): string {
   return positional;
 }
 
+// `plugins: await getPluginsList(...)` is still a list one call builds, and the callee names it.
+function unwrapPluginsExpression(node: ts.Expression): ts.Expression {
+  if (ts.isAwaitExpression(node)) return unwrapPluginsExpression(node.expression);
+  if (ts.isParenthesizedExpression(node)) return unwrapPluginsExpression(node.expression);
+  return node;
+}
+
 function findViteConfigFile(dir: string): string | undefined {
   for (const name of VITE_CONFIG_FILES) {
     const candidate = path.join(dir, name);
@@ -348,6 +364,8 @@ interface ParsedViteConfig {
   rollupInputs?: string[];
   publicDir?: string;
   aliasEntries: Array<{ find: string; replacement: string }>;
+  // The entry names the harness could not honor, empty when every entry resolved.
+  droppedAliases: string[];
   conditions: string[];
   ignored: Set<string>;
   pluginNames?: string[];
@@ -370,11 +388,12 @@ function parseViteConfigFile(configFile: string): ParsedViteConfig | undefined {
   const config = findViteConfigObject(source);
   if (!config) {
     ignored.add("a computed config object");
-    return { aliasEntries: [], conditions: [], ignored };
+    return { aliasEntries: [], droppedAliases: [], conditions: [], ignored };
   }
 
   const configDir = path.dirname(configFile);
   const aliasEntries: Array<{ find: string; replacement: string }> = [];
+  const droppedAliases: string[] = [];
   let conditions: string[] = [];
   let publicDir: string | undefined;
   let root: string | undefined;
@@ -432,7 +451,9 @@ function parseViteConfigFile(configFile: string): ParsedViteConfig | undefined {
             ignored.add("resolve.alias");
             continue;
           }
+          let position = 0;
           for (const entry of inner.initializer.properties) {
+            position++;
             const find = ts.isPropertyAssignment(entry) ? literalPropertyName(entry) : undefined;
             const literalTarget = ts.isPropertyAssignment(entry)
               ? stringLiteralValue(entry.initializer)
@@ -444,11 +465,11 @@ function parseViteConfigFile(configFile: string): ParsedViteConfig | undefined {
                   ? resolveCallExpressionPath(entry.initializer, configDir)
                   : undefined;
             if (!find || replacement === undefined) {
-              ignored.add("resolve.alias");
+              droppedAliases.push(find ?? `entry #${position}`);
               continue;
             }
             if (!fs.existsSync(replacement)) {
-              ignored.add("resolve.alias");
+              droppedAliases.push(find);
               continue;
             }
             aliasEntries.push({ find, replacement: toPosix(replacement) });
@@ -526,13 +547,14 @@ function parseViteConfigFile(configFile: string): ParsedViteConfig | undefined {
     }
 
     if (name === "plugins") {
-      const elements = ts.isArrayLiteralExpression(property.initializer)
-        ? property.initializer.elements
-        : undefined;
+      const declared = unwrapPluginsExpression(property.initializer);
+      const elements = ts.isArrayLiteralExpression(declared) ? declared.elements : undefined;
       if (elements && elements.length === 0) continue;
       ignored.add("plugins");
       // What the note names, in the order the config declares them.
       if (elements) pluginNames = elements.map(declaredPluginName);
+      // A computed list has one name to give: the function the config calls to build it.
+      else if (ts.isCallExpression(declared)) pluginNames = [declaredPluginName(declared, 0)];
     }
   }
 
@@ -540,11 +562,16 @@ function parseViteConfigFile(configFile: string): ParsedViteConfig | undefined {
   if (unfoldable.length > 0 && Object.keys(preprocessorOptions).length === 0) {
     ignored.add("css.preprocessorOptions");
   }
+  // The key stands for the whole map only when the harness honored none of it.
+  if (droppedAliases.length > 0) {
+    ignored.add(aliasEntries.length > 0 ? PARTIAL_ALIAS_KEY : "resolve.alias");
+  }
   return {
     publicDir,
     ...(root !== undefined ? { root } : {}),
     ...(rollupInputs !== undefined ? { rollupInputs } : {}),
     aliasEntries,
+    droppedAliases,
     conditions,
     ignored,
     ...(pluginNames ? { pluginNames } : {}),
@@ -553,9 +580,20 @@ function parseViteConfigFile(configFile: string): ParsedViteConfig | undefined {
   };
 }
 
-function toAliasRegex(entry: { find: string; replacement: string }): { find: RegExp; replacement: string } {
+function toAliasRegex(entry: { find: string; replacement: string }): {
+  find: RegExp;
+  replacement: string;
+  pattern: string;
+  target: string;
+} {
   // Vite's object form matches a whole leading segment, the @rollup/plugin-alias rule.
-  return { find: new RegExp(`^${escapeRegex(entry.find)}(?=/|$)`), replacement: entry.replacement };
+  return {
+    find: new RegExp(`^${escapeRegex(entry.find)}(?=/|$)`),
+    replacement: entry.replacement,
+    // What the config wrote, so a stale-alias line names the key instead of the built regex.
+    pattern: entry.find,
+    target: entry.replacement,
+  };
 }
 
 // The workspace root's own config is layered additively: only resolve.alias and conditions.
@@ -577,7 +615,9 @@ export function readViteConfigData(
       if (parsed.rollupInputs) data.rollupInputs = parsed.rollupInputs;
       data.aliases = parsed.aliasEntries.map(toAliasRegex);
       data.conditions = parsed.conditions;
-      data.ignoredKeys = IGNORED_KEY_ORDER.filter((key) => parsed!.ignored.has(key));
+      data.ignoredKeys = IGNORED_KEY_ORDER.filter((key) => parsed!.ignored.has(key)).map((key) =>
+        key === PARTIAL_ALIAS_KEY ? partialAliasText(parsed!.droppedAliases) : key,
+      );
       if (parsed.pluginNames) data.pluginNames = parsed.pluginNames;
       // The foldable half travels to the server; the rest is named.
       if (parsed.preprocessorOptions) data.preprocessorOptions = parsed.preprocessorOptions;

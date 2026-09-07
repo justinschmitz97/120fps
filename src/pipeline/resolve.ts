@@ -2,10 +2,46 @@ import fs from "node:fs";
 import path from "node:path";
 import { discoverGlobalCss, detectWrapper, findProjectRoot } from "../harness/index.js";
 import { detectFramework } from "../project/index.js";
+import {
+  CSS_PREPROCESSOR_PACKAGES,
+  PROJECT_TRANSFORM_WARNING,
+  bundledPreprocessor,
+  isPackageAvailable,
+} from "../project/index.js";
 import { findWorkspaceRoot, isVueFile } from "../project/index.js";
 import { type CssReport } from "../report/index.js";
 import { type AnalyzeOptions } from "./analyze.js";
 import { toPosix } from "../shared/index.js";
+
+// The sentence a run prints when Vite falls through to the Sass 120fps declares; matched on, so a
+// run never carries two of them.
+export const BUNDLED_PREPROCESSOR_DISCLOSED = "falls through to the copy 120fps ships";
+
+// An injected stylesheet is no import edge of the measured graph, so the preflight classification
+// never sees it. Its disclosure is the project-transform one, produced by that same function, and
+// it is emitted only where the transform classification has already had its say.
+export function bundledPreprocessorStylesheetWarning(
+  files: readonly string[],
+  projectRoot: string,
+  workspaceRoot: string = findWorkspaceRoot(projectRoot),
+): string | undefined {
+  for (const file of files) {
+    const extension = path.extname(file).toLowerCase();
+    const packages = CSS_PREPROCESSOR_PACKAGES[extension];
+    if (!packages || !bundledPreprocessor(extension)) continue;
+    if (packages.some((pkg) => isPackageAvailable(pkg, projectRoot, workspaceRoot))) continue;
+    return PROJECT_TRANSFORM_WARNING(
+      {
+        kind: "project-transform",
+        chain: [],
+        specifier: toPosix(path.relative(projectRoot, file)),
+        transformCode: "css-preprocessor",
+      },
+      "bundled",
+    );
+  }
+  return undefined;
+}
 
 // Gated on the mount of `{}` rendering: a component that renders nothing matches no rule anyway.
 export async function probeStylesheetMatchStats(
@@ -39,6 +75,55 @@ export const STYLESHEET_MATCHED_NOTHING_WARNING = (file: string, rules: number):
   "that renders that ancestor fixes it, or the sheet only declares custom properties on :root, " +
   "which do cascade in and are not counted here.";
 
+// One line for many sheets: a run that names each of them drowns the one line that is a finding.
+export const STYLESHEET_MATCHED_NOTHING_COLLAPSED_WARNING = (
+  named: string[],
+  total: number,
+  opts: { othersMatched: boolean },
+): string => {
+  const rest = total > named.length ? ` and ${total - named.length} more` : "";
+  const one = total === 1;
+  const subject =
+    `${total} injected stylesheet${one ? "" : "s"} (${named.join(", ")}${rest}) matched no ` +
+    "element inside the component's own tree";
+  return opts.othersMatched
+    ? `${subject}, while another injected stylesheet did match. ` +
+      `${one ? "It carries" : "They carry"} styling this component ` +
+      "does not use, so the render was not measured unstyled and nothing needs changing."
+    : `${subject}, and no injected stylesheet matched anything. Either they are scoped under an ` +
+      "ancestor the harness does not render (a theme root, an app shell wrapper), in which case a " +
+      "--wrap module that renders that ancestor fixes it, or they only declare custom properties " +
+      "on :root, which do cascade in and are not counted here.";
+};
+
+// The size-ranked pick is the one case where "matched nothing" means the pick itself was wrong.
+export const STYLESHEET_FALLBACK_MATCHED_NOTHING_WARNING = (file: string, rules: number): string =>
+  `${file} was injected as the largest stylesheet under this project, no import chain corroborates ` +
+  `that pick, and none of its ${rules} rules matched an element inside the component's own tree — ` +
+  "so the pick is most likely the wrong sheet. Pass --css <file> to name the stylesheet this " +
+  "component actually loads.";
+
+// A sheet the component was never expected to use gets no --wrap advice.
+export function stylesheetMatchWarnings(css: Pick<CssReport, "layer" | "details">): string[] {
+  const details = css.details ?? [];
+  const zero = details.filter((d) => d.rules > 0 && d.matchedRules === 0);
+  if (zero.length === 0) return [];
+  const othersMatched = details.some((d) => (d.matchedRules ?? 0) > 0);
+  if (css.layer === "largest-fallback") {
+    return zero.map((d) => STYLESHEET_FALLBACK_MATCHED_NOTHING_WARNING(d.file, d.rules));
+  }
+  if (zero.length === 1 && !othersMatched) {
+    return [STYLESHEET_MATCHED_NOTHING_WARNING(zero[0].file, zero[0].rules)];
+  }
+  return [
+    STYLESHEET_MATCHED_NOTHING_COLLAPSED_WARNING(
+      zero.slice(0, 3).map((d) => d.file),
+      zero.length,
+      { othersMatched },
+    ),
+  ];
+}
+
 // --no-css wins over an explicit --css, matching --no-wrap/--wrap.
 export function resolveCssFiles(
   options: Pick<AnalyzeOptions, "cssFiles" | "noCss">,
@@ -55,6 +140,7 @@ export function resolveCssFiles(
   runtimeEngines?: string[];
   runtimeEnginesRecognised?: boolean;
   declaredMissing?: Array<{ field: string; path: string; buildCommand?: string }>;
+  searchNotes?: string[];
 } {
   // layer is what makes "found nothing" and "found nothing because --no-css" distinguishable.
   if (options.noCss) return { files: [], autoDetected: false, layer: "disabled" };
@@ -76,9 +162,12 @@ export function resolveCssFiles(
     return { files, autoDetected: false, layer: "explicit" };
   }
 
+  // Only the "none" arm renders them, so every other decision record stays byte-identical.
+  const searchNotes: string[] = [];
   const discovered = discoverGlobalCss(projectRoot, warningsOut, {
     ...(opts?.wrapPath ? { extraEntryFiles: [opts.wrapPath] } : {}),
     ...(opts?.measuredFile ? { measuredFile: opts.measuredFile } : {}),
+    searchNotesOut: searchNotes,
   });
   const layer: CssReport["layer"] =
     discovered.source === "entry"
@@ -106,6 +195,9 @@ export function resolveCssFiles(
       ? { runtimeEnginesRecognised: discovered.runtimeEnginesRecognised }
       : {}),
     ...(discovered.declaredMissing !== undefined ? { declaredMissing: discovered.declaredMissing } : {}),
+    ...(layer === "none" && discovered.declaredMissing === undefined && searchNotes.length > 0
+      ? { searchNotes }
+      : {}),
   };
 }
 

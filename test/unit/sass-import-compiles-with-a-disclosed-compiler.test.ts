@@ -217,8 +217,7 @@ describe("a preprocessor failure only the bundler saw", () => {
   it("names a style block in a workspace sibling the import walk never entered", () => {
     const message = presentBundlerFailure(VBEN_FAILURE, tmpDir);
 
-    expect(message).toContain("header.vue");
-    expect(message).not.toContain("?vue&type=style");
+    expect(message).toContain("header.vue needs a CSS preprocessor");
   });
 
   it("leaves an unrelated harness failure byte-identical", () => {

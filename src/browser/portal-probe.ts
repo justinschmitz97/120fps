@@ -1,10 +1,23 @@
 import type { Page } from "playwright";
-import { type InteractionDescriptor, type RawElement, toDescriptor } from "./discovery.js";
+import {
+  classifyNavigationEscape,
+  type InteractionDescriptor,
+  type RawElement,
+  type SkippedTarget,
+  toDescriptor,
+} from "./discovery.js";
+
+export interface PortalProbeOptions {
+  // The harness page's origin, so a portal's anchors face the same rule as the root walk's.
+  pageOrigin: string;
+  onSkipped?: (skipped: SkippedTarget[]) => void;
+}
 
 export async function probePortals(
   page: Page,
   triggers: InteractionDescriptor[],
   remount: () => Promise<void>,
+  options: PortalProbeOptions,
 ): Promise<InteractionDescriptor[]> {
   const clickOrFocusTriggers = triggers.filter(
     (d) => !d.portal && (d.type === "click" || d.type === "focus"),
@@ -191,6 +204,7 @@ export async function probePortals(
 
                 if (!isInteractive) { node = walker.nextNode() as Element | null; continue; }
                 if (tag === "A" && !node.hasAttribute("href")) { node = walker.nextNode() as Element | null; continue; }
+                const anchor = tag === "A" ? (node as HTMLAnchorElement) : null;
 
                 const nonInteractiveRoles = new Set(["tablist", "menu", "tree", "region", "tabpanel", "dialog"]);
                 if (role && nonInteractiveRoles.has(role) &&
@@ -217,6 +231,13 @@ export async function probePortals(
                   hasOnmousedown, hasOnmouseup, isContentEditable,
                   isHidden: false, selector: sel, inShadow: false,
                   portal: true,
+                  ...(anchor
+                    ? {
+                        href: anchor.href,
+                        linkTarget: anchor.getAttribute("target") || "",
+                        linkRel: anchor.getAttribute("rel") || "",
+                      }
+                    : {}),
                 });
               }
             }
@@ -228,7 +249,19 @@ export async function probePortals(
       triggers.map((t) => t.selector),
     );
 
+    const portalSkipped: SkippedTarget[] = [];
     for (const raw of portalRaw) {
+      // A portal's anchors face the same decision as the root walk's; only the walk differs.
+      const escape = classifyNavigationEscape(raw, options.pageOrigin);
+      if (escape) {
+        portalSkipped.push({
+          reason: escape,
+          selector: raw.selector,
+          label: raw.textContent.slice(0, 200),
+          ...(raw.href ? { href: raw.href } : {}),
+        });
+        continue;
+      }
       const desc = toDescriptor(raw);
       desc.triggeredBy = trigger.selector;
       if (!seenPortalSelectors.has(desc.selector)) {
@@ -236,6 +269,7 @@ export async function probePortals(
         allPortalDescriptors.push(desc);
       }
     }
+    if (portalSkipped.length > 0) options.onSkipped?.(portalSkipped);
   }
 
   return allPortalDescriptors;

@@ -84,6 +84,10 @@ Every line number below was checked against `C:\Projekte\120fps-m107\src` (`feat
   ignored keys keeps them: the note reads `vite.config.js declares resolve.alias, css.preprocessorOptions and plugins
   the harness cannot honor: sass, vue — the project's Vite config is never executed`, and the `css.preprocessorOptions`
   preprocessor-globals clause (`src/harness.ts:1579-1582`) is printed unchanged.
+  M132 C3 supersedes the two `resolve.alias` clauses quoted above: the key is named only when the
+  harness honored no alias entry at all, and a config that honored some names the dropped entries
+  (`resolve.alias "@img"`) instead of the key. A `plugins:` value that is a call expression rather
+  than an array is named by its callee, in the same shape this clause defines for an array element.
 - C4 The note names no plugin whose transform this run applied: a declared name that is a transform's recognizer code or
   the plugin factory the harness recognizes for it (`vue` for `@vitejs/plugin-vue`, `svgr` for `vite-plugin-svgr`,
   `vanillaExtractPlugin` for `vanilla-extract`) is left out, and the note is omitted when the list empties.

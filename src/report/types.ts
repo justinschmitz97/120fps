@@ -356,6 +356,8 @@ export interface CssReport {
   // present only when layer === "largest-fallback"
   onlyCandidate?: boolean;
   noEntryInPackage?: boolean;
+  // Present only when layer === "none": what the search did and why each candidate was rejected.
+  searchNotes?: string[];
 }
 
 // `detected` is the package check, `active` is what ran; a flag can make them diverge.
@@ -403,6 +405,8 @@ export interface Report {
   noise?: NoiseReport;
   // Recognizer codes of the project's own Vite transforms that compiled this run.
   projectTransforms?: string[];
+  // Generated declaration files the run resolved component and identifier names through.
+  generatedMaps?: string[];
   // Ids, never prose, so a hint can be reworded without a schema change.
   hints?: HintId[];
   // Attached only when a combo failed to render, never a finding on a healthy run.

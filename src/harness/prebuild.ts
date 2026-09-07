@@ -1,8 +1,9 @@
 import path from "node:path";
+import { pathKey } from "../shared/index.js";
 import {
   findWorkspaceRoot,
-  loadTsconfigAliases,
   resolveServerConditions,
+  tsconfigAliasesForFile,
   type WorkspaceRootAliasSource,
 } from "../project/index.js";
 import { scanExternalDeps } from "./deps-scan.js";
@@ -43,6 +44,20 @@ export interface StaticPreBuild {
 }
 
 
+// One --explain-props invocation walks several candidates over one graph; a specifier that
+// resolves nowhere is one fact about the project, not one per candidate. The candidate that met
+// it first keeps it, so the dry run and the real run of one component still report identically.
+const disclosedUnresolvedByProject = new Map<string, Map<string, string>>();
+
+// The vite config is a fact about the project, so a per-candidate walk states it once per run.
+const disclosedViteConfigNotes = new Set<string>();
+
+export function resetPreBuildDisclosures(): void {
+  disclosedUnresolvedByProject.clear();
+  disclosedViteConfigNotes.clear();
+}
+
+
 // Warnings come back in buildAndServe's own order, with no message reworded.
 export function collectStaticPreBuildWarnings(
   projectRoot: string,
@@ -55,12 +70,24 @@ export function collectStaticPreBuildWarnings(
 ): StaticPreBuild {
   const workspaceRoot = opts.workspaceRoot ?? findWorkspaceRoot(projectRoot);
   const warnings: string[] = [];
-  const tsconfigAliases = loadTsconfigAliases(projectRoot, warnings, opts.componentPath);
+  // The same array tsconfigAliasesForFile returns, so a file under this config takes the fast path.
+  const measuredConfigWarnings: string[] = [];
+  const tsconfigAliases = tsconfigAliasesForFile(
+    projectRoot,
+    opts.componentPath,
+    measuredConfigWarnings,
+  );
+  warnings.push(...measuredConfigWarnings);
   const detected = !opts.noShims && detectNextJs(projectRoot);
   const shimAliases = buildShimAliases(detected);
   // Read as text; the project's vite.config is never imported.
   const viteConfig = readViteConfigData(projectRoot, workspaceRoot);
-  if (viteConfig.configFile && viteConfig.ignoredKeys.length > 0) {
+  if (
+    viteConfig.configFile &&
+    viteConfig.ignoredKeys.length > 0 &&
+    !disclosedViteConfigNotes.has(viteConfig.configFile)
+  ) {
+    disclosedViteConfigNotes.add(viteConfig.configFile);
     warnings.push(
       VITE_CONFIG_IGNORED_WARNING(
         path.basename(viteConfig.configFile),
@@ -83,11 +110,36 @@ export function collectStaticPreBuildWarnings(
     ...viteConfig.aliases,
     ...shimAliases,
   ];
+  // Only the tsconfig layer is per-package; vite aliases, shims and rescues are project-wide.
+  // A file outside the measured package is judged by its own config first, so a rescue this run
+  // added for another package's answer cannot pass for that file's own resolution.
+  const measuredTsconfigAliases = new Set(tsconfigAliases);
+  // A config's own warnings reach the report once, whichever file first brought that config in.
+  const disclosedConfigWarnings = new Set<string>(measuredConfigWarnings);
+  const aliasesForFile = (file: string): StaticPreBuild["aliases"] => {
+    const collected: string[] = [];
+    const governing = tsconfigAliasesForFile(projectRoot, file, collected);
+    for (const warning of collected) {
+      if (disclosedConfigWarnings.has(warning)) continue;
+      disclosedConfigWarnings.add(warning);
+      warnings.push(warning);
+    }
+    if (governing === tsconfigAliases) return aliases;
+    return [...governing, ...aliases.filter((alias) => !measuredTsconfigAliases.has(alias))];
+  };
 
   const importedSpecifiers = new Set<string>();
   // Filled by the same walk, so the dry run reports what the real optimizer would choke on.
   const unresolvedExternals: Array<{ specifier: string; importer: string }> = [];
+  const projectDisclosureKey = pathKey(projectRoot);
+  const disclosureOwners =
+    disclosedUnresolvedByProject.get(projectDisclosureKey) ?? new Map<string, string>();
+  disclosedUnresolvedByProject.set(projectDisclosureKey, disclosureOwners);
+  const componentDisclosureKey = pathKey(opts.componentPath);
   const reportedUnresolvedSpecifiers = new Set<string>();
+  for (const [specifier, owner] of disclosureOwners) {
+    if (owner !== componentDisclosureKey) reportedUnresolvedSpecifiers.add(specifier);
+  }
   const externalDeps = [
     ...new Set([
       ...scanExternalDeps(
@@ -100,6 +152,7 @@ export function collectStaticPreBuildWarnings(
         aliases,
         unresolvedExternals,
         reportedUnresolvedSpecifiers,
+        aliasesForFile,
       ),
       // Wrapper packages must be pre-bundled too, or the first mount pays the optimize cost.
       ...(opts.wrapPath
@@ -113,6 +166,7 @@ export function collectStaticPreBuildWarnings(
             aliases,
             unresolvedExternals,
             reportedUnresolvedSpecifiers,
+            aliasesForFile,
           )
         : []),
     ]),
@@ -128,6 +182,10 @@ export function collectStaticPreBuildWarnings(
     activeShims = shimmed.length > 0 ? shimmed : undefined;
     unsupported = unshimmedNextModules(importedSpecifiers);
     if (unsupported.length > 0) warnings.push(UNSUPPORTED_NEXT_MODULE_WARNING(unsupported));
+  }
+
+  for (const specifier of reportedUnresolvedSpecifiers) {
+    if (!disclosureOwners.has(specifier)) disclosureOwners.set(specifier, componentDisclosureKey);
   }
 
   // Decided by the dependency alone: utility classes need it with no global stylesheet.

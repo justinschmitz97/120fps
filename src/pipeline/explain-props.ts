@@ -37,6 +37,7 @@ import {
 import {
   CURVE_NOT_ACTIVATED_WARNING,
   formatStylesheetsLine,
+  repeatsPrintedProjectNote,
   formatPhaseDuration,
   dedupeWarnings,
 } from "../report/index.js";
@@ -49,14 +50,21 @@ import { MATRIX_SUPPRESSED_BY_COMPOSITION_WARNING, MATRIX_SUPPRESSED_BY_FIXTURE_
 import {
   RE_EXPORT_MEASURED_DISCLOSURE,
   UNRESOLVED_RE_EXPORT_WARNING,
-  ZERO_PROPS_WARNING,
+  zeroPropCountWarning,
   alternativeExportNote,
   explainsZeroPropCount,
   presetShapeDisclosure,
   remediesAfterPreset,
   suppressHonoredPluginNote,
 } from "./remedies.js";
-import { resolveCssFiles, resolveFramework, resolveProjectPaths, resolveWrapPath } from "./resolve.js";
+import {
+  BUNDLED_PREPROCESSOR_DISCLOSED,
+  bundledPreprocessorStylesheetWarning,
+  resolveCssFiles,
+  resolveFramework,
+  resolveProjectPaths,
+  resolveWrapPath,
+} from "./resolve.js";
 import { toPosix } from "../shared/index.js";
 
 export interface ExplainedProp {
@@ -124,6 +132,11 @@ export async function explainProps(
     maxCombos?: number;
     // Curve points and combo-path anchors are the same list, so the estimate prices either.
     scalePoints?: number[];
+    // The stylesheet decision is the real run's, so the same two flags decide it here.
+    cssFiles?: string[];
+    noCss?: boolean;
+    // The file --check would read, so the estimate prices the entry the real run will consult.
+    baselineFile?: string;
   } = {},
 ): Promise<PropsExplanation> {
   const resolvedPath = path.resolve(componentPath);
@@ -145,7 +158,11 @@ export async function explainProps(
   );
   // Before the CSS probe, as the full run resolves it, so a wrapper's imports are discoverable.
   const { wrapPath } = resolveWrapPath({}, projectRoot, framework, warnings);
-  const resolvedCss = resolveCssFiles({}, projectRoot, warnings, {
+  const cssOptions = {
+    ...(options.noCss ? { noCss: true } : {}),
+    ...(options.cssFiles ? { cssFiles: options.cssFiles } : {}),
+  };
+  const resolvedCss = resolveCssFiles(cssOptions, projectRoot, warnings, {
     ...(wrapPath ? { wrapPath } : {}),
     measuredFile: resolvedPath,
   });
@@ -186,6 +203,12 @@ export async function explainProps(
     { ...(options.noTransforms ? { noTransforms: true } : {}) },
   )) {
     warnings.push(PROJECT_TRANSFORM_WARNING(hit, availability));
+  }
+  // The run path's rule: the injected stylesheet discloses its compiler only when the classifier
+  // above disclosed none, so a run never carries two Sass disclosures.
+  if (!options.noTransforms && !warnings.some((w) => w.includes(BUNDLED_PREPROCESSOR_DISCLOSED))) {
+    const injected = bundledPreprocessorStylesheetWarning(resolvedCss.files, projectRoot);
+    if (injected !== undefined) warnings.push(injected);
   }
   if (preflight.hard.length > 0) {
     if (options.noPreflight) warnings.push(PREFLIGHT_BYPASSED_WARNING(preflight.hard));
@@ -246,7 +269,7 @@ export async function explainProps(
     !detail.unresolvedReExport &&
     !detail.warnings.some(explainsZeroPropCount)
   ) {
-    warnings.push(ZERO_PROPS_WARNING);
+    warnings.push(zeroPropCountWarning(detail.warnings));
   }
 
   // Records, not names: inferComposition reads the shape the dispatcher hands it.
@@ -337,6 +360,7 @@ export async function explainProps(
     usesFixture: dryRunUsesFixture,
     mode: predictedMode,
     ...(options.scalePoints ? { scalePoints: options.scalePoints } : {}),
+    ...(options.baselineFile ? { baselineFile: options.baselineFile } : {}),
     samples: options.samples,
     maxCombos: options.maxCombos,
   });
@@ -426,7 +450,8 @@ function explainValue(value: unknown): string {
 }
 
 // Read back from the warning the same extraction produced, never re-derived, so the two agree.
-const COLLAPSED_UNION_WARNING = /^Warning: prop "([^"]+)".* is a union of \d+ different shapes \(([^)]*)\)/;
+const COLLAPSED_UNION_WARNING =
+  /^(?:Warning: )?prop "([^"]+)".* is a union of \d+ different shapes \(([^)]*)\)/;
 
 export function collapsedUnionBranchesFor(
   propName: string,
@@ -583,10 +608,12 @@ export function formatExplainProps(explained: PropsExplanation): string {
     );
   }
 
-  if (explained.warnings.length > 0) {
+  // The list stays whole; the terminal states a project-level note once per invocation.
+  const printable = explained.warnings.filter((w) => !repeatsPrintedProjectNote(w));
+  if (printable.length > 0) {
     lines.push("");
     lines.push("Warnings:");
-    for (const warning of explained.warnings) lines.push(`  ${warning}`);
+    for (const warning of printable) lines.push(`  ${warning}`);
   }
 
   lines.push("");

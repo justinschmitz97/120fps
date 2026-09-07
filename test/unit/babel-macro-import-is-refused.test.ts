@@ -130,12 +130,12 @@ describe("an import that only looks like a macro", () => {
     expect(preflight.hard).toEqual([]);
   });
 
-  it("leaves a virtual-namespace import a warning, as an unrun plugin is not a macro", () => {
+  it("refuses a virtual-namespace import as its own kind, as an unrun plugin is not a macro", () => {
     const entry = path.join(VIRTUAL_FIXTURE, "src", "Icon.tsx");
 
     const preflight = runPreflight({ projectRoot: VIRTUAL_FIXTURE, entries: [entry] });
 
-    expect(preflight.hard).toEqual([]);
+    expect(preflight.hard.map((h) => h.kind)).toEqual(["unloadable-virtual-module"]);
     expect(preflight.transforms.map((h) => h.transformCode)).toContain("virtual-module");
   });
 });

@@ -27,6 +27,7 @@ Options:
   --no-matrix                    Disable auto-activation of matrix mode
   --save-baseline                Save current measurements as baseline
   --check                        Compare against baseline, fail on regression
+  --baseline-file <path>         Baseline file --save-baseline writes and --check reads (default: <project root>/120fps-baseline.json)
   --budget                       Shorthand for --ci --check
   --no-baseline                  Skip baseline comparison in CI mode
   --no-cache                     Measure even when an unchanged component could reuse its baseline verdict
@@ -54,7 +55,7 @@ Options:
 
 Exit codes:
   0   every measured component passed
-  1   a verdict failed: over budget, or a regression under --check/--budget
+  1   a verdict failed: over budget, a regression under --check/--budget, or a render error
   2   setup error: bad flag, missing file, harness or browser failure
 
 Multiple components:

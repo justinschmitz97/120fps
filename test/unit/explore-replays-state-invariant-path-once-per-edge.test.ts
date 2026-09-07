@@ -17,6 +17,8 @@ interface RawElementSeed {
   tagName: string;
   selector: string;
   scrollAxis?: string;
+  // An anchor's resolved destination, so the discovery filter has something to decline.
+  href?: string;
 }
 
 function rawElement(seed: RawElementSeed): Record<string, unknown> {
@@ -46,6 +48,7 @@ function rawElement(seed: RawElementSeed): Record<string, unknown> {
     isHidden: false,
     selector: seed.selector,
     inShadow: false,
+    ...(seed.href ? { href: seed.href, linkTarget: "", linkRel: "" } : {}),
   };
 }
 
@@ -67,7 +70,11 @@ interface FakeOptions {
   failWheelOnCall?: number;
   // True times the run like the shipped default: a real trace lifecycle, not PerformanceObserver.
   traceTiming?: boolean;
+  // Fails the walk after discovery, the way a harness crash mid-combo does.
+  throwOnObserverInstall?: boolean;
 }
+
+const HARNESS_ORIGIN = "http://localhost:5173";
 
 function fakeHarnessRun(options: FakeOptions): {
   pool: BrowserPool;
@@ -83,9 +90,12 @@ function fakeHarnessRun(options: FakeOptions): {
       rec.mounts++;
       return undefined;
     }
-    if (src.includes("SCROLLABLE_OVERFLOW")) return raws;
+    if (src.includes("SCROLLABLE_OVERFLOW")) return { elements: raws, origin: HARNESS_ORIGIN };
     if (src.includes("aria-haspopup")) return [];
-    if (src.includes("PerformanceObserver")) return undefined;
+    if (src.includes("PerformanceObserver")) {
+      if (options.throwOnObserverInstall) throw new Error("harness exploded");
+      return undefined;
+    }
     if (src.includes("eventTimingUnavailable")) {
       rec.observedReads++;
       if (options.loseTargetOnRead === rec.observedReads) {
@@ -100,6 +110,8 @@ function fakeHarnessRun(options: FakeOptions): {
     if (src.includes("requestAnimationFrame")) return undefined;
     if (src.includes("setTimeout")) return undefined;
     if (src.includes("viewport")) return undefined;
+    // The escape check: this fake page never leaves the harness.
+    if (src.includes("__120fps")) return true;
     throw new Error(`unhandled page.evaluate in fake: ${src.slice(0, 120)}`);
   };
 
@@ -190,6 +202,28 @@ async function exploreWithFake(
     onWarning: (w) => warnings.push(w),
   });
   return { graph: results[0].graph, rec, warnings };
+}
+
+async function exploreExpectingThrow(
+  options: FakeOptions,
+  samples: number,
+): Promise<{ error: unknown; warnings: string[] }> {
+  const warnings: string[] = [];
+  try {
+    const { pool, harness } = fakeHarnessRun(options);
+    await explore(harness, {
+      pool,
+      combos: [{}],
+      samples,
+      warmupRuns: 0,
+      observerTiming: options.traceTiming !== true,
+      seed: 42,
+      onWarning: (w) => warnings.push(w),
+    });
+    return { error: undefined, warnings };
+  } catch (error) {
+    return { error, warnings };
+  }
 }
 
 function graphShape(graph: StateGraph): unknown {
@@ -322,5 +356,34 @@ describe("a sample whose pattern step failed does not hand its state on", () => 
   it("mounts twice when every sweep completes", async () => {
     const { rec } = await exploreWithFake(SCROLL_ONLY, 5);
     expect(rec.mounts).toBe(2);
+  });
+});
+
+describe("a combo that dies mid-walk still says what it declined", () => {
+  it("names the skipped targets when the walk throws after discovery", async () => {
+    const { error, warnings } = await exploreExpectingThrow(
+      {
+        elements: [
+          { tagName: "A", selector: "a", href: "https://vite.dev/" },
+          { tagName: "BUTTON", selector: "button" },
+        ],
+        throwOnObserverInstall: true,
+      },
+      1,
+    );
+
+    expect((error as Error).message).toContain("harness exploded");
+    expect(warnings.join(" ")).toContain("explore skipped 1 interaction target");
+    expect(warnings.filter((w) => w.startsWith("explore skipped"))).toHaveLength(1);
+  });
+
+  it("says nothing when the walk that threw had declined nothing", async () => {
+    const { error, warnings } = await exploreExpectingThrow(
+      { elements: [{ tagName: "BUTTON", selector: "button" }], throwOnObserverInstall: true },
+      1,
+    );
+
+    expect((error as Error).message).toContain("harness exploded");
+    expect(warnings.some((w) => w.startsWith("explore skipped"))).toBe(false);
   });
 });

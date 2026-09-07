@@ -370,3 +370,45 @@ describe("loadTsconfigAliases: types-only paths targets (M77)", () => {
     expect(warnings).toEqual([]);
   });
 });
+
+// Declaration order is not precedence: two keys can match one import, and tsc picks the longer.
+describe("two path aliases that both match one import", () => {
+  it("puts the longer prefix ahead of the shorter one", () => {
+    const root = mkProject({
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: {
+          baseUrl: ".",
+          paths: { "@/*": ["./core/*"], "@/app/*": ["./app/*"] },
+        },
+      }),
+      "core/keep.ts": "export const keep = 1;\n",
+      "app/asset.ts": "export const asset = 1;\n",
+    });
+
+    const aliases = loadTsconfigAliases(root);
+    const first = aliases.find((alias) => alias.find.test("@/app/asset"));
+
+    expect(first).toBeDefined();
+    expect("@/app/asset".replace(first!.find, first!.replacement)).toBe(
+      fwd(path.join(root, "app", "asset")),
+    );
+  });
+
+  it("keeps an exact key ahead of every wildcard", () => {
+    const root = mkProject({
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: {
+          baseUrl: ".",
+          paths: { "@/*": ["./core/*"], "@/one": ["./app/one.ts"] },
+        },
+      }),
+      "core/one.ts": "export const one = 1;\n",
+      "app/one.ts": "export const one = 1;\n",
+    });
+
+    const aliases = loadTsconfigAliases(root);
+    const first = aliases.find((alias) => alias.find.test("@/one"));
+
+    expect(first!.replacement).toContain("app/one.ts");
+  });
+});

@@ -1,5 +1,6 @@
 export * from "./compiler-options.js";
 export * from "./framework.js";
+export * from "./generated-declarations.js";
 export * from "./model.js";
 export * from "./nuxt.js";
 export * from "./package-manager.js";
@@ -10,3 +11,4 @@ export * from "./resolve.js";
 export * from "./transforms.js";
 export * from "./tsconfig-aliases.js";
 export * from "./vue-sfc.js";
+export * from "./workspace-source.js";

@@ -230,10 +230,58 @@ interface ReadCompilerConfig {
   parsed: ts.ParsedCommandLine;
   base: string;
   configErrors: string[];
+  // TypeScript's own glob expansion, paid for only where coversTarget asks for it.
+  fileNames: () => readonly string[];
+}
+
+// The include globs are expanded over the whole project; only coversTarget ever reads them.
+const NO_DIRECTORY_SCAN: ts.ParseConfigHost = { ...ts.sys, readDirectory: () => [] };
+
+// Keyed by mtime and size, so an edit invalidates the entry and a missing file is never cached.
+interface ConfigRead {
+  signature: string | undefined;
+  failures: string[];
+  value: ReadCompilerConfig | undefined;
+}
+
+const compilerConfigs = new Map<string, ConfigRead>();
+const expandedFileNames = new Map<string, { signature: string | undefined; files: readonly string[] }>();
+
+// The registers span a process, so a test worker must start from empty.
+export function resetTsconfigReadCache(): void {
+  compilerConfigs.clear();
+  expandedFileNames.clear();
+}
+
+export function tsconfigSignature(configPath: string): string | undefined {
+  try {
+    const stat = fs.statSync(configPath);
+    return `${stat.mtimeMs}:${stat.size}`;
+  } catch {
+    return undefined;
+  }
 }
 
 // The caller owns the message, so a failed read pushes detail onto failures and stays quiet.
 function readCompilerConfig(
+  configPath: string,
+  failures: string[],
+): ReadCompilerConfig | undefined {
+  const key = pathKey(configPath);
+  const signature = tsconfigSignature(configPath);
+  const cached = compilerConfigs.get(key);
+  if (cached && cached.signature === signature) {
+    failures.push(...cached.failures);
+    return cached.value;
+  }
+  const own: string[] = [];
+  const value = parseCompilerConfig(configPath, own);
+  compilerConfigs.set(key, { signature, failures: own, value });
+  failures.push(...own);
+  return value;
+}
+
+function parseCompilerConfig(
   configPath: string,
   failures: string[],
 ): ReadCompilerConfig | undefined {
@@ -249,7 +297,7 @@ function readCompilerConfig(
     // parseJsonConfigFileContent resolves extends, JSONC and trailing commas; baseUrl is absolute.
     const parsed = ts.parseJsonConfigFileContent(
       configFile.config,
-      ts.sys,
+      NO_DIRECTORY_SCAN,
       configDir,
       undefined,
       configPath,
@@ -264,6 +312,7 @@ function readCompilerConfig(
       configErrors: parsed.errors
         .filter((d) => EXTENDS_BROKEN_CODES.has(d.code))
         .map((d) => ts.flattenDiagnosticMessageText(d.messageText, " ")),
+      fileNames: () => expandConfigFileNames(configPath, configFile.config),
     };
   } catch (err) {
     failures.push(
@@ -271,6 +320,36 @@ function readCompilerConfig(
     );
     return undefined;
   }
+}
+
+// TypeScript globs no .vue file on its own, so a config covering an SFC would read as covering
+// nothing; the editor tooling a Vue project runs passes the same extension.
+const SINGLE_FILE_COMPONENT_EXTENSION: readonly ts.FileExtensionInfo[] = [
+  { extension: ".vue", isMixedContent: true, scriptKind: ts.ScriptKind.Deferred },
+];
+
+// The real file system, once per config path: only a references walk needs the file list.
+function expandConfigFileNames(configPath: string, config: unknown): readonly string[] {
+  const key = pathKey(configPath);
+  const signature = tsconfigSignature(configPath);
+  const cached = expandedFileNames.get(key);
+  if (cached && cached.signature === signature) return cached.files;
+  let files: readonly string[] = [];
+  try {
+    files = ts.parseJsonConfigFileContent(
+      config,
+      ts.sys,
+      path.dirname(configPath),
+      undefined,
+      configPath,
+      undefined,
+      SINGLE_FILE_COMPONENT_EXTENSION,
+    ).fileNames;
+  } catch {
+    files = [];
+  }
+  expandedFileNames.set(key, { signature, files });
+  return files;
 }
 
 // A referenced path is a config file or the directory holding one, as tsc --build reads it.
@@ -394,7 +473,7 @@ export function resolveGoverningTsconfig(fileOrDir: string, stopDir?: string): G
         continue;
       }
       tried.push(relativeCandidate);
-      if (!coversTarget(referenced.parsed.fileNames, target, targetIsFile)) {
+      if (!coversTarget(referenced.fileNames(), target, targetIsFile)) {
         for (const nested of referencePaths(referenced.raw)) {
           next.push(resolveReferencePath(path.dirname(candidate), nested));
         }

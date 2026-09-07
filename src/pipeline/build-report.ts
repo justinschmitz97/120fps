@@ -19,6 +19,7 @@ import {
   computeINP,
   loadBudgetConfig,
   loadBaseline,
+  resolveBaselinePath,
   saveBaseline as saveBaselineFile,
   resolveTolerances,
   compareBaseline,
@@ -100,13 +101,45 @@ export interface BuildReportInput {
   phaseClock?: Pick<PhaseClock, "addAttribution">;
 }
 
+// A value the harness chose reached the DOM of a combo that rendered: the verdict is not the point.
+export function HARNESS_FAULT_DISCLOSURE(
+  comboIndex: number,
+  fault: NonNullable<ComboReport["harnessFault"]>,
+): string {
+  const evidence = fault.evidence.length > 160
+    ? `${fault.evidence.slice(0, 160).trimEnd()}…`
+    : fault.evidence;
+  return (
+    `[harness fault] combo ${comboIndex} rendered with the harness's own synthesized value for ` +
+    `"${fault.propName}" (${JSON.stringify(fault.value)}, provenance: ${fault.provenance}), and a ` +
+    `page error names it: ${evidence}. The verdict is unchanged; add a preset naming the prop to ` +
+    "measure it with a real value."
+  );
+}
+
+// 120fps's own repeat suffix and the runtime's line:column frames are not the component's text.
+const OWN_REPEAT_SUFFIX = /\s*\(×\d+\)/g;
+const STACK_POSITION = /:\d+:\d+/g;
+
+function withoutOwnAnnotations(errorText: string): string {
+  return errorText.replace(OWN_REPEAT_SUFFIX, "").replace(STACK_POSITION, "");
+}
+
+// "16" collides with a React error code and a line number; "test" collides with nothing.
+function isDistinctiveLeaf(leaf: string): boolean {
+  return leaf.length >= 3 || !/^\d+$/.test(leaf);
+}
+
 // A harness-caused crash is not the component's, but risky provenance alone is never evidence.
 function detectHarnessFault(
   combo: ComboReport,
   schemas: Array<PropSchema & { provenance?: PropProvenance }> | undefined,
+  // A combo that rendered has no crash corroborating the match, so its evidence bar is higher.
+  opts: { distinctiveOnly?: boolean } = {},
 ): ComboReport["harnessFault"] | undefined {
   if (!schemas || schemas.length === 0) return undefined;
   const errorText = (combo.pageErrors ?? []).join(" ");
+  const matchText = opts.distinctiveOnly ? withoutOwnAnnotations(errorText) : errorText;
 
   // Truthiness is necessary, not sufficient: an unconditional crash must exonerate no combo.
   for (const schema of schemas) {
@@ -124,7 +157,7 @@ function detectHarnessFault(
     if (!(schema.name in combo.props)) continue;
     if (!errorText) continue;
     const value = combo.props[schema.name];
-    if (valueEvidencedInText(value, errorText)) {
+    if (valueEvidencedInText(value, matchText, 0, opts.distinctiveOnly === true)) {
       return { propName: schema.name, value, provenance: schema.provenance, evidence: errorText };
     }
   }
@@ -170,12 +203,19 @@ function matchesAsWord(needle: string, haystack: string): boolean {
 }
 
 // Depth-bounded, so a cyclic or pathological value cannot loop this.
-function valueEvidencedInText(value: unknown, errorText: string, depth = 0): boolean {
+function valueEvidencedInText(
+  value: unknown,
+  errorText: string,
+  depth = 0,
+  distinctiveOnly = false,
+): boolean {
   const leaf = stringifyLeaf(value);
-  if (leaf && matchesAsWord(leaf, errorText)) return true;
+  if (leaf && (!distinctiveOnly || isDistinctiveLeaf(leaf)) && matchesAsWord(leaf, errorText)) {
+    return true;
+  }
   if (depth >= 3 || value === null || typeof value !== "object") return false;
   for (const child of Object.values(value as Record<string, unknown>)) {
-    if (valueEvidencedInText(child, errorText, depth + 1)) return true;
+    if (valueEvidencedInText(child, errorText, depth + 1, distinctiveOnly)) return true;
   }
   return false;
 }
@@ -349,13 +389,22 @@ export function buildReport(input: BuildReportInput): Report {
   }
 
   // After the tier pass, so it sees the verdict a reader would; it only narrows an explained fail.
+  const harnessFaultDisclosures: string[] = [];
   for (const combo of combos) {
-    if (combo.verdict !== "fail" || combo.renderHealth !== "error") continue;
-    const fault = detectHarnessFault(combo, input.schemas);
-    if (fault) {
+    const narrowsAnExplainedFail = combo.verdict === "fail" && combo.renderHealth === "error";
+    const fault = detectHarnessFault(
+      combo,
+      input.schemas,
+      narrowsAnExplainedFail ? {} : { distinctiveOnly: true },
+    );
+    if (!fault) continue;
+    if (narrowsAnExplainedFail) {
       combo.harnessFault = fault;
       combo.verdict = "warn";
+      continue;
     }
+    // The combo rendered, so its verdict stands; the reader is still told the value was ours.
+    harnessFaultDisclosures.push(HARNESS_FAULT_DISCLOSURE(combo.comboIndex, fault));
   }
 
   // Stated directly: a verdict mutation added below must not start charging a harnessFault again.
@@ -391,6 +440,10 @@ export function buildReport(input: BuildReportInput): Report {
 
   if (renderHealthInconsistencyWarning) {
     report.warnings = [...(report.warnings ?? []), renderHealthInconsistencyWarning];
+  }
+
+  if (harnessFaultDisclosures.length > 0) {
+    report.warnings = [...(report.warnings ?? []), ...harnessFaultDisclosures];
   }
 
   if (input.fixturePath !== undefined) {
@@ -453,7 +506,7 @@ export function applyBaselineWorkflow(
   metrics: BaselineMetrics | undefined,
   ctx: BaselineWorkflowContext,
 ): void {
-  const baselinePath = path.join(ctx.projectRoot, "120fps-baseline.json");
+  const baselinePath = resolveBaselinePath(ctx.projectRoot, ctx.options.baselineFile);
 
   if (ctx.options.check && !ctx.options.noBaseline) {
     const baseline = loadBaseline(baselinePath);
@@ -523,7 +576,7 @@ export function applyBaselineWorkflow(
         report.pass = false;
       }
     } else {
-      const legacyWarning = legacyBaselineWarning(ctx.projectRoot, ctx.componentDir);
+      const legacyWarning = legacyBaselineWarning(baselinePath, ctx.projectRoot, ctx.componentDir);
       if (legacyWarning) {
         process.stderr.write(`Warning: ${legacyWarning}\n`);
       }
@@ -532,7 +585,10 @@ export function applyBaselineWorkflow(
 
   if (ctx.options.saveBaseline && metrics) {
     const entry = buildBaselineEntry(metrics, report.pass, ctx);
-    const { pruned } = saveBaselineFile(baselinePath, entry, ctx.relativeComponent);
+    // Stored with the entry so a run that reuses this verdict repeats this run's disclosures.
+    const warnings = report.warnings ?? [];
+    const stored = warnings.length > 0 ? { ...entry, warnings: [...warnings] } : entry;
+    const { pruned } = saveBaselineFile(baselinePath, stored, ctx.relativeComponent);
     if (pruned.length > 0) {
       report.warnings = [...(report.warnings ?? []), PRUNED_SLOTS_NOTICE(pruned)];
     }
@@ -607,6 +663,9 @@ export function buildCssReport(
     ...(resolvedCss.onlyCandidate !== undefined ? { onlyCandidate: resolvedCss.onlyCandidate } : {}),
     ...(resolvedCss.noEntryInPackage !== undefined
       ? { noEntryInPackage: resolvedCss.noEntryInPackage }
+      : {}),
+    ...(resolvedCss.searchNotes !== undefined && resolvedCss.searchNotes.length > 0
+      ? { searchNotes: resolvedCss.searchNotes }
       : {}),
   };
 }

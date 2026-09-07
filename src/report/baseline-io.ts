@@ -1,7 +1,16 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
+import path from "node:path";
 import type { EnvFingerprint } from "./types.js";
 import { metricsRevision, type Baseline, type BaselineEntry } from "./budget.js";
+
+// The name a baseline carries when the caller named no path of its own.
+export const BASELINE_FILE_NAME = "120fps-baseline.json";
+
+// A caller-named path is the whole destination; a relative one belongs to the process cwd.
+export function resolveBaselinePath(projectRoot: string, baselineFile?: string): string {
+  return baselineFile ? path.resolve(baselineFile) : path.join(projectRoot, BASELINE_FILE_NAME);
+}
 
 // One slot per environment, so one committed baseline serves many machines.
 export const BASELINE_VERSION = 2;
@@ -71,7 +80,8 @@ export function loadBaseline(baselinePath: string): Baseline | null {
     };
   } catch (err: any) {
     if (err.code === "ENOENT") return null;
-    throw err;
+    // A caller-named destination can be a directory or hand-written rubbish; both must say which file.
+    throw new Error(`could not read the baseline at ${baselinePath}: ${err.message}`, { cause: err });
   }
 }
 
@@ -123,9 +133,36 @@ export function saveBaseline(
     entries: sorted,
   };
 
-  fs.writeFileSync(baselinePath, JSON.stringify(baseline, null, 2), "utf-8");
+  // A caller-named destination can point anywhere; a failure there must name the path it tried.
+  try {
+    fs.mkdirSync(path.dirname(baselinePath), { recursive: true });
+    fs.writeFileSync(baselinePath, JSON.stringify(baseline, null, 2), "utf-8");
+  } catch (err: any) {
+    throw new Error(`could not write the baseline to ${baselinePath}: ${err.message}`, { cause: err });
+  }
   return { key, pruned };
 }
+
+// A committed baseline is source a reviewer reads, not data 120fps wrote: a replayed warning is
+// untrusted text that lands in a terminal and in a CI artifact.
+export const MAX_REPLAYED_WARNINGS = 10;
+export const MAX_REPLAYED_WARNING_CHARS = 300;
+const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f]/g;
+
+export function sanitizeStoredWarnings(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((entry): entry is string => typeof entry === "string")
+    .slice(0, MAX_REPLAYED_WARNINGS)
+    .map((entry) => entry.replace(CONTROL_CHARS, " ").slice(0, MAX_REPLAYED_WARNING_CHARS))
+    .filter((entry) => entry.trim() !== "");
+}
+
+// One named file holds entries keyed by a path relative to a project root; two roots collide.
+export const BASELINE_FILE_SPANS_PROJECTS_ERROR = (roots: string[]): string =>
+  `--baseline-file names one file, but this run spans ${roots.length} project roots ` +
+  `(${roots.join(", ")}) whose entries are keyed by a path relative to their own root. ` +
+  "Run each project separately, or drop --baseline-file to write each project's own baseline.";
 
 export const NO_ENV_BASELINE_WARNING = (componentPath: string): string =>
   `No baseline for this environment. Run --save-baseline here to record one for ${componentPath}; ` +

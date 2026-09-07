@@ -8,7 +8,10 @@ import {
   loadBaseline,
   buildEnvFingerprint,
   parseBaselineKey,
+  resolveBaselinePath,
   sameMachineIdentity,
+  sanitizeStoredWarnings,
+  BASELINE_FILE_NAME,
   type MachineInfo,
   type Report,
   type Thresholds,
@@ -65,6 +68,27 @@ export async function collectMachineInfo(
   };
 }
 
+// The mode the reuse probe can describe before any combo is extracted.
+const REUSE_PROBE_MODE = "combo";
+
+// EnvFingerprint.mode's own vocabulary; a baseline file is editable, so the value is checked.
+const KNOWN_BASELINE_MODES: ReadonlySet<string> = new Set([
+  "combo",
+  "curve",
+  "matrix",
+  "isolation",
+]);
+
+export function describeStoredMode(mode: unknown): string {
+  return typeof mode === "string" && KNOWN_BASELINE_MODES.has(mode)
+    ? `${mode} mode`
+    : "an unknown mode";
+}
+
+export const BASELINE_MODE_MISMATCH_NOTICE = (stored: unknown, current: string): string =>
+  `no verdict was reused: the stored baseline entry was recorded in ${describeStoredMode(stored)} ` +
+  `and this run's reuse check runs in ${current} mode, so the component is measured again.`;
+
 // Safe because identical source in an identical environment redraws the same distribution.
 export async function tryReuseStoredVerdict(args: {
   options: AnalyzeOptions;
@@ -85,7 +109,7 @@ export async function tryReuseStoredVerdict(args: {
   if (!optionsAllowVerdictReuse(options)) return undefined;
 
   // Only this environment's own slot may short-circuit; a cross-machine slot is informational.
-  const baselineFile = loadBaseline(path.join(projectRoot, "120fps-baseline.json"));
+  const baselineFile = loadBaseline(resolveBaselinePath(projectRoot, options.baselineFile));
   const slots = Object.entries(baselineFile?.entries ?? {}).filter(
     ([key]) => parseBaselineKey(key).componentPath === args.relativeComponent,
   );
@@ -94,6 +118,15 @@ export async function tryReuseStoredVerdict(args: {
 
   const fingerprint = await args.getSourceFingerprint();
   if (fingerprint !== entry.sourceFingerprint) return undefined;
+
+  // The probe below is built in combo mode because no combo has been extracted yet; an entry
+  // recorded in another mode can never match it, and the reader is told so instead of guessing.
+  if (entry.env.mode !== REUSE_PROBE_MODE) {
+    process.stderr.write(
+      `Warning: ${BASELINE_MODE_MISMATCH_NOTICE(entry.env.mode, REUSE_PROBE_MODE)}\n`,
+    );
+    return undefined;
+  }
 
   // Identity only: one calibration sample swings 20-40%, and drift changes values, not verdicts.
   const browser = await args.pool.acquire(true);
@@ -104,7 +137,7 @@ export async function tryReuseStoredVerdict(args: {
     cpuThrottle: args.cpuThrottle,
     // Requested, not effective: combos are unextracted, so a throttled entry fails the gate.
     samples: args.samples,
-    mode: "combo",
+    mode: REUSE_PROBE_MODE,
     framework: args.framework,
     // cssReport exists even for "none"; gate on files.length to keep a no-CSS fingerprint stable.
     ...(args.cssReport && args.cssReport.files.length > 0 ? { css: args.cssReport.files } : {}),
@@ -141,8 +174,13 @@ export async function tryReuseStoredVerdict(args: {
       envMismatches: [],
     },
   };
-  // A reused verdict repeats the disclosure that came with it.
-  if (entry.measuredState && entry.measuredState !== "settled") {
+  // A reused verdict repeats every disclosure that came with it, so caching loses none.
+  // Baseline files are user-editable JSON: the stored list is capped and stripped of controls.
+  const stored = sanitizeStoredWarnings(entry.warnings);
+  if (stored.length > 0) {
+    report.warnings = [...stored];
+  } else if (entry.measuredState && entry.measuredState !== "settled") {
+    // An entry saved before warnings were stored still discloses the scene it measured.
     report.warnings = [MEASURED_STATE_WARNING(entry.measuredState)];
   }
   writeReportJson(report, options.jsonPath);
@@ -182,14 +220,15 @@ export function projectConfigFingerprintFiles(
 }
 
 export function legacyBaselineWarning(
+  baselinePath: string,
   projectRoot: string,
   componentDir: string,
 ): string | undefined {
   if (componentDir === projectRoot) return undefined;
-  if (!fs.existsSync(path.join(componentDir, "120fps-baseline.json"))) return undefined;
+  if (!fs.existsSync(path.join(componentDir, BASELINE_FILE_NAME))) return undefined;
   return (
-    `no baseline entry found at ${path.join(projectRoot, "120fps-baseline.json")}, ` +
-    `but a legacy 120fps-baseline.json exists next to the component in ${componentDir}. ` +
+    `no baseline entry found at ${baselinePath}, ` +
+    `but a legacy ${BASELINE_FILE_NAME} exists next to the component in ${componentDir}. ` +
     `Baselines now live at the package root: re-run with --save-baseline to migrate.`
   );
 }

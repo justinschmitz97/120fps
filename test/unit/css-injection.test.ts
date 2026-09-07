@@ -19,10 +19,11 @@ import {
   needsStyleSettle,
   settleStyles,
 } from "../../src/browser/index.js";
-import { resolveCssFiles } from "../../src/pipeline/index.js";
+import { buildCssReport, resolveCssFiles } from "../../src/pipeline/index.js";
 import { buildEnvFingerprint, classifyEnv } from "../../src/report/index.js";
 import {
   DEFAULT_THRESHOLDS,
+  formatStylesheetsLine,
   formatTable,
   type CssReport,
   type Report,
@@ -160,8 +161,18 @@ describe("resolveCssFiles", () => {
     });
   });
 
-  it("returns an empty list when nothing is detected", () => {
-    expect(resolveCssFiles({}, tmpDir)).toEqual({ files: [], autoDetected: false, layer: "none" });
+  it("returns an empty list when nothing is detected, and says what it searched", () => {
+    expect(resolveCssFiles({}, tmpDir)).toEqual({
+      files: [],
+      autoDetected: false,
+      layer: "none",
+      searchNotes: [
+        "no project entry was found: no index.html module script, no app/layout, pages/_app or " +
+          "app/root module, and no nuxt.config css array",
+        "no conventional global stylesheet filename exists here (19 checked)",
+        "no stylesheet file exists under this project",
+      ],
+    });
   });
 
   it("explicit files suppress detection and keep order", () => {
@@ -647,5 +658,49 @@ describe("EnvFingerprint.css", () => {
     const a = buildEnvFingerprint({ ...base, css: ["a.css", "b.css"] });
     const b = buildEnvFingerprint({ ...base, css: ["a.css", "b.css"] });
     expect(classifyEnv(a, b)).toBe("identical");
+  });
+});
+
+// M100/M110 parity: one producer, so the dry run's decision cannot describe another pick.
+describe("the stylesheet each entry shape decides on, as both modes print it", () => {
+  // resolveCssFiles is the one producer analyze() and explainProps() both call, so a shape is
+  // pinned here by the sentence a user reads, not by comparing the function with itself.
+  // The seam that still differs is explainProps' own call, which forwards no --css/--no-css yet;
+  // that is lane D's F17 and is asserted there, not here.
+  const shapes: Array<[string, string]> = [
+    ["fixtures/m131/rr7-root-url", "app/app.css"],
+    ["fixtures/m131/side-effect-directory-index", "src/styles/global.css"],
+    ["fixtures/m131/one-hop-plugin", "src/styles/global.css"],
+    ["fixtures/m131/vue-entry-root", "src/app.scss"],
+    ["fixtures/m131/nuxt-config-css", "app/assets/css/main.css"],
+  ];
+
+  for (const [shape, sheet] of shapes) {
+    it(`names ${sheet} as found in the project entry's own imports`, () => {
+      const root = path.resolve(shape);
+      const warnings: string[] = [];
+      const resolved = resolveCssFiles({}, root, warnings);
+      const line = formatStylesheetsLine(buildCssReport(resolved, root));
+      expect(resolved.layer).toBe("entry-chain");
+      expect(line).toBe(`Stylesheets: ${sheet} (found in the project entry's own imports)`);
+    });
+  }
+
+  it("reports no stylesheet, and no discovery warning, when --no-css was passed", () => {
+    const root = path.resolve("fixtures/m131/one-hop-plugin");
+    const warnings: string[] = [];
+    const resolved = resolveCssFiles({ noCss: true }, root, warnings);
+    expect(resolved).toEqual({ files: [], autoDetected: false, layer: "disabled" });
+    expect(warnings).toEqual([]);
+    expect(formatStylesheetsLine(buildCssReport(resolved, root))).toBe(
+      "Stylesheets: none (--no-css)",
+    );
+  });
+
+  it("keeps an explicit --css sheet over everything the entry chain found", () => {
+    const root = path.resolve("fixtures/m131/one-hop-plugin");
+    const explicit = path.join(root, "src", "deep", "two-hops-down.css");
+    const resolved = resolveCssFiles({ cssFiles: [explicit] }, root);
+    expect(resolved).toEqual({ files: [explicit], autoDetected: false, layer: "explicit" });
   });
 });

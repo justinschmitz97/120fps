@@ -73,17 +73,22 @@ Every line below was re-read in this worktree; the map's line numbers all still 
 
 - **C1** A completed run's report carries `phaseTimings` with the keys `preflight`, `build`,
   `calibration`, `mount`, `rerender`, `explore`, `scale`, `deltas`, `attribution`, `analysis` and
-  `total`, each an integer count of milliseconds. Every key is present; a phase the run never entered
-  is `0`. The ten phase keys sum to `total` exactly: `total` opens at the first statement of `run()`
+  `total`, each an integer count of milliseconds (superseded by M134 C3: `setup` joins the list
+  between `calibration` and `mount`, so there are eleven phase keys). Every key is present; a phase
+  the run never entered is `0`. The phase keys sum to `total` exactly: `total` opens at the first statement of `run()`
   and closes at the `report` boundary, and the interval before the first `preflight:` boundary is
   charged to `preflight`. The CLI's `Total:` opens one stamp earlier (`src/cli.ts:1404`) and closes
   after the report JSON is written, the only difference A1's 1 s tolerance covers. Each phase is the
   interval from its own boundary to the next, so a gap between two labelled phases (session open,
-  noise probe, wrapper overhead, scale-point gate probe) is charged to the phase that preceded it.
+  noise probe) is charged to the phase that preceded it. Superseded by M134 C3 for the gap that
+  followed `calibration`: wrapper overhead, the calibration session's close, schema extraction and
+  combination generation are `setup`, a boundary of their own, and the scale-point gate probe is
+  part of the mount batch.
 - **C2** A boundary line is classified by its label: `preflight:` to `preflight`, `harness:` to
   `build`, `calibration` to `calibration`, `mount:` to `mount`, `rerender:` to `rerender`,
   `explore:` to `explore`, `scaling curves` to `scale`, `prop deltas` to `deltas`, `react analysis`
-  to `analysis`, and `report` closes `total`. A label matching none of them (`mode:`, `isolation:`)
+  to `analysis`, and `report` closes `total`. Superseded by M134 C3: `setup` and every `mode:` line
+  classify to `setup`, and `isolation:` classifies to `mount`; a label matching none of them still
   keeps the currently open phase, so C1's sum holds in combo, matrix, curve and isolation mode alike.
   `attribution` holds the time the run spent computing cost attribution: `0` for a run that
   attributes nothing (no mount traces, or attribution skipped), non-zero for a run whose combos carry

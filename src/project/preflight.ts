@@ -3,9 +3,12 @@ import path from "node:path";
 import { builtinModules } from "node:module";
 import ts from "typescript";
 import { projectCompilerOptions } from "./compiler-options.js";
-import { setImportCycleReported, toPosix } from "../shared/index.js";
+import { pathKey, setImportCycleReported, toPosix } from "../shared/index.js";
 import { isVueFile, parseSfcScript, type VueSfcCompiler } from "./vue-sfc.js";
 import { detectPnP, findWorkspaceRoot, isPackageDeclared } from "./model.js";
+import { unbuiltSiblingSourceEntry } from "./workspace-source.js";
+import { capturesEveryRootAbsoluteUrl } from "./tsconfig-aliases.js";
+import { resolveTarget } from "./resolve.js";
 import { isNuxtProject, nuxtPrepareGap, type NuxtPrepareGap } from "./nuxt.js";
 import {
   declaredTransformOwner,
@@ -39,6 +42,8 @@ export interface PreflightHit {
   preprocessor?: PreprocessorSearch;
   // Nuxt refusals only: the config that names a generated file and the file it names.
   nuxt?: NuxtPrepareGap;
+  // Alias refusals only: the target the alias named, relative to projectRoot.
+  aliasTarget?: string;
 }
 
 export interface PreflightResult {
@@ -54,6 +59,7 @@ export interface PreflightResult {
 export const PROVIDER_LIBRARIES: Record<string, string> = {
   "next-intl": "useTranslations",
   "react-i18next": "useTranslation",
+  "react-intl": "useIntl",
   "react-redux": "useSelector",
   "@tanstack/react-query": "useQuery",
   // Router and meta-framework hooks: the same failure shape as the four above.
@@ -63,10 +69,15 @@ export const PROVIDER_LIBRARIES: Record<string, string> = {
   gatsby: "useStaticQuery",
   "@tanstack/react-router": "useRouter",
   "@tanstack/react-start": "useRouter",
+  // Atom and RPC stores: the hook throws outside the scope component that supplies the store.
+  jotai: "useAtom",
+  "jotai-scope": "useAtom",
+  "@trpc/tanstack-react-query": "useTRPC",
+  "@trpc/react-query": "useQuery",
 };
 
 // A headless kit ships one package per primitive, so PROVIDER_LIBRARIES's names do not fit.
-const PROVIDER_LIBRARY_SCOPES = ["@radix-ui/"];
+const PROVIDER_LIBRARY_SCOPES = ["@radix-ui/", "@mantine/", "@chakra-ui/", "@trpc/"];
 
 export interface ProviderHit {
   // Package name, or the projectRoot-relative path of a local module.
@@ -84,11 +95,17 @@ function packageOf(specifier: string): string {
 
 export function detectProviderImport(
   specifier: string,
+  // The importing file's text. Without it the table's representative hook is named unconditionally.
+  sourceText?: string,
 ): { source: string; hook?: string } | undefined {
   if (specifier.startsWith(".") || specifier.startsWith("/")) return undefined;
   const pkg = packageOf(specifier);
   const hook = PROVIDER_LIBRARIES[pkg];
-  if (hook) return { source: pkg, hook };
+  if (hook) {
+    // A file that imported only `Link` is not told about `useNavigate` it never called.
+    const observed = sourceText === undefined || new RegExp(`\\b${hook}\\b`).test(sourceText);
+    return observed ? { source: pkg, hook } : { source: pkg };
+  }
   if (PROVIDER_LIBRARY_SCOPES.some((scope) => pkg.startsWith(scope))) return { source: pkg };
   return undefined;
 }
@@ -162,6 +179,36 @@ function scriptKind(fileName: string): ts.ScriptKind {
 // Keyed by mtime and size, so an edit invalidates the entry and a missing file is never cached.
 const parsedFiles = new Map<string, { signature: string; sourceFile: ts.SourceFile | undefined }>();
 
+// One cache per (project root, compiler options), so candidates 2 and 3 re-resolve nothing.
+const moduleResolutionCaches = new Map<string, ts.ModuleResolutionCache>();
+
+export function resetModuleResolutionCache(): void {
+  moduleResolutionCaches.clear();
+}
+
+// The options carry the answer, so two projects that would resolve differently never share one.
+function moduleResolutionCacheFor(
+  projectRoot: string,
+  compilerOptions: ts.CompilerOptions,
+): ts.ModuleResolutionCache {
+  const key = JSON.stringify([
+    pathKey(projectRoot),
+    Object.entries(compilerOptions)
+      .filter(([, value]) => typeof value !== "function")
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
+  ]);
+  let cache = moduleResolutionCaches.get(key);
+  if (cache === undefined) {
+    cache = ts.createModuleResolutionCache(
+      path.resolve(projectRoot),
+      (fileName) => (ts.sys.useCaseSensitiveFileNames ? fileName : fileName.toLowerCase()),
+      compilerOptions,
+    );
+    moduleResolutionCaches.set(key, cache);
+  }
+  return cache;
+}
+
 function fileSignature(fileName: string): string | undefined {
   try {
     const stat = fs.statSync(fileName);
@@ -203,12 +250,19 @@ function parseUncached(fileName: string, vueCompiler?: VueSfcCompiler): ts.Sourc
   return ts.createSourceFile(fileName, text, ts.ScriptTarget.Latest, true, scriptKind(fileName));
 }
 
+// `./icon.svg?url` and `./worker?worker` name a transform of a file, not a different file.
+function withoutQuery(specifier: string): string {
+  const query = specifier.indexOf("?");
+  return query === -1 ? specifier : specifier.slice(0, query);
+}
+
 // TypeScript cannot resolve a .vue specifier, so SFC edges are resolved by hand.
 function resolveVueImport(
   fromFile: string,
-  specifier: string,
+  rawSpecifier: string,
   compilerOptions?: ts.CompilerOptions,
 ): string | undefined {
+  const specifier = withoutQuery(rawSpecifier);
   // An aliased SFC is the same graph edge as a relative one, so the alias is substituted here.
   const candidates =
     specifier.startsWith(".") || specifier.startsWith("/")
@@ -222,8 +276,21 @@ function resolveVueImport(
   return undefined;
 }
 
+// One `paths` key that matched, with its targets already resolved against the config's base.
+interface AliasMatch {
+  pattern: string;
+  // TypeScript ranks an exact key first, then the longest prefix before the wildcard.
+  rank: number;
+  targets: string[];
+}
+
 // The two `paths` shapes TypeScript itself supports: an exact key, or one `*`.
-function aliasCandidates(specifier: string, compilerOptions?: ts.CompilerOptions): string[] {
+function aliasMatches(
+  specifier: string,
+  compilerOptions?: ts.CompilerOptions,
+  // A prefix-less key ("*", "/*") matches every bare specifier, so no refusal may rest on it.
+  prefixedOnly = false,
+): AliasMatch[] {
   const paths = compilerOptions?.paths;
   // TypeScript 5 leaves baseUrl undefined for a paths-only tsconfig; pathsBasePath records it.
   const base =
@@ -233,25 +300,58 @@ function aliasCandidates(specifier: string, compilerOptions?: ts.CompilerOptions
       ? path.dirname(compilerOptions.configFilePath as string)
       : undefined);
   if (!paths || !base) return [];
-  const candidates: string[] = [];
+  const matches: AliasMatch[] = [];
   for (const [pattern, targets] of Object.entries(paths)) {
+    if (prefixedOnly && capturesEveryRootAbsoluteUrl(pattern)) continue;
     const star = pattern.indexOf("*");
     let rest: string;
+    let rank: number;
     if (star === -1) {
       if (pattern !== specifier) continue;
       rest = "";
+      rank = Number.MAX_SAFE_INTEGER;
     } else {
       const prefix = pattern.slice(0, star);
       const suffix = pattern.slice(star + 1);
       if (!specifier.startsWith(prefix) || !specifier.endsWith(suffix)) continue;
       rest = specifier.slice(prefix.length, specifier.length - suffix.length);
+      rank = prefix.length;
     }
-    for (const target of targets) {
-      candidates.push(path.resolve(base, target.replace("*", rest)));
+    matches.push({
+      pattern,
+      rank,
+      targets: targets.map((target) => path.resolve(base, target.replace("*", rest))),
+    });
+  }
+  return matches.sort((left, right) => right.rank - left.rank);
+}
+
+function aliasCandidates(
+  specifier: string,
+  compilerOptions?: ts.CompilerOptions,
+  prefixedOnly = false,
+): string[] {
+  return aliasMatches(specifier, compilerOptions, prefixedOnly).flatMap((match) => match.targets);
+}
+
+// The target the winning alias named when nothing at all resolves; undefined when something does.
+function missingAliasTarget(
+  rawSpecifier: string,
+  compilerOptions?: ts.CompilerOptions,
+): string | undefined {
+  // `?url` and `?raw` ask Vite for a transform of a file that is on disk under its own name.
+  const specifier = withoutQuery(rawSpecifier);
+  const matches = aliasMatches(specifier, compilerOptions, true);
+  if (matches.length === 0) return undefined;
+  for (const match of matches) {
+    for (const candidate of match.targets) {
+      if (resolveTarget(candidate) !== undefined) return undefined;
     }
   }
-  return candidates;
+  // The longest prefix is the key TypeScript itself would have used, so it is the one to name.
+  return matches[0].targets[0];
 }
+
 
 // A type-only statement is erased before a browser sees it, so it cannot break a mount.
 function isTypeOnlyImport(node: ts.ImportDeclaration): boolean {
@@ -363,7 +463,6 @@ export interface PreflightOptions {
 
 export function runPreflight(options: PreflightOptions): PreflightResult {
   const { projectRoot, entries, vueCompiler } = options;
-  const compilerOptions = projectCompilerOptions(entries[0]);
 
   const hard: PreflightHit[] = [];
   const soft: PreflightHit[] = [];
@@ -372,6 +471,8 @@ export function runPreflight(options: PreflightOptions): PreflightResult {
   const providerSources = new Set<string>();
   const parents = new Map<string, string>();
   const cycleReported = new Set<string>();
+  // One refusal per specifier, however many files in the graph import it.
+  const reportedAliases = new Set<string>();
   const cycleChains: string[][] = [];
   setImportCycleReported(false);
   const seen = new Set<string>();
@@ -421,6 +522,8 @@ export function runPreflight(options: PreflightOptions): PreflightResult {
     const file = queue.shift()!;
     const sf = parse(file, vueCompiler);
     if (!sf) continue;
+    // Per importing file: a monorepo member and its sibling declare the same alias differently.
+    const fileOptions = projectCompilerOptions(file);
 
     if (hasUseServerDirective(sf)) {
       hard.push({ kind: "use-server", chain: chainTo(file) });
@@ -445,7 +548,7 @@ export function runPreflight(options: PreflightOptions): PreflightResult {
     for (const edge of importEdges(sf)) {
       if (edge.typeOnly) continue;
 
-      const provider = detectProviderImport(edge.specifier);
+      const provider = detectProviderImport(edge.specifier, sf.text);
       if (provider && !providerSources.has(provider.source)) {
         providerSources.add(provider.source);
         providers.push({ ...provider, local: false, chain: chainTo(file) });
@@ -479,7 +582,7 @@ export function runPreflight(options: PreflightOptions): PreflightResult {
         });
         // A .vue edge is a graph edge too: the note must not end the walk here.
         if (recognizer.code === "vue" && vueCompiler) {
-          const sfc = resolveVueImport(file, edge.specifier, compilerOptions);
+          const sfc = resolveVueImport(file, edge.specifier, fileOptions);
           if (sfc && !seen.has(sfc)) {
             seen.add(sfc);
             parents.set(sfc, file);
@@ -489,18 +592,49 @@ export function runPreflight(options: PreflightOptions): PreflightResult {
         continue;
       }
 
+      // Bare specifiers only: node_modules and `paths` targets do not appear while a run lives,
+      // while a relative edge can — the harness writes its own entry into the measured project.
       const resolved = ts.resolveModuleName(
         edge.specifier,
         file,
-        compilerOptions,
+        fileOptions,
         ts.sys,
+        edge.specifier.startsWith(".") || edge.specifier.startsWith("/")
+          ? undefined
+          : moduleResolutionCacheFor(projectRoot, fileOptions),
       ).resolvedModule;
-      if (!resolved) continue;
-
-      const target = path.normalize(resolved.resolvedFileName);
+      const resolvedTarget =
+        resolved === undefined ? undefined : path.normalize(resolved.resolvedFileName);
       // The graph stops at package boundaries: a dependency's internals are the bundler's job.
-      if (resolved.isExternalLibraryImport || /[\\/]node_modules[\\/]/.test(target)) continue;
-      if (target.endsWith(".d.ts")) continue;
+      const crossesPackageBoundary =
+        resolvedTarget === undefined ||
+        resolved!.isExternalLibraryImport ||
+        /[\\/]node_modules[\\/]/.test(resolvedTarget) ||
+        resolvedTarget.endsWith(".d.ts");
+      // An unbuilt workspace sibling is first-party source: every gate applies behind its entry.
+      const siblingSource = crossesPackageBoundary
+        ? unbuiltSiblingSourceEntry(edge.specifier, file, projectRoot, workspaceRoot)
+        : undefined;
+      const target = crossesPackageBoundary
+        ? siblingSource === undefined
+          ? undefined
+          : path.normalize(siblingSource)
+        : resolvedTarget;
+      if (target === undefined) {
+        // An alias that matches and resolves nowhere is a 500 the dev server answers later.
+        const missing =
+          resolved === undefined ? missingAliasTarget(edge.specifier, fileOptions) : undefined;
+        if (missing !== undefined && !reportedAliases.has(edge.specifier)) {
+          reportedAliases.add(edge.specifier);
+          hard.push({
+            kind: "unresolved-alias",
+            chain: chainTo(file),
+            specifier: edge.specifier,
+            aliasTarget: relative(projectRoot, missing),
+          });
+        }
+        continue;
+      }
       // The generated entry is the only root, so it enters a cycle where the app does not.
       if (entryFiles.has(target) && target !== file && !cycleReported.has(file)) {
         cycleReported.add(file);

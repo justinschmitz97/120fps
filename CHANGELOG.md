@@ -1,5 +1,174 @@
 # Changelog
 
+## Unreleased
+
+Field-test run 7 remediation, in progress: fifty repositories measured against 0.7.0 (`f54be55`),
+plus a further twenty-one new-repo diagnosis, closing eight clusters.
+A fatal page error or a same-origin module server error that lands before readiness now ends the
+run the moment it happens instead of waiting out the full bound, and the diagnosis that names the
+cause is appended to the readiness report rather than replacing it: taxonomy's `env.mjs: Invalid
+environment variables` throw ends the run in 4 s instead of 93, directus's `.yaml` module 500s end
+it in 10 s instead of 94, twenty's unresolved `applyDiff.ts` import ends it in 25 s instead of 97,
+and n8n's `~icons/` virtual-namespace 500 ends it in 25 s instead of 100. Every navigation now
+carries the same bound the readiness wait advertises, instead of Playwright's own 30 s default.
+uptime-kuma's sass 1.42.1 — installed, but too old for the `compileStringAsync` API Vite 7 calls —
+is named instead of the run waiting out the bound with no diagnosis at all, and a `next/font/google`
+import, a Next.js build-time module 120fps has decided never to shim, is now refused in the dry run
+with the same words and exit code the real run already used (M129).
+An unbuilt workspace sibling that a monorepo app imports by package name is now walked, typed and
+aliased as its own package instead of stopping at the `node_modules` boundary three subsystems
+disagreed about: directus's `.yaml` edge, previously invisible to the preflight walk, is a hard
+refusal before the browser in the dry run and the real run identically; dub's `icon` prop, previously
+invisible because the sibling's own types never resolved, is now extracted and required; twenty's
+dry run drops from 149 false stale-alias lines to zero once an alias is judged against the tsconfig
+that governs the file that wrote it rather than the measured package's own table; and a query-suffixed
+alias import (`?url`, `?raw`, `?worker`) whose target exists is never wrongly flagged as broken, while
+one whose target is genuinely missing inside the measured graph is now a hard preflight refusal
+(M130). The dry run itself now resolves each module once per run instead of once per candidate, and
+reads each tsconfig once per absolute path instead of re-parsing it every time, so posthog's
+three-candidate `--explain-props` falls from 316 s to 116 s with byte-identical output (M135).
+The entry chain that finds the stylesheet a typical app loads now follows the shapes the corpus
+actually uses — React Router 7 and Remix's `app/root.tsx`, a `nuxt.config`'s literal `css:` array
+including a package entry, a bound import carrying `?url`, and one hop below the entry in source
+order — and a bare package stylesheet specifier resolves through a wildcard `exports` pattern as well
+as an exact key; an import carrying `?inline` or `?raw` is never injected, because it hands the page
+a string, not a sheet. The ranked walk no longer stops at the first candidate it cannot preprocess,
+every sheet that matched nothing collapses into one disclosure line instead of drowning the few that
+matter, and a `Stylesheets: none found` line now names the reason it found nothing instead of
+asserting a search that never happened. M122's Sass disclosure now also covers a stylesheet reached
+through this walk, not only one reached through the module graph (M131).
+A passing run now pays for less of its own overhead and labels what it paid for truthfully: the
+`calibration` phase holds only calibration, with the wrapper overhead, session close, schema
+extraction and combination planning it used to absorb split into a new `setup` phase; the React
+analysis pass measures each distinct prop set once instead of re-measuring the same auto-scale combo
+up to four times; and the memo pass no longer mounts and rerenders a tree that carries no memo fiber.
+`--explore-budget` now bounds the whole explore phase — the first combo, a single-combo run, and
+every one of curve mode's scale points included — instead of a hardcoded per-combo default the flag
+never reached: rallly's curve mode falls from 205 s to 47 s and novu's explore phase from 33 s to
+18 s under the same `--explore-budget 30`. `observerTiming`, the cheaper sampling path the code
+already named as the answer to explore's dominant cost, is now reachable by a caller as an opt-in;
+it is not a new default (M134).
+Explore no longer measures the browser's own attempt to leave the page: an anchor whose resolved
+origin differs from the harness page, that carries `target="_blank"` or `rel="external"`, or whose
+`href` is a `mailto:`/`tel:`/handler-less `javascript:` scheme is not exercised, and the discovery
+line names how many targets were skipped and why. If a click nonetheless opens a popup or navigates
+away, the run closes the popup, returns to the harness page, stops exercising that target, and
+reports it as skipped rather than measuring the result. Withholding a FAIL on a noisy machine was
+evaluated and not adopted: the signal was circular, the reconstruction was unsound, and it would have
+contradicted the standing contract that budget verdicts are absolute, so a per-step breach still
+fails however the noise sentinel classifies the machine (M137).
+`--ci`, `--report-md` and `--report-junit` now carry the run's real verdicts instead of the empty
+array nothing ever filled: every measured component's row matches the verdict the terminal printed,
+and a sweep that exits 1 without any component reporting a failure gains one synthetic JUnit
+testcase, named `120fps run`, whose failure says so. A `--check` run that reuses a stored verdict now
+says exactly that and nothing else — no baseline-comparison line, no environment-match line, no mode
+line, no measurement-basis line, and no interaction-count hint for a component it did not measure —
+and it carries the reused entry's own warnings, replayed with control characters stripped and bounded
+to ten entries of 300 characters each rather than lost to the cache; a stored entry recorded under a
+different mode is named and re-measured rather than silently ignored. `--baseline-file <path>` names
+where `--save-baseline` writes and `--check` reads, so a run need not dirty the measured repository;
+it is refused before anything is measured when it names one file for a sweep spanning multiple
+project roots, and a baseline that cannot be read names the path in its error (M138).
+
+Every warning a passing run prints is now a statement the run can support, printed once, and names
+what to change: a component that declares no props — soybean-admin's `soybean-avatar.vue`,
+lobe-chat's `memo`-wrapped `Divider` — says so and states that extraction did not fail, and keeps the
+old hedge only when the run has an actual reason to suspect a failed extraction, named in the same
+line. A Vite config note names only the alias entries the run actually dropped, not `resolve.alias`
+wholesale, and names a computed `plugins:` expression by its callee (`setupVitePlugins`,
+`getPluginsList`) instead of calling it anonymous; the project-level note itself is now produced once
+per measured component instead of once per candidate, so vue-pure-admin's three-candidate dry run
+prints it once instead of three times, identically in the dry run and the real run. Node's own
+`MODULE_TYPELESS_PACKAGE_JSON` warning about a project's own config file — midday's and plane's
+`tailwind.config.ts` — no longer reaches the user's terminal, while 120fps's own warnings are
+unaffected. Output a third party writes through `console.error` during a run — rallly's 7
+`enhanced-resolve` stack lines from the Tailwind PostCSS plugin — is captured and printed, attributed
+to the package that wrote it, only when no 120fps warning already reports the same fact; `DEBUG`
+still shows everything. `--no-css` is honoured by the dry run exactly as it decides the real run, so
+`--explain-props --no-css` reports no stylesheet instead of the file the real run was told to skip. A
+provider hint names the hook the file actually imported — `react-router (useNavigate)` only when the
+file imports `useNavigate`, otherwise "imports react-router" alone — instead of a hook the table
+merely associates with the package. And anything-llm's warning now carries one `⚠ Warning:` prefix
+instead of two (M132).
+
+A render failure now names the provider it suspects and why: the scope table covers `@mantine/`,
+`@chakra-ui/` and `@trpc/` beside `@radix-ui/`, and names the representative hook of `react-intl`,
+`jotai`/`jotai-scope` and `@trpc/tanstack-react-query`/`@trpc/react-query`; when more than one
+candidate exists they are ranked by whether the captured page error's own words name them, and the
+remedy quotes that error — docmost's `@mantine/core` import now ranks first with `MantineProvider was
+not found in component tree` as its evidence, and ai-chatbot's `@radix-ui/` import ranks the same way,
+where the baseline found no suspect at all. A growth hint is never fitted over a tree that did not
+render, in combo mode and curve mode alike, so trigger.dev's six non-rendering combos no longer
+produce a `superlinearGrowth` hint over a curve that measured nothing. A prop named for a dimension —
+`width`, `height`, `size`, `x`, `y`, `r`, `cx`, `cy`, `rx`, `ry`, `strokeWidth` — and typed `string`
+synthesizes `"16"` instead of the placeholder `"test"` that rendered `<svg width="test">` on every one
+of linkwarden's samples; a prop shaped `React.ElementType` synthesizes `"div"` instead of reaching
+React as `undefined`, which is what threw on every scale row of dub's required `icon` prop. A
+synthesized placeholder value that still reaches the DOM of a combo that rendered is disclosed as
+`[harness fault]`, naming the prop, the value and the page error that names it, without changing the
+combo's verdict. `--help` now describes exit 1 as the union of what it actually means — over budget, a
+regression under `--check`/`--budget`, or a render error — and the README's render-error section gains
+a worked example linking to the `120fps.setup.tsx` recipe (M133).
+
+A Vue app's own generated auto-import maps — `components.d.ts`, `.nuxt/components.d.ts`,
+`auto-imports.d.ts` — are now read and resolved in staged steps instead of leaving an auto-imported
+identifier a free variable, without ever executing the project's Vite config: when a project does not
+declare `@vitejs/plugin-vue` itself but a framework it does declare depends on it — Nuxt, then Vite —
+the harness resolves the plugin through that framework's own dependency closure instead of only
+through hoisting. A `components.d.ts` or `.nuxt/components.d.ts` map is parsed into a name-to-module
+table and registered before mount for every entry whose module resolves inside the project's own
+source tree; a dependency's own entry is named, not registered — the milestone's own stop condition
+(C12) fired: registering `@nuxt/ui`'s `<UCarousel>` in full let it resolve and then fail to load with
+a Nuxt-context error the browser reported as a 500, which `defineAsyncComponent` turned into a
+silent, empty-tree pass, so only project-source entries are registered instead. An `auto-imports.d.ts`
+map prepends an import for a free identifier the measured component's own module graph references,
+scoped to that graph and never touching a module that already imports or declares the name. Every map
+the run reads is named in its disclosures and joins the run's source fingerprint, and a registered
+component the browser cannot fetch is named rather than silently rendering nothing. ADR
+`0006-generated-declaration-files-are-a-resolution-input.md` records the decision. wg-easy, which
+could not compile a single `.vue` file, drops from a 93 s setup-error to a 17 s pass; vitesse,
+vue3-element-admin and it-tools move from a diagnosed `ReferenceError` to a pass; scaffold-nuxt's
+"found via a hoisted transitive install" warning is gone; nuxt.com still aborts on the same
+Nuxt-context error, but now names `UCarousel` and `ProseImg` and the map file that resolved them,
+where the baseline's log never named the missing component at all (M136).
+
+**Upgrading:** `phaseTimings` gains an eleventh key, `setup`, between `calibration` and `mount`; all
+eleven keys still sum to `total`, and a baseline recorded before this key existed reads it as absent
+without otherwise changing. A baseline recorded against a project whose discovered stylesheet list
+has since changed re-records once, because the environment fingerprint's `css` list is now more often
+accurate than before (M131); a baseline recorded against a project whose generated auto-import maps
+have since regenerated re-records once for the same reason, because `generatedMaps` also joins the
+fingerprint (M136). `--explore-budget` now bounds the whole explore phase rather than a hardcoded
+per-combo default, so a slow machine explores fewer steps within the same bound instead of running
+past it, and the run discloses when the budget stopped it, with one deliberate overrun: a combo that
+starts with less than ten seconds of budget left is given ten seconds anyway rather than a walk too
+short to reach a second state, so the phase can end up to ten seconds past the flag, disclosed on the
+combo that carried it. `EXPLORE_BUDGET_WARNING` gained a third parameter (a unit name, `"prop combos"`
+or `"scale points"`) and now names `--explore-budget <seconds>` as the way to raise it. A synthetic
+curve's scale probes now carry the first measured combo's props beside `__120fps_scaleN`, so a
+component with a required prop renders on its scale rows instead of throwing `Element type is invalid
+... got: undefined` on every one of them. `--baseline-file <path>` is a new flag for `--save-baseline`
+and `--check`; without it, the destination is unchanged. `--report-junit` may now contain a `120fps
+run` testcase for a sweep that exits 1 without any component reporting the failure. `BaselineEntry`
+gains an optional `warnings` field; a baseline file recorded before this release has none and loads
+unchanged.
+
+Known limits, by decision: a budget verdict is never downgraded for machine noise, even on a per-step
+interaction breach — the evidence for a noise-based gate was circular, and the standing contract that
+budget verdicts are absolute stands (M137); a framework-bound listener on a non-`http(s)` anchor —
+Vue's `@click`, React's `onClick` — leaves no attribute for the discovery walk to read, so a
+`javascript:` anchor bound only that way is still declined as a non-http link (M137). A Nuxt
+composable or `#imports` binding, and a component a dependency provides through its own auto-import
+map, are not supplied; the run names what it did not register rather than attempting a Nuxt
+application context a bare `createApp` cannot provide, and a registered component the browser cannot
+fetch is disclosed by name rather than failing the run — the milestone's own falsifier found that
+requirement, and a future milestone owns it (M136). Two workspace siblings declaring the same alias
+pattern to different targets cannot both be served by one Vite alias list; the conflict is disclosed
+by name and the measured package's own target wins, per-importer resolution is disclosed, not served
+(M130). Third-party output is captured only at `console.error`; a tool that writes straight to
+`process.stdout`/`process.stderr` (linkwarden's daisyUI banner) still streams raw, because wrapping
+the stream itself would buffer 120fps's own diagnostics (M132).
+
 ## 0.7.0
 
 Field-test run 6 remediation: ten milestones closing run-6 smoke clusters 1 through 9 (cluster 9,

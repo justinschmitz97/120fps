@@ -98,9 +98,10 @@ export async function extractPropsDetailed(
   const absolutePath = path.resolve(filePath);
   const warnings: string[] = [];
   const sink = (message: string): void => {
-    const line = message.trimEnd();
+    // The trailing newline and the "Warning: " prefix belong to warnOnce's stderr write; a list
+    // entry gets its prefix from whichever reader prints it.
+    const line = message.trimEnd().replace(/^Warning:\s+/, "");
     warnings.push(line);
-    // The trailing newline belongs to warnOnce's stderr write; a list entry must not carry it.
     options?.onWarning?.(line);
   };
   const collecting = options?.onWarning !== undefined;

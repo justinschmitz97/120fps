@@ -21,8 +21,11 @@ describe("the generic zero-prop hedge yields to a stated cause", () => {
     expect(explainsZeroPropCount(UNTYPED_JS_COMPONENT_WARNING("/p/Badge.js", "Badge"))).toBe(true);
   });
 
+  it("recognizes a component that declares no props", () => {
+    expect(explainsZeroPropCount(ZERO_PROPS_WARNING)).toBe(true);
+  });
+
   it("does not claim to explain an unrelated warning", () => {
-    expect(explainsZeroPropCount(ZERO_PROPS_WARNING)).toBe(false);
     expect(explainsZeroPropCount("Stylesheets: none found")).toBe(false);
   });
 });

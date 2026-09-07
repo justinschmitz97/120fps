@@ -66,25 +66,21 @@ afterEach(() => {
 
 const POSTCSS_ENOENT_ERROR = new Error(
   [
-    "component harness did not become ready within timeout. Page errors:",
-    "  - [vite] Internal Server Error",
+    "[vite] Internal Server Error",
     "[postcss] ENOENT: no such file or directory, open 'E:\\repositories\\shadcn-ui\\apps\\v4\\shadcn\\tailwind.css'",
     "    at async open (node:internal/fs/promises:640:25)",
     "    at async Object.readFile (node:internal/fs/promises:1046:14)",
     `    at async LazyResult.runOnRoot (${WIN_INSTALL_ROOT}\\node_modules\\.pnpm\\postcss@8.4.35\\node_modules\\postcss\\lib\\lazy-result.js:88:16)`,
     `    at async LazyResult.async (${WIN_INSTALL_ROOT}\\node_modules\\.pnpm\\postcss@8.4.35\\node_modules\\postcss\\lib\\lazy-result.js:192:26)`,
-    "  - response 500: GET http://localhost:5180/app/globals.css",
   ].join("\n"),
 );
 
 const VITE_IMPORT_RESOLVE_ERROR = new Error(
   [
-    "component harness did not become ready within timeout. Page errors:",
-    "  - [vite] Internal Server Error",
+    "[vite] Internal Server Error",
     'Failed to resolve import "@shadcn/react/message-scroller" from "registry/new-york-v4/ui/message-scroller.tsx". Does the file exist?',
     `    at TransformPluginContext._formatLog (${WIN_INSTALL_ROOT}\\node_modules\\.pnpm\\vite@6.4.2\\node_modules\\vite\\dist\\node\\chunks\\dep-Dq2t6Dq0.js:42553:41)`,
     `    at TransformPluginContext.error (${WIN_INSTALL_ROOT}\\node_modules\\.pnpm\\vite@6.4.2\\node_modules\\vite\\dist\\node\\chunks\\dep-Dq2t6Dq0.js:42550:16)`,
-    "  - response 500: GET http://localhost:5179/registry/new-york-v4/ui/message-scroller.tsx",
   ].join("\n"),
 );
 
@@ -432,5 +428,57 @@ describe("presentBundlerFailure: surface 3, the async unhandled-rejection channe
     expect(resolved!.output.indexOf("gitignored")).toBeLessThan(
       resolved!.output.indexOf("Warnings recorded before this failure:"),
     );
+  });
+});
+
+// plane's shape: the mute-readiness suspect named a sheet the compile probe had already dropped.
+describe("the stylesheet a mute readiness timeout may name as its suspect", () => {
+  const MUTE_TIMEOUT = "component harness did not become ready within timeout. No page errors were captured.";
+
+  it("names the sheet that survived the probe and not the one the probe dropped", () => {
+    const presented = presentBundlerFailure(MUTE_TIMEOUT, tmpDir, [
+      "Stylesheets: styles/emoji.css, src/app.css (found in the project entry's own imports)",
+      "styles/emoji.css did not compile ([postcss] tailwindcss: Cannot apply unknown utility class); the stylesheet was not injected and the component may render unstyled. Pass --css to name a stylesheet that compiles, or --no-css to measure without one",
+    ]);
+
+    expect(presented).toContain("src/app.css");
+    expect(presented).not.toContain("stylesheet this run injected: styles/emoji.css");
+  });
+
+  it("names no stylesheet when the probe dropped every candidate, and says the probe cleared them", () => {
+    const presented = presentBundlerFailure(MUTE_TIMEOUT, tmpDir, [
+      "Stylesheets: styles/emoji.css (largest-stylesheet fallback, low confidence — verify with --css)",
+      "styles/emoji.css did not compile ([postcss] tailwindcss: Cannot apply unknown utility class); the stylesheet was not injected and the component may render unstyled. Pass --css to name a stylesheet that compiles, or --no-css to measure without one",
+    ]);
+
+    expect(presented).toContain(MUTE_TIMEOUT);
+    expect(presented).not.toContain("styles/emoji.css");
+    expect(presented).toContain("compile probe");
+  });
+
+  it("treats a sheet the probe timed out on as dropped too", () => {
+    const presented = presentBundlerFailure(MUTE_TIMEOUT, tmpDir, [
+      "Stylesheets: styles/emoji.css (largest-stylesheet fallback, low confidence — verify with --css)",
+      "styles/emoji.css did not compile within 20 s; the stylesheet was not injected and the component may render unstyled. Pass --css to name a stylesheet that compiles, or --no-css to measure without one",
+    ]);
+
+    expect(presented).not.toContain("styles/emoji.css");
+    expect(presented).toContain("compile probe");
+  });
+
+  it("still names every injected sheet when the probe dropped none", () => {
+    const presented = presentBundlerFailure(MUTE_TIMEOUT, tmpDir, [
+      "Stylesheets: styles/emoji.css, src/app.css (found in the project entry's own imports)",
+    ]);
+
+    expect(presented).toContain("stylesheet this run injected: styles/emoji.css, src/app.css");
+  });
+
+  it("says nothing about stylesheets when the run injected none", () => {
+    const presented = presentBundlerFailure(MUTE_TIMEOUT, tmpDir, [
+      "Stylesheets: none found (checked the project entry, conventional filenames, and the largest stylesheet under the project)",
+    ]);
+
+    expect(presented).toBe(MUTE_TIMEOUT);
   });
 });

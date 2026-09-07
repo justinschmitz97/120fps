@@ -239,6 +239,48 @@ export interface EntryOptions {
   renderer?: Renderer;
   // Only an unconditional root is safe to force into a stable wrapped render (vue-sfc.ts).
   vueUnconditionalRoot?: boolean;
+  // Names a generated declaration map resolves, registered on the app before it mounts.
+  globalComponents?: GlobalComponentRegistration[];
+}
+
+// One entry of a components declaration map, with the specifier the harness page can request.
+export interface GlobalComponentRegistration {
+  name: string;
+  specifier: string;
+  exportName: string;
+}
+
+// Lazy by construction: a map of hundreds of names costs one resolve each and no evaluation.
+// The page reports a failed registration on this prefix; the run reads it back off page errors.
+export const COMPONENT_LOAD_FAILURE_PREFIX = "[120fps] registered component";
+
+export function vueGlobalComponentBlock(
+  registrations: readonly GlobalComponentRegistration[],
+): string {
+  if (registrations.length === 0) return "";
+  const lines = registrations.map(
+    ({ name, specifier, exportName }) =>
+      `  app.component(${JSON.stringify(name)}, defineAsyncComponent({\n` +
+      `    loader: () => import(${JSON.stringify(specifier)})` +
+      `.then((m: any) => m[${JSON.stringify(exportName)}] ?? m.default ?? m),\n` +
+      `    onError: (err: any, _retry: any, fail: any) => {\n` +
+      `      __120fpsComponentLoadFailed(${JSON.stringify(name)}, err);\n` +
+      `      fail(err);\n` +
+      `    },\n` +
+      `  }));`,
+  );
+  // Reported through the page-error channel the run already collects, once per component.
+  return `const __120fpsLoadFailures: Record<string, string> = {};
+const __120fpsComponentLoadFailed = (name: string, err: any): void => {
+  if (name in __120fpsLoadFailures) return;
+  __120fpsLoadFailures[name] = err && err.message ? String(err.message) : String(err);
+  console.error(${JSON.stringify(COMPONENT_LOAD_FAILURE_PREFIX)} + " " + name +
+    " failed to load: " + __120fpsLoadFailures[name]);
+};
+const __120fpsRegisterGlobals = (app: any) => {
+${lines.join("\n")}
+};
+`;
 }
 
 // The renderer supplies the import block, the mount and unmount bodies, and `renderTree`.
@@ -257,6 +299,11 @@ export function generateVueEntry(opts: EntryOptions): string {
     presetRelative,
     vueUnconditionalRoot,
   } = opts;
+  const globalComponents = opts.globalComponents ?? [];
+  const registerGlobals = vueGlobalComponentBlock(globalComponents);
+  const vueImports = registerGlobals
+    ? "createApp, defineAsyncComponent, h, nextTick, shallowRef"
+    : "createApp, h, nextTick, shallowRef";
 
   // An SFC always exports its component as the default, so the selected name is fixed.
   const importLine =
@@ -284,7 +331,7 @@ const ${componentName} = __120fps_selectExport("default");` +
   const rootRender = vueUnconditionalRoot ? `h("div", null, [${bareRender}])` : bareRender;
 
   return `
-${cssImportBlock(cssImports)}import { createApp, h, nextTick, shallowRef } from "vue";
+${cssImportBlock(cssImports)}import { ${vueImports} } from "vue";
 ${wrapImportLine(wrapRelative)}${presetImportLine(presetRelative)}${importLine}
 
 const container = document.getElementById("root")!;
@@ -303,10 +350,10 @@ ${scaleBranch}
 };
 ${vueRenderTreeHelper(wrapRelative)}
 const __120fpsRoot = { render: () => renderTree(wrapperOnly ? null : renderComponent()) };
-
+${registerGlobals}
 const startApp = () => {
   app = createApp(__120fpsRoot);
-  app.mount(container);
+${registerGlobals ? "  __120fpsRegisterGlobals(app);\n" : ""}  app.mount(container);
   mounted = true;
 };
 const stopApp = () => {

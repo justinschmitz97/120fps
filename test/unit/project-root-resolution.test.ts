@@ -138,10 +138,13 @@ describe("D7: legacy baseline migration guard", () => {
       "src/ui/120fps-baseline.json": JSON.stringify({ version: 1, timestamp: "x", entries: {} }),
     });
     const componentDir = path.join(tmpDir, "src", "ui");
-    const warning = legacyBaselineWarning(tmpDir, componentDir);
+    const baselinePath = path.join(tmpDir, "120fps-baseline.json");
+    const warning = legacyBaselineWarning(baselinePath, tmpDir, componentDir);
     expect(warning).toBeDefined();
     expect(warning).toContain("--save-baseline");
     expect(warning).toContain(componentDir);
+    // The file the run actually consulted, which --baseline-file can move off the root.
+    expect(warning).toContain(baselinePath);
   });
 
   it("returns undefined when component dir equals the package root", () => {
@@ -150,12 +153,18 @@ describe("D7: legacy baseline migration guard", () => {
       "Button.tsx": "x",
       "120fps-baseline.json": JSON.stringify({ version: 1, timestamp: "x", entries: {} }),
     });
-    expect(legacyBaselineWarning(tmpDir, tmpDir)).toBeUndefined();
+    expect(legacyBaselineWarning(path.join(tmpDir, "120fps-baseline.json"), tmpDir, tmpDir)).toBeUndefined();
   });
 
   it("returns undefined when no legacy baseline exists next to the component", () => {
     makeTree({ "package.json": "{}", "src/ui/Button.tsx": "x" });
-    expect(legacyBaselineWarning(tmpDir, path.join(tmpDir, "src", "ui"))).toBeUndefined();
+    expect(
+      legacyBaselineWarning(
+        path.join(tmpDir, "120fps-baseline.json"),
+        tmpDir,
+        path.join(tmpDir, "src", "ui"),
+      ),
+    ).toBeUndefined();
   });
 });
 

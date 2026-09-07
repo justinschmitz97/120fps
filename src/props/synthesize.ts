@@ -323,6 +323,9 @@ const LOCALE_PROP_NAME = /^(locale|language)$/i;
 // A "test" `src` 404s against the harness origin and the 404 is charged to the component.
 const IMAGE_SRC_PROP_NAME = /^(src|srcset|poster)$/i;
 
+// An SVG or layout attribute rejects a word, and the element silently falls back to 300x150.
+const DIMENSION_PROP_NAME = /^(width|height|size|x|y|r|cx|cy|rx|ry|strokeWidth)$/i;
+
 const DATA_URI_PLACEHOLDER =
   "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==";
 
@@ -333,6 +336,7 @@ export function namedStringValue(name: string | undefined): string | undefined {
   if (CURRENCY_PROP_NAME.test(name)) return "USD";
   if (LOCALE_PROP_NAME.test(name)) return "en-US";
   if (IMAGE_SRC_PROP_NAME.test(name)) return DATA_URI_PLACEHOLDER;
+  if (DIMENSION_PROP_NAME.test(name)) return "16";
   return undefined;
 }
 
