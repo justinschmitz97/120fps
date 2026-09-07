@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { filterProjectModuleTypeWarnings } from "../../src/cli/index.js";
@@ -63,6 +64,28 @@ describe("every other Node warning", () => {
       message: "The `punycode` module is deprecated (/tmp/project/postcss.config.js)",
     };
     expect(emitted([other])).toHaveLength(1);
+  });
+});
+
+describe("where the filter is installed", () => {
+  it("runs after the version check, which must reach a runtime this file cannot", () => {
+    const cliSrc = fs.readFileSync(path.resolve("src/cli/main.ts"), "utf8");
+    expect(cliSrc.indexOf("nodeVersionError(process.version)")).toBeLessThan(
+      cliSrc.indexOf("filterProjectModuleTypeWarnings(ownInstallRoot())"),
+    );
+    expect(cliSrc.indexOf("filterProjectModuleTypeWarnings(ownInstallRoot())")).toBeLessThan(
+      cliSrc.indexOf("parseArgs(process.argv.slice(2))"),
+    );
+  });
+
+  it("resolves its own root without a bare __dirname", () => {
+    const cliSrc = fs.readFileSync(path.resolve("src/cli/main.ts"), "utf8");
+    const ownRoot = cliSrc.slice(
+      cliSrc.indexOf("function ownInstallRoot()"),
+      cliSrc.indexOf("async function main()"),
+    );
+    expect(ownRoot).toContain("fileURLToPath(import.meta.url)");
+    expect(ownRoot).not.toContain("__dirname");
   });
 });
 

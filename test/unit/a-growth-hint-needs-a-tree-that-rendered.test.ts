@@ -52,6 +52,44 @@ describe("a growth hint over combos that never rendered", () => {
   });
 });
 
+describe("a growth hint in curve mode", () => {
+  function curveReport(overrides: Record<string, unknown>): Report {
+    return {
+      combos: [],
+      scalingCurveReport: {
+        points: [],
+        mountCurve: QUADRATIC,
+        rerenderCurve: null,
+        ...overrides,
+      },
+    } as unknown as Report;
+  }
+
+  it("is withheld when a scale point threw", () => {
+    const ids = hintsForReport(
+      curveReport({ renderErrorPoints: [{ n: 1, pageErrors: ["boom"] }] }),
+    );
+    expect(ids).toContain("renderError");
+    expect(ids).not.toContain("superlinearGrowth");
+  });
+
+  it("is withheld when every scale point rendered nothing", () => {
+    const ids = hintsForReport(
+      curveReport({ points: [{ domNodeCount: 0 }, { domNodeCount: 0 }] }),
+    );
+    expect(ids).toContain("curveRenderedNothing");
+    expect(ids).not.toContain("superlinearGrowth");
+  });
+
+  it("still fires over scale points that rendered", () => {
+    const ids = hintsForReport(
+      curveReport({ points: [{ domNodeCount: 12 }, { domNodeCount: 40 }] }),
+    );
+    expect(ids).toContain("superlinearGrowth");
+    expect(ids).not.toContain("renderError");
+  });
+});
+
 describe("the budget hint the same guard protects", () => {
   it("is still withheld for a render error and still fires for a plain fail", () => {
     expect(

@@ -2,7 +2,13 @@ import { describe, it, expect } from "vitest";
 import path from "node:path";
 import { explainProps } from "../../src/pipeline/index.js";
 import { extractPropsDetailed } from "../../src/props/index.js";
-import { formatTable, buildTimingWithCV, type Report, type Thresholds } from "../../src/report/index.js";
+import {
+  formatTable,
+  formatMarkdown,
+  buildTimingWithCV,
+  type Report,
+  type Thresholds,
+} from "../../src/report/index.js";
 
 const fixture = (rel: string): string => path.resolve("fixtures", rel);
 
@@ -69,5 +75,22 @@ describe("the terminal's warning prefix", () => {
   it("is added to a text that has none", () => {
     const output = formatTable(makeReport(["measured 2 of 3 prop combos"]));
     expect(output).toContain("⚠ measured 2 of 3 prop combos");
+  });
+
+  it("is not added to a text that already leads with one", () => {
+    const output = formatTable(makeReport(["⚠ already marked", "Warning: already worded"]));
+    expect(output).toContain("⚠ already marked");
+    expect(output).not.toContain("⚠ ⚠ already marked");
+    expect(output).not.toContain("⚠ Warning: already worded");
+    expect(output).toContain("Warning: already worded");
+  });
+});
+
+describe("the markdown report's warning fold", () => {
+  it("carries the unprefixed text", () => {
+    const md = formatMarkdown([makeReport(["no representative value could be synthesized for onToggle"])]);
+    expect(md).toContain("- no representative value could be synthesized for onToggle");
+    expect(md).not.toContain("Warning: no representative value");
+    expect(md).not.toContain("⚠");
   });
 });

@@ -235,10 +235,13 @@ export function appendEmptyRenderNote(lines: string[], report: Report): void {
   );
 }
 
+// A text that already leads with a warning marker keeps the one it has.
+const CARRIES_ITS_OWN_PREFIX = /^(⚠|Warning:)/;
+
 // Every output mode ends with the run's warnings, or its numbers lose their reason.
 export function appendWarnings(lines: string[], report: Report): void {
   for (const warning of presentWarnings(report)) {
-    lines.push(`⚠ ${warning}`);
+    lines.push(CARRIES_ITS_OWN_PREFIX.test(warning) ? warning : `⚠ ${warning}`);
   }
 }
 

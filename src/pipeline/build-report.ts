@@ -117,13 +117,29 @@ export function HARNESS_FAULT_DISCLOSURE(
   );
 }
 
+// 120fps's own repeat suffix and the runtime's line:column frames are not the component's text.
+const OWN_REPEAT_SUFFIX = /\s*\(×\d+\)/g;
+const STACK_POSITION = /:\d+:\d+/g;
+
+function withoutOwnAnnotations(errorText: string): string {
+  return errorText.replace(OWN_REPEAT_SUFFIX, "").replace(STACK_POSITION, "");
+}
+
+// "16" collides with a React error code and a line number; "test" collides with nothing.
+function isDistinctiveLeaf(leaf: string): boolean {
+  return leaf.length >= 3 || !/^\d+$/.test(leaf);
+}
+
 // A harness-caused crash is not the component's, but risky provenance alone is never evidence.
 function detectHarnessFault(
   combo: ComboReport,
   schemas: Array<PropSchema & { provenance?: PropProvenance }> | undefined,
+  // A combo that rendered has no crash corroborating the match, so its evidence bar is higher.
+  opts: { distinctiveOnly?: boolean } = {},
 ): ComboReport["harnessFault"] | undefined {
   if (!schemas || schemas.length === 0) return undefined;
   const errorText = (combo.pageErrors ?? []).join(" ");
+  const matchText = opts.distinctiveOnly ? withoutOwnAnnotations(errorText) : errorText;
 
   // Truthiness is necessary, not sufficient: an unconditional crash must exonerate no combo.
   for (const schema of schemas) {
@@ -141,7 +157,7 @@ function detectHarnessFault(
     if (!(schema.name in combo.props)) continue;
     if (!errorText) continue;
     const value = combo.props[schema.name];
-    if (valueEvidencedInText(value, errorText)) {
+    if (valueEvidencedInText(value, matchText, 0, opts.distinctiveOnly === true)) {
       return { propName: schema.name, value, provenance: schema.provenance, evidence: errorText };
     }
   }
@@ -187,12 +203,19 @@ function matchesAsWord(needle: string, haystack: string): boolean {
 }
 
 // Depth-bounded, so a cyclic or pathological value cannot loop this.
-function valueEvidencedInText(value: unknown, errorText: string, depth = 0): boolean {
+function valueEvidencedInText(
+  value: unknown,
+  errorText: string,
+  depth = 0,
+  distinctiveOnly = false,
+): boolean {
   const leaf = stringifyLeaf(value);
-  if (leaf && matchesAsWord(leaf, errorText)) return true;
+  if (leaf && (!distinctiveOnly || isDistinctiveLeaf(leaf)) && matchesAsWord(leaf, errorText)) {
+    return true;
+  }
   if (depth >= 3 || value === null || typeof value !== "object") return false;
   for (const child of Object.values(value as Record<string, unknown>)) {
-    if (valueEvidencedInText(child, errorText, depth + 1)) return true;
+    if (valueEvidencedInText(child, errorText, depth + 1, distinctiveOnly)) return true;
   }
   return false;
 }
@@ -368,9 +391,14 @@ export function buildReport(input: BuildReportInput): Report {
   // After the tier pass, so it sees the verdict a reader would; it only narrows an explained fail.
   const harnessFaultDisclosures: string[] = [];
   for (const combo of combos) {
-    const fault = detectHarnessFault(combo, input.schemas);
+    const narrowsAnExplainedFail = combo.verdict === "fail" && combo.renderHealth === "error";
+    const fault = detectHarnessFault(
+      combo,
+      input.schemas,
+      narrowsAnExplainedFail ? {} : { distinctiveOnly: true },
+    );
     if (!fault) continue;
-    if (combo.verdict === "fail" && combo.renderHealth === "error") {
+    if (narrowsAnExplainedFail) {
       combo.harnessFault = fault;
       combo.verdict = "warn";
       continue;

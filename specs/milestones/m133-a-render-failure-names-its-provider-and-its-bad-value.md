@@ -97,7 +97,8 @@ The verifier for every item below: run-7 investigation (2026-09-06), refuted by 
 - **C3** A render failure with no provider candidate keeps today's generic remedy, unchanged.
 - **C4** No hint is derived from a combo whose `renderHealth` is `error`: the curve loop moves inside
   the guard that already protects `budgetBreach`, so a curve fitted over non-rendering combos
-  produces no `superlinearGrowth`.
+  produces no `superlinearGrowth`. Curve mode has no combos, so its own curves are guarded by the
+  `curveRenderError` and `curveRenderedNothing` facts the report already computes.
 - **C8** A prop whose type accepts an intrinsic tag *and* a component — `React.ElementType` and the
   aliases that expand to the same union — synthesizes the string `"div"` with provenance
   `heuristic`, so a required slot renders instead of reaching React as `undefined`. A hand-written
@@ -110,7 +111,11 @@ The verifier for every item below: run-7 investigation (2026-09-06), refuted by 
   discloses `[harness fault]` in `report.warnings`, naming the prop, the value, its provenance and
   the page error that names it — the element the reader would look for is in that error text. The
   disclosure never changes a verdict, and it never sets `combo.harnessFault`, whose only meaning
-  stays the fail-and-render-error exemption `Result: PASS` is computed from.
+  stays the fail-and-render-error exemption `Result: PASS` is computed from. A combo that rendered
+  has no crash corroborating the match, so its evidence bar is higher than the crashed combo's: the
+  error text is read without 120fps's own `(×N)` repeat suffix and without `:line:column` stack
+  positions, and a value shorter than three characters that is all digits — `"16"`, `"1"` — is never
+  evidence, because it also spells a React error code and a line number.
 - **C7** `--help` describes exit 1 as the union of what the tool actually returns it for: a verdict
   that failed — over budget, a regression under `--check`/`--budget`, or a render error. The README
   rewording (`README:97`, `README:353-355` gaining an example and a link to `README:235`) is filed
@@ -143,8 +148,9 @@ The verifier for every item below: run-7 investigation (2026-09-06), refuted by 
   import keeps the generic remedy; a package in scope but not imported yields no candidate.
 - **C4** — `test/unit/a-growth-hint-needs-a-tree-that-rendered.test.ts` and
   `test/unit/hints.test.ts` (`:95-105`): six combos with `renderHealth: "error"` and `domNodeCount: 0`
-  produce no `superlinearGrowth`; the same curve with healthy combos still produces it; `budgetBreach`
-  behaviour is unchanged.
+  produce no `superlinearGrowth`; the same curve with healthy combos still produces it; a curve-mode
+  report whose scale points threw, and one whose points all rendered nothing, produce none either;
+  `budgetBreach` behaviour is unchanged.
 - **C5** — `test/unit/a-dimension-prop-synthesizes-a-number.test.ts` and
   `test/unit/prop-synthesis-image-src.test.ts`: `size: string`, `width: string`, `strokeWidth: string`
   each synthesize `"16"` with provenance `heuristic`; `label: string` does not; `size: number` is
@@ -180,6 +186,22 @@ npx vitest run test/unit --maxWorkers=2
 -> Test Files  2 failed | 387 passed (389)
    Tests  2 failed | 5387 passed | 1 skipped (5390)
    Duration 465.23s
+   the two failures are the recorded pre-existing set: prop-cap-ranking.test.ts and
+   vue-setup-inject-evidence.test.ts
+```
+
+Recorded run of the review fixes (2026-09-07, merged with `feat/run7-remediation` at `55f5102`):
+
+```
+node node_modules/typescript/bin/tsc --noEmit -p tsconfig.json   -> exit 0, no output
+
+npx vitest run <the 16 files this lane's two milestones touch> --maxWorkers=2
+-> Test Files  16 passed (16);  Tests  169 passed (169)
+
+npx vitest run test/unit --maxWorkers=2
+-> Test Files  2 failed | 389 passed (391)
+   Tests  2 failed | 5455 passed | 1 skipped (5458)
+   Duration 460.04s
    the two failures are the recorded pre-existing set: prop-cap-ranking.test.ts and
    vue-setup-inject-evidence.test.ts
 ```
@@ -232,13 +254,21 @@ Recorded corpus results (2026-09-07, `dist` built at this commit; logs under
 |---|---|---|
 | docmost | verdict-fail, generic remedy, `providerCandidates` undefined | `component imports @mantine/core, and the page error says "@mantine/core: MantineProvider was not found in component tree, make sure you have it in your app": render it inside that provider. A default-exporting 120fps.setup.tsx (or 120fps.setup.vue) at the package root is picked up automatically; --wrap names another path.` |
 | trigger.dev | `cost grows faster than the data` fitted over six `renderHealth: "error"` combos (`grep -c` = 1) | `grep -c` = 0; the render error is what is reported, and the suspect line names the page-error phrase |
-| linkwarden | 8 `<svg> attribute width: Expected length, "test"` errors, verdict-fail | `grep -c` = 0; `Result: PASS`; no placeholder reaches the DOM, so no disclosure is due |
+| linkwarden | 8 `<svg> attribute width: Expected length, "test"` errors, verdict-fail | `grep -c` = 0; `Result: PASS`, exit 0 in 30 s; `grep -c 'harness fault'` = 0 — no placeholder reaches the DOM, so no disclosure is due |
 | dub | every combo `Element type is invalid … but got: undefined`, 0 DOM nodes (13 error lines) | combos 0 and 1 render 8 and 4 DOM nodes (`WARN`); the four `__120fps_scaleN` probes still throw, which is the scale-probe prop path, not this rule |
 | bulletproof-react | `component imports react-router (useNavigate): likely needs a provider wrapper; see --wrap / 120fps.setup.tsx` for a file that imports only `Link` | `component imports react-router, and the page error says "Cannot destructure property 'basename' of 'React10.useContext(...)' as it is null.": render it inside that provider. …` |
 | ai-chatbot | verdict-fail, `Primitive.label failed to slot` | `Result: PASS` |
+| calcom (`--curve`, control) | `Growth: mount linear, rerender linear`; `Result: FAIL [render error]`, exit 1 | unchanged: no growth hint was due, and none prints; the curve-mode guard is pinned by unit tests instead |
 | calcom (control) | verdict-fail, exit 1 | `Result: FAIL [render error]`, exit 1, generic remedy unchanged (no candidate found); `--help` and `README:97` now describe exit 1 the same way |
 
 ## Deferred
+
+- **One-letter dimension names.** C5's `x`, `y`, `r` are as likely to be a coordinate the component
+  computes as an SVG attribute; the rule fires on them because the corpus offered no counter-example,
+  and a repository that synthesizes a wrong `x` is what would narrow it.
+- **Suppressing a suspect the run itself hoisted.** A provider candidate reached only through a
+  dependency 120fps installed for the harness is still named; separating the two needs the install
+  provenance the resolver does not carry today.
 
 - **The exit-code redesign.** The findings keep exit 1 (M59 is explicit; the JSON already carries
   `renderHealth`). C7 rewords the description; a distinct code for a render crash is a separate

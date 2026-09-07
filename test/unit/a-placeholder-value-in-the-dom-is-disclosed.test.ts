@@ -118,6 +118,71 @@ describe("a synthesized placeholder that reached the DOM of a rendered combo", (
   });
 });
 
+describe("text that is 120fps's own, or the runtime's, and not the component's", () => {
+  const DIMENSION_SCHEMAS: Schema[] = [
+    { name: "size", kind: "string", required: false, values: ["16"], provenance: "heuristic" },
+  ];
+
+  function disclosedFor(message: string): boolean {
+    const report = build({
+      mounts: [
+        makeMountResult({
+          props: { size: "16" },
+          pageErrors: { messages: [message], fatal: false, dropped: 0 },
+        }),
+      ],
+      schemas: DIMENSION_SCHEMAS,
+    });
+    return (report.warnings ?? []).some((w) => w.includes("[harness fault]"));
+  }
+
+  it("does not read 120fps's own repeat suffix as evidence", () => {
+    expect(disclosedFor("TypeError: cannot read properties of null (×16)")).toBe(false);
+  });
+
+  it("does not read a stack frame's line and column as evidence", () => {
+    expect(
+      disclosedFor("TypeError: boom\n    at Widget (webpack://src/Widget.tsx:16:5)"),
+    ).toBe(false);
+  });
+
+  it("does not read a React error code as evidence", () => {
+    expect(disclosedFor("Minified React error #16; visit https://react.dev/errors/16")).toBe(false);
+  });
+
+  it("still reads a distinctive placeholder as evidence", () => {
+    const report = build({
+      mounts: [
+        makeMountResult({
+          props: { size: "test" },
+          pageErrors: { messages: [SVG_ERROR], fatal: false, dropped: 0 },
+        }),
+      ],
+      schemas: SIZE_SCHEMAS,
+    });
+    expect((report.warnings ?? []).some((w) => w.includes("[harness fault]"))).toBe(true);
+  });
+
+  it("keeps the crashed combo's exemption on a short numeric value", () => {
+    const report = build({
+      mounts: [
+        makeMountResult({
+          props: { size: "16" },
+          domNodeCount: 0,
+          pageErrors: {
+            messages: ['Error: <svg> attribute width: Expected length, "16".'],
+            fatal: true,
+            dropped: 0,
+          },
+        }),
+      ],
+      schemas: DIMENSION_SCHEMAS,
+    });
+    expect(report.combos[0].harnessFault?.propName).toBe("size");
+    expect(report.combos[0].verdict).toBe("warn");
+  });
+});
+
 describe("the combo that crashed on a synthesized value", () => {
   it("keeps the exemption the verdict already grants it", () => {
     const report = build({

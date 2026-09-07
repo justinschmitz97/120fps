@@ -2,12 +2,17 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { analyze, explainProps, formatExplainProps, resolveProjectPaths } from "../pipeline/index.js";
 import { compareAgainstRef, formatCompare, validateCompareOptions } from "../analysis/index.js";
 import { formatMarkdown, formatJUnit, formatTable, formatPhaseBreakdown, resolveBaselinePath, BASELINE_FILE_SPANS_PROJECTS_ERROR } from "../report/index.js";
 import type { PhaseTimings } from "../report/index.js";
 import { createBrowserPool } from "../browser/index.js";
-import { createServerPool, refreshHarnessDirMarkers } from "../harness/index.js";
+import {
+  createServerPool,
+  refreshHarnessDirMarkers,
+  resetPreBuildDisclosures,
+} from "../harness/index.js";
 import { formatResolvedRoots, resolveProjectModel, setPreflightBypassed } from "../project/index.js";
 import { filterProjectModuleTypeWarnings } from "./node-warnings.js";
 import { captureThirdPartyErrors, thirdPartyOutputNotice } from "./third-party-output.js";
@@ -133,17 +138,19 @@ export function explainPropsOptions(
 
 // Resolved from the running file, so a global install and a workspace checkout both answer it.
 function ownInstallRoot(): string {
-  return path.resolve(import.meta.dirname ?? __dirname, "../..");
+  return path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 }
 
 async function main(): Promise<void> {
-  // Before parseArgs, so every project file a later step imports is already covered.
-  filterProjectModuleTypeWarnings(ownInstallRoot());
   const versionError = nodeVersionError(process.version);
   if (versionError) {
     process.stderr.write(`Error: ${versionError}\n`);
     process.exit(2);
   }
+
+  // After the version check, which must reach an old runtime, and before parseArgs, so every
+  // project file a later step imports is already covered.
+  filterProjectModuleTypeWarnings(ownInstallRoot());
 
   const args = parseArgs(process.argv.slice(2));
   // A remedy must not advise the flag this run already passed; set before anything can fail.
@@ -348,6 +355,8 @@ async function main(): Promise<void> {
       runWatchdog.clear();
       setCurrentRunProjectRoot(undefined);
       resetCurrentRunWarnings();
+      // One measured component is one run: component 2 of a glob states the project's config too.
+      resetPreBuildDisclosures();
     }
   }
   {
