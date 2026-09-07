@@ -7,6 +7,7 @@ tests:
   - test/unit/a-components-map-registers-its-components.test.ts
   - test/unit/an-auto-import-map-supplies-a-free-identifier.test.ts
   - test/unit/a-missing-identifier-names-the-map-consulted.test.ts
+  - test/unit/a-vue-file-is-covered-by-its-referenced-config.test.ts
 ---
 
 # M136: a Vue app's generated auto-import maps resolve its components and composables
@@ -90,15 +91,20 @@ advances M123's "nuxt.com must still reach the browser".
 
 ### Stage 2 — a components map registers its components
 
-- **C3** When a Vue project has a components declaration map on disk — `components.d.ts`,
-  `.nuxt/components.d.ts`, or the path a `components.d.ts`-shaped file is written to — the harness
-  parses it into `name → { module, exportName }` entries and registers each one before mount
-  (`src/harness/entry.ts:308`) as
-  `app.component(name, defineAsyncComponent(() => import(module)))`.
+- **C3** When a Vue project has a components declaration map on disk (`components.d.ts`,
+  `src/components.d.ts`, `types/components.d.ts`, `src/types/components.d.ts`,
+  `app/components.d.ts` or `.nuxt/components.d.ts`, searched in that order) the harness parses it
+  into `name -> { module, exportName }` entries and registers each entry whose module resolves
+  inside the project's own source tree, before mount, as
+  `app.component(name, defineAsyncComponent(() => import(module)))`. An entry whose module
+  resolves inside a dependency stays unregistered (C12).
 - **C4** Registration is additive and never shadows: a component the measured module graph imports
   explicitly wins over the map's entry of the same name.
 - **C5** A map entry whose module cannot be resolved is skipped, and the run says which entries were
-  skipped and from which map.
+  skipped and from which map. An entry left unregistered under C12 is a second, separately named
+  class, reported only when the measured component's own source references one of them: the run
+  names those, counts the rest, and says why a dependency's component is not registered. A run whose
+  component reaches for none of them prints no line, because none of them changes what it renders.
 
 ### Stage 3 — an auto-import map supplies a free identifier
 
@@ -110,8 +116,12 @@ advances M123's "nuxt.com must still reach the browser".
 - **C7** The transform is scoped to the measured component's own module graph. A file outside that
   graph, a file in `node_modules`, and a file that already imports or declares the identifier are all
   left untouched.
-- **C8** The prepended imports are disclosed: the run states how many identifiers it supplied and
-  from which map file.
+- **C8** The prepended imports are disclosed: before the page loads, the run names the auto-import
+  map file it read and how many identifiers that table makes available to the measured component's
+  graph. (The count of identifiers actually prepended is not stated: the harness result's warning
+  list is copied into the run's warnings in `src/pipeline/analyze.ts` before the page evaluates a
+  single module, so a per-module count recorded during transform could never reach the report.
+  What is prepended, and to which module, is decided only by C6 and C7.)
 
 ### Stage 4 — the hint names the map
 
@@ -121,15 +131,21 @@ advances M123's "nuxt.com must still reach the browser".
 
 ### Across all stages
 
-- **C13** A Nuxt project whose tsconfig chain covers the measured component through a generated
-  config reports that coverage instead of refusing to find one. The verifier for the gap:
-  scaffold-nuxt's run prints
-  `no referenced config covers app/components/Greeting.vue (tried .nuxt/tsconfig.app.json…)` although
-  `.nuxt/` is present and complete. When no config covers the component, the message names the
-  generated configs it tried and the `nuxi prepare` remedy M123 already owns; it never claims a
-  refusal M123 forbids (C11).
+- **C13** A referenced config that includes the measured component covers it, whatever the
+  component's file extension. The gap was extension-blindness, not a Nuxt layout: TypeScript's own
+  file globbing yields no `.vue` path unless the caller passes `extraFileExtensions`, so every
+  `.vue` file under a references-only root read as covered by nothing. `expandConfigFileNames`
+  (`src/project/model.ts`) passes `.vue` as a deferred-script extension, which is what the editor
+  tooling a Vue project runs already does. When no config covers the component the message is
+  unchanged: it names the configs it tried and never claims a refusal M123 forbids (C11).
 - **C10** Dry/real parity (M100, M110): `--explain-props` reports the same maps found, the same
-  entry counts, and the same skipped entries as the real run.
+  entry counts, and the same skipped entries as the real run. Deferred: the dry run never calls
+  `buildAndServe`, so its warning list is assembled independently in `src/pipeline/explain-props.ts`,
+  a lane-D file. The hunk is one push of the same texts
+  (`GENERATED_COMPONENTS_DISCLOSURE`, `GENERATED_MAP_SKIPPED_WARNING`, `DEFERRED_COMPONENTS_WARNING`,
+  `AUTO_IMPORT_DISCLOSURE`, all exported from `src/project/generated-declarations.ts`) beside the
+  existing `collectStaticPreBuildWarnings` push; it is filed as an interface request, not landed
+  here.
 - **C11** M123's contract holds unchanged: a project whose tsconfig chain names a missing file under
   `.nuxt/` is still a hard preflight refusal with the `nuxi prepare` remedy
   (`m123-…:57-60`); a project whose `.nuxt/` is complete is still not refused, and nuxt.com must
@@ -149,6 +165,23 @@ advances M123's "nuxt.com must still reach the browser".
   Nuxt-context refusal that names `UCarousel` and the map file", which is C9's outcome, and the lane
   does not attempt to synthesise a Nuxt context.
 
+  **C12 fired.** Registering `.nuxt/components.d.ts` in full let `<UCarousel>` resolve, and the
+  module then failed to load with a Nuxt-context error the browser reported as a 500:
+
+  ```
+  [vite] Internal Server Error
+  Missing "#imports" specifier in "@nuxt/ui" package
+  response 500: GET http://localhost:5173/node_modules/.pnpm/@nuxt+ui@4.11.0_.../@nuxt/ui/dist/runtime/components/Carousel.vue
+  Failed to fetch dynamically imported module: .../@nuxt/ui/dist/runtime/components/Carousel.vue
+  ```
+
+  `defineAsyncComponent` turns that load failure into a rejected promise, so the component rendered
+  nothing and the run reported **PASS with `domNodeCount: 1` at every scale point** - a measurement
+  of an empty tree. A silent pass is worse than the baseline's honest abort, which is exactly the
+  outcome C12 exists to prevent. Stage 2 is therefore re-scoped as C3 now states: only an entry
+  whose module resolves inside the project's own source tree is registered. A dependency's entry is
+  named by `DEFERRED_COMPONENTS_WARNING`, which lists the deferred names the measured component's
+  own source references.
 ## MUST NOT
 
 - Execute the project's `vite.config`, `nuxt.config` or any project code. The maps are parsed as
@@ -177,21 +210,30 @@ advances M123's "nuxt.com must still reach the browser".
   a fixture where the plugin exists only via hoisting still warns; a fixture with no plugin anywhere
   produces today's refusal.
 - **C3, C4, C5** — `test/unit/a-components-map-registers-its-components.test.ts`: a `components.d.ts`
-  with a relative entry, a package entry and an unresolvable entry registers the first two, skips the
-  third and names it; `.nuxt/components.d.ts` is parsed with the same shape; a component the graph
-  imports explicitly is not shadowed; a project with no map registers nothing.
+  with a project-source entry, a dependency entry and an unresolvable entry registers the first,
+  defers the second by name and skips the third by name; `.nuxt/components.d.ts` is parsed with the
+  same shape, including its `LazyComponent<...>` wrapper; a deferred name is matched in the measured
+  source in both `<UCarousel>` and `<u-carousel>` form; the measured component stays bound to its own
+  module import, so an explicit import is never shadowed; a project with no map registers nothing.
 - **C6, C7, C8** — `test/unit/an-auto-import-map-supplies-a-free-identifier.test.ts`: a module using
-  `useCounter` freely gets `import { useCounter } from '@vueuse/core'` prepended; a module that
-  already imports it is untouched; a module that declares a local `useCounter` is untouched; a file
-  in `node_modules` is untouched; a file outside the component's graph is untouched; the disclosure
-  names the count and the map.
+  `useCounter` freely gets `import { useCounter } from "@vueuse/core"` prepended; a module that
+  already imports it is untouched; a module that declares `useCounter` at any scope is untouched; a
+  name that appears only as a property or inside a string is untouched; a file in `node_modules`, a
+  file outside the project, a style block and a virtual module are all refused as transform targets;
+  the disclosure names the count and the map.
 - **C9** — `test/unit/a-missing-identifier-names-the-map-consulted.test.ts`: an undefined identifier
   present in the map, and one absent from it, produce distinguishable hints, both naming the map file.
-- **C10** — extend `test/unit/explain-props-parity.test.ts`: the dry run reports the same maps, counts
-  and skips.
-- **C11** — extend `test/unit/vue-support.test.ts` and the M123 tests: a Nuxt project with a missing
-  `.nuxt/` file still refuses with `nuxi prepare`; a complete `.nuxt/` is not refused; a non-Nuxt
-  project never sees `nuxi prepare`.
+- **C10** — deferred, see the contract item: `test/unit/explain-props-parity.test.ts` is unchanged
+  and still passes.
+- **C11** — `test/unit/vue-support.test.ts`,
+  `test/unit/nuxt-app-is-refused-or-reaches-the-first-measurement.test.ts` and
+  `test/unit/nuxt-diagnosis-requires-nuxt.test.ts` are unchanged and pass: a Nuxt project with a
+  missing `.nuxt/` file still refuses with `nuxi prepare`; a complete `.nuxt/` is not refused; a
+  non-Nuxt project never sees `nuxi prepare`.
+- **C13** — `test/unit/a-vue-file-is-covered-by-its-referenced-config.test.ts`: a references-only root
+  whose referenced config includes `app/**/*` covers `app/components/Greeting.vue` and supplies its
+  `paths`; the same config still covers a `.ts` file beside it; a target no referenced config
+  includes still reports `no referenced config covers` and names what it tried.
 - **C12** — recorded below: either nuxt.com reaches mount, or the verbatim Nuxt-context error and the
   re-scoped stage-2 contract.
 - Types: `node node_modules/typescript/bin/tsc --noEmit -p tsconfig.json` clean.
@@ -204,9 +246,45 @@ advances M123's "nuxt.com must still reach the browser".
 Recorded run of this milestone's verification:
 
 ```
-<filled by lane G: tsc result, the vitest invocations and their verbatim totals,
- and — for C12 — either nuxt.com reaching mount or the verbatim Nuxt-context error>
+$ node node_modules/typescript/bin/tsc --noEmit -p tsconfig.json
+(no output, exit 0)
+
+$ npx vitest run     test/unit/the-vue-plugin-resolves-through-its-host-framework.test.ts     test/unit/a-components-map-registers-its-components.test.ts     test/unit/an-auto-import-map-supplies-a-free-identifier.test.ts     test/unit/a-missing-identifier-names-the-map-consulted.test.ts     test/unit/a-vue-file-is-covered-by-its-referenced-config.test.ts     test/unit/module-ratchets.test.ts test/unit/module-boundaries.test.ts --maxWorkers=2
+ Test Files  7 passed (7)
+      Tests  51 passed (51)
+
+$ npx vitest run test/unit/vue-support.test.ts test/unit/project-transforms.test.ts     test/unit/nuxt-app-is-refused-or-reaches-the-first-measurement.test.ts     test/unit/nuxt-diagnosis-requires-nuxt.test.ts     test/unit/entry-selects-exports-at-runtime.test.ts test/unit/hints.test.ts     test/unit/mount-abort-hints-name-read-evidence.test.ts     test/unit/explain-props-parity.test.ts test/unit/a-tsconfig-is-parsed-once-per-path.test.ts     test/unit/module-boundaries.test.ts test/unit/module-ratchets.test.ts --maxWorkers=2
+ Test Files  11 passed (11)
+      Tests  168 passed (168)
+
+$ npx vitest run test/unit --maxWorkers=2
+ Test Files  2 failed | 369 passed (371)
+      Tests  2 failed | 5214 passed | 1 skipped (5217)
+   Duration  384.81s
+# the two failures are the recorded pre-existing pair, confirmed in isolation:
+$ npx vitest run test/unit/prop-cap-ranking.test.ts test/unit/vue-setup-inject-evidence.test.ts
+ Test Files  2 failed (2)
+      Tests  2 failed | 6 passed (8)
 ```
+
+Corpus results, `dist` built in `C:/Projekte/120fps-run7-lane-g`, profile
+`--samples 3 --max-combos 2 --explore-budget 30 --no-deltas`, logs under
+`C:/Projekte/120fps-fieldtest/logs/run7-lane-g/<repo>/`:
+
+| Repo | Component | Baseline | Observed | Stage |
+|---|---|---|---|---|
+| wg-easy | `app/components/Form/Label.vue` | setup-error, exit 2, 93 s | **PASS**, exit 0, 17.9 s; no hoisting warning; 206 project components registered from `src/.nuxt/components.d.ts`, and `Label, Slot` named as reached-for entries inside a dependency | 1 |
+| scaffold-nuxt | `app/components/Greeting.vue` | pass with "found via a hoisted transitive install" | **PASS**, exit 0, 12.0 s; hoisting warning gone; `no referenced config covers` gone, replaced by `.nuxt/tsconfig.app.json covers app/components/Greeting.vue and supplies paths, jsxImportSource` | 1, C13 |
+| nuxt.com | `app/components/content/Carousel.vue` | setup-error, exit 2, 37 s; log never names `UCarousel` | exit 2, 46 s, same `Cannot destructure property 'item'` abort, and the run now names it: `.nuxt/components.d.ts maps ProseImg, UCarousel, which this component's source references, to modules inside a dependency ... 600 further entries are in the same class.` | 2, C12 |
+| vitesse | `src/components/TheCounter.vue` | diagnosed-error, exit 2, 4 s (`useCounter is not defined`) | **PASS**, exit 0, 46.2 s; 4 DOM nodes, 9 interactions; `src/auto-imports.d.ts maps 305 auto-imported identifiers` | 3 |
+| vue3-element-admin | `src/components/Fullscreen/index.vue` | diagnosed-error, exit 2, 6 s | **PASS**, exit 0, 16.8 s; `types/auto-imports.d.ts maps 296 auto-imported identifiers`, 40 components registered | 3 |
+| it-tools | `src/ui/c-modal/c-modal.demo.vue` | diagnosed-error, exit 2, 4 s | **PASS**, exit 0, 14.1 s; 153 components registered, 280 identifiers available. The run also discloses a page error from the project's own `c-button.vue`, `Cannot access 'size' before initialization`; `size` is absent from `auto-imports.d.ts`, so the injector cannot be its source, and the earlier abort had hidden it. | 3 |
+| uptime-kuma (control) | `src/components/Tag.vue` | setup-error, exit 2 | unchanged class: setup-error, exit 2, 12 s, now carrying M129's `sass 1.42.1 ... does not define compileStringAsync` diagnosis | control |
+| vue-pure-admin (control) | `src/views/components/slider/components/Input.vue` | pass-warn, exit 0 | unchanged: PASS, exit 0, 48.1 s, 4 warnings, no map lines (the project has no generated map at a searched path) | control |
+
+`git status --porcelain` in every target repository is unchanged by these runs. `vue3-element-admin`
+(`pnpm-lock.yaml`) and `uptime-kuma` (`package-lock.json`) carry a pre-existing lockfile edit that
+predates the lane.
 
 Corpus repros, through a `dist` built in `C:/Projekte/120fps-run7-lane-g`:
 
@@ -236,8 +314,8 @@ node C:/Projekte/120fps-fieldtest/tools/run120.mjs \
   --out C:/Projekte/120fps-fieldtest/logs/run7-lane-g/nuxt.com \
   --label m136-nuxt-com --cli C:/Projekte/120fps-run7-lane-g/dist/cli/main.js \
   -- app/components/content/Carousel.vue --samples 3 --max-combos 2 --explore-budget 30 --no-deltas
-# expected: reaches mount, or stops with a named Nuxt-context refusal naming UCarousel and
-#           .nuxt/components.d.ts (C12 stop-and-re-scope)
+# observed: C12 fired; the run stops on the same abort as the baseline and now names UCarousel
+#           and .nuxt/components.d.ts
 
 # stage 3
 node C:/Projekte/120fps-fieldtest/tools/run120.mjs \
@@ -275,5 +353,13 @@ node C:/Projekte/120fps-fieldtest/tools/run120.mjs \
   accurate and stays.
 - **soybean-admin, vue-pure-admin, uptime-kuma.** They pass because the picked leaf touches no
   auto-import; they are controls here, not targets.
-- **A Nuxt app context for `@nuxt/ui` runtime components.** If C12 fires, this is what would be
-  needed, and it is a new milestone with its own evidence — not a widening of this one.
+- **A Nuxt app context for a dependency's runtime components.** C12 fired, so this is what nuxt.com
+  would need, and it is a new milestone with its own evidence, not a widening of this one. Its first
+  requirement is the one this lane found the hard way: an async component that fails to load must
+  fail the run instead of rendering nothing and passing.
+- **Dry/real parity for the map disclosures (C10).** `src/pipeline/explain-props.ts` belongs to
+  lane D; the hunk is described in C10 and is an interface request to the coordinator.
+- **A per-module count of prepended imports (C8's original wording).** The harness result's warning
+  list is consumed before the page loads, so the count of identifiers actually supplied has no
+  channel to reach the report. C8 states what the run does state: the map file and the size of its
+  table.

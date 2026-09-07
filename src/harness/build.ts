@@ -3,18 +3,27 @@ import path from "node:path";
 import { createServer, searchForWorkspaceRoot, type ViteDevServer } from "vite";
 import type { CompositionTree, ExportInfo } from "../props/index.js";
 import {
+  AUTO_IMPORT_DISCLOSURE,
+  autoImportTransformPlugin,
+  DEFERRED_COMPONENTS_WARNING,
+  deferredComponentsUsedBy,
   detectProjectTransforms,
   findProjectRoot,
   findWorkspaceRoot,
+  GENERATED_COMPONENTS_DISCLOSURE,
+  GENERATED_MAP_SKIPPED_WARNING,
   isVueFile,
   loadProjectTransformPlugins,
   loadReactCompilerPlugin,
   loadVueCompiler,
   reactCompilerRuntimeDeps,
   reactJsxRuntimeDeps,
+  readAutoImportDeclarationMap,
+  readComponentDeclarationMap,
   resolveReactCompilerState,
   templateHasUnconditionalRoot,
   type ReactCompilerState,
+  type ResolvedDeclarationMap,
 } from "../project/index.js";
 import { presentBundlerFailure } from "./bundler-failure.js";
 import { cssImportHoistPlugin } from "./css-import-hoist.js";
@@ -182,6 +191,44 @@ export async function buildAndServe(
     ? toPosix(path.relative(projectRoot, path.resolve(options.presetPath)))
     : undefined;
 
+  // What the project's own generators wrote down, read as data: a name-to-module table.
+  const generatedMapWarnings: string[] = [];
+  const useGeneratedMaps = renderer === "vue" && !options?.noTransforms;
+  const componentMap = useGeneratedMaps ? readComponentDeclarationMap(projectRoot) : undefined;
+  const autoImportMap = useGeneratedMaps ? readAutoImportDeclarationMap(projectRoot) : undefined;
+  const globalComponents = (componentMap?.names ?? []).map((entry) => ({
+    name: entry.name,
+    specifier: entry.targetIsFile
+      ? `/${componentImportPath(entry.target, projectRoot)}`
+      : entry.target,
+    exportName: entry.exportName,
+  }));
+  for (const map of [componentMap, autoImportMap]) {
+    if (map && map.skipped.length > 0) {
+      generatedMapWarnings.push(GENERATED_MAP_SKIPPED_WARNING(map.file, map.skipped));
+    }
+  }
+  if (componentMap && globalComponents.length > 0) {
+    generatedMapWarnings.push(
+      GENERATED_COMPONENTS_DISCLOSURE(componentMap.file, globalComponents.length),
+    );
+  }
+  if (autoImportMap && autoImportMap.names.length > 0) {
+    generatedMapWarnings.push(AUTO_IMPORT_DISCLOSURE(autoImportMap.file, autoImportMap.names.length));
+  }
+  if (componentMap && componentMap.deferred.length > 0) {
+    // Named only when the measured component reaches for one: the rest changes nothing it renders.
+    const reached = deferredComponentsUsedBy(
+      fs.readFileSync(absoluteComponentPath, "utf-8"),
+      componentMap.deferred,
+    );
+    if (reached.length > 0) {
+      generatedMapWarnings.push(
+        DEFERRED_COMPONENTS_WARNING(componentMap.file, reached, componentMap.deferred.length),
+      );
+    }
+  }
+
   // Re-rendered when the stylesheet probe drops a sheet, before the page is ever requested.
   let renderEntry: (imports: string[]) => string;
   let component: ComponentIdentity;
@@ -218,6 +265,7 @@ export async function buildAndServe(
         renderer,
         ...(presetRelative ? { presetRelative } : {}),
         ...(renderer === "vue" ? { vueUnconditionalRoot } : {}),
+        ...(globalComponents.length > 0 ? { globalComponents } : {}),
       });
   }
   const entryTsx = renderEntry(cssImports);
@@ -308,6 +356,16 @@ export async function buildAndServe(
       )),
     );
   }
+  // After the SFC compiler, so the identifiers it reads are the ones the module really evaluates.
+  if (autoImportMap && autoImportMap.names.length > 0) {
+    plugins.push(
+      autoImportTransformPlugin({
+        projectRoot,
+        map: autoImportMap as ResolvedDeclarationMap,
+        harnessDir,
+      }),
+    );
+  }
 
   const aliasAllow = fsAllowDirs(
     projectRoot,
@@ -389,6 +447,7 @@ export async function buildAndServe(
   let ownsServer = true;
   const buildWarnings: string[] = [
     ...transformWarnings,
+    ...generatedMapWarnings,
     ...sweepWarnings,
     ...new Set(configWarnings),
   ];

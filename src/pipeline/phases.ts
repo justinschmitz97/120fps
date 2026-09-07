@@ -36,6 +36,7 @@ import {
   PreflightHardRejectionError,
   type PreflightHit,
   type VueSfcCompiler,
+  autoImportMapEvidence,
   classifyProjectTransformHits,
   isDirectProviderHit,
   preflightFailureMessage,
@@ -494,6 +495,7 @@ export async function classifyHarnessFault(input: {
       combined.push(warning);
     }),
     ...(viteConfigIgnoredKeys(combined) ?? {}),
+    ...(autoImportMapEvidence(projectRoot) ?? {}),
   });
   return { presented, combined, abortHints };
 }
