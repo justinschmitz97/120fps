@@ -6,8 +6,10 @@ tests:
   - test/unit/prop-synthesis-image-src.test.ts
   - test/unit/a-render-failure-names-its-provider.test.ts
   - test/unit/a-dimension-prop-synthesizes-a-number.test.ts
+  - test/unit/an-element-type-prop-synthesizes-a-tag.test.ts
   - test/unit/a-growth-hint-needs-a-tree-that-rendered.test.ts
   - test/unit/a-placeholder-value-in-the-dom-is-disclosed.test.ts
+  - test/unit/the-exit-code-line-covers-a-render-error.test.ts
 ---
 
 # M133: a render failure names its provider, its bad value, and nothing that never rendered
@@ -66,7 +68,12 @@ The verifier for every item below: run-7 investigation (2026-09-06), refuted by 
    (`if (combo.verdict !== "fail" || combo.renderHealth !== "error") continue;`). The verifier: a
    combo that rendered 39 nodes and produced page errors gets no `[harness fault]` line, because it
    neither failed nor reported a render error.
-5. **The help text describes exit 1 as something else** — `src/cli/help.ts:57` reads
+5. **A slot that takes a tag or a component is measured as `undefined`** — `classifyTypeByShape`
+   (`src/props/classify.ts`) had no rule for `React.ElementType`, whose union carries every
+   intrinsic tag literal beside `ComponentClass` and `FunctionComponent`. The verifier: dub's
+   `ui/shared/empty-state.tsx` extracts `icon` as required (M130) and every combo threw
+   `Element type is invalid … but got: undefined` — `logs/run7-lane-b/dub/`.
+6. **The help text describes exit 1 as something else** — `src/cli/help.ts:57` reads
    `1   a verdict failed: over budget, or a regression under --check/--budget`, and `README:97`
    repeats it, while `specs/overview/01-glossary.md:169` records that a `renderHealth` error forces a
    fail and `:175` defines fail as exceeding a threshold. The verifier: a render crash exits 1 and is
@@ -75,23 +82,35 @@ The verifier for every item below: run-7 investigation (2026-09-06), refuted by 
 
 ## MUST
 
-- **C1** `PROVIDER_LIBRARY_SCOPES` covers `@mantine/` and `@chakra-ui/` beside `@radix-ui/`, so a
-  component whose imports name a package in one of those scopes yields a provider candidate.
+- **C1** `PROVIDER_LIBRARY_SCOPES` covers `@mantine/`, `@chakra-ui/` and `@trpc/` beside
+  `@radix-ui/`, so a component whose imports name a package in one of those scopes yields a
+  provider candidate. `PROVIDER_LIBRARIES` names the representative hook of the context libraries
+  the deep run found: `react-intl` (`useIntl`), `jotai` and `jotai-scope` (`useAtom`),
+  `@trpc/tanstack-react-query` (`useTRPC`) and `@trpc/react-query` (`useQuery`).
 - **C2** When more than one provider candidate exists, they are ranked by whether the captured page
   error text names them, using the needle mechanism already at `src/report/hints.ts:417`. The remedy
   names the top candidate, states the evidence — the import, and the page-error phrase when there was
-  one — and points at the `120fps.setup.tsx` / `120fps.setup.vue` recipe and the member root where it
-  is auto-detected.
+  one — and points at the `120fps.setup.tsx` / `120fps.setup.vue` recipe and the package root where
+  it is auto-detected. Exactly one line reads as the suspect; the remaining candidates keep the
+  line they already had. The needle drops every trailing `Provider`/`Context`, so
+  `OperatingSystemContextProvider` ranks `OperatingSystemProvider.tsx` first.
 - **C3** A render failure with no provider candidate keeps today's generic remedy, unchanged.
 - **C4** No hint is derived from a combo whose `renderHealth` is `error`: the curve loop moves inside
   the guard that already protects `budgetBreach`, so a curve fitted over non-rendering combos
   produces no `superlinearGrowth`.
+- **C8** A prop whose type accepts an intrinsic tag *and* a component — `React.ElementType` and the
+  aliases that expand to the same union — synthesizes the string `"div"` with provenance
+  `heuristic`, so a required slot renders instead of reaching React as `undefined`. A hand-written
+  literal union of tag names stays the enumeration it declares; a prop the contract rule already
+  owns (`as`, `asChild`, `render`) keeps its `contract` provenance.
 - **C5** A prop whose name matches a dimension — `/^(width|height|size|x|y|r|cx|cy|rx|ry|strokeWidth)$/i`
   — and whose type is `string` synthesizes `"16"`, with provenance `heuristic`, in the same place the
   currency, locale and image-source rules live.
-- **C6** When a synthesized placeholder value reaches the DOM, the run discloses `[harness fault]`
-  naming the prop, the value and the element, regardless of the combo's verdict and `renderHealth`.
-  The disclosure never changes a verdict.
+- **C6** When a synthesized placeholder value reaches the DOM of a combo that rendered, the run
+  discloses `[harness fault]` in `report.warnings`, naming the prop, the value, its provenance and
+  the page error that names it — the element the reader would look for is in that error text. The
+  disclosure never changes a verdict, and it never sets `combo.harnessFault`, whose only meaning
+  stays the fail-and-render-error exemption `Result: PASS` is computed from.
 - **C7** `--help` describes exit 1 as the union of what the tool actually returns it for: a verdict
   that failed — over budget, a regression under `--check`/`--budget`, or a render error. The README
   rewording (`README:97`, `README:353-355` gaining an example and a link to `README:235`) is filed
@@ -109,6 +128,9 @@ The verifier for every item below: run-7 investigation (2026-09-06), refuted by 
   available in the JSON if they are already carried there.
 - Extend the dimension rule to a prop whose type is a number, a union of literals, or an enum — those
   already synthesize correctly and C5 must not shadow them.
+- Read C8's element-type shape from a type *name*. The rule fires on the structure — every intrinsic
+  tag literal plus a callable or constructable member — so a renamed alias is still covered and a
+  literal union that happens to contain `"div"` is not.
 - Change the `120fps.setup.*` detection or the recipe itself; both are M114 and M127 surface and both
   are recorded as working.
 
@@ -128,6 +150,10 @@ The verifier for every item below: run-7 investigation (2026-09-06), refuted by 
   each synthesize `"16"` with provenance `heuristic`; `label: string` does not; `size: number` is
   untouched; `size: "sm" | "lg"` is untouched. A fixture sibling of `fixtures/m84/image-src.tsx`
   carries the shape.
+- **C8** — `test/unit/an-element-type-prop-synthesizes-a-tag.test.ts`: `icon: ElementType`
+  (required) and `component?: ElementType` each synthesize `"div"` with provenance `heuristic`;
+  `title: string` beside them keeps `"test"`; `as?: ElementType` keeps `contract`; a
+  `"div" | "span" | "button"` union keeps all three values and `declared`.
 - **C6** — `test/unit/a-placeholder-value-in-the-dom-is-disclosed.test.ts`: a combo with
   `verdict: "pass"`, `renderHealth: "ok"`, 39 rendered nodes and a placeholder value in the DOM
   produces the `[harness fault]` disclosure and keeps `verdict: "pass"`; a combo with no placeholder
@@ -140,10 +166,22 @@ The verifier for every item below: run-7 investigation (2026-09-06), refuted by 
   `test/unit/curve-render-error-hint.test.ts`, `test/unit/preflight.test.ts`, then the full unit suite
   once before the lane's final commit.
 
-Recorded run of this milestone's verification:
+Recorded run of this milestone's verification (2026-09-07, worktree
+`C:/Projekte/120fps-run7-lane-d` merged with `feat/run7-remediation` at `cc506f0`, node 22.22.2):
 
 ```
-<filled by lane D: tsc result, the vitest invocations and their verbatim totals>
+node node_modules/typescript/bin/tsc --noEmit -p tsconfig.json
+-> exit 0, no output
+
+npx vitest run test/unit/a-render-failure-names-its-provider.test.ts   test/unit/a-growth-hint-needs-a-tree-that-rendered.test.ts   test/unit/a-dimension-prop-synthesizes-a-number.test.ts   test/unit/a-placeholder-value-in-the-dom-is-disclosed.test.ts   test/unit/an-element-type-prop-synthesizes-a-tag.test.ts   test/unit/the-exit-code-line-covers-a-render-error.test.ts   test/unit/hints-captured-error.test.ts test/unit/hints.test.ts   test/unit/curve-render-error-hint.test.ts test/unit/prop-synthesis*.test.ts   test/unit/dx-features.test.ts test/unit/preflight.test.ts --maxWorkers=2
+-> Test Files  17 passed (17);  Tests  267 passed (267)
+
+npx vitest run test/unit --maxWorkers=2
+-> Test Files  2 failed | 387 passed (389)
+   Tests  2 failed | 5387 passed | 1 skipped (5390)
+   Duration 465.23s
+   the two failures are the recorded pre-existing set: prop-cap-ranking.test.ts and
+   vue-setup-inject-evidence.test.ts
 ```
 
 Corpus repros, through a `dist` built in `C:/Projekte/120fps-run7-lane-d`:
@@ -186,6 +224,19 @@ node C:/Projekte/120fps-fieldtest/tools/run120.mjs \
   -- modules/apps/components/Slider.tsx --samples 3 --max-combos 2 --explore-budget 30 --no-deltas
 # expected: still verdict-fail, exit 1
 ```
+
+Recorded corpus results (2026-09-07, `dist` built at this commit; logs under
+`C:/Projekte/120fps-fieldtest/logs/run7-lane-d/<repo>/`):
+
+| Repo | Before | After |
+|---|---|---|
+| docmost | verdict-fail, generic remedy, `providerCandidates` undefined | `component imports @mantine/core, and the page error says "@mantine/core: MantineProvider was not found in component tree, make sure you have it in your app": render it inside that provider. A default-exporting 120fps.setup.tsx (or 120fps.setup.vue) at the package root is picked up automatically; --wrap names another path.` |
+| trigger.dev | `cost grows faster than the data` fitted over six `renderHealth: "error"` combos (`grep -c` = 1) | `grep -c` = 0; the render error is what is reported, and the suspect line names the page-error phrase |
+| linkwarden | 8 `<svg> attribute width: Expected length, "test"` errors, verdict-fail | `grep -c` = 0; `Result: PASS`; no placeholder reaches the DOM, so no disclosure is due |
+| dub | every combo `Element type is invalid … but got: undefined`, 0 DOM nodes (13 error lines) | combos 0 and 1 render 8 and 4 DOM nodes (`WARN`); the four `__120fps_scaleN` probes still throw, which is the scale-probe prop path, not this rule |
+| bulletproof-react | `component imports react-router (useNavigate): likely needs a provider wrapper; see --wrap / 120fps.setup.tsx` for a file that imports only `Link` | `component imports react-router, and the page error says "Cannot destructure property 'basename' of 'React10.useContext(...)' as it is null.": render it inside that provider. …` |
+| ai-chatbot | verdict-fail, `Primitive.label failed to slot` | `Result: PASS` |
+| calcom (control) | verdict-fail, exit 1 | `Result: FAIL [render error]`, exit 1, generic remedy unchanged (no candidate found); `--help` and `README:97` now describe exit 1 the same way |
 
 ## Deferred
 
