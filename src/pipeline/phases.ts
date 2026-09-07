@@ -55,7 +55,7 @@ import {
   viteConfigIgnoredKeys,
 } from "./remedies.js";
 import {
-  STYLESHEET_MATCHED_NOTHING_WARNING,
+  stylesheetMatchWarnings,
   probeStylesheetMatchStats,
   resolveCssFiles,
   resolveFramework,
@@ -548,16 +548,19 @@ export async function recordStylesheetMatches(input: {
 // Read on the harness this run measures on, before throttling and any traced window.
 if (cssReport.details && cssReport.details.length > 0) {
   const stats = await probeStylesheetMatchStats(page);
+  // The probe reports rules: 0 for a sheet it could not read, and detail.rules is only static.
+  const probed: NonNullable<CssReport["details"]> = [];
   for (const stat of stats ?? []) {
     // One direction only: the reverse match misattaches when two sheets share a trailing segment.
     const normalized = stat.file.split("\\").join("/");
     const detail = cssReport.details.find((d) => normalized.endsWith(d.file));
     if (!detail) continue;
     detail.matchedRules = stat.matched;
-    // The probe reports rules: 0 for a sheet it could not read, and detail.rules is only static.
-    if (stat.rules > 0 && stat.matched === 0) {
-      onWarning(STYLESHEET_MATCHED_NOTHING_WARNING(detail.file, stat.rules));
-    }
+    probed.push({ ...detail, rules: stat.rules, matchedRules: stat.matched });
+  }
+  // One disclosure for the whole run: a wrong pick reads differently from an unused feature sheet.
+  for (const warning of stylesheetMatchWarnings({ layer: cssReport.layer, details: probed })) {
+    onWarning(warning);
   }
 }
 }

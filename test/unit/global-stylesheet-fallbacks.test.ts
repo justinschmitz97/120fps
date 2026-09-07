@@ -11,7 +11,8 @@ import {
   largestStylesheet,
   validateCssFiles,
 } from "../../src/harness/index.js";
-import { resolveCssFiles } from "../../src/pipeline/index.js";
+import { buildCssReport, resolveCssFiles } from "../../src/pipeline/index.js";
+import { formatStylesheetsLine } from "../../src/report/index.js";
 
 let tmpDir: string;
 
@@ -197,5 +198,46 @@ describe("auto-detection through resolveCssFiles", () => {
       layer: "explicit",
     });
     expect(warnings).toEqual([]);
+  });
+});
+
+describe("what the none-found line says it did", () => {
+  function noneLine(root: string): string {
+    return formatStylesheetsLine(buildCssReport(resolveCssFiles({}, root), root));
+  }
+
+  it("names the sheet it rejected and why, when the only sheet is a Tailwind passthrough", () => {
+    write("src/styles/global.css", "@layer base;\n@import 'tailwindcss';\n");
+    const line = noneLine(tmpDir);
+    expect(line).toContain("none found");
+    expect(line).toContain("src/styles/global.css");
+    expect(line).toContain("no CSS rule with a body of its own");
+    expect(line).toContain("Tailwind");
+  });
+
+  it("does not claim it checked a project entry when it found none", () => {
+    write("src/styles/global.css", "@import 'tailwindcss';\n");
+    expect(noneLine(tmpDir)).not.toContain("checked the project entry");
+  });
+
+  it("says no stylesheet file exists when the project has none", () => {
+    write("src/main.tsx", "export const a = 1;");
+    const line = noneLine(tmpDir);
+    expect(line).toContain("none found");
+    expect(line).toContain("no stylesheet file");
+  });
+
+  it("names the entry it read when the entry imports no stylesheet", () => {
+    write("index.html", '<script type="module" src="/src/main.tsx"></script>');
+    write("src/main.tsx", "export const a = 1;");
+    const line = noneLine(tmpDir);
+    expect(line).toContain("none found");
+    expect(line).toContain("src/main.tsx");
+  });
+
+  it("keeps the plain sentence when the run recorded no reason", () => {
+    expect(
+      formatStylesheetsLine({ files: [], autoDetected: false, layer: "none" }),
+    ).toContain("checked the project entry, conventional filenames");
   });
 });

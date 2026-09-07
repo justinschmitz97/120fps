@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import ts from "typescript";
 import {
   findWorkspaceRoot,
   loadTsconfigAliases,
@@ -17,9 +18,11 @@ import {
   CSS_PLACEHOLDER_SKIPPED_WARNING,
   CSS_RESET_SKIPPED_WARNING,
   GLOBAL_CSS_CANDIDATES,
+  entryModuleImports,
   entryStylesheetImports,
   isCssModule,
   isOptInResetName,
+  isPreprocessorPartialName,
   isStylesheet,
   preprocessorFor,
   resolveStylesheetImportTarget,
@@ -32,6 +35,9 @@ import { readViteConfigData } from "./vite-config.js";
 import { isFile, toPosix } from "../shared/index.js";
 
 const NEXT_ENTRY_STEMS = ["app/layout", "src/app/layout", "pages/_app", "src/pages/_app"];
+// React Router 7 and Remix start every route from this module, and it is where the app's
+// stylesheet is imported (`import stylesheet from "./app.css?url"`).
+const ROUTER_ENTRY_STEMS = ["app/root", "src/app/root"];
 const ENTRY_EXTENSIONS = [".tsx", ".jsx", ".ts", ".js"];
 const MODULE_SCRIPT_TAG = /<script\b[^>]*>/gi;
 
@@ -74,13 +80,64 @@ export function findProjectEntry(
     if (fromInput) return fromInput;
   }
 
-  for (const stem of NEXT_ENTRY_STEMS) {
+  for (const stem of [...NEXT_ENTRY_STEMS, ...ROUTER_ENTRY_STEMS]) {
     for (const extension of ENTRY_EXTENSIONS) {
       const candidate = path.join(projectRoot, stem + extension);
       if (isFile(candidate)) return candidate;
     }
   }
   return undefined;
+}
+
+const NUXT_CONFIG_NAMES = ["nuxt.config.ts", "nuxt.config.mts", "nuxt.config.js", "nuxt.config.mjs"];
+// Nuxt 4 keeps the app under app/; the same specifier resolves against src/ in a Nuxt 3 layout.
+const NUXT_ALIAS_ROOTS = ["app", "src", "."];
+
+// The literal `css:` array of a nuxt config, read from source. The config is never executed, so a
+// computed array yields nothing rather than a guess.
+export function nuxtConfigStylesheets(projectRoot: string): string[] {
+  const config = NUXT_CONFIG_NAMES.map((name) => path.join(projectRoot, name)).find(isFile);
+  if (!config) return [];
+  let sourceText: string;
+  try {
+    sourceText = fs.readFileSync(config, "utf-8");
+  } catch {
+    return [];
+  }
+  const source = ts.createSourceFile(config, sourceText, ts.ScriptTarget.Latest, false, ts.ScriptKind.TS);
+  const specifiers: string[] = [];
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isPropertyAssignment(node) &&
+      (ts.isIdentifier(node.name) || ts.isStringLiteral(node.name)) &&
+      node.name.text === "css" &&
+      ts.isArrayLiteralExpression(node.initializer)
+    ) {
+      for (const element of node.initializer.elements) {
+        if (ts.isStringLiteral(element)) specifiers.push(element.text.split("?")[0]);
+      }
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(source, visit);
+
+  const files: string[] = [];
+  for (const specifier of specifiers) {
+    if (!isStylesheet(specifier)) continue;
+    const relative = /^[~@]\//.test(specifier) ? specifier.slice(2) : specifier;
+    const bases = /^[~@]\//.test(specifier)
+      ? NUXT_ALIAS_ROOTS.map((root) => path.join(projectRoot, root))
+      : [path.dirname(config)];
+    for (const base of bases) {
+      const candidate = path.resolve(base, relative);
+      if (isFile(candidate) && !files.includes(candidate)) {
+        files.push(candidate);
+        break;
+      }
+    }
+  }
+  return files;
 }
 
 const STYLESHEET_SCAN_SKIP_DIRS = new Set([
@@ -92,6 +149,8 @@ const STYLESHEET_SCAN_SKIP_DIRS = new Set([
   "public",
   "storybook-static",
 ]);
+// The ranked walk reads every candidate it inspects, so the size-ranked tail is bounded.
+const RANKED_CANDIDATE_LIMIT = 12;
 const STYLESHEET_SCAN_MAX_DEPTH = 8;
 const STYLESHEET_SCAN_MAX_ENTRIES = 4000;
 
@@ -277,7 +336,10 @@ export function discoverGlobalCss(
   projectRoot: string,
   warningsOut?: string[],
   // A wrapper is no application entry, so it never changes `noEntryInPackage`.
-  opts?: { extraEntryFiles?: string[]; measuredFile?: string },
+  // searchNotesOut collects why each layer found nothing, so the report never claims a search it
+  // did not run. It is an out-parameter for the same reason warningsOut is: the decision record
+  // stays byte-identical for every caller that does not ask.
+  opts?: { extraEntryFiles?: string[]; measuredFile?: string; searchNotesOut?: string[] },
 ): CssDiscovery {
   const workspaceRoot = findWorkspaceRoot(projectRoot);
   const aliases = loadTsconfigAliases(projectRoot);
@@ -327,17 +389,51 @@ export function discoverGlobalCss(
     const resolved = path.resolve(file);
     if (!entryFiles.includes(resolved)) entryFiles.push(resolved);
   }
-  if (entryFiles.length > 0) {
-    const imported: string[] = [];
+  // The config lists the app's global sheets itself, so no entry module names them.
+  const nuxtDeclared = validateCssFiles(nuxtConfigStylesheets(projectRoot), warningsOut);
+  // Four is what a reader acts on; a longer list is a catalogue, not a diagnosis.
+  const noteSearch = (note: string): void => {
+    const sink = opts?.searchNotesOut;
+    if (sink && sink.length < 4 && !sink.includes(note)) sink.push(note);
+  };
+  if (entryFiles.length > 0 || nuxtDeclared.length > 0) {
+    const imported: string[] = [...nuxtDeclared];
+    let hops = 0;
     for (const entryFile of entryFiles) {
-      const files = validateCssFiles(
-        entryStylesheetImports(entryFile, projectRoot, aliases, warningsOut, workspaceRoot),
-        warningsOut,
+      const push = (files: string[]): void => {
+        for (const file of files) if (!imported.includes(file)) imported.push(file);
+      };
+      push(
+        validateCssFiles(
+          entryStylesheetImports(entryFile, projectRoot, aliases, warningsOut, workspaceRoot),
+          warningsOut,
+        ),
       );
-      for (const file of files) if (!imported.includes(file)) imported.push(file);
+      // One level below the entry, in source order: where a typical app's global sheet is loaded.
+      for (const hop of entryModuleImports(entryFile, projectRoot, aliases)) {
+        hops++;
+        const hopWarnings: string[] = [];
+        const files = entryStylesheetImports(hop, projectRoot, aliases, hopWarnings, workspaceRoot);
+        // "the project entry imports ..." is untrue of a module below it; the rest names its file.
+        for (const warning of hopWarnings) {
+          if (!warning.startsWith("the project entry imports ")) warningsOut?.push(warning);
+        }
+        push(validateCssFiles(files, warningsOut));
+      }
     }
     const usable = imported.filter(injectable);
     if (usable.length > 0) return { files: usable, source: "entry" };
+    noteSearch(
+      entry
+        ? `the project entry ${relativeToRoot(entry, projectRoot)} and the ${hops} module(s) it ` +
+          "imports name no stylesheet the harness can serve"
+        : "no stylesheet the harness can serve was named where the run was pointed",
+    );
+  } else {
+    noteSearch(
+      "no project entry was found: no index.html module script, no app/layout, pages/_app or " +
+        "app/root module, and no nuxt.config css array",
+    );
   }
 
   // What the package says about itself, above a filename convention and the size-ranked guess.
@@ -398,24 +494,52 @@ export function discoverGlobalCss(
     };
   }
 
+  if (declaredCandidates.length === 0) {
+    noteSearch(
+      `no conventional global stylesheet filename exists here (${GLOBAL_CSS_CANDIDATES.length} checked)`,
+    );
+  }
+
   const ranked = rankedStylesheets(projectRoot);
+  if (ranked.length === 0) noteSearch("no stylesheet file exists under this project");
   let survivor: { file: string; size: number } | undefined;
-  for (const candidate of ranked) {
+  // Each candidate is skipped for a reason the run can state; only a usable one ends the walk.
+  for (const candidate of ranked.slice(0, RANKED_CANDIDATE_LIMIT)) {
     const relative = toPosix(path.relative(projectRoot, candidate.file));
     if (rejected.has(candidate.file)) continue;
     if (stylesheetRuleCount(candidate.file) === 0) {
       warningsOut?.push(CSS_PLACEHOLDER_SKIPPED_WARNING(relative));
+      noteSearch(
+        `${relative} declares no CSS rule with a body of its own` +
+          (stylesheetTailwindSyntax(candidate.file) !== undefined
+            ? " -- it only pulls in Tailwind"
+            : " (comments, imports and bare at-rules only)"),
+      );
       continue;
     }
     if (isOptInResetName(candidate.file)) {
       warningsOut?.push(CSS_RESET_SKIPPED_WARNING(relative));
+      noteSearch(`${relative} is an opt-in reset stylesheet by filename`);
       continue;
     }
-    if (contradictsInstalledTailwind(candidate.file)) continue;
-    // Preprocessor-missing stops the walk rather than skipping to the next-ranked candidate.
-    if (!preprocessorFor(candidate.file, projectRoot, workspaceRoot) && injectable(candidate.file)) {
-      survivor = candidate;
+    // Sass never compiles an underscore partial on its own, so no app loads one as its sheet.
+    if (isPreprocessorPartialName(candidate.file)) {
+      noteSearch(`${relative} is a Sass partial, which no app loads on its own`);
+      continue;
     }
+    if (contradictsInstalledTailwind(candidate.file)) {
+      noteSearch(`${relative} was written for another Tailwind major than the installed one`);
+      continue;
+    }
+    const missingPreprocessor = preprocessorFor(candidate.file, projectRoot, workspaceRoot);
+    if (missingPreprocessor) {
+      noteSearch(
+        `${relative} needs ${missingPreprocessor}, which this project does not have installed`,
+      );
+      continue;
+    }
+    if (!injectable(candidate.file)) continue;
+    survivor = candidate;
     break;
   }
 

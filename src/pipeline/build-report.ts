@@ -612,6 +612,9 @@ export function buildCssReport(
     ...(resolvedCss.noEntryInPackage !== undefined
       ? { noEntryInPackage: resolvedCss.noEntryInPackage }
       : {}),
+    ...(resolvedCss.searchNotes !== undefined && resolvedCss.searchNotes.length > 0
+      ? { searchNotes: resolvedCss.searchNotes }
+      : {}),
   };
 }
 

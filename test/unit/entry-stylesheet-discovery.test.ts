@@ -185,15 +185,26 @@ describe("collecting an entry's own stylesheet imports", () => {
     expect(warnings).toEqual([CSS_IMPORT_SKIPPED_WARNING(["./gone.css"])]);
   });
 
-  it("skips a preprocessor stylesheet when its compiler is not installed", () => {
+  // M122: 120fps declares sass itself, so Vite's fallback base compiles a project that has none.
+  it("keeps a Sass stylesheet the project has no compiler for, because 120fps ships one", () => {
     write("package.json", JSON.stringify({ name: "no-sass" }));
-    write("src/theme.scss", "$a: 1;");
+    const scss = write("src/theme.scss", "$a: 1;");
     const css = write("src/style.css", "body{}");
     const entry = write("src/main.tsx", 'import "./theme.scss";\nimport "./style.css";');
     const warnings: string[] = [];
+    expect(entryStylesheetImports(entry, tmpDir, [], warnings)).toEqual([scss, css]);
+    expect(warnings).toEqual([]);
+  });
+
+  it("skips a stylesheet whose compiler exists nowhere, naming the package to install", () => {
+    write("package.json", JSON.stringify({ name: "no-stylus" }));
+    write("src/theme.styl", ".a { color: red; }");
+    const css = write("src/style.css", "body{}");
+    const entry = write("src/main.tsx", 'import "./theme.styl";\nimport "./style.css";');
+    const warnings: string[] = [];
     expect(entryStylesheetImports(entry, tmpDir, [], warnings)).toEqual([css]);
     expect(warnings).toEqual([
-      CSS_PREPROCESSOR_MISSING_WARNING(path.join(tmpDir, "src", "theme.scss"), "sass"),
+      CSS_PREPROCESSOR_MISSING_WARNING(path.join(tmpDir, "src", "theme.styl"), "stylus"),
     ]);
   });
 

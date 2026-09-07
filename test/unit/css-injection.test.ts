@@ -160,8 +160,18 @@ describe("resolveCssFiles", () => {
     });
   });
 
-  it("returns an empty list when nothing is detected", () => {
-    expect(resolveCssFiles({}, tmpDir)).toEqual({ files: [], autoDetected: false, layer: "none" });
+  it("returns an empty list when nothing is detected, and says what it searched", () => {
+    expect(resolveCssFiles({}, tmpDir)).toEqual({
+      files: [],
+      autoDetected: false,
+      layer: "none",
+      searchNotes: [
+        "no project entry was found: no index.html module script, no app/layout, pages/_app or " +
+          "app/root module, and no nuxt.config css array",
+        "no conventional global stylesheet filename exists here (19 checked)",
+        "no stylesheet file exists under this project",
+      ],
+    });
   });
 
   it("explicit files suppress detection and keep order", () => {
@@ -647,5 +657,38 @@ describe("EnvFingerprint.css", () => {
     const a = buildEnvFingerprint({ ...base, css: ["a.css", "b.css"] });
     const b = buildEnvFingerprint({ ...base, css: ["a.css", "b.css"] });
     expect(classifyEnv(a, b)).toBe("identical");
+  });
+});
+
+// M100/M110 parity: one producer, so the dry run's decision cannot describe another pick.
+describe("the dry run and the real run agree on each entry shape", () => {
+  const shapes = [
+    "fixtures/m131/rr7-root-url",
+    "fixtures/m131/side-effect-directory-index",
+    "fixtures/m131/one-hop-plugin",
+    "fixtures/m131/vue-entry-root",
+    "fixtures/m131/nuxt-config-css",
+  ];
+
+  for (const shape of shapes) {
+    it(`decides the same stylesheets, layer and warnings for ${shape}`, () => {
+      const root = path.resolve(shape);
+      const dryWarnings: string[] = [];
+      const realWarnings: string[] = [];
+      const dry = resolveCssFiles({}, root, dryWarnings);
+      const real = resolveCssFiles({}, root, realWarnings);
+      expect(dry).toEqual(real);
+      expect(dryWarnings).toEqual(realWarnings);
+      expect(dry.layer).toBe("entry-chain");
+      expect(dry.files.length).toBeGreaterThan(0);
+    });
+  }
+
+  it("reports no stylesheet in either mode when --no-css was passed", () => {
+    const root = path.resolve("fixtures/m131/one-hop-plugin");
+    expect(resolveCssFiles({ noCss: true }, root)).toEqual(
+      resolveCssFiles({ noCss: true }, root),
+    );
+    expect(resolveCssFiles({ noCss: true }, root).layer).toBe("disabled");
   });
 });

@@ -106,6 +106,10 @@ export function formatStylesheetsLine(css: CssReport): string {
           "not built yet; build the package, then re-run"
         );
       }
+      // The generic sentence claims a search; when the run recorded what it did, that is printed.
+      if (css.searchNotes && css.searchNotes.length > 0) {
+        return `Stylesheets: none found (${css.searchNotes.join("; ")})`;
+      }
       return (
         "Stylesheets: none found (checked the project entry, conventional filenames, and the " +
         "largest stylesheet under the project)"
