@@ -2,7 +2,6 @@ import path from "node:path";
 import { pathKey } from "../shared/index.js";
 import {
   findWorkspaceRoot,
-  loadTsconfigAliases,
   resolveServerConditions,
   tsconfigAliasesForFile,
   type WorkspaceRootAliasSource,
@@ -67,7 +66,14 @@ export function collectStaticPreBuildWarnings(
 ): StaticPreBuild {
   const workspaceRoot = opts.workspaceRoot ?? findWorkspaceRoot(projectRoot);
   const warnings: string[] = [];
-  const tsconfigAliases = loadTsconfigAliases(projectRoot, warnings, opts.componentPath);
+  // The same array tsconfigAliasesForFile returns, so a file under this config takes the fast path.
+  const measuredConfigWarnings: string[] = [];
+  const tsconfigAliases = tsconfigAliasesForFile(
+    projectRoot,
+    opts.componentPath,
+    measuredConfigWarnings,
+  );
+  warnings.push(...measuredConfigWarnings);
   const detected = !opts.noShims && detectNextJs(projectRoot);
   const shimAliases = buildShimAliases(detected);
   // Read as text; the project's vite.config is never imported.
@@ -96,25 +102,21 @@ export function collectStaticPreBuildWarnings(
     ...shimAliases,
   ];
   // Only the tsconfig layer is per-package; vite aliases, shims and rescues are project-wide.
-  // The swap keeps that layer where it sits, so a rescue the walk put ahead of it stays ahead.
+  // A file outside the measured package is judged by its own config first, so a rescue this run
+  // added for another package's answer cannot pass for that file's own resolution.
   const measuredTsconfigAliases = new Set(tsconfigAliases);
+  // A config's own warnings reach the report once, whichever file first brought that config in.
+  const disclosedConfigWarnings = new Set<string>(measuredConfigWarnings);
   const aliasesForFile = (file: string): StaticPreBuild["aliases"] => {
-    const governing = tsconfigAliasesForFile(projectRoot, file);
-    if (governing === tsconfigAliases) return aliases;
-    const swapped: StaticPreBuild["aliases"] = [];
-    let placed = false;
-    for (const alias of aliases) {
-      if (measuredTsconfigAliases.has(alias)) {
-        if (!placed) {
-          swapped.push(...governing);
-          placed = true;
-        }
-        continue;
-      }
-      swapped.push(alias);
+    const collected: string[] = [];
+    const governing = tsconfigAliasesForFile(projectRoot, file, collected);
+    for (const warning of collected) {
+      if (disclosedConfigWarnings.has(warning)) continue;
+      disclosedConfigWarnings.add(warning);
+      warnings.push(warning);
     }
-    if (!placed) swapped.push(...governing);
-    return swapped;
+    if (governing === tsconfigAliases) return aliases;
+    return [...governing, ...aliases.filter((alias) => !measuredTsconfigAliases.has(alias))];
   };
 
   const importedSpecifiers = new Set<string>();

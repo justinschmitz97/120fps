@@ -67,9 +67,10 @@ CPU profile of posthog `--explain-props` (3 candidates, 118 s sampled; 266 s col
   not expanded. The one consumer that needs the expansion — `coversTarget`
   (`src/project/model.ts:397`) — obtains the file list lazily, only when it is actually asked, and
   only for the config it is asked about.
-- **C4** The dry run's output is unchanged. For every corpus repository in this milestone's
-  acceptance table, `--explain-props` produces byte-identical stdout to the pre-change build for the
-  same component and flags: same props, same warnings, same order.
+- **C4** The dry run's output is unchanged modulo C7's dedupe. For every corpus repository in this
+  milestone's acceptance table, `--explain-props` produces the pre-change build's stdout with the
+  repeat disclosures C7 removes and nothing else: same props, same order, no line added, no line
+  reworded.
 - **C5** The real run makes the same decisions it made before, from the same inputs. A cache never
   changes an answer; it only removes a repetition (M100/M110 parity is preserved by construction).
 - **C6** The measured effect is recorded: posthog `--explain-props` over the same three candidates is
@@ -132,9 +133,9 @@ node node_modules/typescript/bin/tsc -p tsconfig.json          # exit 0
 npx vitest run test/unit/module-resolution-is-cached-across-candidates.test.ts   test/unit/a-tsconfig-is-parsed-once-per-path.test.ts   test/unit/a-run-discloses-an-unresolved-package-once.test.ts   test/unit/dry-run-names-the-unresolved-prebundle-entry.test.ts   test/unit/prebundle-entry-that-resolves-to-nothing-warns.test.ts   test/unit/import-graph-walk-parses-each-file-once.test.ts --maxWorkers=2
 #   Test Files  6 passed (6)      Tests  27 passed (27)
 
-npx vitest run test/unit --maxWorkers=2
-#   Test Files  2 failed | 348 passed (350)
-#   Tests  2 failed | 4958 passed | 1 skipped (4961)
+npx vitest run test/unit --maxWorkers=2          # on the merged wave-1 tree, after review fixes
+#   Test Files  2 failed | 364 passed (366)
+#   Tests  2 failed | 5180 passed | 1 skipped (5183)
 #   the two failures are the recorded baseline pair (prop-cap-ranking.test.ts,
 #   vue-setup-inject-evidence.test.ts).
 ```
@@ -150,7 +151,8 @@ Recorded corpus runs, `dist` built in `C:/Projekte/120fps-run7-lane-b`, logs und
 |---|---|---|---|---|
 | posthog | 3 (`m135-posthog-before`, `m135-posthog-after`) | 316 s | 116 s (2.7x) | diff is 36 removed lines, every one a `resolves to no installed package` repeat from candidates 2 and 3; no line added, no line changed |
 | librechat | 5 (`m135-librechat-before`, `m135-librechat-after`) | 75 s, 60 unresolved-package lines, 25 alias-conflict lines | 44 s, 12 and 5 | diff adds nothing |
-| twenty | 1 (`m135-twenty-dry`) | 12 s at the M130 commit | 8 s | byte-identical to the M130 log |
+| twenty | 1 (`m135-twenty-dry`, `m130fix-twenty-dry`) | 12 s at the M130 commit | 8-9 s | alias decisions unchanged, 0 stale-alias lines; the only diff after the wave-1 merge is lane C's stylesheet resolution |
+| twenty (one walk, measured directly) | `collectStaticPreBuildWarnings` | 5 339 ms, 81 548 `existsSync` | 1 897-2 555 ms, 6 046 `existsSync` | the per-file alias lookup is hoisted out of the specifier loop and the nearest-config walk is memoized per directory |
 | plane | 3 (`m135-plane-dry`) | 26 s in `run7-smoke1` | 12 s | — |
 | trigger.dev | 3 (`m135-triggerdev-dry`) | 14 s in `run7-smoke1` | 5 s | — |
 | taxonomy (control) | 3 (`m135-taxonomy-3`) | 3 s in `run7-smoke1` | 3 s | unchanged |

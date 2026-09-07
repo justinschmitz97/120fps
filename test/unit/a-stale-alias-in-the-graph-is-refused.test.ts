@@ -109,6 +109,97 @@ describe("an aliased import whose target is not on disk", () => {
   });
 });
 
+describe("an aliased import that carries a Vite query suffix", () => {
+  it("is not refused when the file it names is on disk", () => {
+    const { root, entry } = project("120fps-alias-query-present-", {
+      "package.json": MANIFEST,
+      "tsconfig.json": TSCONFIG,
+      "src/Card.tsx": ENTRY,
+      "src/helper.ts":
+        'import icon from "~/assets/logo.svg?url";\nexport const helper = icon;\n',
+      "src/assets/logo.svg": "<svg />\n",
+    });
+
+    const { hard } = runPreflight({ projectRoot: root, entries: [entry] });
+
+    expect(hard.map((hit) => hit.kind)).not.toContain("unresolved-alias");
+  });
+
+  it("is refused when the file it names is not on disk", () => {
+    const { root, entry } = project("120fps-alias-query-absent-", {
+      "package.json": MANIFEST,
+      "tsconfig.json": TSCONFIG,
+      "src/Card.tsx": ENTRY,
+      "src/helper.ts":
+        'import icon from "~/assets/logo.svg?url";\nexport const helper = icon;\n',
+    });
+
+    const { hard } = runPreflight({ projectRoot: root, entries: [entry] });
+
+    const hit = hard.find((candidate) => candidate.kind === "unresolved-alias");
+    expect(hit).toBeDefined();
+    expect(hit!.specifier).toBe("~/assets/logo.svg?url");
+    expect(hit!.aliasTarget).toContain("assets/logo.svg");
+  });
+
+  it("is not refused for a worker or component query either", () => {
+    const { root, entry } = project("120fps-alias-query-worker-", {
+      "package.json": MANIFEST,
+      "tsconfig.json": TSCONFIG,
+      "src/Card.tsx": ENTRY,
+      "src/helper.ts":
+        'import w from "~/work/job?worker";\nimport c from "~/icons/star.svg?component";\nexport const helper = [w, c];\n',
+      "src/work/job.ts": "export default 1;\n",
+      "src/icons/star.svg": "<svg />\n",
+    });
+
+    const { hard } = runPreflight({ projectRoot: root, entries: [entry] });
+
+    expect(hard.map((hit) => hit.kind)).not.toContain("unresolved-alias");
+  });
+});
+
+describe("two path aliases that both match one import", () => {
+  it("names the target of the longest matching prefix", () => {
+    const { root, entry } = project("120fps-alias-longest-prefix-", {
+      "package.json": MANIFEST,
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: {
+          baseUrl: ".",
+          paths: { "@/*": ["./src/*"], "@/app/*": ["./app/*"] },
+        },
+      }),
+      "src/Card.tsx": ENTRY,
+      "src/helper.ts": 'import { gone } from "@/app/gone";\nexport const helper = gone;\n',
+    });
+
+    const { hard } = runPreflight({ projectRoot: root, entries: [entry] });
+
+    const hit = hard.find((candidate) => candidate.kind === "unresolved-alias");
+    expect(hit).toBeDefined();
+    expect(hit!.aliasTarget).toBe("app/gone");
+  });
+
+  it("refuses nothing when the shorter pattern resolves the import", () => {
+    const { root, entry } = project("120fps-alias-longest-prefix-hit-", {
+      "package.json": MANIFEST,
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: {
+          baseUrl: ".",
+          paths: { "@/*": ["./src/*"], "@/app/*": ["./app/*"] },
+        },
+      }),
+      "src/Card.tsx": ENTRY,
+      "src/helper.ts": 'import { there } from "@/app/there";\nexport const helper = there;\n',
+      "src/app/there.ts": "export const there = 1;\n",
+    });
+
+    const { hard } = runPreflight({ projectRoot: root, entries: [entry] });
+
+    expect(hard.map((hit) => hit.kind)).not.toContain("unresolved-alias");
+  });
+});
+
 describe("a path alias with no prefix of its own", () => {
   it("refuses nothing, because it matches every bare specifier", () => {
     const { root, entry } = project("120fps-stale-alias-catch-all-", {

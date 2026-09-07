@@ -115,6 +115,18 @@ export function WORKSPACE_ROOT_ALIAS_WARNING(
   );
 }
 
+// An exact key outranks every wildcard; among wildcards the longer prefix wins, as tsc does it.
+function aliasKeyRank(pattern: string): number {
+  const star = pattern.indexOf("*");
+  return star === -1 ? Number.MAX_SAFE_INTEGER : star;
+}
+
+function bySpecificity<T>(entries: Array<[string, T]>): Array<[string, T]> {
+  return [...entries].sort(
+    ([left], [right]) => aliasKeyRank(right) - aliasKeyRank(left),
+  );
+}
+
 // A .d.ts-only target would become an inert alias that crashes the harness on first import.
 export function TYPES_ONLY_ALIAS_WARNING(pattern: string, target: string): string {
   return (
@@ -296,15 +308,20 @@ export function loadTsconfigAliases(
     for (const warning of governing.warnings) {
       if (!warningsOut) break;
       if (warning.includes(TSCONFIG_REFERENCES_MARKER)) {
-        if (disclosedGoverningConfigs.has(warning)) continue;
-        disclosedGoverningConfigs.add(warning);
+        // Keyed on the config pair, not the sentence: the subject file differs per lookup and
+        // the reader needs the choice once, not once per file under that config.
+        const pair = warning.split(" covers ")[0];
+        if (disclosedGoverningConfigs.has(pair)) continue;
+        disclosedGoverningConfigs.add(pair);
       }
       warningsOut.push(warning);
     }
     if (governing.options.paths) {
       // The member owns any name it lists, whether or not its own target resolves.
       memberPatterns = new Set(Object.keys(governing.options.paths));
-      for (const [pattern, targets] of Object.entries(governing.options.paths)) {
+      // Declaration order is not precedence: TypeScript matches the exact key, then the longest
+      // prefix, and a list Vite reads front to back has to be written in that order.
+      for (const [pattern, targets] of bySpecificity(Object.entries(governing.options.paths))) {
         const entry = buildPathAliasEntry(
           pattern,
           targets,
@@ -334,7 +351,7 @@ export function loadTsconfigAliases(
       warningsOut?.push(TSCONFIG_EXTENDS_BROKEN_WARNING(rootConfigPath, detail));
     }
     if (rootParsed?.paths) {
-      for (const [pattern, targets] of Object.entries(rootParsed.paths)) {
+      for (const [pattern, targets] of bySpecificity(Object.entries(rootParsed.paths))) {
         if (memberPatterns.has(pattern) || !targets.length) continue;
         const entry = buildPathAliasEntry(
           pattern,
@@ -357,12 +374,18 @@ export function loadTsconfigAliases(
 
 
 // One table per governing tsconfig, so a walk that crosses packages pays for each config once.
-const aliasTablesByConfig = new Map<string, TsconfigAlias[]>();
+const aliasTablesByConfig = new Map<
+  string,
+  { aliases: TsconfigAlias[]; warnings: string[]; owner: string }
+>();
+// The nearest config above a directory: one upward walk per directory, not per file.
+const configScopeByDirectory = new Map<string, { path: string | undefined }>();
 // Keyed by config path: whether that config delegates its options to a `references` entry.
 const referencesOnlyConfigs = new Map<string, boolean>();
 
 export function resetTsconfigAliasTables(): void {
   aliasTablesByConfig.clear();
+  configScopeByDirectory.clear();
   referencesOnlyConfigs.clear();
   parsedPathsConfigs.clear();
 }
@@ -388,19 +411,44 @@ export function delegatesToReferences(configPath: string): boolean {
 
 // The table that governs one file. Files under a references-only root are keyed one by one,
 // because which referenced config covers them is a property of the file, not of the directory.
-export function tsconfigAliasesForFile(projectRoot: string, file: string): TsconfigAlias[] {
-  const workspaceRoot = findWorkspaceRoot(projectRoot);
-  const nearest = findCompilerConfig(path.dirname(path.resolve(file)), workspaceRoot);
+// A config's own warnings come back the first time that config is read, once per run.
+export function tsconfigAliasesForFile(
+  projectRoot: string,
+  file: string,
+  warningsOut?: string[],
+): TsconfigAlias[] {
+  // Per directory: every file in one directory shares the roots and the nearest config above it.
+  const directoryKey = JSON.stringify([pathKey(projectRoot), pathKey(path.dirname(path.resolve(file)))]);
+  let nearest = configScopeByDirectory.get(directoryKey);
+  if (nearest === undefined) {
+    const workspaceRoot = findWorkspaceRoot(projectRoot);
+    nearest = { path: findCompilerConfig(path.dirname(path.resolve(file)), workspaceRoot) };
+    configScopeByDirectory.set(directoryKey, nearest);
+  }
   const scope =
-    nearest === undefined
+    nearest.path === undefined
       ? ""
-      : delegatesToReferences(nearest)
+      : delegatesToReferences(nearest.path)
         ? pathKey(file)
-        : pathKey(nearest);
-  const key = `${pathKey(projectRoot)} ${scope}`;
+        : pathKey(nearest.path);
+  const key = JSON.stringify([
+    pathKey(projectRoot),
+    scope,
+    nearest.path === undefined ? null : tsconfigSignature(nearest.path),
+  ]);
   const cached = aliasTablesByConfig.get(key);
-  if (cached) return cached;
-  const aliases = loadTsconfigAliases(projectRoot, undefined, file);
-  aliasTablesByConfig.set(key, aliases);
+  const owner = pathKey(file);
+  if (cached) {
+    // The file that first read this config keeps its disclosures, so asking twice for one
+    // component (the dry run and the real run) prints them twice and other files print none.
+    if (cached.owner === owner) warningsOut?.push(...cached.warnings);
+    return cached.aliases;
+  }
+  const own: string[] = [];
+  const aliases = loadTsconfigAliases(projectRoot, own, file);
+  // The references disclosure has its own once-per-run register; replaying it would double it.
+  const replayable = own.filter((warning) => !warning.includes(TSCONFIG_REFERENCES_MARKER));
+  aliasTablesByConfig.set(key, { aliases, warnings: replayable, owner });
+  warningsOut?.push(...own);
   return aliases;
 }

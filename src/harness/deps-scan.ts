@@ -77,13 +77,12 @@ export function GOVERNING_ALIAS_CONFLICT_WARNING(
   specifier: string,
   importer: string,
   siblingTarget: string,
-  measuredTarget: string,
+  servedTarget: string,
 ): string {
   return (
     `${importer} imports "${specifier}" through its own package's path alias, which names ` +
-    `${siblingTarget}; the measured package's alias of the same name points at ${measuredTarget}. ` +
-    "The dev server resolves aliases from one list, so it serves the measured package's target and " +
-    "this import loads the wrong file."
+    `${siblingTarget}; this run serves ${servedTarget} for that name. The dev server resolves ` +
+    "aliases from one list, so this import loads the wrong file."
   );
 }
 
@@ -367,35 +366,41 @@ function walkExternalDeps(
   const brokenAliasGroups = new Map<string, { targetRoot: string; specifiers: string[] }>();
   // Specifiers a stale project alias claimed while the sibling's own source answers for them.
   const rescuedFromStaleAlias = new Set<string>();
-  // Specifiers another package's tsconfig resolved; the measured table alone would not serve them.
-  const reconciledAliases = new Set<string>();
+  // What this run will serve for each bare specifier, whoever claimed it first.
+  const servedGoverningTargets = new Map<string, string>();
 
   // The dev server reads one alias list, so a governing answer it cannot reproduce is disclosed.
   const serveGoverningAlias = (spec: string, resolvedPath: string, importer: string): void => {
-    if (reconciledAliases.has(spec)) return;
-    // Namespaced in the run-wide register: one disclosure per specifier, not one per candidate.
-    const disclosureKey = `alias-conflict ${spec}`;
-    const measured = resolveLocalImport(importer, spec, projectRoot, aliases);
-    if (measured.kind === "resolved" && pathKey(measured.path) === pathKey(resolvedPath)) return;
-    reconciledAliases.add(spec);
-    if (measured.kind === "resolved") {
-      if (reportedUnresolved.has(disclosureKey)) return;
-      reportedUnresolved.add(disclosureKey);
-      warningsOut?.push(
-        GOVERNING_ALIAS_CONFLICT_WARNING(
-          spec,
-          relativeToRoot(importer, projectRoot),
-          toPosix(resolvedPath),
-          toPosix(measured.path),
-        ),
-      );
-      return;
+    let served = servedGoverningTargets.get(spec);
+    if (served === undefined) {
+      const measured = resolveLocalImport(importer, spec, projectRoot, aliases);
+      if (measured.kind === "resolved") {
+        // The measured package's own table already answers this name; that is what Vite serves.
+        served = measured.path;
+      } else {
+        // Nothing else resolves it, so this package's answer becomes the one the run serves.
+        served = resolvedPath;
+        extraAliasesOut?.unshift({
+          find: new RegExp(`^${escapeRegex(spec)}$`),
+          replacement: toPosix(resolvedPath),
+        });
+      }
+      servedGoverningTargets.set(spec, served);
     }
-    // Ahead of the measured package's own alias, which resolves this name nowhere.
-    extraAliasesOut?.unshift({
-      find: new RegExp(`^${escapeRegex(spec)}$`),
-      replacement: toPosix(resolvedPath),
-    });
+    if (pathKey(served) === pathKey(resolvedPath)) return;
+    // A second package wants a different file behind the same name; one list cannot hold both.
+    // Keyed by target in the run-wide register: each wrong file is named once, not once per candidate.
+    const disclosureKey = `alias-conflict ${spec} ${pathKey(resolvedPath)}`;
+    if (reportedUnresolved.has(disclosureKey)) return;
+    reportedUnresolved.add(disclosureKey);
+    warningsOut?.push(
+      GOVERNING_ALIAS_CONFLICT_WARNING(
+        spec,
+        relativeToRoot(importer, projectRoot),
+        toPosix(resolvedPath),
+        toPosix(served),
+      ),
+    );
   };
   const reportedWorkspaceRootAliases = new Set<string>();
   // One report per specifier, however many files import it.
@@ -428,18 +433,22 @@ function walkExternalDeps(
       continue;
     }
 
+    // Hoisted: the governing table is a property of the file, and the lookup walks the tree.
+    let fileAliases = aliasesForFile === undefined ? aliases : aliasesForFile(normalizedFile);
+    let aliasCount = aliases.length;
+
     for (const raw of readSpecifiers(content)) {
+      // A rescue this file's own imports added applies to the imports below them.
+      if (aliasesForFile !== undefined && aliases.length !== aliasCount) {
+        aliasCount = aliases.length;
+        fileAliases = aliasesForFile(normalizedFile);
+      }
       // `./icon.svg?url` never resolved with the query; a "#" survives, it opens a subpath import.
       const spec = raw.split("?")[0];
       if (!spec) continue;
 
       const isBareSpecifier = !spec.startsWith(".") && !spec.startsWith("/");
-      const localResolved = resolveLocalImport(
-        normalizedFile,
-        spec,
-        projectRoot,
-        aliasesForFile === undefined ? aliases : aliasesForFile(normalizedFile),
-      );
+      const localResolved = resolveLocalImport(normalizedFile, spec, projectRoot, fileAliases);
       if (localResolved.kind === "resolved") {
         if (SOURCE_EXTENSIONS.includes(path.extname(localResolved.path))) {
           queue.push(localResolved.path);
