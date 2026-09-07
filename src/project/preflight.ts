@@ -238,12 +238,19 @@ function parseUncached(fileName: string, vueCompiler?: VueSfcCompiler): ts.Sourc
   return ts.createSourceFile(fileName, text, ts.ScriptTarget.Latest, true, scriptKind(fileName));
 }
 
+// `./icon.svg?url` and `./worker?worker` name a transform of a file, not a different file.
+function withoutQuery(specifier: string): string {
+  const query = specifier.indexOf("?");
+  return query === -1 ? specifier : specifier.slice(0, query);
+}
+
 // TypeScript cannot resolve a .vue specifier, so SFC edges are resolved by hand.
 function resolveVueImport(
   fromFile: string,
-  specifier: string,
+  rawSpecifier: string,
   compilerOptions?: ts.CompilerOptions,
 ): string | undefined {
+  const specifier = withoutQuery(rawSpecifier);
   // An aliased SFC is the same graph edge as a relative one, so the alias is substituted here.
   const candidates =
     specifier.startsWith(".") || specifier.startsWith("/")
@@ -257,13 +264,21 @@ function resolveVueImport(
   return undefined;
 }
 
+// One `paths` key that matched, with its targets already resolved against the config's base.
+interface AliasMatch {
+  pattern: string;
+  // TypeScript ranks an exact key first, then the longest prefix before the wildcard.
+  rank: number;
+  targets: string[];
+}
+
 // The two `paths` shapes TypeScript itself supports: an exact key, or one `*`.
-function aliasCandidates(
+function aliasMatches(
   specifier: string,
   compilerOptions?: ts.CompilerOptions,
   // A prefix-less key ("*", "/*") matches every bare specifier, so no refusal may rest on it.
   prefixedOnly = false,
-): string[] {
+): AliasMatch[] {
   const paths = compilerOptions?.paths;
   // TypeScript 5 leaves baseUrl undefined for a paths-only tsconfig; pathsBasePath records it.
   const base =
@@ -273,38 +288,56 @@ function aliasCandidates(
       ? path.dirname(compilerOptions.configFilePath as string)
       : undefined);
   if (!paths || !base) return [];
-  const candidates: string[] = [];
+  const matches: AliasMatch[] = [];
   for (const [pattern, targets] of Object.entries(paths)) {
     if (prefixedOnly && capturesEveryRootAbsoluteUrl(pattern)) continue;
     const star = pattern.indexOf("*");
     let rest: string;
+    let rank: number;
     if (star === -1) {
       if (pattern !== specifier) continue;
       rest = "";
+      rank = Number.MAX_SAFE_INTEGER;
     } else {
       const prefix = pattern.slice(0, star);
       const suffix = pattern.slice(star + 1);
       if (!specifier.startsWith(prefix) || !specifier.endsWith(suffix)) continue;
       rest = specifier.slice(prefix.length, specifier.length - suffix.length);
+      rank = prefix.length;
     }
-    for (const target of targets) {
-      candidates.push(path.resolve(base, target.replace("*", rest)));
-    }
+    matches.push({
+      pattern,
+      rank,
+      targets: targets.map((target) => path.resolve(base, target.replace("*", rest))),
+    });
   }
-  return candidates;
+  return matches.sort((left, right) => right.rank - left.rank);
 }
 
-// The target an alias named when nothing at all resolves; undefined when something does.
-function missingAliasTarget(
+function aliasCandidates(
   specifier: string,
   compilerOptions?: ts.CompilerOptions,
+  prefixedOnly = false,
+): string[] {
+  return aliasMatches(specifier, compilerOptions, prefixedOnly).flatMap((match) => match.targets);
+}
+
+// The target the winning alias named when nothing at all resolves; undefined when something does.
+function missingAliasTarget(
+  rawSpecifier: string,
+  compilerOptions?: ts.CompilerOptions,
 ): string | undefined {
-  const candidates = aliasCandidates(specifier, compilerOptions, true);
-  if (candidates.length === 0) return undefined;
-  for (const candidate of candidates) {
-    if (resolveTarget(candidate) !== undefined) return undefined;
+  // `?url` and `?raw` ask Vite for a transform of a file that is on disk under its own name.
+  const specifier = withoutQuery(rawSpecifier);
+  const matches = aliasMatches(specifier, compilerOptions, true);
+  if (matches.length === 0) return undefined;
+  for (const match of matches) {
+    for (const candidate of match.targets) {
+      if (resolveTarget(candidate) !== undefined) return undefined;
+    }
   }
-  return candidates[0];
+  // The longest prefix is the key TypeScript itself would have used, so it is the one to name.
+  return matches[0].targets[0];
 }
 
 

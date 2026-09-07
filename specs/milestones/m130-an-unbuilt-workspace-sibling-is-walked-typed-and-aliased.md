@@ -109,12 +109,18 @@ The verifier for every item below: run-7 investigation (2026-09-06), refuted by 
   exists on disk.
 - **C7** Dry/real parity (M100, M110): `--explain-props` and the real run make the same walk
   decisions, apply the same alias tables, and print the same alias and unresolved-module warnings.
-- **C8** An import that matches a configured path alias, resolves to nothing on disk through that
-  alias and through node resolution, and lies in the measured component's own import graph — the
+- **C8** An import whose specifier, with any Vite query suffix (`?url`, `?raw`, `?worker`) removed,
+  matches a configured path alias, resolves to nothing on disk through that alias and through node
+  resolution, and lies in the measured component's own import graph — the
   graph `runPreflight` walks, type-only edges excluded — is a hard preflight hit. The run is refused
   before the browser starts, in the real run and in `--explain-props` identically, and the refusal
   names the importing file, the specifier and the missing target. `--no-preflight` bypasses it like
   every other hard hit. A stale alias the preflight walk never reaches keeps C6's collapsed warning.
+  The pattern probed and named is the one TypeScript would use: the exact key, else the longest
+  prefix; a refusal never rests on a shorter key whose target the project never meant.
+- **C11** A path alias list is ordered by specificity, exact keys first and longer prefixes before
+  shorter ones, in the table the walk reads and in the list the harness hands Vite. Two keys that
+  both match one import resolve to the target TypeScript would have picked.
 - **C10** An aliased import written inside a workspace sibling resolves through that sibling's own
   tsconfig at runtime too: when the measured package's alias list cannot resolve the same specifier,
   the harness aliases it to the file the sibling's config names, ahead of the measured entries. When
@@ -127,8 +133,10 @@ The verifier for every item below: run-7 investigation (2026-09-06), refuted by 
 
 ## MUST NOT
 
-- Walk into a third-party package. C1 fires only when the resolved target is inside the workspace
-  (a member of the workspace's package globs) *and* its declared entry is missing from disk.
+- Walk into a third-party package. C1 fires only when the import resolves to a directory whose
+  realpath lies under the workspace root with no `node_modules` segment between the two — the test
+  `isWorkspaceSibling` applies, which is a superset of the package globs and needs no glob parsing —
+  *and* whose declared entry is missing from disk.
 - Alias a sibling that is built. A sibling whose declared entry exists on disk keeps resolving to
   that entry; M107's contract is unchanged.
 - Change what `walkExternalDeps` aliases, or how the harness serves an unbuilt sibling at runtime.
@@ -175,6 +183,9 @@ The verifier for every item below: run-7 investigation (2026-09-06), refuted by 
   maps `@fix/sib/*` at an unbuilt target still reaches the sibling's `src/sub.ts`, its transitive
   packages appear in `externalDeps`, no stale-alias line is printed, and the rescue alias precedes
   the project alias in the list the harness hands Vite.
+- **C11** — `test/unit/tsconfig-aliases.test.ts`: `@/app/*` outranks `@/*` and an exact key
+  outranks both; `test/unit/a-stale-alias-in-the-graph-is-refused.test.ts` covers the same rule for
+  the refusal, and a `?url` import of a file that exists produces no hit.
 - **C8** — `test/unit/a-stale-alias-in-the-graph-is-refused.test.ts`: an aliased import whose target
   is absent, written in a file the preflight walk reaches, is a hard hit naming importer, specifier
   and target; the same alias imported by no file in the graph produces no hit; a prefix-less `*`
@@ -194,9 +205,9 @@ node node_modules/typescript/bin/tsc -p tsconfig.json          # exit 0; dist/cl
 npx vitest run test/unit/the-preflight-walk-crosses-into-an-unbuilt-sibling.test.ts   test/unit/an-unbuilt-sibling-contributes-its-types.test.ts   test/unit/an-alias-is-resolved-against-its-own-tsconfig.test.ts   test/unit/unresolved-alias-reporting.test.ts   test/unit/a-stale-alias-in-the-graph-is-refused.test.ts   test/unit/a-stale-alias-does-not-hide-a-sibling-source.test.ts   test/unit/a-siblings-own-alias-is-served-to-the-browser.test.ts   test/unit/explain-props-parity.test.ts test/unit/preflight.test.ts --maxWorkers=2
 #   Test Files  9 passed (9)      Tests  74 passed (74)
 
-npx vitest run test/unit --maxWorkers=2
-#   Test Files  2 failed | 345 passed (347)
-#   Tests  2 failed | 4948 passed | 1 skipped (4951)
+npx vitest run test/unit --maxWorkers=2          # on the merged wave-1 tree, after review fixes
+#   Test Files  2 failed | 364 passed (366)
+#   Tests  2 failed | 5180 passed | 1 skipped (5183)
 #   the two failures are the recorded baseline pair (prop-cap-ranking.test.ts,
 #   vue-setup-inject-evidence.test.ts); both reproduce in isolation at f54be55.
 ```
@@ -249,9 +260,10 @@ Recorded corpus runs, `dist` built in `C:/Projekte/120fps-run7-lane-b`, logs und
 | Repo | Label | Baseline | Recorded |
 |---|---|---|---|
 | directus | `m130-directus-dry`, `m130-directus-real` | setup-error, exit 2, 94 s, raw Vite parse error | exit 2 in 6 s (dry) and 3 s (real), refusal byte-identical, before the browser: `../packages/system-data/src/collections/index.ts imports ./collections.yaml`, chain `empty-state.vue → v-list-item.vue → ../packages/composables/src/index.ts → …/use-items.ts → ../packages/utils/shared/index.ts → …` |
-| dub | `m130-dub-dry` | verdict-fail, exit 1, 31 s, prop table without `icon` | exit 0 in 13 s, `Props (6)` with `icon function required` first |
+| dub | `m130-dub-dry`, `m130fix-dub-real` | verdict-fail, exit 1, 31 s, prop table without `icon` | dry: exit 0 in 13 s, `Props (6)` with `icon function required` first. Real: still exit 1 in 78 s with `Element type is invalid ... got: undefined` on every combo. `icon` is extracted and measured as a function, and a function is not a component; see Deferred. |
 | twenty | `m130-twenty-dry` | 149 stale-alias lines | exit 0 in 12 s, 0 stale-alias lines |
 | umbrel (control) | `m130-control` | pass-warn, exit 0, 46 s | pass-warn, exit 0, 33 s, same warning set |
+| plane | `m130fix-plane-empty-state` | dry exit 0, one false stale-alias line for `@/app/assets/empty-state/api-token.svg` (0.7.0 named a target under `@/*` that never existed) | dry exit 0 in 5 s, no stale-alias line: the `?url` query is stripped before the probe (C8) and `@/app/*` outranks `@/*` (C11) |
 | librechat | `m130-librechat-dry`, `m130-librechat-real` | dry exit 0 with 4 stale-alias lines; real exit 2 at 121 s on `librechat-data-provider/react-query` | dry exit 0 in 16 s with 0 stale-alias lines; real exit 2 at 112 s, past both former blockers, on `The requested module '/src/hooks/index.ts' does not provide an export named 'useMediaQuery'`, with 5 `GOVERNING_ALIAS_CONFLICT_WARNING` lines naming the cause |
 
 librechat's `librechat-data-provider/react-query` is **not** a C8 refusal: C3's injected `paths`
@@ -268,6 +280,12 @@ still stops librechat is one alias namespace claimed by two packages (`~/*` in b
   resolution; the findings assign them the `120fps.setup.vue` remedy (M136 records the same).
 - **The exit-code the refusal uses.** C2 refuses before the browser; whether that is exit 2 or a new
   code is the exit-code redesign the findings leave out.
+- **Synthesizing a value for `React.ElementType`.** dub's `icon` is now extracted (C3) and
+  classified as a function union of 180 shapes, so the run mounts it with a function placeholder;
+  React needs a component. Proposal: classify a prop whose type accepts an intrinsic tag or a
+  component type as its own kind and synthesize `"div"` — the one value React always accepts —
+  with provenance `heuristic`. `src/props/synthesize.ts` and `src/props/classify.ts`'s
+  classification table are lane D's, so this is an interface request, not a lane B edit.
 - **Per-importer alias resolution.** Two workspace packages declaring the same alias pattern
   (librechat's `~/*` in `client/` and in `packages/client/`) cannot both be served by one Vite alias
   list. C10 discloses each such import by name (`GOVERNING_ALIAS_CONFLICT_WARNING`) and serves the

@@ -21,6 +21,7 @@ function write(name: string, content: string): string {
   return file;
 }
 
+const ESC = String.fromCharCode(10);
 const fwd = (p: string) => p.replace(/\\/g, "/");
 const srcAlias = () => [
   { find: /^@\//, replacement: `${fwd(tmpDir)}/src/`, pattern: "@/*", target: "./src/*" },
@@ -122,6 +123,29 @@ describe("an alias that matches but points nowhere", () => {
     expect(pkgs).toEqual(["clsx"]);
     // The unresolvable entry gets its own warning; no alias warning is due.
     expect(warnings.filter((w) => !w.includes("resolves to no installed package"))).toEqual([]);
+  });
+
+  it("still warns when a stale alias shadows an installed package of the same name", () => {
+    const pkgDir = path.join(tmpDir, "node_modules", "lib");
+    fs.mkdirSync(pkgDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(pkgDir, "package.json"),
+      JSON.stringify({ name: "lib", main: "./index.js" }),
+    );
+    fs.writeFileSync(path.join(pkgDir, "index.js"), "module.exports = {};" + ESC);
+    const entry = write("Entry.tsx", 'import "lib/helper";' + ESC + "export const entry = 1;" + ESC);
+    const alias = [
+      { find: /^lib\//, replacement: `${fwd(tmpDir)}/src/lib/`, pattern: "lib/*", target: "./src/lib/*" },
+    ];
+
+    const warnings: string[] = [];
+    const pkgs = scanExternalDeps(entry, tmpDir, alias, undefined, warnings);
+
+    // The alias claimed the name, so the installed package is not what the harness would serve.
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("lib/*");
+    expect(warnings[0]).toContain("lib/helper");
+    expect(pkgs).not.toContain("lib");
   });
 
   it("says nothing about a relative import that resolves to nothing", () => {
