@@ -124,6 +124,8 @@ export async function explainProps(
     maxCombos?: number;
     // Curve points and combo-path anchors are the same list, so the estimate prices either.
     scalePoints?: number[];
+    // The file --check would read, so the estimate prices the entry the real run will consult.
+    baselineFile?: string;
   } = {},
 ): Promise<PropsExplanation> {
   const resolvedPath = path.resolve(componentPath);
@@ -337,6 +339,7 @@ export async function explainProps(
     usesFixture: dryRunUsesFixture,
     mode: predictedMode,
     ...(options.scalePoints ? { scalePoints: options.scalePoints } : {}),
+    ...(options.baselineFile ? { baselineFile: options.baselineFile } : {}),
     samples: options.samples,
     maxCombos: options.maxCombos,
   });
